@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova ChatBot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/axiom-shared.css">
+<style>
+  :root{
+    --indigo:#7C6FE0; --indigo-dark:#5F51C7; --indigo-light:#efedfd;
+    --ink:#22243A; --ink-soft:#4a4d63; --muted:#8b8fa3; --line:#e6e6f0;
+    --chat-fs:14px;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:#fff;color:var(--ink);display:flex;flex-direction:column;height:100%;
+    font-size:14px;-webkit-font-smoothing:antialiased;
+  }
+
+  /* ---- header ---- */
+  .wg-head{
+    flex:none;display:flex;align-items:center;gap:10px;padding:12px 14px;
+    background:linear-gradient(120deg,var(--indigo),#8f7ee0);color:#fff;
+  }
+  .wg-mark{width:30px;height:30px;border-radius:9px;background:rgba(255,255,255,.18);
+    display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;flex:none;}
+  .wg-title{font-weight:700;font-size:14.5px;line-height:1.2;}
+  .wg-sub{font-size:11.5px;opacity:.85;line-height:1.2;}
+  .wg-head .sp{flex:1;}
+  .wg-x{display:inline-flex;align-items:center;justify-content:center;gap:5px;
+    background:rgba(255,255,255,.16);border:none;color:#fff;height:26px;min-width:26px;
+    padding:0 8px;border-radius:7px;cursor:pointer;font-family:inherit;font-size:11.5px;
+    font-weight:600;line-height:1;flex:none;white-space:nowrap;transition:background .15s;}
+  .wg-x.icon{padding:0;width:26px;}
+  .wg-x svg{display:block;flex:none;}
+  .wg-x:hover{background:rgba(255,255,255,.3);}
+
+  /* ---- sign in ---- */
+  .wg-auth{flex:1;display:flex;flex-direction:column;justify-content:center;padding:26px 22px;gap:10px;}
+  .wg-auth h3{margin:0 0 2px;font-size:16px;}
+  .wg-auth p{margin:0 0 10px;font-size:13px;color:var(--ink-soft);line-height:1.55;}
+  .wg-auth input{
+    width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:9px;
+    font-size:14px;font-family:inherit;outline:none;transition:border-color .15s;
+  }
+  .wg-auth input:focus{border-color:var(--indigo);box-shadow:0 0 0 3px var(--indigo-light);}
+  .wg-btn{
+    width:100%;padding:11px;border:none;border-radius:9px;background:var(--indigo);color:#fff;
+    font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;transition:background .15s;
+  }
+  .wg-btn:hover{background:var(--indigo-dark);}
+  .wg-btn:disabled{opacity:.55;cursor:default;}
+  .wg-sso{margin:0 0 10px;padding:9px 11px;border-radius:9px;font-size:11.5px;line-height:1.5;}
+  .wg-sso.working{background:var(--indigo-light);color:var(--indigo-dark);border:1px solid #ddd6fe;}
+  .wg-sso.working::before{content:"";display:inline-block;width:9px;height:9px;margin-right:7px;
+    border:2px solid var(--indigo);border-top-color:transparent;border-radius:50%;
+    vertical-align:-1px;animation:wgSpin .7s linear infinite;}
+  @keyframes wgSpin{to{transform:rotate(360deg);}}
+  .wg-sso.failed{background:#fffbeb;color:#92400e;border:1px solid #fde68a;word-break:break-word;}
+  .wg-sso-retry{margin-left:6px;border:1px solid #fcd34d;background:#fff;color:#92400e;
+    font-family:inherit;font-size:11px;font-weight:600;padding:2px 9px;border-radius:6px;cursor:pointer;}
+  .wg-sso-retry:hover{background:#fef3c7;}
+  .wg-err{font-size:12.5px;color:#dc2626;min-height:16px;}
+  .wg-note{font-size:11.5px;color:var(--muted);line-height:1.5;margin-top:2px;}
+
+  /* ---- chat ---- */
+  .wg-chat{flex:1;display:flex;flex-direction:column;min-height:0;}
+  .wg-cbar{position:relative;flex:none;padding:6px 10px;border-bottom:1px solid var(--line);background:#fff;z-index:20;}
+  .wg-cbar-btn{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--line);
+    background:#fff;border-radius:16px;font-family:inherit;font-size:11px;font-weight:600;
+    color:var(--ink-soft);cursor:pointer;max-width:100%;}
+  .wg-cbar-btn span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .wg-cbar.on .wg-cbar-btn{border-color:#bbf7d0;background:#f0fdf4;color:#166534;}
+  .wg-cbar-dot{width:6px;height:6px;border-radius:50%;background:#cbd0dd;flex:none;}
+  .wg-cbar.on .wg-cbar-dot{background:#16a34a;}
+  .wg-cbar-chev{font-size:8px;opacity:.6;flex:none;}
+  .wg-cbar-pop{position:absolute;top:100%;left:10px;right:10px;margin-top:4px;background:#fff;
+    border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(30,20,70,.18);
+    padding:9px;z-index:40;max-height:280px;overflow-y:auto;}
+  .wg-cbar-pop input{width:100%;padding:7px 9px;border:1.5px solid var(--line);border-radius:7px;
+    font-family:inherit;font-size:12px;outline:none;box-sizing:border-box;}
+  .wg-cbar-pop input:focus{border-color:var(--indigo);}
+  .wg-cbar-row{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:7px 8px;
+    margin-top:4px;border:1px solid transparent;border-radius:7px;background:#fff;font-family:inherit;
+    font-size:11.5px;cursor:pointer;}
+  .wg-cbar-row:hover{border-color:var(--line);background:#f7f7fb;}
+  .wg-cbar-row b{font-weight:600;color:var(--ink);}
+  .wg-cbar-row i{font-style:normal;color:var(--indigo-dark);}
+  .wg-cbar-row small{display:block;color:var(--muted);font-size:10px;}
+  .wg-cbar-row em{margin-left:auto;font-style:normal;font-weight:600;color:var(--muted);font-size:11px;}
+  .wg-cbar-clear{width:100%;margin-top:7px;padding:5px;border:1px solid var(--line);background:#fff;
+    color:var(--muted);font-family:inherit;font-size:10.5px;border-radius:6px;cursor:pointer;}
+  .wg-cbar-empty{font-size:11px;color:var(--muted);padding:6px 2px;}
+
+  .wg-cart-pill{display:inline-flex;align-items:center;gap:5px;margin-left:6px;padding:4px 9px;
+    border:1px solid #bbf7d0;background:#f0fdf4;color:#166534;border-radius:16px;font-family:inherit;
+    font-size:11px;font-weight:600;cursor:pointer;}
+  .wg-cart-pill svg{width:11px;height:11px;}
+  .wg-cart-pill span{background:#16a34a;color:#fff;border-radius:8px;padding:0 5px;font-size:10px;}
+  /* Anchored under the cart pill, not stretched across the panel. */
+  .wg-cart-pop{position:absolute;top:100%;right:10px;margin-top:4px;width:290px;max-width:calc(100% - 20px);
+    background:#fff;border:1px solid var(--line);border-radius:10px;
+    box-shadow:0 10px 30px rgba(30,20,70,.18);padding:10px;z-index:46;
+    max-height:300px;overflow-y:auto;}
+  .wg-cart-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--line);}
+  .wg-cart-row img,.wg-cart-ph{width:32px;height:32px;flex:none;border-radius:6px;object-fit:cover;
+    border:1px solid var(--line);background:linear-gradient(135deg,#f4f4f9,#eceaf6);}
+  .wg-cart-b{flex:1;min-width:0;display:flex;flex-direction:column;}
+  .wg-cart-b b{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .wg-cart-b small{font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .wg-cart-p{flex:none;font-size:12px;font-weight:700;color:var(--indigo-dark);}
+  .wg-cart-x{flex:none;width:20px;height:20px;border:1px solid var(--line);background:#fff;border-radius:5px;
+    color:var(--muted);font-size:9px;cursor:pointer;padding:0;}
+  .wg-cart-ft{display:flex;justify-content:space-between;padding-top:8px;margin-top:4px;
+    border-top:2px solid var(--line);font-size:13px;font-weight:700;color:var(--indigo-dark);}
+
+  .wg-cbar-info{padding:8px 2px 10px;border-bottom:1px solid var(--line);margin-bottom:6px;
+    display:flex;flex-direction:column;gap:2px;}
+  .wg-cbar-info b{font-size:12.5px;font-weight:700;color:var(--ink);}
+  .wg-cbar-info b i{font-style:normal;font-weight:500;color:var(--indigo-dark);}
+  .wg-cbar-info small{font-size:10.5px;color:var(--muted);}
+  .wg-cart-order{width:100%;margin-top:9px;padding:8px;border:none;background:var(--indigo);color:#fff;
+    font-family:inherit;font-size:12px;font-weight:700;border-radius:8px;cursor:pointer;}
+  .wg-cart-order:disabled{opacity:.6;cursor:default;}
+  .wg-cart-form{margin-top:10px;border-top:1px solid var(--line);padding-top:10px;}
+  .wg-cf-item{border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px;}
+  .wg-cf-t{font-size:11.5px;font-weight:700;margin-bottom:6px;}
+  .wg-cf-item label{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--muted);
+    margin-bottom:5px;}
+  .wg-cf-item label>input,.wg-cf-item label>select{flex:1;min-width:0;padding:5px 7px;
+    border:1.5px solid var(--line);border-radius:6px;font-family:inherit;font-size:11px;outline:none;}
+  .wg-cf-turn{font-size:10px;color:var(--muted);margin:-2px 0 6px;}
+  .wg-cf-foot span{font-size:10.5px;color:#b45309;}
+  .wg-cf-done{padding:10px;border-radius:8px;background:#f0fdf4;border:1px solid #bbf7d0;
+    color:#166534;font-size:11.5px;font-weight:600;text-align:center;}
+
+  .wg-msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:11px;background:#fafafd;}
+  .wg-msg{max-width:84%;padding:10px 12px;border-radius:12px;font-size:var(--chat-fs);line-height:1.55;white-space:pre-wrap;word-wrap:break-word;}
+  .wg-msg.ai{align-self:flex-start;background:#fff;border:1px solid var(--line);border-bottom-left-radius:3px;}
+  .wg-msg.me{align-self:flex-end;background:var(--indigo);color:#fff;border-bottom-right-radius:3px;white-space:pre-wrap;}
+  .wg-msg.ai table{border-collapse:collapse;margin:6px 0;font-size:12.5px;width:100%;}
+  .wg-msg.ai th,.wg-msg.ai td{border:1px solid var(--line);padding:5px 7px;text-align:left;}
+  .wg-msg.ai th{background:#f5f4fb;font-weight:600;}
+  .wg-msg.ai code{background:#f2f1fa;padding:1px 5px;border-radius:4px;font-size:12px;}
+  .wg-msg.ai a{color:var(--indigo-dark);}
+  .wg-msg.ai img{max-width:100%;border-radius:8px;border:1px solid var(--line);margin:6px 0;display:block;}
+  .wg-step{align-self:flex-start;font-size:11.5px;color:var(--muted);padding:2px 2px;display:flex;align-items:center;gap:6px;}
+  .wg-dots{display:flex;gap:4px;align-self:flex-start;padding:11px 13px;background:#fff;border:1px solid var(--line);border-radius:12px;border-bottom-left-radius:3px;}
+  .wg-dots span{width:6px;height:6px;border-radius:50%;background:#c7c2f0;animation:b 1.1s infinite ease-in-out;}
+  .wg-dots span:nth-child(2){animation-delay:.15s;}
+  .wg-dots span:nth-child(3){animation-delay:.3s;}
+  @keyframes b{0%,60%,100%{transform:translateY(0);opacity:.5;}30%{transform:translateY(-4px);opacity:1;}}
+
+  .wg-sugg{flex:none;display:flex;gap:6px;flex-wrap:wrap;padding:0 12px 8px;background:#fafafd;}
+  .wg-chip{font-size:11.5px;padding:6px 10px;border-radius:20px;border:1px solid var(--line);
+    background:#fff;color:var(--ink-soft);cursor:pointer;font-family:inherit;transition:.15s;}
+  .wg-chip:hover{border-color:var(--indigo);color:var(--indigo-dark);background:#f7f6ff;}
+
+  .wg-enum{font-family:inherit;font-size:inherit;font-weight:600;color:var(--indigo-dark);
+    background:var(--indigo-light);border:1px solid #ddd6fe;border-radius:5px;padding:0 4px;cursor:pointer;}
+  .wg-enum:hover{background:var(--indigo);color:#fff;}
+  .wg-jp{position:fixed;z-index:9999;width:190px;background:#fff;border:1px solid var(--line);
+    border-left:4px solid var(--muted);border-radius:10px;box-shadow:0 10px 30px rgba(30,20,70,.24);
+    overflow:hidden;pointer-events:none;}
+  .wg-jp-prepress{border-left-color:#d97706;} .wg-jp-ready{border-left-color:var(--indigo);}
+  .wg-jp-production{border-left-color:#2563eb;} .wg-jp-done{border-left-color:#16a34a;}
+  .wg-jp img{width:100%;height:92px;object-fit:cover;display:block;background:#fafafd;}
+  .wg-jp-b{padding:7px 9px;}
+  .wg-jp-p{font-size:11.5px;font-weight:700;line-height:1.3;}
+  .wg-jp-m{font-size:10px;color:var(--muted);margin-top:2px;}
+  .wg-jp-s{font-size:9.5px;font-weight:700;text-transform:uppercase;margin-top:5px;display:inline-block;
+    padding:1px 6px;border-radius:4px;background:#eef1f5;color:#475569;border:1px solid #dfe4ea;}
+  .wg-jp-prepress .wg-jp-s{background:#fef3c7;color:#92400e;border-color:#fde68a;}
+  .wg-jp-production .wg-jp-s{background:#dbeafe;color:#1e40af;border-color:#bfdbfe;}
+  .wg-jp-done .wg-jp-s{background:#dcfce7;color:#166534;border-color:#bbf7d0;}
+
+  .wg-jb{align-self:stretch;margin:3px 0;padding:10px 12px;border:1px solid var(--line);
+    border-left:4px solid var(--muted);border-radius:11px;background:#fff;}
+  .wg-jb-prepress{border-left-color:#d97706;} .wg-jb-ready{border-left-color:var(--indigo);}
+  .wg-jb-production{border-left-color:#2563eb;} .wg-jb-done{border-left-color:#16a34a;}
+  .wg-jb-top{display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+  .wg-jb-e{font-size:12.5px;font-weight:700;}
+  .wg-jb-st{font-size:9.5px;font-weight:700;text-transform:uppercase;padding:1px 6px;border-radius:4px;
+    background:#eef1f5;color:#475569;border:1px solid #dfe4ea;}
+  .wg-jb-prepress .wg-jb-st{background:#fef3c7;color:#92400e;border-color:#fde68a;}
+  .wg-jb-production .wg-jb-st{background:#dbeafe;color:#1e40af;border-color:#bfdbfe;}
+  .wg-jb-done .wg-jb-st{background:#dcfce7;color:#166534;border-color:#bbf7d0;}
+  .wg-jb-name{font-size:12.5px;font-weight:600;margin-top:3px;}
+  .wg-jb-meta{font-size:10.5px;color:var(--muted);margin-top:2px;}
+  .wg-jb-tbl{width:100%;border-collapse:collapse;margin-top:7px;font-size:11px;}
+  .wg-jb-tbl td{padding:3px 6px;border-top:1px solid #eee;}
+  .wg-jb-tbl td:first-child{color:var(--muted);width:44%;}
+  .wg-jb-re{width:100%;margin-top:8px;padding:6px;border:1px solid var(--indigo);background:#fff;
+    color:var(--indigo-dark);border-radius:8px;font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;}
+  .wg-jb-re:hover{background:var(--indigo);color:#fff;}
+
+  .wg-pq{align-self:stretch;margin:3px 0;padding:10px 12px;border:1px solid #e0dbf7;border-radius:11px;
+    background:linear-gradient(160deg,#fbfaff,#f5f3ff);}
+  .wg-pq-head{display:flex;align-items:baseline;gap:8px;}
+  .wg-pq-prod{font-size:12.5px;font-weight:700;flex:1;min-width:0;}
+  .wg-pq-total{font-size:17px;font-weight:700;color:var(--indigo-dark);}
+  .wg-pq-total s{font-size:11.5px;font-weight:600;color:var(--muted);margin-right:4px;}
+  .wg-pq-disc{margin-top:5px;padding:4px 8px;border-radius:7px;background:#dcfce7;border:1px solid #bbf7d0;
+    color:#166534;font-size:10.5px;font-weight:700;}
+  .wg-jb-flags{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;}
+  .wg-jb-flag{font-size:9.5px;font-weight:700;text-transform:uppercase;background:#fef3c7;color:#92400e;
+    border:1px solid #fde68a;border-radius:4px;padding:1px 6px;}
+  .wg-jb-vers{margin-top:6px;border:1px solid var(--line);border-radius:7px;overflow:hidden;}
+  .wg-jb-ver{display:flex;align-items:center;gap:7px;padding:4px 8px;font-size:11px;border-top:1px solid #f0f0f5;}
+  .wg-jb-ver:first-child{border-top:none;}
+  .wg-jb-ver > span{flex:0 0 22px;color:var(--muted);font-weight:700;font-size:10px;}
+  .wg-jb-ver em{margin-left:auto;font-style:normal;font-weight:700;color:var(--indigo-dark);}
+  .wg-jb-disc{margin-top:6px;padding:4px 8px;border-radius:6px;background:#dcfce7;border:1px solid #bbf7d0;
+    color:#166534;font-size:10px;font-weight:600;}
+  .wg-pq-sub{font-size:10.5px;color:var(--muted);margin-top:2px;}
+  .wg-pq-tbl{width:100%;border-collapse:collapse;margin-top:8px;font-size:11.5px;}
+  .wg-pq-tbl td{padding:4px 6px;border-top:1px solid #e9e6f7;}
+  .wg-pq-tbl td:first-child{color:var(--muted);width:42%;}
+  .wg-pq-actions{display:flex;gap:6px;margin-top:8px;}
+  .wg-pq-actions button{flex:1 1 0;padding:7px 10px;border-radius:8px;font-family:inherit;
+    font-size:11.5px;font-weight:600;cursor:pointer;transition:.15s;}
+  .wg-pq-copybtn{border:1px solid var(--line);background:#fff;color:var(--ink-soft);}
+  .wg-pq-copybtn:hover{border-color:var(--indigo);color:var(--indigo-dark);}
+  .wg-pq-copybtn.ok{border-color:#bbf7d0;background:#dcfce7;color:#166534;}
+  .wg-pq-editbtn{border:1px solid var(--indigo);background:#fff;color:var(--indigo-dark);}
+  .wg-pq-editbtn:hover{background:var(--indigo-light);}
+  .wg-pq-orderbtn{border:1px solid var(--indigo);background:var(--indigo);color:#fff;}
+  .wg-pq-orderbtn:hover{background:var(--indigo-dark);}
+  .wg-pq-order{margin-top:9px;padding:9px;border:1px solid #ddd6fe;border-radius:9px;background:#fbfaff;}
+  .wg-ord-hd{font-size:11.5px;font-weight:700;margin-bottom:7px;}
+  .wg-pq-order textarea{flex:1;min-width:0;padding:5px 7px;border:1.5px solid var(--line);border-radius:7px;
+    font-family:inherit;font-size:11.5px;resize:vertical;outline:none;}
+  .wg-ord-msg{flex:1;font-size:10.5px;color:#b45309;}
+  .wg-ord-cancel{border:1px solid var(--line);background:#fff;color:var(--ink-soft);font-family:inherit;
+    font-size:11px;padding:5px 10px;border-radius:7px;cursor:pointer;}
+  .wg-ord-send{border:none;background:var(--indigo);color:#fff;font-family:inherit;font-size:11px;
+    font-weight:600;padding:6px 12px;border-radius:7px;cursor:pointer;}
+  .wg-ord-ok{font-size:11.5px;font-weight:600;color:#166534;background:#dcfce7;border:1px solid #bbf7d0;
+    border-radius:8px;padding:8px 10px;}
+  .wg-pq-tbl em.lk{background:#e0e7ff !important;color:#3730a3 !important;}
+  .wg-pq-edit{margin-top:9px;display:flex;flex-direction:column;gap:6px;}
+  .wg-pq-f{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink-soft);}
+  .wg-pq-f > span{flex:0 0 84px;}
+  .wg-pq-f select,.wg-pq-f input{flex:1;min-width:0;padding:5px 7px;border:1.5px solid var(--line);
+    border-radius:7px;font-family:inherit;font-size:11.5px;background:#fff;color:var(--ink);outline:none;}
+  .wg-pq-f select:focus,.wg-pq-f input:focus{border-color:var(--indigo);}
+  .wg-pq-sub{margin-top:-2px;padding-left:9px;border-left:2px solid var(--indigo-light);}
+  .wg-pq-sub > span{flex:0 0 75px;font-size:10.5px;color:var(--muted);}
+  .wg-pq-foot{display:flex;align-items:center;justify-content:space-between;margin-top:3px;}
+  .wg-pq-status{font-size:10.5px;color:var(--muted);}
+  .wg-pq-done{border:none;background:var(--indigo);color:#fff;font-family:inherit;font-size:11.5px;
+    font-weight:600;padding:5px 12px;border-radius:7px;cursor:pointer;}
+  .wg-pq-tbl em{font-style:normal;font-size:9.5px;background:#fef3c7;color:#92400e;border-radius:3px;padding:0 4px;margin-left:3px;}
+
+  .wg-cl{display:flex;align-items:center;gap:9px;align-self:stretch;margin:3px 0;padding:9px 11px;
+    border:1px solid #e0dbf7;border-radius:11px;background:linear-gradient(135deg,#fbfaff,#f5f3ff);}
+  .wg-cl-av{width:32px;height:32px;border-radius:50%;flex:none;background:linear-gradient(135deg,var(--indigo),#8f7ee0);
+    color:#fff;display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:700;}
+  .wg-cl-av.sm{width:26px;height:26px;font-size:10px;background:#ede9fe;color:#4c1d95;}
+  .wg-cl-body{display:flex;flex-direction:column;min-width:0;flex:1;}
+  .wg-cl-name{font-size:12.5px;font-weight:700;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .wg-cl-name em{font-style:normal;font-weight:500;color:var(--muted);font-size:11.5px;}
+  .wg-cl-mail{font-size:11px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .wg-cl-stats{font-size:10.5px;color:var(--muted);margin-top:2px;}
+  .wg-cl-picks{display:flex;flex-direction:column;gap:5px;align-self:stretch;margin:3px 0;}
+  .wg-cl-pick{display:flex;align-items:center;gap:8px;text-align:left;padding:7px 9px;border:1px solid var(--line);
+    border-radius:10px;background:#fff;font-family:inherit;cursor:pointer;transition:.15s;}
+  .wg-cl-pick:hover:not(:disabled){border-color:var(--indigo);background:#f8f7ff;}
+  .wg-cl-pick:disabled{opacity:.5;cursor:default;}
+  .wg-cl-pick.chosen{border-color:var(--indigo);background:var(--indigo-light);opacity:1;}
+  .wg-cl-n{flex:none;font-size:13px;font-weight:700;color:var(--indigo-dark);}
+
+  .wg-pc-row{display:flex;flex-wrap:wrap;gap:6px;align-self:stretch;margin:2px 0;}
+  .wg-pc{display:flex;align-items:center;gap:9px;max-width:210px;font-family:inherit;text-align:left;cursor:pointer;padding:5px 10px 5px 5px;border:1px solid var(--line);
+    border-radius:10px;background:#fff;text-decoration:none;color:var(--ink);transition:.15s;}
+  .wg-pc:hover{border-color:var(--indigo);background:#f8f7ff;}
+  .wg-pc-thumb{width:60px;height:60px;border-radius:8px;object-fit:cover;flex:none;
+    border:1px solid var(--line);background:#f4f4f9;display:block;}
+  .wg-pc-meta{display:flex;flex-direction:column;gap:1px;min-width:0;}
+  .wg-pc-name{font-size:12.5px;font-weight:600;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .wg-pc-id{font-size:10.5px;color:var(--muted);}
+  .wg-pc-preview{position:fixed;z-index:9999;width:180px;padding:8px;background:#fff;border:1px solid var(--line);
+    border-radius:10px;box-shadow:0 10px 30px rgba(30,20,70,.24);pointer-events:none;}
+  .wg-pc-preview img{width:100%;height:150px;object-fit:contain;border-radius:6px;background:#fafafd;display:block;}
+  .wg-pc-preview span{display:block;font-size:11px;font-weight:600;margin-top:5px;text-align:center;}
+
+  .wg-ta{align-self:stretch;margin:4px 0;padding:11px;border:1px solid #e0dbf7;border-radius:12px;
+    background:linear-gradient(160deg,#fbfaff,#f6f4ff);}
+  .wg-ta-head{display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;margin-bottom:8px;}
+  .wg-ta-title{font-size:12.5px;font-weight:700;color:var(--ink);flex:1;min-width:0;}
+  .wg-ta-ready{font-size:10.5px;color:var(--muted);text-align:right;}
+  .wg-ta-ready strong{display:block;font-size:12px;color:var(--indigo-dark);}
+  .wg-ta-cut{font-size:11px;color:var(--ink-soft);padding:6px 9px;background:#fff;border:1px solid var(--line);
+    border-radius:8px;margin-bottom:9px;line-height:1.5;}
+  .wg-ta-strip{display:flex;gap:5px;flex-wrap:wrap;}
+  .wg-ta-day{flex:0 0 50px;border-radius:8px;padding:6px 3px;text-align:center;border:1.5px solid var(--line);background:#fff;}
+  .wg-ta-dow{font-size:8.5px;font-weight:700;text-transform:uppercase;color:var(--muted);}
+  .wg-ta-num{font-size:15px;font-weight:700;line-height:1.2;color:var(--ink);}
+  .wg-ta-lbl{font-size:8.5px;color:var(--muted);line-height:1.2;}
+  .wg-ta-approved{border-color:#c7c2f0;background:#f3f1fe;}
+  .wg-ta-start{border-color:#c7c2f0;background:#f3f1fe;border-style:dashed;}
+  .wg-ta-skipped{border-style:dashed;background:#f7f7fa;opacity:.72;}
+  .wg-ta-skipped .wg-ta-num{color:var(--muted);}
+  .wg-ta-ready-day{}
+  .wg-ta-day.wg-ta-ready{border-color:var(--indigo);background:linear-gradient(160deg,var(--indigo),#8f7ee0);}
+  .wg-ta-day.wg-ta-ready .wg-ta-dow,.wg-ta-day.wg-ta-ready .wg-ta-lbl{color:rgba(255,255,255,.85);}
+  .wg-ta-day.wg-ta-ready .wg-ta-num{color:#fff;}
+  .wg-ta-note{font-size:10.5px;color:var(--muted);margin-top:7px;}
+  .wg-ta-verdict{margin-top:8px;padding:6px 9px;border-radius:8px;font-size:11.5px;font-weight:600;}
+  .wg-ta-verdict.ok{background:#dcfce7;color:#166534;border:1px solid #bbf7d0;}
+  .wg-ta-verdict.bad{background:#fee2e2;color:#991b1b;border:1px solid #fecaca;}
+
+  .wg-picks{display:flex;flex-direction:column;gap:6px;align-self:stretch;margin:2px 0;}
+  .wg-picks-hd{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:1px;}
+  .wg-pick{display:flex;align-items:center;gap:9px;text-align:left;padding:8px 10px;border:1px solid var(--line);
+    border-radius:10px;background:#fff;font-family:inherit;font-size:13px;color:var(--ink);cursor:pointer;transition:.15s;}
+  .wg-pick:hover:not(:disabled){border-color:var(--indigo);background:#f8f7ff;}
+  .wg-pick:disabled{opacity:.5;cursor:default;}
+  .wg-pick.chosen{border-color:var(--indigo);background:var(--indigo-light);opacity:1;font-weight:600;}
+  .wg-pick-extra{display:none;}
+  .wg-pick-body{flex:1;min-width:0;}
+  .wg-pick-img{width:30px;height:30px;border-radius:6px;object-fit:cover;flex:none;border:1px solid var(--line);}
+  .wg-pick-id{color:var(--muted);font-size:11.5px;margin-left:3px;}
+  .wg-pick-pct{flex:none;font-size:11px;font-weight:700;padding:2px 7px;border-radius:20px;white-space:nowrap;}
+  .wg-pick-pct.hi{background:#dcfce7;color:#166534;border:1px solid #bbf7d0;}
+  .wg-pick-pct.mid{background:#fef3c7;color:#92400e;border:1px solid #fde68a;}
+  .wg-pick-pct.lo{background:#eef1f5;color:#64748b;border:1px solid #dfe4ea;}
+  .wg-more{width:100%;padding:7px;border:1px dashed var(--line);border-radius:9px;background:transparent;
+    color:var(--muted);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;transition:.15s;}
+  .wg-more:hover{border-color:var(--indigo);color:var(--indigo-dark);border-style:solid;background:#f8f7ff;}
+
+  /* Returning after a gap — continue or start fresh */
+  .wg-resume{align-self:stretch;margin:4px 0;padding:12px;border:1px solid #e0dbf7;border-radius:12px;
+    background:linear-gradient(160deg,#fbfaff,#f5f3ff);text-align:center;}
+  .wg-resume-t{font-size:12.5px;font-weight:700;color:var(--ink);}
+  .wg-resume-s{font-size:11.5px;color:var(--ink-soft);margin-top:3px;}
+  .wg-resume-b{display:flex;gap:7px;margin-top:10px;}
+  .wg-resume-b button{flex:1;padding:8px 10px;border-radius:9px;font-family:inherit;font-size:12px;
+    font-weight:600;cursor:pointer;transition:.15s;}
+  .wg-rs-go{border:none;background:var(--indigo);color:#fff;}
+  .wg-rs-go:hover{background:var(--indigo-dark);}
+  .wg-rs-new{border:1px solid var(--line);background:#fff;color:var(--ink-soft);}
+  .wg-rs-new:hover{border-color:var(--indigo);color:var(--indigo-dark);}
+
+  .wg-rate{display:flex;gap:5px;margin-top:7px;}
+  .wg-rate-btn{width:24px;height:24px;border:1px solid var(--line);background:#fff;border-radius:6px;
+    cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center;padding:0;transition:.15s;}
+  .wg-rate-btn svg{width:12px;height:12px;}
+  .wg-rate-btn:hover{border-color:var(--indigo);color:var(--indigo-dark);}
+  .wg-rate-btn.on{border-color:var(--indigo);background:var(--indigo-light);color:var(--indigo-dark);}
+
+  .wg-hist{flex:none;border-bottom:1px solid var(--line);background:#fafafd;padding:10px 12px;
+    max-height:52%;overflow-y:auto;}
+  .wg-hist-item{display:block;width:100%;text-align:left;padding:8px 10px;margin-bottom:5px;
+    border:1px solid var(--line);border-radius:9px;background:#fff;font-family:inherit;cursor:pointer;transition:.15s;}
+  .wg-hist-item:hover{border-color:var(--indigo);background:#f8f7ff;}
+  .wg-hist-item.current{border-color:var(--indigo);background:var(--indigo-light);}
+  .wg-hist-t{font-size:12px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .wg-hist-d{font-size:10.5px;color:var(--muted);margin-top:2px;}
+  .wg-hist-empty{font-size:11.5px;color:var(--muted);padding:4px 2px;}
+
+  /* ---- appearance settings ---- */
+  .wg-set{flex:none;border-bottom:1px solid var(--line);background:#fafafd;padding:11px 13px;
+    max-height:60%;overflow-y:auto;}
+  .wg-set-hd{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
+    color:var(--muted);margin-bottom:9px;}
+  .wg-set-hd span{text-transform:none;letter-spacing:0;font-weight:500;opacity:.8;}
+  .wg-set-row{display:flex;align-items:center;gap:9px;margin-bottom:8px;font-size:12px;color:var(--ink-soft);}
+  .wg-set-row > span{flex:0 0 74px;}
+  .wg-set-row input[type=range]{flex:1;min-width:0;accent-color:var(--indigo);height:4px;cursor:pointer;}
+  .wg-set-row em{flex:0 0 48px;text-align:right;font-style:normal;font-size:11px;color:var(--muted);}
+  .wg-seg{display:flex;gap:4px;}
+  .wg-seg button{border:1px solid var(--line);background:#fff;border-radius:7px;padding:4px 11px;
+    font-family:inherit;font-size:11.5px;color:var(--ink-soft);cursor:pointer;}
+  .wg-seg button.on{border-color:var(--indigo);background:var(--indigo-light);color:var(--indigo-dark);font-weight:600;}
+  .wg-swatches{display:flex;gap:6px;flex-wrap:wrap;}
+  .wg-sw{width:22px;height:22px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;
+    box-shadow:0 0 0 1px var(--line);}
+  .wg-sw.on{border-color:#fff;box-shadow:0 0 0 2px var(--indigo);}
+  .wg-build{margin-top:8px;font-size:10px;color:var(--muted);text-align:right;}
+  .wg-set-foot{display:flex;align-items:center;justify-content:space-between;margin-top:4px;}
+  .wg-set-reset{border:1px solid var(--line);background:#fff;border-radius:7px;padding:4px 11px;
+    font-family:inherit;font-size:11.5px;color:var(--ink-soft);cursor:pointer;}
+  .wg-set-reset:hover{border-color:var(--indigo);color:var(--indigo-dark);}
+  #wgSetMsg{font-size:11px;color:var(--muted);}
+
+  .wg-pending{flex:none;display:flex;gap:6px;padding:7px 12px 0;background:#fff;flex-wrap:wrap;}
+  .wg-thumb{position:relative;display:inline-block;}
+  .wg-thumb img{width:46px;height:46px;object-fit:cover;border-radius:7px;border:1px solid var(--line);display:block;}
+  .wg-thumb button{position:absolute;top:-5px;right:-5px;width:16px;height:16px;border-radius:50%;
+    border:none;background:#ef4444;color:#fff;font-size:9px;line-height:1;cursor:pointer;padding:0;}
+  .wg-attach{flex:none;width:30px;height:30px;border:1px solid var(--line);background:#fff;border-radius:8px;
+    cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center;padding:0;}
+  .wg-attach svg{width:14px;height:14px;}
+  .wg-attach:hover{border-color:var(--indigo);color:var(--indigo-dark);}
+  .wg-file{display:inline-flex;align-items:center;gap:5px;position:relative;padding:6px 22px 6px 8px;
+    border:1px solid var(--line);border-radius:8px;background:#fff;font-size:11px;max-width:170px;}
+  .wg-file.err{border-color:#fecaca;background:#fef2f2;}
+  .wg-file-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--ink);}
+  .wg-file-x{color:var(--muted);font-size:10px;white-space:nowrap;}
+  .wg-file button{position:absolute;top:-5px;right:-5px;width:16px;height:16px;border-radius:50%;
+    border:none;background:#ef4444;color:#fff;font-size:9px;line-height:1;cursor:pointer;padding:0;}
+  .wg-sent-file{display:inline-block;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,.2);
+    font-size:11px;font-weight:600;}
+  .wg-mic-alt{margin-top:6px;font-size:11px;}
+  .wg-mic-alt a{color:var(--indigo-dark);font-weight:600;}
+  .wg-mic.rec{border-color:#ef4444;background:#fef2f2;color:#dc2626;
+    animation:wgPulse 1.4s ease-in-out infinite;}
+  @keyframes wgPulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.45);}50%{box-shadow:0 0 0 5px rgba(239,68,68,0);}}
+  .wg-sent-imgs{display:flex;gap:5px;margin-top:6px;flex-wrap:wrap;}
+  .wg-sent-imgs img{width:64px;height:64px;object-fit:cover;border-radius:7px;border:1px solid rgba(255,255,255,.35);}
+  .wg-composer{flex:none;display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:#fff;align-items:flex-end;}
+  .wg-composer textarea{
+    flex:1;border:1.5px solid var(--line);border-radius:10px;padding:9px 11px;font-size:var(--chat-fs);
+    font-family:inherit;outline:none;resize:none;max-height:110px;line-height:1.45;
+  }
+  .wg-composer textarea:focus{border-color:var(--indigo);}
+  .wg-send{border:none;background:var(--indigo);color:#fff;width:38px;height:38px;border-radius:10px;
+    cursor:pointer;flex:none;display:flex;align-items:center;justify-content:center;}
+  .wg-send:hover{background:var(--indigo-dark);}
+  .wg-send:disabled{opacity:.45;cursor:default;}
+  .wg-foot{flex:none;font-size:10.5px;color:var(--muted);text-align:center;padding:0 12px 9px;line-height:1.45;background:#fff;}
+</style>
+</head>
+<body>
+
+<div class="wg-head">
+  <div class="wg-mark">✦</div>
+  <div>
+    <div class="wg-title">Nova ChatBot</div>
+    <div class="wg-sub" id="wgSub">AxiomPrint knowledge</div>
+  </div>
+  <div class="sp"></div>
+  <button class="wg-x" id="wgNew" onclick="startNewChat()" title="Start a new chat" style="display:none">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"
+      stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line>
+      <line x1="5" y1="12" x2="19" y2="12"></line></svg>New chat
+  </button>
+  <button class="wg-x icon" id="wgHist" onclick="toggleHistory()" title="Recent chats" style="display:none">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+      stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle>
+      <polyline points="12 7 12 12 15.5 14"></polyline></svg>
+  </button>
+  <button class="wg-x icon" id="wgCog" onclick="toggleSettings()" title="Appearance settings" style="display:none">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+      stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+  </button>
+  <button class="wg-x" id="wgOut" onclick="signOutClick()" title="Sign out" style="display:none">Sign out</button>
+  <button class="wg-x icon" onclick="closeWidget()" title="Close">✕</button>
+</div>
+
+<!-- Recent chats -->
+<div class="wg-hist" id="wgHistPanel" style="display:none">
+  <div class="wg-set-hd">Your recent chats</div>
+  <div id="wgHistList"></div>
+</div>
+
+<!-- Appearance settings -->
+<div class="wg-set" id="wgSet" style="display:none">
+  <div class="wg-set-hd">Appearance <span>saved to your account</span></div>
+
+  <label class="wg-set-row"><span>Size</span>
+    <input type="range" id="setScale" min="85" max="130" step="5"><em id="setScaleV"></em></label>
+
+  <label class="wg-set-row"><span>Chat width</span>
+    <input type="range" id="setWidth" min="340" max="720" step="20"><em id="setWidthV"></em></label>
+
+  <label class="wg-set-row"><span>Chat height</span>
+    <input type="range" id="setHeight" min="420" max="820" step="20"><em id="setHeightV"></em></label>
+
+  <label class="wg-set-row"><span>Text size</span>
+    <input type="range" id="setFont" min="12" max="17" step="1"><em id="setFontV"></em></label>
+
+  <div class="wg-set-row"><span>Side</span>
+    <div class="wg-seg" id="setSide">
+      <button type="button" data-v="left">Left</button>
+      <button type="button" data-v="right">Right</button>
+    </div>
+  </div>
+
+  <div class="wg-set-row"><span>Colour</span>
+    <div class="wg-swatches" id="setAccent"></div>
+  </div>
+
+  <div class="wg-set-foot">
+    <button class="wg-set-reset" onclick="resetPrefs()">Reset</button>
+    <span id="wgSetMsg"></span>
+  </div>
+  <div class="wg-build" id="wgBuild"></div>
+</div>
+
+<!-- Sign in -->
+<div class="wg-auth" id="wgAuth" style="display:none">
+  <h3>Sign in to Nova</h3>
+  <div class="wg-sso" id="wgSsoNote" style="display:none"></div>
+  <p>ChatBot is for AxiomPrint staff. Sign in with your Nova account to continue.</p>
+  <input type="text" id="wgUser" placeholder="Username" autocomplete="username">
+  <input type="password" id="wgPass" placeholder="Password" autocomplete="current-password">
+  <div class="wg-err" id="wgErr"></div>
+  <button class="wg-btn" id="wgLoginBtn" onclick="doLogin()">Sign in</button>
+  <div class="wg-note">Your session stays on nova.axiomprint.com. Nothing here is visible to customers.</div>
+</div>
+
+<!-- Chat -->
+<div class="wg-chat" id="wgChat" style="display:none">
+  <!-- Pinned client — same idea as the ChatBot page, sized for the widget. -->
+  <div class="wg-cbar" id="wgCbar">
+    <button type="button" class="wg-cbar-btn" onclick="wgToggleClient()">
+      <span class="wg-cbar-dot"></span>
+      <span id="wgCbarLabel">Connect to client</span>
+      <span class="wg-cbar-chev">▾</span>
+    </button>
+    <div class="wg-cbar-pop" id="wgCbarPop" style="display:none">
+      <input type="text" id="wgCbarSearch" placeholder="Name, company or email" oninput="wgClientSearch()">
+      <div id="wgCbarResults"></div>
+      <button type="button" class="wg-cbar-clear" onclick="wgSetClient(null)">Disconnect</button>
+    </div>
+    <button type="button" class="wg-cart-pill" id="wgCartPill" onclick="wgToggleCart()" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+        stroke-linejoin="round"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle>
+        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>
+      <span id="wgCartCount">0</span><b id="wgCartTotal"></b>
+    </button>
+    <div class="wg-cart-pop" id="wgCartPop" style="display:none"></div>
+  </div>
+  <div class="wg-msgs" id="wgMsgs"></div>
+  <div class="wg-sugg" id="wgSugg"></div>
+  <div class="wg-pending" id="wgPending" style="display:none"></div>
+  <div class="wg-composer">
+    <button class="wg-attach" onclick="document.getElementById('wgFile').click()" title="Attach an image">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+        stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+    </button>
+    <input type="file" id="wgFile" multiple style="display:none"
+      accept="image/*,.pdf,.xlsx,.xlsm,.xlsb,.xls,.ods,.csv,.tsv,.tab,.docx,.doc,.txt,.md,.xml,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.oasis.opendocument.spreadsheet,text/csv"
+      onchange="handlePastedFiles(this.files); this.value='';">
+    <button class="wg-attach wg-mic" id="wgMic" type="button" title="Dictate a message">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+        stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line></svg>
+    </button>
+    <textarea id="wgInput" rows="1" placeholder="Ask, paste a screenshot, or use the mic…"
+      onkeydown="wgKey(event)" oninput="wgResize(this)" onpaste="wgPaste(event)"></textarea>
+    <button class="wg-send" id="wgSend" onclick="wgSend()" title="Send">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+        stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line>
+        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+    </button>
+  </div>
+  <div class="wg-foot">Answers come from our live data. Double-check numbers before sending to a client.</div>
+</div>
+
+<script src="/axiom-cards.js"></script>
+<script src="/axiom-files.js"></script>
+<script src="/axiom-speech.js"></script>
+<script src="/widget.js"></script>
+</body>
+</html>

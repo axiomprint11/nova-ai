@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Order Assist · Axiom AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/axiom-shared.css">
+</head>
+<body>
+
+<div id="app" style="display:none">
+  <div class="topbar">
+    <div class="topbar-left">
+      <a href="/" class="btn-ghost" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px" title="All agents">&larr;</a>
+      <div class="agent-picker">
+        <select id="agentSelect" class="agent-select" onchange="switchAgentPage(this.value)"></select>
+      </div>
+      <div class="status-pill">Connected</div>
+    </div>
+    <div class="topbar-right">
+      <div class="user-chip"><span class="avatar" id="avatar">N</span><span id="userLabel"></span></div>
+      <a class="btn-ghost" id="adminBtn" href="/admin" style="text-decoration:none;display:none">Admin</a>
+      <button class="btn-ghost" onclick="clearChat()">New chat</button>
+      <button class="btn-ghost" onclick="logout()">Sign out</button>
+    </div>
+  </div>
+
+  <div class="main-area">
+    <aside class="sidebar" id="sidebar">
+      <button class="new-chat-btn" onclick="clearChat()">+ New chat</button>
+      <div class="sidebar-label">Recent chats</div>
+      <div class="chat-list" id="chatList"></div>
+    </aside>
+    <div class="chat-area">
+      <div class="messages" id="messages">
+        <div class="messages-inner" id="messagesInner"></div>
+      </div>
+
+      <div class="composer">
+        <div class="composer-inner">
+          <div class="suggestions" id="suggestions"></div>
+          <div id="pendingFiles" class="pending-files"></div>
+          <div class="input-shell">
+            <button class="attach-btn" id="attachBtn" onclick="document.getElementById('fileInput').click()" title="Attach image or PDF">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+            </button>
+            <input type="file" id="fileInput" accept="image/*,application/pdf" multiple style="display:none" onchange="handleFileSelect(event)" />
+            <textarea id="input" placeholder="Paste a client request or email…" onkeydown="handleKey(event)" onpaste="handlePaste(event)" rows="1" oninput="autoResize(this)" style="overflow-y:hidden;"></textarea>
+            <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+            </button>
+          </div>
+          <div class="hint">Axiom AI works from your live data. Always double-check critical numbers before sending to a client.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="lightbox" class="lightbox" style="display:none" onclick="this.style.display='none'">
+    <img id="lightboxImg" src="" alt="">
+  </div>
+</div>
+
+<script src="/order-assist.js"></script>
+</body>
+</html>

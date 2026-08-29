@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prepress · Axiom AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/axiom-shared.css">
+</head>
+<body>
+
+<div id="app" style="display:none">
+  <div class="topbar">
+    <div class="topbar-left">
+      <a href="/" class="btn-ghost" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px" title="All agents">&larr;</a>
+      <div class="agent-picker">
+        <select id="agentSelect" class="agent-select" onchange="switchAgentPage(this.value)"></select>
+      </div>
+      <div class="status-pill">Connected</div>
+    </div>
+    <div class="topbar-right">
+      <div class="user-chip"><span class="avatar" id="avatar">N</span><span id="userLabel"></span></div>
+      <a class="btn-ghost" id="adminBtn" href="/admin" style="text-decoration:none;display:none">Admin</a>
+      <button class="btn-ghost" onclick="clearChat()">New chat</button>
+      <button class="btn-ghost" onclick="logout()">Sign out</button>
+    </div>
+  </div>
+
+  <div class="main-area">
+    <aside class="sidebar" id="sidebar">
+      <button class="new-chat-btn" onclick="clearChat()">+ New chat</button>
+      <div class="sidebar-label">Recent chats</div>
+      <div class="chat-list" id="chatList"></div>
+    </aside>
+    <div class="chat-area">
+      <div class="messages" id="messages">
+        <div class="messages-inner" id="messagesInner"></div>
+      </div>
+
+      <div class="composer">
+        <div class="composer-inner">
+          <div class="suggestions" id="suggestions"></div>
+          <div class="input-shell">
+            <textarea id="input" placeholder="Ask a prep question (bleed, DPI, file format) or ask for a product template..." onkeydown="handleKey(event)" rows="1" oninput="autoResize(this)"></textarea>
+            <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+            </button>
+          </div>
+          <div class="hint">Prepress answers from general print standards + AxiomPrint product data. Verify critical specs against the die-line before sending to production.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/prepress.js"></script>
+</body>
+</html>

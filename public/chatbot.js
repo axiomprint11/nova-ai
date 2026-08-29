@@ -1,0 +1,1934 @@
+// ===== ChatBot — the AxiomPrint company brain =====
+// Answers staff questions from domain knowledge, meeting notes, agent training,
+// approved answers, and the live product database.
+// Auth happens on the homepage (/). This page requires a token; if missing, bounce home.
+let token = localStorage.getItem('axiom_token');
+let username = localStorage.getItem('axiom_user');
+let isAdmin = localStorage.getItem('axiom_admin') === '1';
+let currentChatId = null;
+let chatHistory = [];
+let isLoading = false;
+let agents = [];
+const currentAgent = 'chatbot';                // fixed for this page
+function agentName() { return 'ChatBot'; }
+
+// Slug -> page route. Keep in sync with the launcher (index.html).
+const AGENT_ROUTES = { 'order-assist': '/order-assist', 'chatbot': '/chatbot', 'prepress-ai': '/prepress' };
+
+// ---- stale-build guard ----
+// The page is served with ?v=<mtime> on every asset, but a browser or CDN can
+// still hand back an old chatbot.js, and a stale frontend silently misbehaves
+// (old order form, missing buttons) in ways that look like server bugs. Compare
+// the build this file was served as against what the server reports, and reload
+// once if they differ.
+(function stalenessGuard() {
+  try {
+    // Assets are served as /chatbot.<hash>.js, so the hash in our own src IS the
+    // build we are running. Compare it with what the server would serve now.
+    const me = document.querySelector('script[src*="chatbot"]');
+    const src = me && me.getAttribute('src');
+    const m = src && src.match(/chatbot\.([0-9a-f]{10})\.js/);
+    if (!m) return;
+    const mine = m[1];
+    fetch('/api/asset-hash?file=/chatbot.js', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(v => {
+        if (!v || !v.hash || v.hash === mine) return;
+        // Reload once only — a reload loop would be worse than a stale file.
+        if (sessionStorage.getItem('novaReloadedFor') === v.hash) return;
+        sessionStorage.setItem('novaReloadedFor', v.hash);
+        console.log('[Nova] newer build ' + v.hash + ' (running ' + mine + ') — reloading');
+        location.reload();
+      })
+      .catch(() => {});
+  } catch (e) {}
+})();
+
+// Confirm the stored token really is valid before showing anything. Trusting
+// localStorage alone means an expired or revoked token gets through and fails
+// later, mid-task, with a confusing error instead of a clean sign-in.
+let me = null;
+if (!token) {
+  window.location.href = '/';
+} else {
+  showApp();
+  (async function verifyMe() {
+    try {
+      const r = await fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + token } });
+      if (r.status === 401 || r.status === 403) throw new Error('unauthorized');
+      if (!r.ok) return;                       // server hiccup: keep working offline-ish
+      const j = await r.json();
+      if (!j || !j.success) throw new Error('unauthorized');
+      me = j;
+      username = j.display_name || j.username || username;
+      isAdmin = !!j.is_admin;
+      try {
+        localStorage.setItem('axiom_user', username);
+        localStorage.setItem('axiom_admin', isAdmin ? '1' : '0');
+      } catch (e) {}
+      const lbl = document.getElementById('userLabel');
+      if (lbl) lbl.textContent = username || '';
+      const av = document.getElementById('avatar');
+      if (av) av.textContent = (username || 'U').charAt(0).toUpperCase();
+    } catch (e) {
+      try {
+        localStorage.removeItem('axiom_token');
+        localStorage.removeItem('axiom_admin');
+      } catch (e2) {}
+      window.location.href = '/';
+    }
+  })();
+}
+
+function autoResize(el) { el.style.height = '40px'; el.style.height = Math.min(el.scrollHeight, 120) + 'px'; }
+function logout() { localStorage.clear(); window.location.href = '/'; }
+// Follow the answer only while the person is already at the bottom. Yanking the
+// view down while they are reading something further up is the single most
+// irritating thing a streaming chat can do.
+let stickToBottom = true;
+function nearBottom(m) {
+  return (m.scrollHeight - m.scrollTop - m.clientHeight) < 120;
+}
+function scrollDown(force) {
+  const m = document.getElementById('messages');
+  if (!m) return;
+  if (force || stickToBottom) m.scrollTop = m.scrollHeight;
+}
+document.addEventListener('DOMContentLoaded', () => {
+  renderCart();                       // show the empty cart from the start
+  const m = document.getElementById('messages');
+  if (!m) return;
+  // Scrolling up detaches; returning to the bottom re-attaches.
+  m.addEventListener('scroll', () => { stickToBottom = nearBottom(m); }, { passive: true });
+});
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }
+// Dictation. The module hides the button on browsers that can't do it.
+document.addEventListener('DOMContentLoaded', () => {
+  if (!window.AxiomSpeech) return;
+  window.AxiomSpeech.attach({
+    button: document.getElementById('micBtn'),
+    input: document.getElementById('input'),
+    onInput: () => { const i = document.getElementById('input'); if (i) autoResize(i); },
+    onError: (m) => { const i = document.getElementById('input'); if (i) i.placeholder = m; }
+  });
+});
+
+// A click on a card must always go through. sendMessage() bails while a turn is
+// still streaming, so calling it directly swallowed the click and left the text
+// stranded in the composer — the card looked dead.
+// Clicking a card while an answer is still streaming means the person has moved
+// on. Stop the old answer and start the new one — waiting for a turn they have
+// already abandoned is time they spend watching a spinner.
+let activeStream = null;
+
+function ask(text) {
+  document.getElementById('input').value = text;
+  const sug = document.getElementById('suggestions');
+  if (sug) sug.style.display = 'none';
+  if (isLoading) stopCurrentAnswer('superseded');
+  sendMessage();
+}
+
+function stopCurrentAnswer(reason) {
+  if (activeStream) {
+    try { activeStream.abort(); } catch (e) {}   // the server sees this and stops too
+    activeStream = null;
+  }
+  isLoading = false;
+  const btn = document.getElementById('sendBtn');
+  if (btn) btn.disabled = false;
+  // Mark the abandoned answer so the transcript doesn't look like it failed.
+  if (reason === 'superseded') {
+    document.querySelectorAll('.bubble.ai.streaming').forEach(b => {
+      b.classList.remove('streaming');
+      b.querySelectorAll('.typing-dots').forEach(n => n.remove());
+      if (!b.textContent.trim() && !b.children.length) b.remove();
+      else b.classList.add('superseded');
+    });
+  }
+}
+
+function showApp() {
+  document.getElementById('app').style.display = 'flex';
+  document.getElementById('userLabel').textContent = username || '';
+  document.getElementById('avatar').textContent = (username || 'U').charAt(0).toUpperCase();
+  const ab = document.getElementById('adminBtn');
+  if (ab) ab.style.display = isAdmin ? 'inline-flex' : 'none';
+  loadAgents();
+}
+
+async function loadAgents() {
+  try {
+    const res = await fetch('/api/agents', { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await res.json();
+    agents = (j.agents || []);
+  } catch (e) { agents = []; }
+  const sel = document.getElementById('agentSelect');
+  if (sel) {
+    sel.innerHTML = agents.map(a => {
+      const built = !!AGENT_ROUTES[a.slug];
+      const selectable = a.status === 'active' && built;
+      const note = (a.status !== 'active') ? ' (coming soon)' : (!built ? ' (unavailable)' : '');
+      return '<option value="' + a.slug + '"' + (selectable ? '' : ' disabled') +
+        (a.slug === currentAgent ? ' selected' : '') + '>' + esc(a.name) + note + '</option>';
+    }).join('');
+    sel.value = currentAgent;
+  }
+  loadChatList();
+  if (!document.getElementById('messagesInner').children.length) greet();
+}
+
+function switchAgentPage(slug) {
+  if (slug === currentAgent) return;
+  const route = AGENT_ROUTES[slug];
+  if (!route) { document.getElementById('agentSelect').value = currentAgent; return; }
+  localStorage.setItem('axiom_agent', slug);
+  window.location.href = route;
+}
+
+function greet() {
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+  row.innerHTML = '<div class="msg-avatar ai">AI</div><div class="msg-col"><div class="msg-meta">ChatBot</div><div class="bubble ai">' +
+    "Hi! Ask me anything about AxiomPrint \u2014 products and their options, how we price things, what we agreed in team training, or anything in our shared knowledge. I can look things up in the live database too." +
+    '</div></div>';
+  document.getElementById('messagesInner').appendChild(row);
+  const sg = document.getElementById('suggestions');
+  if (sg) {
+    const examples = [
+      'What paper stocks do we offer for postcards?',
+      'What did we decide about rush orders?',
+      'Which products have multiple versions enabled?',
+      'What is our turnaround for business cards?'
+    ];
+    sg.innerHTML = examples.map(t => '<button class="suggestion" onclick="ask(' + JSON.stringify(t).replace(/"/g,'&quot;') + ')">' + esc(t) + '</button>').join('');
+    sg.style.display = 'flex';
+  }
+}
+
+function clearChat() {
+  chatHistory = [];
+  currentChatId = null;
+  // A new conversation starts unattached — the next client is pinned fresh.
+  chatClientId = null;
+  chatClientName = null;
+  chatClientInfo = null;
+  cartItems = [];
+  clearCalcPane();
+  renderClientBar();
+  renderCart();
+  document.getElementById('messagesInner').innerHTML = '';
+  greet();
+}
+
+// ===== Chat history sidebar =====
+async function loadChatList() {
+  const box = document.getElementById('chatList');
+  if (!box) return;
+  try {
+    const res = await fetch('/api/chats?agent=' + encodeURIComponent(currentAgent), { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await res.json();
+    box.innerHTML = '';
+    (j.chats || []).forEach(c => {
+      const item = document.createElement('div');
+      item.className = 'chat-item' + (c.id === currentChatId ? ' active' : '');
+      item.innerHTML = '<div class="chat-item-title">' + esc(c.title || 'Chat') + '</div><div class="chat-item-date">' + fmtDate(c.updated_at) + '</div>';
+      item.onclick = () => openChat(c.id);
+      box.appendChild(item);
+    });
+  } catch (e) {}
+}
+
+function fmtDate(s) {
+  if (!s) return '';
+  const d = new Date(s.replace(' ', 'T') + 'Z');
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  return sameDay ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString();
+}
+
+async function openChat(id) {
+  try {
+    const res = await fetch('/api/chats/' + id, { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await res.json();
+    if (!j.success) return;
+    currentChatId = id;
+    chatHistory = [];
+    loadChatClient();          // whoever this conversation belongs to
+    loadCart();
+    document.getElementById('suggestions').style.display = 'none';
+    const inner = document.getElementById('messagesInner');
+    inner.innerHTML = '';
+    j.messages.forEach(m => {
+      if (m.role === 'user') {
+        addUserRow(m.content);
+        chatHistory.push({ role: 'user', content: m.content });
+      } else {
+        const row = document.createElement('div');
+        row.className = 'msg-row';
+        const col = document.createElement('div');
+        col.className = 'msg-col';
+        col.innerHTML = '<div class="msg-meta">ChatBot</div>';
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble ai';
+        bubble.innerHTML = renderMarkdown(m.content);
+        col.appendChild(bubble);
+        // Rebuild the cards that were shown with this answer — the product
+        // matches, the price card, the timeline. Without them a reopened chat
+        // reads as "Which one?" with nothing underneath.
+        (m.cards || []).forEach(c => {
+          try { renderCard(bubble, c); } catch (e) {}
+        });
+        bubble.appendChild(buildRating(m.id, m.rating));
+        row.innerHTML = '<div class="msg-avatar ai">AI</div>';
+        row.appendChild(col);
+        inner.appendChild(row);
+        chatHistory.push({ role: 'assistant', content: m.content });
+      }
+    });
+    loadChatList();
+    scrollDown();
+  } catch (e) {}
+}
+
+
+
+// ===== User message row =====
+function addUserRow(text) {
+  const row = document.createElement('div');
+  row.className = 'msg-row user';
+  const col = document.createElement('div');
+  col.className = 'msg-col';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble user';
+  bubble.textContent = text;
+  col.appendChild(bubble);
+  row.appendChild(col);
+  row.innerHTML += '<div class="msg-avatar user">' + (username || 'U').charAt(0).toUpperCase() + '</div>';
+  document.getElementById('messagesInner').appendChild(row);
+  scrollDown();
+}
+
+// ===== Pinned client =====
+// One client per conversation, stored on the chat. Set once and the agent stops
+// asking, quotes carry the discount, and the order form is pre-filled.
+let chatClientId = null;
+let chatClientName = null;
+
+let chatClientInfo = null;
+
+function renderClientBar() {
+  const bar = document.getElementById('clientBar');
+  const label = document.getElementById('cbarLabel');
+  if (!bar || !label) return;
+  bar.classList.toggle('on', !!chatClientId);
+
+  // Connected: show what the client card shows — who they are, how to reach
+  // them, and what they're worth. Scrolling back to find the card was the only
+  // way to see any of it.
+  const i = chatClientInfo;
+  if (chatClientId && i) {
+    const money = n => '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+    // Dates arrive as full timestamps; only the day is useful here.
+    const day = d => String(d || '').slice(0, 10);
+    // Long company names push the whole bar wide, so trim on a word boundary.
+    const trim = (t, n) => {
+      t = String(t || '');
+      if (t.length <= n) return t;
+      const cut = t.slice(0, n);
+      const sp = cut.lastIndexOf(' ');
+      return (sp > n * 0.6 ? cut.slice(0, sp) : cut).replace(/[\s,\-]+$/, '') + '\u2026';
+    };
+    label.innerHTML =
+      '<span class="cbar-l1">' + esc(i.name || chatClientName || '') +
+        (i.company ? ' <em title="' + esc(i.company) + '">' + esc(trim(i.company, 28)) + '</em>' : '') +
+      '</span>' +
+      '<span class="cbar-l2">' + [i.email, i.phone].filter(Boolean).map(esc).join(' · ') + '</span>' +
+      '<span class="cbar-l3">' + [
+        i.orders ? i.orders.toLocaleString() + ' orders' : null,
+        i.lifetime ? money(i.lifetime) + ' lifetime' : null,
+        i.last_order ? 'last ' + esc(day(i.last_order)) : null
+      ].filter(Boolean).join(' · ') + '</span>';
+  } else {
+    label.textContent = chatClientId ? (chatClientName || 'Client #' + chatClientId) : 'Connect to client';
+  }
+}
+
+function toggleClientPicker() {
+  const pop = document.getElementById('cbarPop');
+  if (!pop) return;
+  const open = pop.style.display !== 'none';
+  if (!open) closePopovers('cbarPop');
+  pop.style.display = open ? 'none' : 'block';
+  if (!open) {
+    const q = document.getElementById('cbarSearch');
+    if (q) { q.value = ''; setTimeout(() => q.focus(), 60); }
+    document.getElementById('cbarResults').innerHTML = '';
+  }
+}
+
+let cbarTimer = null;
+function clientBarSearch() {
+  clearTimeout(cbarTimer);
+  const q = document.getElementById('cbarSearch').value.trim();
+  const box = document.getElementById('cbarResults');
+  if (q.length < 2) { box.innerHTML = ''; return; }
+  cbarTimer = setTimeout(async () => {
+    box.innerHTML = '<div class="cbar-empty">Searching…</div>';
+    try {
+      const r = await fetch('/api/chatbot/find-client?q=' + encodeURIComponent(q),
+        { headers: { 'Authorization': 'Bearer ' + token } });
+      const j = await r.json();
+      if (!j.ok || !j.clients.length) { box.innerHTML = '<div class="cbar-empty">No match.</div>'; return; }
+      box.innerHTML = '';
+      j.clients.forEach(c => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'cbar-row';
+        // Person in charcoal, company in the accent colour — the name is what
+        // you scan for, the company is context.
+        b.innerHTML = '<span class="cbar-who">' +
+          '<span class="cbar-name">' + esc(c.name) + '</span>' +
+          (c.company ? '<span class="cbar-co"> — ' + esc(c.company) + '</span>' : '') +
+          '<span class="cbar-mail">' + esc(c.email || '') + '</span></span>' +
+          '<span class="cbar-n">' + (c.orders || 0) + '</span>';
+        b.onclick = () => setChatClient(c.id, c.company ? (c.name + ' (' + c.company + ')') : c.name);
+        box.appendChild(b);
+      });
+    } catch (e) { box.innerHTML = '<div class="cbar-empty">Search failed.</div>'; }
+  }, 280);
+}
+
+async function setChatClient(id, name) {
+  if (!currentChatId) {
+    // No chat yet — remember locally and persist on the first message.
+    chatClientId = id; chatClientName = name || null;
+    renderClientBar();
+    document.getElementById('cbarPop').style.display = 'none';
+    return;
+  }
+  try {
+    const r = await fetch('/api/chats/set-client', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ chat_id: currentChatId, client_id: id })
+    });
+    const j = await r.json();
+    if (j.ok) {
+      chatClientId = j.client_id;
+      chatClientName = j.client_name || name || null;
+      chatClientInfo = j.info || null;
+      renderClientBar();
+      // If they were stopped at checkout for this, clear the warning.
+      const cf = document.getElementById('cartForm');
+      if (cf && cf.querySelector('.cf-needclient')) {
+        cf.style.display = 'none';
+        cf.innerHTML = '';
+        // They were stopped here for want of a client — now that there is one,
+        // reprice and reopen so the form shows discounted figures.
+        repriceCart(j.client_id).then(() => openCartOrder());
+      }
+      // Any quote already on screen was priced at list. Update it to this
+      // client's pricing rather than leaving a number that is now wrong.
+      if (j.client_id && window.AxiomCards && AxiomCards.repriceAllForClient) {
+        AxiomCards.repriceAllForClient(j.client_id, chatClientName);
+      }
+      // The cart holds its own copies of those prices, so it needs the same
+      // treatment — a cart total that disagrees with the cards is worse than none.
+      repriceCart(j.client_id);
+    }
+  } catch (e) {}
+  document.getElementById('cbarPop').style.display = 'none';
+}
+
+async function loadChatClient() {
+  if (!currentChatId) { chatClientId = null; chatClientName = null; renderClientBar(); return; }
+  try {
+    const r = await fetch('/api/chats/' + currentChatId + '/client',
+      { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await r.json();
+    chatClientId = j.client_id || null;
+    chatClientName = j.client_name || null;
+    chatClientInfo = j.info || null;
+  } catch (e) {}
+  renderClientBar();
+}
+
+// Close the picker when clicking elsewhere.
+document.addEventListener('click', (e) => {
+  const bar = document.getElementById('clientBar');
+  if (bar && !bar.contains(e.target)) {
+    const pop = document.getElementById('cbarPop');
+    if (pop) pop.style.display = 'none';
+  }
+});
+
+// ===== Cart =====
+// Priced items parked at the top of the conversation. A multi-product request
+// builds a visible list instead of a chat you have to scroll back through.
+let cartItems = [];
+
+async function addToCart(item) {
+  if (!currentChatId) return false;
+  try {
+    const r = await fetch('/api/chats/cart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify(Object.assign({ chat_id: currentChatId }, item))
+    });
+    const j = await r.json();
+    if (j.ok) { await loadCart(); return true; }
+  } catch (e) {}
+  return false;
+}
+
+// Re-price the cart for a newly connected client, with a visible loader — this
+// hits the pricing engine once per item, so it is not instant.
+async function repriceCart(clientId) {
+  if (!currentChatId || !cartItems.length) return;
+  const pill = document.getElementById('cartPill');
+  const pop = document.getElementById('cartPop');
+  if (pill) pill.classList.add('recalc');
+  if (pop && pop.style.display !== 'none') {
+    pop.innerHTML = '<div class="cart-recalc">Recalculating for ' +
+      esc(chatClientName || 'this client') + '\u2026</div>';
+  }
+  try {
+    const r = await fetch('/api/chats/' + currentChatId + '/cart/reprice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ client_id: clientId || null })
+    });
+    const j = await r.json();
+    if (j.ok) cartItems = j.items || [];
+  } catch (e) {}
+  if (pill) pill.classList.remove('recalc');
+  renderCart();
+  if (pop && pop.style.display !== 'none') drawCartPanel();
+}
+
+async function loadCart() {
+  if (!currentChatId) { cartItems = []; renderCart(); return; }
+  try {
+    const r = await fetch('/api/chats/' + currentChatId + '/cart',
+      { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await r.json();
+    cartItems = j.items || [];
+  } catch (e) { cartItems = []; }
+  renderCart();
+}
+
+function renderCart() {
+  const pill = document.getElementById('cartPill');
+  if (!pill) return;
+  // Always on show. A cart that appears only once it has something in it gives
+  // no hint that carting is possible at all.
+  pill.style.display = 'inline-flex';
+  pill.classList.toggle('empty', cartItems.length === 0);
+  pill.title = cartItems.length ? 'Cart' : 'Nothing in the cart yet';
+  document.getElementById('cartCount').textContent = cartItems.length;
+  const total = cartItems.reduce((a, b) => a + (Number(b.price) || 0), 0);
+  document.getElementById('cartTotal').textContent = '$' + total.toFixed(2);
+  if (!cartItems.length) { hideCart(); return; }
+  const pop = document.getElementById('cartPop');
+  if (pop && pop.style.display !== 'none') drawCartPanel();
+}
+
+function drawCartPanel() {
+  const pop = document.getElementById('cartPop');
+  const total = cartItems.reduce((a, b) => a + (Number(b.price) || 0), 0);
+  const list = cartItems.reduce((a, b) => a + (Number(b.list_price) || Number(b.price) || 0), 0);
+  pop.innerHTML =
+    '<div class="cart-hd">Cart <span>' + cartItems.length + ' item' +
+      (cartItems.length === 1 ? '' : 's') + '</span></div>' +
+    cartItems.map(it =>
+      '<div class="cart-row">' +
+        (it.image ? '<img src="' + esc(it.image) + '" alt="" onerror="this.remove()">'
+                  : '<span class="cart-ph"></span>') +
+        '<span class="cart-body"><b>' + esc(it.product || '') + '</b>' +
+          '<small>Qty ' + Number(it.quantity || 0).toLocaleString() +
+          (it.summary ? ' · ' + esc(it.summary) : '') +
+          (it.turnaround ? ' · ' + esc(it.turnaround) : '') + '</small></span>' +
+        '<span class="cart-price">$' + Number(it.price || 0).toFixed(2) + '</span>' +
+        '<button type="button" class="cart-rm" data-id="' + it.id + '" title="Remove">✕</button>' +
+      '</div>').join('') +
+    '<div class="cart-ft">' +
+      (list > total ? '<span class="cart-saved">Saves $' + (list - total).toFixed(2) + '</span>' : '<span></span>') +
+      '<b>$' + total.toFixed(2) + '</b>' +
+    '</div>' +
+    '<div class="cart-actions">' +
+      '<button type="button" class="cart-clear" onclick="clearCart()">Empty</button>' +
+      '<button type="button" class="cart-order" onclick="startCheckout()">Proceed with order</button>' +
+    '</div>' +
+    '<button type="button" class="cart-draft" onclick="startDraft()">Help me draft an email</button>' +
+    '<div class="cart-form" id="cartForm" style="display:none"></div>';
+  pop.querySelectorAll('.cart-rm').forEach(b => {
+    b.onclick = async () => {
+      await fetch('/api/chats/cart/' + b.getAttribute('data-id'),
+        { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
+      loadCart();
+    };
+  });
+}
+
+// One order, several estimates. Each item keeps its own job name, date, delivery
+// and artwork choice — they are separate jobs on one purchase order.
+async function openCartOrder() {
+  const box = document.getElementById('cartForm');
+  if (!chatClientId) {
+    // Point at the thing that needs doing instead of stopping everything with a
+    // browser dialog: highlight the client bar, open its search, and say why.
+    box.style.display = 'block';
+    box.innerHTML = '<div class="cf-needclient">The order needs an account. ' +
+      'Connect the client above, then come back to this.</div>';
+    const bar = document.getElementById('clientBar');
+    if (bar) {
+      bar.classList.add('needs-client');
+      setTimeout(() => bar.classList.remove('needs-client'), 2600);
+    }
+    const pop = document.getElementById('cbarPop');
+    if (pop && pop.style.display === 'none') {
+      pop.style.display = 'block';
+      const q = document.getElementById('cbarSearch');
+      if (q) { q.value = ''; setTimeout(() => q.focus(), 80); }
+    }
+    return;
+  }
+  box.style.display = 'block';
+  box.innerHTML = '<div style="color:var(--muted);font-size:12px">Loading…</div>';
+  let cfg = { choices: [] }, dflt = {};
+  try {
+    const [r1, r2] = await Promise.all([
+      fetch('/api/chatbot/order-fields?client_id=' + chatClientId,
+        { headers: { 'Authorization': 'Bearer ' + token } }),
+      fetch('/api/chatbot/order-defaults?client_id=' + chatClientId,
+        { headers: { 'Authorization': 'Bearer ' + token } })
+    ]);
+    cfg = await r1.json(); dflt = await r2.json();
+  } catch (e) {}
+
+  const sel = (key, val) => {
+    const c = (cfg.choices || []).find(x => x.key === key);
+    if (!c) return '';
+    return '<select data-f="' + key + '">' + c.options.map(o =>
+      '<option value="' + esc(o.value) + '"' +
+      ((val || c.default) === o.value ? ' selected' : '') + '>' + esc(o.label) + '</option>').join('') +
+      '</select>';
+  };
+
+  box.innerHTML =
+    '<div class="cf-hd">Placing ' + cartItems.length + ' item' + (cartItems.length === 1 ? '' : 's') +
+      ' as one order for <b>' + esc(chatClientName || '') + '</b></div>' +
+    cartItems.map((it, i) =>
+      '<div class="cf-item" data-cart="' + it.id + '">' +
+        '<div class="cf-title">' + (i + 1) + '. ' + esc(it.product) + '</div>' +
+        '<label>Job name<input type="text" data-f="job_name" placeholder="What this job is called"></label>' +
+        // This item's own turnaround decides its date. Falling back to a shared
+        // default would promise the same day for a 3-day job and a 10-day one.
+        '<label>Needed by<input type="date" data-f="needed_by" value="' +
+          esc(it.ready_date || (dflt.needed_by || '').slice(0, 10)) + '"></label>' +
+        (it.turnaround
+          ? '<div class="cf-turn">' + esc(it.turnaround) +
+            (it.ready_date ? ' \u2014 ready ' + esc(it.ready_date) : '') + '</div>'
+          : '') +
+        '<label>Delivery' + sel('shipping_method', dflt.shipping_method) + '</label>' +
+        '<label>Artwork' + sel('design_type') + '</label>' +
+        '<label>Proof' + sel('proofing') + '</label>' +
+      '</div>').join('') +
+    '<div class="cf-foot">' +
+      '<span id="cartOrderMsg"></span>' +
+      '<button type="button" class="cart-order" onclick="submitCartOrder(this)">Place order</button>' +
+    '</div>';
+}
+
+async function submitCartOrder(btn) {
+  const box = document.getElementById('cartForm');
+  const msg = document.getElementById('cartOrderMsg');
+  const items = Array.from(box.querySelectorAll('.cf-item')).map(el => {
+    const o = { cart_id: Number(el.getAttribute('data-cart')) };
+    el.querySelectorAll('[data-f]').forEach(i => { o[i.getAttribute('data-f')] = i.value; });
+    return o;
+  });
+  const blank = items.filter(i => !String(i.job_name || '').trim()).length;
+  if (blank) { msg.textContent = 'Give every item a job name.'; return; }
+  btn.disabled = true; msg.textContent = 'Placing…';
+  try {
+    const r = await fetch('/api/chatbot/order-cart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ chat_id: currentChatId, client_id: chatClientId, items: items })
+    });
+    const j = await r.json();
+    if (!j.ok) {
+      btn.disabled = false;
+      msg.textContent = j.missing ? j.missing.join('; ') : (j.error || 'Could not place it');
+      return;
+    }
+    box.innerHTML = '<div class="cf-done">\u2713 Ordered ' + j.count + ' item' +
+      (j.count === 1 ? '' : 's') +
+      (j.e_numbers && j.e_numbers.length ? ' \u2014 ' + j.e_numbers.join(', ') : '') + '</div>';
+    loadCart();
+  } catch (e) {
+    btn.disabled = false;
+    msg.textContent = 'Could not place it.';
+  }
+}
+
+// The cart and the client picker share the same corner — opening one closes the
+// other, so the second never appears underneath.
+function closePopovers(except) {
+  ['cartPop', 'cbarPop'].forEach(id => {
+    if (id === except) return;
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+}
+
+function toggleCart() {
+  const pop = document.getElementById('cartPop');
+  if (!pop) return;
+  if (!cartItems.length) return;      // nothing to open
+  if (pop.style.display === 'none') {
+    closePopovers('cartPop');
+    drawCartPanel();
+    pop.style.display = 'block';
+  } else pop.style.display = 'none';
+}
+function hideCart() {
+  const pop = document.getElementById('cartPop');
+  if (pop) pop.style.display = 'none';
+}
+async function clearCart() {
+  if (!currentChatId || !confirm('Empty the cart?')) return;
+  await fetch('/api/chats/' + currentChatId + '/cart',
+    { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
+  loadCart();
+}
+
+document.addEventListener('click', (e) => {
+  const bar = document.getElementById('clientBar');
+  if (bar && !bar.contains(e.target)) hideCart();
+});
+
+// ===== Send a message (streams from /api/chatbot/chat) =====
+// Card events that belong to an answer. Stored with the message so reopening a
+// chat rebuilds what was on screen, not just the sentence above it.
+const CARD_TYPES = ['job_card', 'price_quote', 'client_card', 'client_picks', 'product_cards',
+                    'turnaround', 'choice_picks', 'option_picks', 'product_picks'];
+
+// A card with nothing in it is worse than no card. An empty client placeholder,
+// a "WHICH CLIENT?" header over no options, a turnaround sentence with no dates —
+// all of these rendered because the builder was called with an empty payload.
+function cardHasContent(j) {
+  switch (j.type) {
+    case 'client_card':   return !!(j.client && (j.client.id || j.client.name));
+    case 'client_picks':  return Array.isArray(j.clients) && j.clients.length > 0;
+    case 'product_picks': return Array.isArray(j.products) && j.products.length > 0;
+    case 'product_cards': return Array.isArray(j.products) && j.products.length > 0;
+    case 'option_picks':  return Array.isArray(j.options) && j.options.length > 0;
+    case 'choice_picks':  return Array.isArray(j.choices) && j.choices.length > 0;
+    case 'turnaround':    return !!(j.data && (j.data.readyLabel || (j.data.timeline || []).length));
+    case 'price_quote':   return !!(j.data && j.data.product);
+    case 'job_card':      return !!(j.data && j.data.e_number);
+    default:              return true;
+  }
+}
+
+// The pane only earns its space when there is space. Below this the layout
+// collapses to one column and cards go back into the conversation.
+function usePane() {
+  const pane = document.getElementById('calcPane');
+  return !!pane && window.innerWidth > 1200 && getComputedStyle(pane).display !== 'none';
+}
+
+function showInPane(card, name) {
+  const body = document.getElementById('calcPaneBody');
+  if (!body) return;
+  paneMode = 'calc';
+  lastCalcCard = card;
+  body.innerHTML = '';
+  body.appendChild(card);
+  renderPaneToggle();
+  renderPaneActions();
+  renderLiveTab(name);
+  // The header used to carry the product name, which put the live item ABOVE
+  // the saved tabs and made the second item look like the first. It stays
+  // generic; the item names live in the tabs, in the order they were quoted.
+  const hd = document.querySelector('.calc-pane-hd span');
+  if (hd) hd.textContent = 'Calculator';
+  body.scrollTop = 0;
+}
+
+// Order and draft, under the card where they are actually needed. They used to
+// live inside the cart popover, which meant they were invisible until you had
+// already carted something and opened it.
+// Items quoted and set aside for the reply. Not the cart: a price ladder
+// (250/500/1,000 of one product) is a QUOTE, not three orders, so it cannot go
+// in a cart — but it is exactly what goes in the email.
+const quoteShelf = [];
+
+// How many items the job has, read from the recap the agent writes ("1) … 2) …").
+// Used only to hide "save and go to the next" on the last one — if the recap
+// can't be read, the button stays, which is the harmless way to be wrong.
+let jobItemCount = 0;
+
+function noteJobSize(text) {
+  const m = String(text || '').match(/^\s*(\d+)\)/gm);
+  if (m && m.length > 1) jobItemCount = m.length;
+}
+
+function saveToShelf(moveOn) {
+  const latest = paneQuotes[paneQuotes.length - 1];
+  if (!latest) return;
+  const d = latest.data;
+
+  // Every quantity quoted for THIS product. quantityLadder() returns whichever
+  // product has the most quantities, so asking it here saved the wrong item's
+  // ladder — or none at all when another product had more rows.
+  const mine = {};
+  paneQuotes.forEach(q => {
+    if (Number(q.data.product_id) !== Number(d.product_id)) return;
+    const n = Number(q.data.quantity);
+    if (n > 0) mine[n] = q;
+  });
+  const qtys = Object.keys(mine).map(Number).sort((a, b) => a - b);
+  const rows = qtys.length
+    ? qtys.map(n => ({ quantity: n, price: mine[n].data.price, each: mine[n].data.each }))
+    : [{ quantity: d.quantity, price: d.price, each: d.each }];
+
+  const at = quoteShelf.findIndex(x => x.product_id === d.product_id);
+  const entry = {
+    product_id: d.product_id, product: d.product, image: d.product_image || null,
+    specs: (d.specs || []).filter(sp => !sp.isVersionRow),
+    rows: rows,
+    // The actual cards, so View reopens what was saved rather than re-pricing it.
+    cards: qtys.length ? qtys.map(n => ({ quantity: n, card: mine[n].card, data: mine[n].data }))
+                       : [{ quantity: d.quantity, card: latest.card, data: d }]
+  };
+  if (at > -1) quoteShelf[at] = entry; else quoteShelf.push(entry);
+
+  renderShelf();
+  renderPaneActions();
+  // Only nudge the conversation on when there is genuinely something next.
+  if (moveOn) {
+    ask('Saved the ' + (d.product || 'quote') + ' pricing. Move on to the next item from my original ' +
+        'message — state its own specs, then search for it.');
+  }
+}
+
+// Saved items stack above the live one as accordion tabs, so an earlier quote
+// can be reopened and corrected without re-pricing it from the chat.
+let shelfOpen = -1;
+
+function renderShelf() {
+  let bar = document.getElementById('shelfBar');
+  if (!quoteShelf.length) { if (bar) bar.remove(); return; }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'shelfBar';
+    bar.className = 'shelf-bar';
+    const hd = document.querySelector('.calc-pane-hd');
+    if (hd && hd.parentNode) hd.parentNode.insertBefore(bar, hd.nextSibling);
+  }
+
+  bar.innerHTML = quoteShelf.map((q, i) => {
+    const open = shelfOpen === i;
+    const total = q.rows.length === 1
+      ? '$' + Number(q.rows[0].price).toFixed(2)
+      : q.rows.length + ' quantities';
+    return '<div class="shelf-item' + (open ? ' open' : '') + '">' +
+      '<button type="button" class="shelf-tab" data-i="' + i + '">' +
+        (q.image ? '<img src="' + esc(q.image) + '" alt="" onerror="this.remove()">' : '<span class="shelf-ph"></span>') +
+        '<span class="shelf-name">' + esc(q.product) + '</span>' +
+        '<span class="shelf-sum">' + total + '</span>' +
+        '<span class="shelf-caret">' + (open ? '\u2303' : '\u2304') + '</span>' +
+      '</button>' +
+      (open
+        ? '<div class="shelf-body">' +
+            '<table class="shelf-rows">' + q.rows.map((r, ri) =>
+              '<tr data-open="' + i + '-' + ri + '"><td>' +
+              Number(r.quantity).toLocaleString() + '</td><td>$' +
+              Number(r.price).toFixed(2) + '</td></tr>').join('') + '</table>' +
+            '<div class="shelf-acts">' +
+              '<button type="button" class="sa-view" data-view="' + i + '">View</button>' +
+              '<button type="button" data-edit="' + i + '">Re-price this</button>' +
+              '<button type="button" data-rm="' + i + '">Remove</button>' +
+            '</div>' +
+          '</div>'
+        : '') +
+    '</div>';
+  }).join('');
+
+  bar.querySelectorAll('.shelf-tab').forEach(b => {
+    b.onclick = () => {
+      const i = Number(b.getAttribute('data-i'));
+      shelfOpen = (shelfOpen === i) ? -1 : i;
+      renderShelf();
+    };
+  });
+  bar.querySelectorAll('[data-rm]').forEach(x => {
+    x.onclick = (e) => {
+      e.stopPropagation();
+      quoteShelf.splice(Number(x.getAttribute('data-rm')), 1);
+      shelfOpen = -1;
+      renderShelf(); renderPaneActions();
+    };
+  });
+  // View: put the saved card back in the calculator, exactly as it was. The
+  // Clarify dropdowns and Edit still work, so this doubles as the way in to
+  // change something on an earlier item.
+  // Any quantity in an open item opens that exact card.
+  bar.querySelectorAll('[data-open]').forEach(row => {
+    row.onclick = (e) => {
+      e.stopPropagation();
+      const [si, ri] = row.getAttribute('data-open').split('-').map(Number);
+      const q = quoteShelf[si];
+      if (q && q.cards && q.cards[ri]) showInPane(q.cards[ri].card, q.product);
+    };
+  });
+
+  bar.querySelectorAll('[data-view]').forEach(x => {
+    x.onclick = (e) => {
+      e.stopPropagation();
+      const q = quoteShelf[Number(x.getAttribute('data-view'))];
+      if (!q || !q.cards || !q.cards.length) return;
+      const first = q.cards[0];
+      showInPane(first.card, q.product);
+      // Its other quantities go back in the chat as markers, so the whole
+      // ladder is reachable again.
+      document.querySelectorAll('.pq-moved.on').forEach(n => n.classList.remove('on'));
+    };
+  });
+
+  bar.querySelectorAll('[data-edit]').forEach(x => {
+    x.onclick = (e) => {
+      e.stopPropagation();
+      const q = quoteShelf[Number(x.getAttribute('data-edit'))];
+      if (q) ask('Re-price ' + q.product + ' (#' + q.product_id + ') — same specs as before, ' +
+                 'and I may want to change something.');
+    };
+  });
+}
+
+// The item being priced, shown as the next tab in the sequence rather than as a
+// title above everything — so a two-item job reads 1) saved, 2) live.
+function renderLiveTab(name) {
+  const body = document.getElementById('calcPaneBody');
+  if (!body) return;
+  const old = document.getElementById('liveTab');
+  if (old) old.remove();
+  if (!name) return;
+  const tab = document.createElement('div');
+  tab.id = 'liveTab';
+  tab.className = 'live-tab';
+  tab.innerHTML = '<span class="live-dot"></span>' + esc(name) +
+    '<em>' + (quoteShelf.length + 1) + ' of ' +
+    (jobItemCount || (quoteShelf.length + 1)) + '</em>';
+  body.insertBefore(tab, body.firstChild);
+}
+
+function renderPaneActions() {
+  const body = document.getElementById('calcPaneBody');
+  if (!body || paneMode !== 'calc') return;
+  if (!lastCalcCard) return;                 // nothing quoted yet
+  const old = document.getElementById('paneActions');
+  if (old) old.remove();
+
+  const n = cartItems.length;
+  const bar = document.createElement('div');
+  bar.id = 'paneActions';
+  bar.className = 'pane-actions';
+  const shelved = quoteShelf.length;
+  // On the last item there is nothing to go on to, so the button would lie.
+  const moreToCome = jobItemCount > 0 && shelved < jobItemCount - 1;
+  bar.innerHTML =
+    (moreToCome
+      ? '<button type="button" class="pa-save">Save this &amp; price the next item</button>'
+      : '<button type="button" class="pa-save">Save this quote</button>') +
+    '<button type="button" class="pa-order">' +
+      (n ? 'Proceed with order — ' + n + ' item' + (n === 1 ? '' : 's') : 'Proceed with order') +
+    '</button>' +
+    '<button type="button" class="pa-draft">' +
+      (shelved > 1 ? 'Draft an email with all ' + shelved + ' items' : 'Help me draft an email') +
+    '</button>';
+  bar.querySelector('.pa-save').onclick = () => saveToShelf(moreToCome);
+  bar.querySelector('.pa-order').onclick = () => startCheckout();
+  bar.querySelector('.pa-draft').onclick = () => startDraft();
+  body.appendChild(bar);
+}
+
+// Draft mode: the same job written the way it goes to a client — specs once,
+// then the quantity ladder. Calculator mode is for working it out; this is for
+// sending it.
+let paneMode = 'calc';
+
+function renderPaneToggle() {
+  const hd = document.querySelector('.calc-pane-hd');
+  if (!hd) return;
+  let wrap = document.getElementById('paneToggle');
+  const ladder = quantityLadder();
+  if (!ladder) { if (wrap) wrap.remove(); return; }
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'paneToggle';
+    wrap.className = 'pane-toggle';
+    hd.insertBefore(wrap, hd.querySelector('.calc-pane-x'));
+  }
+  wrap.innerHTML =
+    '<button type="button" class="' + (paneMode === 'calc' ? 'on' : '') + '" data-m="calc">Calculator</button>' +
+    '<button type="button" class="' + (paneMode === 'draft' ? 'on' : '') + '" data-m="draft">Draft</button>';
+  wrap.querySelectorAll('button').forEach(b => {
+    b.onclick = () => {
+      paneMode = b.getAttribute('data-m');
+      renderPaneToggle();
+      if (paneMode === 'draft') drawDraft(); else restoreCalc();
+    };
+  });
+}
+
+let lastCalcCard = null;
+function restoreCalc() {
+  const body = document.getElementById('calcPaneBody');
+  if (!body || !lastCalcCard) return;
+  paneMode = 'calc';
+  body.innerHTML = '';
+  body.appendChild(lastCalcCard);
+  // The action bar belongs to this view, so it comes back with the card.
+  // Rebuilding only the card left the pane with no way to save or order until
+  // something else forced a repaint.
+  renderPaneActions();
+}
+
+// The client-facing quote: every item on the shelf, each with its thumbnail,
+// specs and price ladder. Falls back to the item on screen when nothing is
+// shelved yet.
+function drawDraft() {
+  const body = document.getElementById('calcPaneBody');
+  if (!body) return;
+
+  if (quoteShelf.length) {
+    body.innerHTML =
+      '<div class="draft" id="draftBlock">' +
+        quoteShelf.map(q => draftItemHtml(q)).join('<div class="draft-gap"></div>') +
+      '</div>' +
+      '<button type="button" class="draft-copy" id="draftCopy">Copy for email</button>';
+    document.getElementById('draftCopy').onclick = () => copyDraft();
+    return;
+  }
+
+  const ladder = quantityLadder();
+  if (!ladder) return;
+  const d = ladder.sample;
+
+  // Specs are shared across the ladder, so show them once. Quantity, versions
+  // and turnaround are handled separately: the first varies, the last two sit
+  // under the table where a client expects them.
+  const skip = /^(quantity|versions?|turnaround)$/i;
+  const specRows = (d.specs || [])
+    .filter(sp => !sp.isVersionRow && !skip.test(String(sp.field).replace(/_/g, ' ')))
+    .map(sp => '<tr><td>' + esc(String(sp.field).replace(/_/g, ' ')) + '</td><td>' +
+               esc(sp.value) + '</td></tr>').join('');
+
+  const qtyRows = ladder.rows.map(n => {
+    const q = ladder.quotes[n].data;
+    return '<tr><td>' + n.toLocaleString() + '</td><td><b>$' +
+           Number(q.price).toFixed(2) + '</b>' +
+           (q.each ? ' <span class="dr-each">$' + Number(q.each).toFixed(2) + ' each</span>' : '') +
+           '</td></tr>';
+  }).join('');
+
+  const turn = (d.specs || []).find(sp => /turnaround/i.test(sp.field));
+
+  body.innerHTML =
+    '<div class="draft" id="draftBlock">' +
+      '<div class="draft-title">' + esc(d.product || '') + '</div>' +
+      '<table class="draft-t">' + specRows + '</table>' +
+      '<div class="draft-sub">Quantity</div>' +
+      '<table class="draft-t draft-qty">' + qtyRows + '</table>' +
+      (turn ? '<table class="draft-t"><tr><td>Turnaround</td><td>' + esc(turn.value) +
+              '</td></tr></table>' : '') +
+    '</div>' +
+    '<button type="button" class="draft-copy" id="draftCopy">Copy for email</button>';
+
+  document.getElementById('draftCopy').onclick = () => copyDraft();
+}
+
+// One shelved item, rendered for an email. The thumbnail earns its place —
+// a client scanning a quote recognises the product before reading the specs.
+function draftItemHtml(q) {
+  const skip = /^(quantity|versions?|turnaround)$/i;
+  const specRows = (q.specs || [])
+    .filter(sp => !skip.test(String(sp.field).replace(/_/g, ' ')))
+    .map(sp => '<tr><td>' + esc(String(sp.field).replace(/_/g, ' ')) + '</td><td>' +
+               esc(sp.value) + '</td></tr>').join('');
+  const qtyRows = q.rows.map(r =>
+    '<tr><td>' + Number(r.quantity).toLocaleString() + '</td><td><b>$' +
+    Number(r.price).toFixed(2) + '</b>' +
+    (r.each ? ' <span class="dr-each">$' + Number(r.each).toFixed(2) + ' each</span>' : '') +
+    '</td></tr>').join('');
+  const turn = (q.specs || []).find(sp => /turnaround/i.test(sp.field));
+
+  return '<div class="draft-item">' +
+    '<div class="draft-head">' +
+      (q.image ? '<img src="' + esc(q.image) + '" alt="" onerror="this.remove()">' : '') +
+      '<div class="draft-title">' + esc(q.product || '') + '</div>' +
+    '</div>' +
+    '<table class="draft-t">' + specRows + '</table>' +
+    '<div class="draft-sub">Quantity</div>' +
+    '<table class="draft-t draft-qty">' + qtyRows + '</table>' +
+    (turn ? '<table class="draft-t"><tr><td>Turnaround</td><td>' + esc(turn.value) +
+            '</td></tr></table>' : '') +
+  '</div>';
+}
+
+async function copyDraft() {
+  const block = document.getElementById('draftBlock');
+  const btn = document.getElementById('draftCopy');
+  if (!block) return;
+  // Rich HTML so it pastes into an email as a table, with plain text behind it
+  // for anything that can't take HTML.
+  const html = '<div style="font-family:Arial,sans-serif;font-size:13px;color:#222">' +
+    block.innerHTML.replace(/class="[^"]*"/g, '')
+      .replace(/<table/g, '<table cellpadding="5" cellspacing="0" style="border-collapse:collapse;margin-bottom:6px"')
+      .replace(/<td/g, '<td style="border-bottom:1px solid #e5e5ef;padding:5px 10px"')
+      // Thumbnails survive the paste at a sensible size.
+      .replace(/<img /g, '<img width="90" style="border-radius:6px;margin-right:12px;vertical-align:middle" ') +
+    '</div>';
+  const text = block.innerText;
+  try {
+    await navigator.clipboard.write([new ClipboardItem({
+      'text/html': new Blob([html], { type: 'text/html' }),
+      'text/plain': new Blob([text], { type: 'text/plain' })
+    })]);
+    btn.textContent = 'Copied';
+  } catch (e) {
+    try { await navigator.clipboard.writeText(text); btn.textContent = 'Copied'; }
+    catch (e2) { btn.textContent = 'Could not copy'; }
+  }
+  setTimeout(() => { btn.textContent = 'Copy for email'; }, 1800);
+}
+
+// ===== Draft a reply, in the side pane =====
+// The client wrote in; this answers them. It uses the first message of the
+// conversation as the thing being replied to, so the tone matches what they sent
+// rather than reading as a form letter.
+async function startDraft() {
+  hideCart();
+  paneMode = 'draft-email';
+  const body = document.getElementById('calcPaneBody');
+  const hd = document.querySelector('.calc-pane-hd span');
+  if (hd) hd.textContent = 'Draft reply';
+  body.innerHTML = '<div class="co-loading">Writing the reply…</div>';
+
+  // The opening message is usually the client's own email, pasted in.
+  const first = (chatHistory.find(m => m.role === 'user') || {}).content || '';
+
+  const lines = cartItems.map(it =>
+    (it.quantity ? Number(it.quantity).toLocaleString() + ' × ' : '') + it.product +
+    (it.summary ? ' (' + it.summary + ')' : '') +
+    ' — $' + Number(it.price).toFixed(2) +
+    (it.turnaround ? ', ' + it.turnaround : ''));
+
+  try {
+    const r = await fetch('/api/draft-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({
+        quote: cartItems.reduce((a, b) => a + (Number(b.price) || 0), 0).toFixed(2),
+        client_name: chatClientName || '',
+        client_emails: first ? [{ body: first }] : [],
+        product: cartItems.map(i => i.product).join(', '),
+        lines: lines
+      })
+    });
+    const j = await r.json();
+    const text = j.email || j.draft || j.text || '';
+    if (!text) { body.innerHTML = '<div class="co-none">Could not draft that one.</div>'; return; }
+    body.innerHTML =
+      '<textarea class="draft-mail" id="draftMail" rows="18">' + esc(text) + '</textarea>' +
+      '<button type="button" class="draft-copy" id="draftMailCopy">Copy the reply</button>';
+    document.getElementById('draftMailCopy').onclick = async () => {
+      const b = document.getElementById('draftMailCopy');
+      try {
+        await navigator.clipboard.writeText(document.getElementById('draftMail').value);
+        b.textContent = 'Copied';
+      } catch (e) { b.textContent = 'Could not copy'; }
+      setTimeout(() => { b.textContent = 'Copy the reply'; }, 1800);
+    };
+  } catch (e) {
+    body.innerHTML = '<div class="co-none">Could not draft that one.</div>';
+  }
+}
+
+// ===== Checkout, in the side pane =====
+// Client -> job name -> artwork -> delivery -> submit. Each step only asks what
+// it needs, and the client step is skipped entirely when one is already on.
+let checkoutCfg = null;
+
+async function startCheckout() {
+  hideCart();
+  // Nothing carted, but a quote is on screen — order that rather than making
+  // them cart it first just to satisfy the flow.
+  if (!cartItems.length) {
+    const btn = document.querySelector('.calc-pane .pq-cartbtn:not(:disabled)');
+    if (btn) {
+      btn.click();
+      await new Promise(r => setTimeout(r, 900));
+    }
+    if (!cartItems.length) {
+      const body = document.getElementById('calcPaneBody');
+      if (body) {
+        const m = document.createElement('div');
+        m.className = 'co-msg';
+        m.textContent = 'Add a quote to the cart first.';
+        body.appendChild(m);
+      }
+      return;
+    }
+  }
+  paneMode = 'checkout';
+  const body = document.getElementById('calcPaneBody');
+  const hd = document.querySelector('.calc-pane-hd span');
+  if (hd) hd.textContent = 'Checkout';
+  body.innerHTML = '<div class="co-loading">Loading…</div>';
+
+  if (!chatClientId) { drawCheckoutClientStep(); return; }
+  await loadCheckoutCfg();
+  drawCheckoutForm();
+}
+
+async function loadCheckoutCfg() {
+  try {
+    const [r1, r2] = await Promise.all([
+      fetch('/api/chatbot/order-fields?client_id=' + chatClientId,
+        { headers: { 'Authorization': 'Bearer ' + token } }),
+      fetch('/api/chatbot/order-defaults?client_id=' + chatClientId,
+        { headers: { 'Authorization': 'Bearer ' + token } })
+    ]);
+    checkoutCfg = { fields: await r1.json(), defaults: await r2.json() };
+  } catch (e) { checkoutCfg = { fields: { choices: [] }, defaults: {} }; }
+}
+
+// Step 0 — no client yet, so find one before anything else.
+function drawCheckoutClientStep() {
+  const body = document.getElementById('calcPaneBody');
+  body.innerHTML =
+    '<div class="co-step"><div class="co-step-hd">Who is this order for?</div>' +
+      '<input type="text" id="coClientQ" placeholder="Name, company or email" autocomplete="off">' +
+      '<div id="coClientResults" class="co-results"></div>' +
+    '</div>';
+  const q = document.getElementById('coClientQ');
+  let t = null;
+  q.oninput = () => {
+    clearTimeout(t);
+    t = setTimeout(async () => {
+      const term = q.value.trim();
+      if (term.length < 2) { document.getElementById('coClientResults').innerHTML = ''; return; }
+      try {
+        const r = await fetch('/api/chatbot/find-client?q=' + encodeURIComponent(term),
+          { headers: { 'Authorization': 'Bearer ' + token } });
+        const j = await r.json();
+        const box = document.getElementById('coClientResults');
+        box.innerHTML = (j.clients || []).slice(0, 8).map(c =>
+          '<button type="button" class="co-client" data-id="' + c.id + '" data-name="' +
+            esc((c.company ? c.name + ' (' + c.company + ')' : c.name) || '') + '">' +
+            '<b>' + esc(c.name || '') + '</b>' +
+            (c.company ? ' <span>' + esc(c.company) + '</span>' : '') +
+            '<small>' + esc(c.email || '') + ' · ' + (c.orders || 0) + ' orders</small></button>').join('')
+          || '<div class="co-none">No match</div>';
+        box.querySelectorAll('.co-client').forEach(b => {
+          b.onclick = async () => {
+            await setChatClient(Number(b.getAttribute('data-id')), b.getAttribute('data-name'));
+            await repriceCart(Number(b.getAttribute('data-id')));
+            await loadCheckoutCfg();
+            drawCheckoutForm();
+          };
+        });
+      } catch (e) {}
+    }, 250);
+  };
+  setTimeout(() => q.focus(), 80);
+}
+
+function drawCheckoutForm() {
+  const body = document.getElementById('calcPaneBody');
+  const cfg = (checkoutCfg && checkoutCfg.fields) || { choices: [] };
+  const dflt = (checkoutCfg && checkoutCfg.defaults) || {};
+
+  const sel = (key, id, val) => {
+    const c = (cfg.choices || []).find(x => x.key === key);
+    if (!c) return '';
+    return '<select id="' + id + '">' + c.options.map(o =>
+      '<option value="' + esc(o.value) + '"' +
+      ((val || c.default) === o.value ? ' selected' : '') + '>' + esc(o.label) + '</option>').join('') +
+      '</select>';
+  };
+
+  const addrs = dflt.addresses || [];
+  body.innerHTML =
+    '<div class="co-who">Ordering for <b>' + esc(chatClientName || '') + '</b>' +
+      '<button type="button" onclick="drawCheckoutClientStep()">Change</button></div>' +
+
+    '<div class="co-step"><div class="co-step-hd">Job name</div>' +
+      '<input type="text" id="coName" placeholder="What this job is called">' +
+      '<textarea id="coNotes" rows="2" placeholder="Notes for prepress (optional)"></textarea>' +
+    '</div>' +
+
+    '<div class="co-step"><div class="co-step-hd">Artwork</div>' +
+      sel('design_type', 'coArtwork') +
+      '<div class="co-hint">Choose "Send the Files Later" if artwork is not ready — the job still goes in.</div>' +
+    '</div>' +
+
+    '<div class="co-step"><div class="co-step-hd">Delivery</div>' +
+      sel('shipping_method', 'coShip', dflt.shipping_method) +
+      '<div id="coAddrWrap" style="display:none">' +
+        (addrs.length
+          ? '<select id="coAddr">' + addrs.map(a =>
+              '<option value="' + a.id + '"' + (a.preferred ? ' selected' : '') + '>' +
+              esc(a.label) + '</option>').join('') + '</select>'
+          : '<div class="co-none">No addresses on file for this client — add one in the CRM first.</div>') +
+        '<select id="coCarrier"><option value="">Shipping method — ask production</option></select>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="co-step"><div class="co-step-hd">Needed by</div>' +
+      '<input type="date" id="coDate" value="' + esc((dflt.needed_by || '').slice(0, 10)) + '">' +
+    '</div>' +
+
+    '<div class="co-items">' + cartItems.length + ' item' + (cartItems.length === 1 ? '' : 's') +
+      ' · <b>$' + cartItems.reduce((a, b) => a + (Number(b.price) || 0), 0).toFixed(2) + '</b></div>' +
+    '<div class="co-msg" id="coMsg"></div>' +
+    '<button type="button" class="co-submit" id="coSubmit" onclick="submitCheckout(this)">Place order</button>';
+
+  const ship = document.getElementById('coShip');
+  const wrap = document.getElementById('coAddrWrap');
+  const syncShip = () => {
+    const v = ship ? ship.value : '';
+    wrap.style.display = (v === 'shipping' || v === 'blind_drop_ship') ? 'block' : 'none';
+  };
+  if (ship) { ship.onchange = syncShip; syncShip(); }
+}
+
+async function submitCheckout(btn) {
+  const msg = document.getElementById('coMsg');
+  const name = (document.getElementById('coName') || {}).value || '';
+  if (!name.trim()) { msg.textContent = 'Give the job a name.'; return; }
+
+  const ship = (document.getElementById('coShip') || {}).value || 'pick_up';
+  const addrEl = document.getElementById('coAddr');
+  if ((ship === 'shipping' || ship === 'blind_drop_ship') && !addrEl) {
+    msg.textContent = 'This client has no address on file — add one in the CRM, or choose pick up.';
+    return;
+  }
+
+  const shared = {
+    job_name: name.trim(),
+    notes: (document.getElementById('coNotes') || {}).value || '',
+    design_type: (document.getElementById('coArtwork') || {}).value || '',
+    shipping_method: ship,
+    address_id: addrEl ? Number(addrEl.value) : null,
+    needed_by: (document.getElementById('coDate') || {}).value || ''
+  };
+
+  btn.disabled = true;
+  msg.textContent = 'Placing…';
+  try {
+    const r = await fetch('/api/chatbot/order-cart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({
+        chat_id: currentChatId, client_id: chatClientId,
+        items: cartItems.map(it => Object.assign({ cart_id: it.id }, shared,
+          { needed_by: shared.needed_by || it.ready_date || '' }))
+      })
+    });
+    const j = await r.json();
+    if (!j.ok) {
+      btn.disabled = false;
+      msg.textContent = j.missing ? j.missing.join('; ') : (j.error || 'Could not place it');
+      return;
+    }
+    drawOrderDone(j);
+    loadCart();
+  } catch (e) {
+    btn.disabled = false;
+    msg.textContent = 'Could not place it.';
+  }
+}
+
+function drawOrderDone(j) {
+  const body = document.getElementById('calcPaneBody');
+  const hd = document.querySelector('.calc-pane-hd span');
+  if (hd) hd.textContent = 'Order placed';
+  const nums = j.e_numbers || [];
+  body.innerHTML =
+    '<div class="co-done">' +
+      '<div class="co-done-tick">\u2713</div>' +
+      '<div class="co-done-hd">' + j.count + ' item' + (j.count === 1 ? '' : 's') + ' ordered</div>' +
+      (nums.length
+        ? '<div class="co-enums">' + nums.map(n =>
+            '<a href="https://crm.axiomprint.com/estimates/' + esc(n.replace(/^E/, '')) +
+            '" target="_blank" rel="noopener">' + esc(n) + '</a>').join('') + '</div>'
+        : '<div class="co-hint">The order went through; estimate numbers were not returned.</div>') +
+      '<div class="co-hint">Open each in the CRM to attach artwork and confirm shipping.</div>' +
+    '</div>';
+}
+
+// Fold the card away rather than clearing it — the quote is still wanted, it is
+// just taking up room while you read the chat.
+function togglePaneFold() {
+  const pane = document.getElementById('calcPane');
+  const btn = document.getElementById('calcPaneFold');
+  if (!pane) return;
+  const folded = pane.classList.toggle('folded');
+  if (btn) {
+    btn.title = folded ? 'Expand' : 'Collapse';
+    btn.setAttribute('aria-label', btn.title);
+  }
+}
+
+function clearCalcPane() {
+  const body = document.getElementById('calcPaneBody');
+  if (body) {
+    body.innerHTML = '<div class="calc-pane-empty">Pick a product in the chat and its price card ' +
+      'opens here, where it stays while you keep talking.</div>';
+  }
+  const hd = document.querySelector('.calc-pane-hd span');
+  if (hd) hd.textContent = 'Calculator';
+}
+
+// Every quote shown in the pane this session, so a marker can bring one back and
+// a multi-quantity set can be drafted as one table.
+const paneQuotes = [];
+
+// A line in the conversation so the transcript still records what was quoted —
+// with the quantity, which is the whole point when several are on screen.
+function paneMarker(data, card) {
+  const d = document.createElement('div');
+  const idx = paneQuotes.length;
+  paneQuotes.push({ data: data || {}, card: card });
+
+  const qty = Number(data && data.quantity);
+  d.className = 'pq-moved';
+  d.innerHTML = '<b>' + esc((data && data.product) || 'Quote') + '</b>' +
+    (isFinite(qty) && qty ? ' <span class="pq-moved-q">Qty ' + qty.toLocaleString() + '</span>' : '') +
+    ((data && data.price) != null ? ' <span class="pq-moved-p">$' +
+      Number(data.price).toFixed(2) + '</span>' : '') +
+    '<button type="button">Show</button>';
+
+  d.querySelector('button').onclick = () => {
+    // Bring that exact quote back into the pane rather than just scrolling to
+    // whatever happens to be there.
+    const q = paneQuotes[idx];
+    if (!q) return;
+    showInPane(q.card, q.data.product);
+    document.querySelectorAll('.pq-moved.on').forEach(n => n.classList.remove('on'));
+    d.classList.add('on');
+  };
+  return d;
+}
+
+// Two or more quotes for the same product at different quantities are a price
+// ladder — the thing an AM actually pastes into an email.
+function quantityLadder() {
+  const byProduct = {};
+  paneQuotes.forEach(q => {
+    const id = q.data.product_id;
+    if (!id) return;
+    (byProduct[id] = byProduct[id] || []).push(q);
+  });
+  let best = null;
+  Object.keys(byProduct).forEach(id => {
+    const set = byProduct[id];
+    const qtys = {};
+    set.forEach(q => { qtys[Number(q.data.quantity)] = q; });
+    const rows = Object.keys(qtys).map(Number).filter(n => n > 0).sort((a, b) => a - b);
+    if (rows.length > 1 && (!best || rows.length > best.rows.length)) {
+      best = { rows: rows, quotes: qtys, sample: set[set.length - 1].data };
+    }
+  });
+  return best;
+}
+
+function renderCard(box, j) {
+  if (!cardHasContent(j)) return;
+  // Hold a steady width from the first card onward, so the bubble doesn't start
+  // narrow around a line of text and snap wider when the price card lands.
+  box.classList.add('has-cards');
+  box.querySelectorAll('.typing-dots').forEach(n => n.remove());
+  switch (j.type) {
+    case 'job_card':
+      box.appendChild(buildJobCard(j.data || {}));
+      break;
+    case 'price_quote': {
+      const card = buildPriceCard(Object.assign({ __replace: j.replace }, j.data || {}));
+      // Wide screens: the quote lives in the side pane so it stays put while the
+      // conversation carries on. Narrow screens have no room, so it stays inline.
+      if (usePane()) {
+        showInPane(card, (j.data || {}).product);
+        box.appendChild(paneMarker(j.data || {}, card));
+      } else {
+        box.appendChild(card);
+      }
+      break;
+    }
+    case 'client_card':
+      if (j.client && j.client.id) lastClientId = j.client.id;
+      box.appendChild(buildClientCard(j.client || {}));
+      break;
+    case 'client_picks':
+      box.appendChild(buildClientPicks(j.clients || [], { replace: j.replace }));
+      break;
+    case 'product_cards':
+      box.appendChild(buildProductCards(j.products || [], { calculating: j.calculating }));
+      break;
+    case 'turnaround':
+      box.appendChild(buildTurnaround(j.data || {}));
+      break;
+    case 'choice_picks':
+      box.appendChild(buildChoicePicks(j));
+      break;
+    case 'option_picks':
+      box.appendChild(buildOptionPicks(j));
+      break;
+    case 'product_picks':
+      box.appendChild(buildPicks(j.products || [],
+        { intent: j.intent, ask_about: j.ask_about, replace: j.replace }));
+      break;
+  }
+}
+
+async function sendMessage() {
+  if (isLoading) return;
+  const input = document.getElementById('input');
+  const text = input.value.trim();
+  // Attachments must never be able to block plain typing. If the module failed
+  // to load, sending text still works.
+  const hasFiles = (window.AxiomFiles && AxiomFiles.count()) || 0;
+  if (!text && !hasFiles) return;
+  const files = hasFiles ? AxiomFiles.take() : [];
+  input.value = ''; input.style.height = '40px';
+  document.getElementById('suggestions').style.display = 'none';
+  isLoading = true;
+  document.getElementById('sendBtn').disabled = true;
+
+  stickToBottom = true;        // sending is an explicit "take me to the bottom"
+  addUserRow(text || '(attachment)');
+
+  // Images and PDFs travel as native blocks; extracted text is folded into the
+  // message so the model reads a spreadsheet as content, not as a filename.
+  const usable = files.filter(f => f.kind !== 'error' && f.kind !== 'pending');
+  if (usable.length) {
+    const blocks = [];
+    usable.forEach(f => {
+      if (f.kind === 'image') {
+        blocks.push({ type: 'image', source: { type: 'base64', media_type: f.media_type, data: f.data } });
+      } else if (f.kind === 'pdf') {
+        blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: f.data } });
+      } else if (f.text) {
+        blocks.push({ type: 'text', text: '--- ' + (f.name || 'file') + ' ---\n' + f.text });
+      }
+    });
+    blocks.push({ type: 'text', text: text || 'See the attached.' });
+    chatHistory.push({ role: 'user', content: blocks });
+  } else {
+    chatHistory.push({ role: 'user', content: text });
+  }
+
+  // Ensure a chat exists; persist the user message
+  if (!currentChatId) {
+    try {
+      const r = await fetch('/api/chats/create', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ agent_slug: currentAgent, title: text.slice(0, 120) }) });
+      const j = await r.json();
+      if (j.success) {
+        currentChatId = j.chat_id;
+        // A client picked before the first message still belongs to this chat.
+        if (chatClientId) setChatClient(chatClientId, chatClientName);
+        loadChatList();
+      }
+    } catch (e) {}
+  }
+  if (currentChatId) {
+    fetch('/api/chats/message', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ chat_id: currentChatId, role: 'user', content: text }) });
+  }
+
+  const startTime = Date.now();
+
+  // AI row
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+  const timer = document.createElement('span'); timer.className = 'msg-timer'; timer.textContent = '0.0s';
+  const meta = document.createElement('div'); meta.className = 'msg-meta';
+  meta.appendChild(document.createTextNode('ChatBot'));
+  meta.appendChild(timer);
+  const stepsBox = document.createElement('div'); stepsBox.className = 'steps';
+  const bubble = document.createElement('div'); bubble.className = 'bubble ai';
+  bubble.innerHTML = '<div class="typing-dots"><span></span><span></span><span></span></div>';
+  const col = document.createElement('div'); col.className = 'msg-col';
+  col.appendChild(meta); col.appendChild(stepsBox); col.appendChild(bubble);
+  row.innerHTML = '<div class="msg-avatar ai">AI</div>';
+  row.appendChild(col);
+  document.getElementById('messagesInner').appendChild(row);
+  scrollDown();
+  const timerInt = setInterval(() => { timer.textContent = ((Date.now() - startTime) / 1000).toFixed(1) + 's'; }, 100);
+
+  let fullText = '';
+  const turnCards = [];        // cards drawn in this answer, saved alongside it
+  bubble.classList.add('streaming');
+  let answerStarted = false;
+
+  function ensureTextEl() {
+    let el = bubble.querySelector('.ai-text');
+    if (!el) { el = document.createElement('div'); el.className = 'ai-text'; bubble.insertBefore(el, bubble.firstChild); }
+    return el;
+  }
+
+  try {
+    // Abortable, so a later click can stop this one — the server watches the
+    // dropped connection and stops generating rather than finishing an answer
+    // nobody will read.
+    activeStream = new AbortController();
+    const res = await fetch('/api/chatbot/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ messages: chatHistory, chat_id: currentChatId }),
+      signal: activeStream.signal
+    });
+    // Say what actually went wrong. "Connection error" for a 401 or a 500 sends
+    // people looking at the network when the answer is in the response body.
+    if (!res.ok || !res.body) {
+      let detail = 'HTTP ' + res.status;
+      try {
+        const t = await res.text();
+        if (t) detail += ' — ' + t.slice(0, 300);
+      } catch (e) {}
+      if (res.status === 401 || res.status === 403) {
+        detail = 'Your session has expired. Sign out and back in.';
+      }
+      bubble.innerHTML = '<p style="color:#ef4444">' + esc(detail) + '</p>';
+      console.error('[Nova] chat request failed:', res.status, detail);
+      isLoading = false;
+      document.getElementById('sendBtn').disabled = false;
+      clearInterval(timerInt);
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const d = line.slice(6).trim();
+        if (d === '[DONE]' || d === '') continue;
+        let j; try { j = JSON.parse(d); } catch (e) { continue; }
+
+        if (j.type === 'error') {
+          bubble.innerHTML = '<p style="color:#ef4444">Error: ' + esc(j.error) + '</p>';
+        } else if (j.type === 'query') {
+          // A tool is running, so a card is coming — take the width now rather
+          // than reflowing when it arrives.
+          bubble.classList.add('has-cards');
+          bubble.querySelectorAll('.typing-dots').forEach(n => n.remove());
+          if (!stepsBox.firstChild) {
+            stepsBox.innerHTML = '<span class="action-spin"></span><span class="action-label"></span>';
+            stepsBox.classList.add('active');
+          }
+          const lbl = stepsBox.querySelector('.action-label');
+          if (lbl) { lbl.style.opacity = 0; setTimeout(() => { lbl.textContent = j.description; lbl.style.opacity = 1; }, 100); }
+          scrollDown();
+        } else if (CARD_TYPES.indexOf(j.type) > -1) {
+          // Draw it, and keep it so reopening this chat shows the same thing.
+          turnCards.push(j);
+          renderCard(bubble, j);
+          scrollDown();
+        } else if (j.type === 'client_pinned') {
+          chatClientId = j.client_id;
+          chatClientName = j.client_name || chatClientName;
+          renderClientBar();
+          if (window.AxiomCards && AxiomCards.repriceAllForClient) {
+            AxiomCards.repriceAllForClient(j.client_id, chatClientName);
+          }
+          repriceCart(j.client_id);
+        } else if (j.type === 'query_done') {
+          // keep spinner until next action / answer
+        } else if (j.type === 'timing') {
+          // (timing chips omitted for the conversational UI; total shown via the row timer)
+        } else if (j.type === 'text') {
+          fullText += j.text;
+          noteJobSize(fullText);      // "1) … 2) …" tells us how many items the job has
+          if (!answerStarted) {
+            // Remove ONLY the typing indicator. Wiping the whole bubble here would
+            // destroy anything already rendered into it (turnaround timeline,
+            // product picks, client chip) the moment the answer starts streaming.
+            bubble.querySelectorAll('.typing-dots').forEach(n => n.remove());
+            answerStarted = true;
+          }
+          ensureTextEl().innerHTML = renderMarkdown(fullText);
+          scrollDown();
+        }
+      }
+    }
+
+    // Cards are a complete answer, so "No response." must not appear under a list
+    // of product matches. But the cards live INSIDE this bubble — removing it
+    // takes them with it, which is exactly what wiped the answer. Only strip the
+    // chrome when the bubble is genuinely empty.
+    if (!answerStarted && !fullText) {
+      bubble.querySelectorAll('.typing-dots').forEach(n => n.remove());
+      const hasCards = bubble.children.length > 0;
+      if (hasCards) {
+        bubble.classList.add('bare');      // cards only: drop the bubble styling
+      } else {
+        bubble.innerHTML = '<p style="color:var(--muted)">No response.</p>';
+      }
+    }
+    if (fullText) chatHistory.push({ role: 'assistant', content: fullText });
+
+    // Persist assistant message + rating buttons
+    if (currentChatId && fullText) {
+      try {
+        const r = await fetch('/api/chats/message', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ chat_id: currentChatId, role: 'assistant', content: fullText, cards: turnCards }) });
+        const j = await r.json();
+        if (j.success && j.message_id) bubble.appendChild(buildRating(j.message_id, 0));
+      } catch (e) {}
+    }
+  } catch (e) {
+    // A deliberate cancellation is not a failure — say nothing.
+    if (e && (e.name === 'AbortError' || /aborted/i.test(e.message || ''))) {
+      isLoading = false;
+      return;
+    }
+    // Show the real exception — a silent "connection error" hid a null response
+    // body and cost an afternoon of looking in the wrong place.
+    console.error('[Nova] chat error:', e);
+    bubble.innerHTML = '<p style="color:#ef4444">Something went wrong: ' +
+      esc(e && e.message ? e.message : String(e)) + '</p>';
+  }
+
+  activeStream = null;
+  bubble.classList.remove('streaming');
+  clearInterval(timerInt);
+  timer.textContent = 'Answered in ' + ((Date.now() - startTime) / 1000).toFixed(1) + 's';
+  if (stepsBox.classList.contains('active')) { stepsBox.classList.add('done'); setTimeout(() => { stepsBox.style.display = 'none'; }, 400); }
+  isLoading = false;
+  document.getElementById('sendBtn').disabled = false;
+  input.focus();
+}
+
+
+
+
+
+// Clickable product choices, ranked. Only the best few show up front.
+// Visual production timeline — mirrors the turnaround calculator, in Axiom indigo.
+// Price from the real calculator engine. Shows every spec used and flags the
+// ones that were defaulted rather than asked for.
+// Clicking an E-number anywhere in a reply opens that job.
+document.addEventListener('click', (e) => {
+  const b = e.target.closest ? e.target.closest('.enum-link') : null;
+  if (!b) return;
+  e.preventDefault();
+  hideJobPeek();
+  ask('Show me job E' + b.getAttribute('data-e'));
+});
+
+// Hovering an E-number shows a quick preview: product, photo, status.
+// Results are cached, so hovering the same job repeatedly costs one request.
+const jobPeekCache = {};
+let peekBox = null, peekTimer = null, peekFor = null;
+
+function hideJobPeek() {
+  clearTimeout(peekTimer);
+  peekFor = null;
+  if (peekBox) { peekBox.remove(); peekBox = null; }
+}
+
+function placeJobPeek(el) {
+  if (!peekBox) return;
+  const r = el.getBoundingClientRect();
+  const w = 250;
+  const h = peekBox.offsetHeight || 150;
+  let left = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+  let top = r.top - h - 10;
+  if (top < 8) top = Math.min(r.bottom + 10, window.innerHeight - h - 8);
+  peekBox.style.left = left + 'px';
+  peekBox.style.top = top + 'px';
+}
+
+async function showJobPeek(el, eNum) {
+  peekFor = eNum;
+  let data = jobPeekCache[eNum];
+  if (!data) {
+    try {
+      const r = await fetch('/api/chatbot/job-peek?e=' + encodeURIComponent(eNum), {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      data = await r.json();
+      jobPeekCache[eNum] = data;
+    } catch (e) { return; }
+  }
+  // The pointer may have moved on while the request was in flight.
+  if (peekFor !== eNum || !data || !data.ok) return;
+  hideJobPeekBoxOnly();
+  peekBox = document.createElement('div');
+  peekBox.className = 'jp-peek jp-' + (data.stage || 'prepress');
+  peekBox.innerHTML =
+    (data.image ? '<img src="' + esc(data.image) + '" alt="" onerror="this.remove()">' : '') +
+    '<div class="jp-body">' +
+      '<div class="jp-prod">' + esc(data.product || data.name || 'Job') + '</div>' +
+      (data.name && data.product ? '<div class="jp-name">' + esc(data.name) + '</div>' : '') +
+      '<div class="jp-meta">' + esc([data.client, data.created].filter(Boolean).join(' · ')) +
+      (data.total != null ? ' · $' + Number(data.total).toFixed(2) : '') + '</div>' +
+      '<div class="jp-status">' + esc(data.status || '') + '</div>' +
+    '</div>';
+  document.body.appendChild(peekBox);
+  placeJobPeek(el);
+}
+
+function hideJobPeekBoxOnly() { if (peekBox) { peekBox.remove(); peekBox = null; } }
+
+document.addEventListener('mouseover', (e) => {
+  const b = e.target.closest ? e.target.closest('.enum-link') : null;
+  if (!b) return;
+  const eNum = b.getAttribute('data-e');
+  clearTimeout(peekTimer);
+  // Short delay so scanning past a number doesn't fire a request.
+  peekTimer = setTimeout(() => showJobPeek(b, eNum), 220);
+});
+document.addEventListener('mouseout', (e) => {
+  const b = e.target.closest ? e.target.closest('.enum-link') : null;
+  if (b) hideJobPeek();
+});
+window.addEventListener('scroll', hideJobPeek, true);
+
+
+
+
+
+
+
+
+
+
+// Open a product straight into an editable price card on the product's own
+// defaults. Deliberately NOT used by the "Price it" chip — that goes through the
+// model so specs already given in the chat are applied. Kept for a genuinely
+// context-free open.
+let lastClientId = null;
+async function openCalculator(productId, name) {
+  const inner = document.getElementById('messagesInner');
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+  row.innerHTML = '<div class="msg-avatar ai">AI</div><div class="msg-col">' +
+    '<div class="msg-meta">ChatBot</div><div class="bubble ai"></div></div>';
+  inner.appendChild(row);
+  const bubble = row.querySelector('.bubble');
+  bubble.innerHTML = '<div class="calc-loading">Opening the calculator for ' + esc(name) + '…</div>';
+  scrollDown();
+  try {
+    const r = await fetch('/api/chatbot/reprice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ product_id: productId, client_id: lastClientId })
+    });
+    const j = await r.json();
+    if (!j.ok) { bubble.innerHTML = '<div class="calc-loading">Could not price that product: ' + esc(j.error || '') + '</div>'; return; }
+    bubble.innerHTML = '';
+    bubble.appendChild(buildPriceCard(j));
+    scrollDown();
+  } catch (e) {
+    bubble.innerHTML = '<div class="calc-loading">Connection error.</div>';
+  }
+}
+
+
+
+
+function renderMarkdown(text) {
+  // Extract tables first
+  const lines = text.split('\n');
+  let html = '';
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    // Table detection: a line with | and next line is separator
+    if (line.includes('|') && i+1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i+1]) && lines[i+1].includes('-')) {
+      const header = line.split('|').map(c=>c.trim()).filter(c=>c.length);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].includes('|')) {
+        const cells = lines[i].split('|').map(c=>c.trim()).filter((c,idx,arr)=> !(idx===0&&c==='') && !(idx===arr.length-1&&c===''));
+        if (cells.length) rows.push(cells);
+        i++;
+      }
+      let t = '<div class="tbl-wrap"><table><thead><tr>';
+      header.forEach(h => t += '<th>' + inline(h) + '</th>');
+      t += '</tr></thead><tbody>';
+      rows.forEach(r => { t += '<tr>'; r.forEach(c => t += '<td>' + inline(c) + '</td>'); t += '</tr>'; });
+      t += '</tbody></table></div>';
+      html += t;
+      continue;
+    }
+    if (/^##\s+/.test(line)) { html += '<h2>' + inline(line.replace(/^##\s+/,'')) + '</h2>'; i++; continue; }
+    if (/^---+\s*$/.test(line)) { html += '<hr>'; i++; continue; }
+    if (/^[-*]\s+/.test(line)) {
+      let items = '';
+      while (i < lines.length && /^[-*]\s+/.test(lines[i])) { items += '<li>' + inline(lines[i].replace(/^[-*]\s+/,'')) + '</li>'; i++; }
+      html += '<ul>' + items + '</ul>';
+      continue;
+    }
+    if (line.trim() === '') { i++; continue; }
+    html += '<p>' + inline(line) + '</p>';
+    i++;
+  }
+  return html;
+}
+
+
+function inline(t) {
+  return t
+    // E-numbers identify jobs — make them openable straight from any answer.
+    .replace(/\bE(\d{6,9})\b/g, '<button type="button" class="enum-link" data-e="$1">E$1</button>')
+    // Images first — otherwise the link rule below would swallow ![alt](url)
+    .replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener" class="cb-img-link">' +
+      '<img class="cb-img" src="$2" alt="$1" loading="lazy"></a>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="prod-link">$1</a>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`(.*?)`/g, '<code>$1</code>');
+}
+
+// Cards are shared with the CRM widget — one implementation, in axiom-cards.js.
+if (window.AxiomFiles) AxiomFiles.init({ getToken: () => token, pendingEl: 'pendingBar' });
+
+AxiomCards.init({
+  getToken: () => token,
+  ask: (t) => ask(t),
+  scroll: () => scrollDown(),
+  pinClient: (id, name) => setChatClient(id, name),
+  addToCart: (item) => addToCart(item),
+  onCartAdd: () => {
+    renderPaneActions();
+    // Carting item 1 is the cue to start item 2 — the person has finished with
+    // this one and said so.
+    ask('Added that to the cart. Move on to the next item from my original message — state its own ' +
+        'specs, then search for it. If that was the last item, just say the cart is ready.');
+  }
+});
+const buildPriceCard    = (d) => AxiomCards.priceCard(d);
+const buildJobCard      = (d) => AxiomCards.jobCard(d);
+const buildClientCard   = (d) => AxiomCards.clientCard(d);
+const buildClientPicks  = (d, o) => AxiomCards.clientPicks(d, o);
+const buildOptionPicks  = (d) => AxiomCards.optionPicks(d);
+const buildChoicePicks  = (d) => AxiomCards.choicePicks(d);
+const buildTurnaround   = (d) => AxiomCards.turnaround(d);
+const buildProductCards = (d) => AxiomCards.productCards(d);
+const buildPicks        = (d, o) => AxiomCards.picks(d, o);
+const buildRating       = (id, r) => AxiomCards.rating(id, r);

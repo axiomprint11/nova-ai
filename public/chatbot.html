@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChatBot · Axiom AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/axiom-shared.css">
+</head>
+<body>
+
+<div id="app" style="display:none">
+  <div class="topbar">
+    <div class="topbar-left">
+      <a href="/" class="btn-ghost" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px" title="All agents">&larr;</a>
+      <div class="agent-picker">
+        <select id="agentSelect" class="agent-select" onchange="switchAgentPage(this.value)"></select>
+      </div>
+      <div class="status-pill">Connected</div>
+    </div>
+    <div class="topbar-right">
+      <div class="user-chip"><span class="avatar" id="avatar">N</span><span id="userLabel"></span></div>
+      <a class="btn-ghost" id="adminBtn" href="/admin" style="text-decoration:none;display:none">Admin</a>
+      <button class="btn-ghost" onclick="clearChat()">New chat</button>
+      <button class="btn-ghost" onclick="logout()">Sign out</button>
+    </div>
+  </div>
+
+  <div class="main-area">
+    <aside class="sidebar" id="sidebar">
+      <button class="new-chat-btn" onclick="clearChat()">+ New chat</button>
+      <div class="sidebar-label">Recent chats</div>
+      <div class="chat-list" id="chatList"></div>
+    </aside>
+    <div class="chat-area">
+      <!-- Pinned client: stays put while the chat scrolls, so the conversation
+           always shows who it is for. -->
+      <!-- Chat on the left, the calculator held open on the right. A quote you
+           can keep adjusting while you carry on typing beats one that scrolls
+           away up the conversation. -->
+      <div class="split" id="split">
+        <div class="chat-col">
+          <div class="messages" id="messages">
+            <div class="messages-inner" id="messagesInner"></div>
+          </div>
+
+        <div class="composer">
+          <div class="composer-inner">
+            <div class="suggestions" id="suggestions"></div>
+            <div class="pending-bar" id="pendingBar" style="display:none"></div>
+            <div class="input-shell">
+              <button class="mic-btn" id="attachBtn" type="button" title="Attach an image or document"
+                onclick="document.getElementById('fileInput').click()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                  stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+              </button>
+              <input type="file" id="fileInput" multiple style="display:none"
+                accept="image/*,.pdf,.xlsx,.xlsm,.xlsb,.xls,.ods,.csv,.tsv,.tab,.docx,.doc,.txt,.md,.xml,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.oasis.opendocument.spreadsheet,text/csv"
+                onchange="if(window.AxiomFiles)AxiomFiles.add(this.files); this.value='';">
+              <button class="mic-btn" id="micBtn" type="button" title="Dictate a message">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                  stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line></svg>
+              </button>
+              <textarea id="input" placeholder="Ask anything about AxiomPrint — paste a screenshot, attach a file, or use the mic" onkeydown="handleKey(event)" rows="1" oninput="autoResize(this)" onpaste="if(window.AxiomFiles)AxiomFiles.paste(event)"></textarea>
+              <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+              </button>
+            </div>
+            <div class="hint">ChatBot answers from our domain knowledge, team meeting notes, approved answers, and the live product database. Double-check any number before it goes to a client.</div>
+          </div>
+        </div>
+        </div>
+
+        <aside class="calc-pane" id="calcPane">
+          <!-- Who the job is for, and what is in the cart, sit with the pricing
+               rather than above the conversation. -->
+        <div class="client-bar" id="clientBar">
+          <button type="button" class="cbar-btn" id="cbarBtn" onclick="toggleClientPicker()">
+            <span class="cbar-dot" id="cbarDot"></span>
+            <span class="cbar-label" id="cbarLabel">Connect to client</span>
+            <span class="cbar-chev">▾</span>
+          </button>
+          <button type="button" class="cart-pill" id="cartPill" onclick="toggleCart()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle>
+              <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>
+            <span id="cartCount">0</span>
+            <b id="cartTotal"></b>
+          </button>
+          <div class="cart-pop" id="cartPop" style="display:none"></div>
+          <div class="cbar-pop" id="cbarPop" style="display:none">
+            <input type="text" id="cbarSearch" placeholder="Name, company or email" oninput="clientBarSearch()">
+            <div id="cbarResults"></div>
+            <button type="button" class="cbar-clear" onclick="setChatClient(null)">Disconnect</button>
+          </div>
+        </div>
+          <div class="calc-pane-hd">
+            <span>Calculator</span>
+            <button type="button" class="calc-fold" id="calcPaneFold"
+              onclick="togglePaneFold()" title="Collapse" aria-label="Collapse">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+          </div>
+          <div class="calc-pane-body" id="calcPaneBody">
+            <div class="calc-pane-empty">
+              Pick a product in the chat and its price card opens here, where it
+              stays while you keep talking.
+            </div>
+          </div>
+        </aside>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="/axiom-cards.js"></script>
+<script src="/axiom-files.js"></script>
+<script src="/axiom-speech.js"></script>
+<script src="/chatbot.js"></script>
+</body>
+</html>

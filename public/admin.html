@@ -1,0 +1,1487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Axiom AI · Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --indigo: #6366f1; --indigo-dark: #4f46e5; --indigo-light: #eef2ff; --violet: #8b5cf6;
+  --ink: #1e1b2e; --ink-soft: #4b4869; --muted: #8b88a3; --line: #ececf3;
+  --bg: #fafafe; --surface: #ffffff; --green: #10b981; --green-light: #ecfdf5;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--ink); height: 100vh; -webkit-font-smoothing: antialiased; }
+.gate { display: flex; align-items: center; justify-content: center; height: 100vh; flex-direction: column; gap: 14px; color: var(--ink-soft); }
+.gate a { color: var(--indigo); font-weight: 600; text-decoration: none; }
+#admin { display: none; flex-direction: column; height: 100vh; }
+.topbar { background: var(--surface); border-bottom: 1px solid var(--line); padding: 0 24px; height: 60px; display: flex; align-items: center; justify-content: space-between; }
+.topbar-logo { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
+.topbar-logo span { background: linear-gradient(135deg, var(--indigo), var(--violet)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.btn-ghost { background: transparent; border: 1px solid var(--line); padding: 7px 14px; font-size: 13px; color: var(--ink-soft); border-radius: 9px; cursor: pointer; font-family: inherit; font-weight: 500; text-decoration: none; }
+.btn-ghost:hover { background: var(--bg); border-color: var(--muted); }
+.main { flex: 1; display: flex; min-height: 0; }
+.nav { width: 200px; border-right: 1px solid var(--line); background: #fcfcfe; padding: 16px 12px; display: flex; flex-direction: column; gap: 4px; }
+.nav-item { text-align: left; padding: 10px 14px; border-radius: 9px; border: none; background: transparent; font-family: inherit; font-size: 14px; font-weight: 500; color: var(--ink-soft); cursor: pointer; }
+.nav-item:hover { background: var(--indigo-light); }
+.nav-item.active { background: var(--indigo-light); color: var(--indigo-dark); font-weight: 600; }
+.src-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; background: #e0e7ff; color: #3730a3; border: 1px solid #c7d2fe; border-radius: 4px; padding: 1px 5px; margin-left: 4px; }
+.content { flex: 1; overflow-y: auto; padding: 26px 32px; }
+.h2 { font-size: 20px; font-weight: 700; margin-bottom: 18px; }
+/* Domain Knowledge sub-tabs (Documents / Meetings) */
+.dk-tabs { display: flex; gap: 4px; border-bottom: 1px solid #e6e6f0; margin: -6px 0 18px; }
+.dk-tab { background: none; border: none; border-bottom: 2px solid transparent; padding: 9px 16px; font-family: inherit; font-size: 13.5px; font-weight: 600; color: var(--muted); cursor: pointer; margin-bottom: -1px; transition: all .15s; }
+.dk-tab:hover { color: #4f46e5; }
+.dk-tab.active { color: #4f46e5; border-bottom-color: #4f46e5; }
+input { padding: 11px 14px; border: 1.5px solid var(--line); border-radius: 10px; font-size: 14px; font-family: inherit; outline: none; background: #fcfcff; }
+input:focus { border-color: var(--indigo); box-shadow: 0 0 0 3px var(--indigo-light); }
+.add-row { display: flex; gap: 8px; margin-bottom: 8px; max-width: 480px; }
+.add-row input { flex: 1; }
+.btn-solid { background: linear-gradient(135deg, var(--indigo), var(--indigo-dark)); color: #fff; border: none; border-radius: 10px; padding: 0 16px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; font-family: inherit; }
+.feedback { font-size: 13px; min-height: 18px; margin-bottom: 12px; }
+.feedback.err { color: #ef4444; }
+.feedback.ok { color: var(--green); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+th { background: #f7f7fc; text-align: left; padding: 11px 14px; font-weight: 600; color: var(--ink-soft); border-bottom: 1px solid var(--line); }
+td { padding: 11px 14px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: none; }
+.hist-row { cursor: pointer; }
+.hist-row:hover td { background: #fafafe; }
+.badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 12px; }
+.badge.on { background: var(--green-light); color: #0f7a5a; }
+.badge.off { background: #fef2f2; color: #dc2626; }
+.toggle { position: relative; width: 38px; height: 22px; background: #d4d3e0; border-radius: 20px; cursor: pointer; transition: background 0.2s; border: none; }
+.toggle.on { background: var(--green); }
+.toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; background: #fff; border-radius: 50%; transition: left 0.2s; }
+.toggle.on::after { left: 18px; }
+.filters { display: flex; gap: 10px; margin-bottom: 16px; }
+.filters select { padding: 8px 12px; border: 1.5px solid var(--line); border-radius: 9px; font-family: inherit; font-size: 13px; background: #fff; cursor: pointer; outline: none; }
+.row-actions { text-align: right; }
+.avatar-img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; display: block; }
+.avatar-fallback { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, var(--indigo), var(--violet)); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+.hist-count { color: var(--indigo-dark); font-weight: 600; cursor: pointer; white-space: nowrap; }
+.hist-count:hover { text-decoration: underline; }
+.hist-sub { color: var(--muted); font-weight: 400; font-size: 11px; }
+.hist-avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; display: block; }
+.hist-avatar-fb { width: 30px; height: 30px; border-radius: 50%; background: linear-gradient(135deg, var(--indigo), var(--violet)); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; }
+.agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; max-width: 820px; }
+.agent-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+.agent-card-title { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+.agent-card-desc { font-size: 13px; color: var(--ink-soft); line-height: 1.5; margin-bottom: 14px; }
+.agent-soon { display: inline-block; font-size: 11px; font-weight: 600; color: var(--muted); background: var(--bg); border: 1px solid var(--line); padding: 3px 10px; border-radius: 12px; }
+.conn-list { display: flex; flex-direction: column; gap: 12px; max-width: 640px; }
+.conn-row { display: flex; align-items: center; gap: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+.conn-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.conn-dot.on { background: var(--green); box-shadow: 0 0 0 3px var(--green-light); }
+.conn-dot.off { background: var(--muted); }
+.conn-dot.err { background: #ef4444; box-shadow: 0 0 0 3px #fef2f2; }
+.conn-info { flex: 1; }
+.conn-name { font-size: 14px; font-weight: 600; }
+.conn-detail { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.conn-status { font-size: 12px; font-weight: 600; }
+.conn-status.on { color: #0f7a5a; }
+.conn-status.off { color: var(--muted); }
+.conn-status.err { color: #dc2626; }
+.conn-future { margin-top: 28px; max-width: 640px; }
+.conn-future-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 10px; }
+.conn-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.conn-chip { font-size: 13px; color: var(--ink-soft); background: var(--surface); border: 1px dashed var(--line); padding: 8px 14px; border-radius: 10px; }
+.agent-active { border-color: var(--indigo); box-shadow: 0 2px 12px rgba(99,102,241,0.12); }
+.agent-lock { display: inline-block; margin-left: 8px; font-size: 11px; color: var(--muted); }
+.agent-edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; max-width: 900px; margin-bottom: 8px; }
+.agent-field label { font-size: 13px; font-weight: 600; display: block; margin-bottom: 2px; }
+.agent-hint { font-size: 11.5px; color: var(--muted); margin-bottom: 6px; line-height: 1.4; }
+.agent-field textarea { width: 100%; padding: 10px 12px; border: 1.5px solid var(--line); border-radius: 10px; font-size: 13px; font-family: inherit; resize: vertical; outline: none; background: #fcfcff; line-height: 1.5; }
+.agent-field textarea:focus { border-color: var(--indigo); box-shadow: 0 0 0 3px var(--indigo-light); }
+.agent-sub { font-size: 12px; font-weight: 600; color: var(--ink-soft); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.03em; }
+.ex-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+.ex-card.ex-good { border-left: 3px solid var(--green); }
+.ex-card.ex-bad { border-left: 3px solid #ef4444; }
+.ex-q { font-size: 12.5px; font-weight: 600; margin-bottom: 4px; }
+.ex-a { font-size: 12px; color: var(--ink-soft); line-height: 1.45; margin-bottom: 8px; }
+.ex-actions { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.btn-mini { font-size: 11.5px; padding: 4px 10px; border: 1px solid var(--line); background: var(--bg); border-radius: 8px; cursor: pointer; font-family: inherit; font-weight: 500; color: var(--ink-soft); }
+.btn-mini:hover { border-color: var(--indigo); color: var(--indigo); }
+.btn-mini-ignore:hover { border-color: #ef4444; color: #ef4444; }
+@media (max-width: 700px) { .agent-edit-grid { grid-template-columns: 1fr; } }
+/* chat panel */
+.panel { position: fixed; inset: 0; background: rgba(30,27,46,0.5); display: none; align-items: center; justify-content: center; z-index: 200; }
+.panel-inner { background: var(--surface); border-radius: 16px; width: 720px; max-width: 92vw; max-height: 84vh; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(0,0,0,0.3); }
+.panel-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--line); font-weight: 600; font-size: 15px; }
+.panel-body { overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
+.panel-msg-who { font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+.panel-msg.user .panel-msg-body { background: var(--ink); color: #fff; padding: 10px 14px; border-radius: 12px; font-size: 13.5px; display: inline-block; }
+.panel-msg.assistant .panel-msg-body { background: #f7f7fc; padding: 12px 14px; border-radius: 12px; font-size: 13.5px; }
+.panel-msg.assistant .panel-msg-body strong { font-weight: 600; }
+.close { background: none; border: none; font-size: 24px; color: var(--muted); cursor: pointer; line-height: 1; }
+
+.jg-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 18px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #fafafd; }
+.jg-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.jg-form input, .jg-form select { padding: 8px 10px; border: 1.5px solid var(--line); border-radius: 8px; font-family: inherit; font-size: 13px; min-width: 190px; }
+.jg-form input:focus, .jg-form select:focus { border-color: var(--indigo); outline: none; }
+.jm-box { border: 1px solid #fde68a; background: #fffbeb; border-radius: 10px; padding: 12px 14px; margin-bottom: 18px; }
+.jm-hd { font-size: 13px; font-weight: 700; color: #92400e; }
+.jm-sub { font-size: 12px; color: #a16207; margin-bottom: 8px; }
+.jm-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 13px; border-top: 1px solid #fef3c7; }
+.jm-row b { min-width: 120px; }
+.jm-row span { color: #a16207; font-size: 12px; }
+.jm-row em { flex: 1; font-style: normal; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jm-row button { border: 1px solid var(--indigo); background: #fff; color: var(--indigo-dark); font-family: inherit; font-size: 11.5px; font-weight: 600; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+.jm-row button.ghost { border-color: var(--line); color: var(--muted); }
+button.mini { border: 1px solid var(--line); background: #fff; font-family: inherit; font-size: 11.5px; padding: 4px 9px; border-radius: 6px; cursor: pointer; }
+button.mini.danger { border-color: #fecaca; color: #b91c1c; }
+
+.pf-ok { padding: 10px 12px; border: 1px solid #bbf7d0; background: #f0fdf4; color: #166534; border-radius: 9px; margin-bottom: 12px; }
+.pf-pre { background: #fafafd; border: 1px solid var(--line); border-radius: 9px; padding: 14px; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; max-height: 65vh; overflow-y: auto; }
+.pf-bar { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; color: var(--muted); margin: 10px 0 6px; }
+
+.pf-head { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.pf-title { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); flex: 1; min-width: 280px; }
+.pf-title input { padding: 8px 10px; border: 1.5px solid var(--line); border-radius: 8px; font-family: inherit; font-size: 14px; font-weight: 600; }
+.pf-title input:focus { border-color: var(--indigo); outline: none; }
+.pf-msg { font-size: 12px; color: #166534; }
+.pf-cats { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.pf-cat { font-size: 11.5px; background: var(--indigo-light); color: var(--indigo-dark); border: 1px solid #ddd6fe; border-radius: 6px; padding: 3px 9px; }
+.dk-sub-hd { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 8px; }
+
+.hist-client { font-size: 12px; font-weight: 600; color: var(--indigo-dark); }
+
+.panel-train { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.panel-train button { border: 1px solid var(--line); background: #fff; font-family: inherit; font-size: 11.5px; font-weight: 600; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+.tr-good { border-color: #bbf7d0 !important; color: #166534; }
+.tr-good:hover:not(:disabled) { background: #f0fdf4; }
+.tr-bad { color: var(--muted); }
+.tr-bad:hover:not(:disabled) { border-color: #fecaca !important; color: #b91c1c; background: #fef2f2; }
+.panel-train button:disabled { opacity: .5; cursor: default; }
+.tr-msg { font-size: 11.5px; color: var(--muted); }
+.tr-msg.ok { color: #166534; font-weight: 600; }
+.tr-msg.err { color: #b91c1c; }
+
+.hist-when { white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<div id="gate" class="gate">
+  <div>Checking access…</div>
+</div>
+
+<div id="admin">
+  <div class="topbar">
+    <div class="topbar-logo">Axiom <span>AI</span> · Admin</div>
+    <a class="btn-ghost" href="/">&larr; Back to chat</a>
+  </div>
+  <div class="main">
+    <aside class="nav">
+      <button class="nav-item active" id="navHistory" onclick="tab('history')">History</button>
+      <button class="nav-item" id="navUsers" onclick="tab('users')">Users</button>
+      <button class="nav-item" id="navAgents" onclick="tab('agents')">Agents</button>
+      <button class="nav-item" id="navKnowledge" onclick="tab('knowledge')">Domain Knowledge</button>
+      <button class="nav-item" id="navConnections" onclick="tab('connections')">Connections</button>
+    </aside>
+    <div class="content">
+      <div id="tabUsers">
+        <h2 class="h2">Users</h2>
+        <div class="add-row">
+          <input type="text" id="newEmail" placeholder="Axiom username or email to add..." onkeydown="if(event.key==='Enter')addMember()" />
+          <button class="btn-solid" onclick="addMember()">Add member</button>
+        </div>
+        <div id="msg" class="feedback"></div>
+        <table>
+          <thead><tr><th></th><th>Name</th><th>Username</th><th>Email</th><th>Last login</th><th>History</th><th>Agents</th><th>Knowledge</th><th>Admin</th><th>Status</th><th></th></tr></thead>
+          <tbody id="usersBody"></tbody>
+        </table>
+      </div>
+      <div id="tabHistory" style="display:none">
+        <h2 class="h2">Chat History</h2>
+        <div class="filters">
+          <select id="fRating" onchange="loadHistory()">
+            <option value="all">All ratings</option>
+            <option value="up">👍 Liked</option>
+            <option value="down">👎 Disliked</option>
+          </select>
+          <select id="fUser" onchange="loadHistory()"><option value="">All users</option></select>
+          <select id="fAgent" onchange="loadHistory()"><option value="">All agents</option></select>
+          <select id="fClient" onchange="loadHistory()"><option value="">All clients</option></select>
+        </div>
+        <table>
+          <thead><tr><th>Date</th><th>User</th><th>Client</th><th>Agent</th><th>Summary</th><th>Rating</th></tr></thead>
+          <tbody id="histBody"></tbody>
+        </table>
+      </div>
+      <div id="tabAgents" style="display:none">
+        <div id="agentList">
+          <h2 class="h2">Agents</h2>
+          <p style="color:var(--ink-soft); font-size:14px; max-width:640px; line-height:1.6; margin-bottom:22px;">
+            Configure and train your AI agents — their role, rules, workflow steps, knowledge, and which past answers to learn from.
+          </p>
+          <div id="agentCards" class="agent-grid"></div>
+        </div>
+        <div id="agentEditor" style="display:none"></div>
+      </div>
+      <div id="tabKnowledge" style="display:none">
+        <h2 class="h2">Domain Knowledge</h2>
+
+        <div class="dk-tabs">
+          <button class="dk-tab active" id="dkTabDocs" onclick="dkSwitch('docs')">Documents</button>
+          <button class="dk-tab" id="dkTabMeetings" onclick="dkSwitch('meetings')">Meetings</button>
+          <button class="dk-tab" id="dkTabJargon" onclick="dkSwitch('jargon')">Print Jargon</button>
+          <button class="dk-tab" id="dkTabProfiles" onclick="dkSwitch('profiles')">Product Guides</button>
+        </div>
+
+        <div id="dkPanelDocs">
+          <p style="color:var(--ink-soft); font-size:14px; max-width:640px; line-height:1.6; margin-bottom:18px;">
+            Shared knowledge documents. Each doc can be shared with all agents or specific ones. Only admins can create or edit them.
+          </p>
+          <div class="add-row">
+            <button class="btn-solid" onclick="openKnowledgeEditor()">+ New document</button>
+          </div>
+          <div id="knowledgeMsg" class="feedback"></div>
+          <div id="knowledgeList" style="margin-top:14px;"></div>
+          <div id="knowledgeEditor" style="display:none"></div>
+        </div>
+
+        <div id="dkPanelProfiles" style="display:none">
+          <p style="color:var(--ink-soft); font-size:14px; max-width:700px; line-height:1.6; margin-bottom:16px;">
+            Teach the agent a whole product family at once. This reads the live catalogue and writes a
+            knowledge document listing every product, the fields they share, the common options for each,
+            and any places where two products name the same field differently.
+          </p>
+          <div class="jg-form">
+            <label>Product family<input type="text" id="pfTerm" placeholder="business card" style="min-width:260px"></label>
+            <button class="btn" onclick="genProfile()">Generate</button>
+          </div>
+          <div id="pfResult" style="font-size:13px;"></div>
+          <div id="pfSaved" style="margin-top:26px;"></div>
+
+        </div>
+
+        <div id="dkPanelJargon" style="display:none">
+          <p style="color:var(--ink-soft); font-size:14px; max-width:680px; line-height:1.6; margin-bottom:16px;">
+            What clients say, translated into the words our product data uses. Clients write
+            <b>&ldquo;14pt c1s&rdquo;</b>; the catalogue says <b>&ldquo;14PT Coated 1 Side&rdquo;</b>.
+            Add a term here and the chat understands it straight away &mdash; no deploy.
+          </p>
+          <div class="jg-form">
+            <input type="hidden" id="jgId">
+            <label>Client says<input type="text" id="jgTerm" placeholder="c1s"></label>
+            <label>We search for<input type="text" id="jgExpands" placeholder="coated 1 side"></label>
+            <label>Category
+              <select id="jgCat">
+                <option value="paper">Paper</option>
+                <option value="material">Material</option>
+                <option value="lamination">Lamination</option>
+                <option value="finish">Finish</option>
+                <option value="printing">Printing</option>
+                <option value="size">Size</option>
+                <option value="general">General</option>
+              </select>
+            </label>
+            <button class="btn" onclick="jargonSave()">Save term</button>
+          </div>
+          <div id="jargonBody"></div>
+        </div>
+
+        <div id="dkPanelMeetings" style="display:none">
+          <p style="color:var(--ink-soft); font-size:14px; max-width:640px; line-height:1.6; margin-bottom:18px;">
+            Team training and meeting notes. Paste the Meet AI summary straight in — no need to tidy it up.
+            These are global: every agent reads the active notes, so decisions made in training carry into how
+            the AI quotes and replies.
+          </p>
+          <div class="add-row">
+            <button class="btn-solid" onclick="openMeetingEditor()">+ New meeting note</button>
+          </div>
+          <div id="meetingMsg" class="feedback"></div>
+          <div id="meetingList" style="margin-top:14px;"></div>
+          <div id="meetingEditor" style="display:none"></div>
+        </div>
+      </div>
+      <div id="tabConnections" style="display:none">
+        <h2 class="h2">Connections</h2>
+        <p style="color:var(--ink-soft); font-size:14px; max-width:640px; line-height:1.6; margin-bottom:22px;">
+          Systems this assistant is connected to. Configuration and new integrations (e.g. Dialpad, Product Pages) will be added here.
+        </p>
+        <div id="connList" class="conn-list"></div>
+        <div class="conn-future">
+          <div class="conn-future-label">Available to add later</div>
+          <div class="conn-chips">
+            <span class="conn-chip">Dialpad</span>
+            <span class="conn-chip">Product Pages</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="panel" class="panel">
+    <div class="panel-inner">
+      <div class="panel-head"><span id="panelTitle">Chat</span><button class="close" onclick="document.getElementById('panel').style.display='none'">&times;</button></div>
+      <div id="panelBody" class="panel-body"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Per-user agent access modal -->
+<div id="agentAccessModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:1000;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:14px;width:380px;max-width:92vw;max-height:80vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+    <div style="padding:16px 20px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between;">
+      <div>
+        <div style="font-size:15px;font-weight:700;color:#1e1b2e;">Agent access</div>
+        <div id="agentAccessName" style="font-size:12px;color:var(--muted);margin-top:2px;"></div>
+      </div>
+      <button onclick="closeAgentAccess()" style="background:none;border:none;font-size:20px;color:#999;cursor:pointer;line-height:1;">&times;</button>
+    </div>
+    <div id="agentAccessBody" style="padding:14px 20px;"></div>
+    <div style="padding:12px 20px;border-top:1px solid #eee;display:flex;justify-content:flex-end;gap:8px;">
+      <button onclick="closeAgentAccess()" style="background:#f0f0f5;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;color:#555;cursor:pointer;">Cancel</button>
+      <button id="agentAccessSave" onclick="saveAgentAccess()" style="background:#6366f1;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:600;color:#fff;cursor:pointer;">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const token = localStorage.getItem('axiom_token');
+let currentAgentSlug = null;
+
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtDate(s){ if(!s) return ''; const d=new Date(s.replace(' ','T')+'Z'); return d.toLocaleDateString()+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}); }
+
+// "Today 5:35 PM" reads faster than "8/26/2026 5:35 PM" for anything recent,
+// which is most of what anyone scrolls through. Past a week the actual date is
+// more useful than counting days back.
+function fmtWhen(s){
+  if(!s) return '';
+  const d = new Date(s.replace(' ','T')+'Z');
+  if (isNaN(d)) return '';
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const midnight = new Date(); midnight.setHours(0,0,0,0);
+  const days = Math.floor((midnight - new Date(d).setHours(0,0,0,0)) / 86400000);
+  if (days < 0)  return d.toLocaleDateString() + ' ' + time;   // clock skew
+  if (days === 0) return 'Today ' + time;
+  if (days === 1) return 'Yesterday ' + time;
+  if (days < 7)   return days + ' days ago ' + time;
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + time;
+}
+function md(t){ return esc(t).replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>'); }
+// Build a full URL for an Axiom member image (stored on S3 as a filename).
+function photoUrl(p) {
+  if (!p) return '';
+  if (/^https?:\/\//.test(p)) return p;
+  return 'https://axiomprint.s3.us-west-1.amazonaws.com/MemberImages/' + String(p).replace(/^\/+/, '');
+}
+
+let IS_ADMIN = false;
+let MY_KNOWLEDGE_LEVEL = 'none';
+
+// Gate using /api/me (works for everyone). Admins get the full panel; regular
+// members get a limited view: Agents (read), their own History, and Domain
+// Knowledge (if they have access).
+async function checkAccess() {
+  if (!token) { showGate('You are not signed in. <a href="/">Go to login</a>'); return; }
+  try {
+    const res = await fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + token } });
+    if (res.status === 401) { showGate('Your session expired. <a href="/">Sign in again</a>'); return; }
+    const me = await res.json();
+    if (!me.success) { showGate('Could not load your access. <a href="/">Back</a>'); return; }
+    IS_ADMIN = !!me.is_admin;
+    MY_KNOWLEDGE_LEVEL = me.knowledge_access || 'none';
+    document.getElementById('gate').style.display = 'none';
+    document.getElementById('admin').style.display = 'flex';
+    applyRoleVisibility();
+    // History is visible to every role (members see only their own chats), so it
+    // is the landing tab for everyone — reviewing conversations is the main reason
+    // people open Admin.
+    tab('history');
+  } catch (e) { showGate('Connection error. <a href="/">Back</a>'); }
+}
+
+// Show/hide tabs based on role.
+function applyRoleVisibility() {
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  if (IS_ADMIN) {
+    ['navUsers','navHistory','navAgents','navKnowledge','navConnections'].forEach(id => show(id, true));
+  } else {
+    // Regular member: no Users, no Connections. Agents (view) + History (own) always.
+    show('navUsers', false);
+    show('navConnections', false);
+    show('navHistory', true);
+    show('navAgents', true);
+    show('navKnowledge', MY_KNOWLEDGE_LEVEL !== 'none');
+  }
+}
+function showGate(html) { document.getElementById('gate').innerHTML = '<div>' + html + '</div>'; }
+
+function tab(t) {
+  document.getElementById('tabUsers').style.display = t === 'users' ? 'block' : 'none';
+  document.getElementById('tabHistory').style.display = t === 'history' ? 'block' : 'none';
+  document.getElementById('tabAgents').style.display = t === 'agents' ? 'block' : 'none';
+  document.getElementById('tabKnowledge').style.display = t === 'knowledge' ? 'block' : 'none';
+  document.getElementById('tabConnections').style.display = t === 'connections' ? 'block' : 'none';
+  document.getElementById('navUsers').classList.toggle('active', t === 'users');
+  document.getElementById('navHistory').classList.toggle('active', t === 'history');
+  document.getElementById('navAgents').classList.toggle('active', t === 'agents');
+  document.getElementById('navKnowledge').classList.toggle('active', t === 'knowledge');
+  document.getElementById('navConnections').classList.toggle('active', t === 'connections');
+  if (t === 'users') loadUsers();
+  else if (t === 'history') {
+    loadHistoryAgents();
+    loadHistoryClients();
+    loadHistoryUsers().then(() => {
+      // If we arrived by clicking a user's History count, apply that filter now.
+      if (pendingHistoryUser !== null) {
+        const sel = document.getElementById('fUser');
+        if (sel) sel.value = pendingHistoryUser;
+        pendingHistoryUser = null;
+      }
+      loadHistory();
+    });
+  }
+  else if (t === 'connections') loadConnections();
+  else if (t === 'agents') loadAgents();
+  else if (t === 'knowledge') dkSwitch(dkActiveTab);
+}
+
+// ===== Agents =====
+async function loadAgents() {
+  document.getElementById('agentList').style.display = 'block';
+  document.getElementById('agentEditor').style.display = 'none';
+  const box = document.getElementById('agentCards');
+  box.innerHTML = '<div style="color:var(--muted);font-size:13px">Loading...</div>';
+  const url = IS_ADMIN ? '/api/admin/agents' : '/api/agents';
+  try {
+    const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await res.json();
+    if (!j.success) { box.innerHTML = '<div class="feedback err">' + (j.error||'Error') + '</div>'; return; }
+    box.innerHTML = '';
+    (j.agents || []).forEach(a => {
+      const active = a.status === 'active';
+      const card = document.createElement('div');
+      card.className = 'agent-card' + (active ? ' agent-active' : '');
+      card.innerHTML =
+        '<div class="agent-card-title">' + esc(a.name) + '</div>' +
+        '<div class="agent-card-desc">' + esc(a.description || '') + '</div>' +
+        (active
+          ? (IS_ADMIN
+              ? '<button class="btn-solid" onclick="openAgent(\'' + a.slug + '\')">Train / Edit</button>'
+              : '<span class="agent-soon" style="background:#eef;color:#4f46e5;">Available</span>')
+          : '<span class="agent-soon">Coming soon</span>') +
+        (a.access === 'restricted' ? '<span class="agent-lock" title="Admin & selected users only">🔒 Restricted</span>' : '');
+      box.appendChild(card);
+    });
+  } catch (e) { box.innerHTML = '<div class="feedback err">Connection error</div>'; }
+}
+
+async function openAgent(slug) {
+  currentAgentSlug = slug;
+  const ed = document.getElementById('agentEditor');
+  document.getElementById('agentList').style.display = 'none';
+  ed.style.display = 'block';
+  ed.innerHTML = '<div style="color:var(--muted);font-size:13px">Loading...</div>';
+  try {
+    const res = await fetch('/api/admin/agents/' + slug, { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await res.json();
+    if (!j.success) { ed.innerHTML = '<div class="feedback err">' + (j.error||'Error') + '</div>'; return; }
+    const a = j.agent;
+    ed.innerHTML =
+      '<button class="btn-ghost" onclick="loadAgents()">&larr; All agents</button>' +
+      '<h2 class="h2" style="margin-top:14px">' + esc(a.name) + '</h2>' +
+      '<div class="agent-edit-grid">' +
+        fieldBlock('Role', 'agentRole', a.role, 'Who this agent is and its tone. E.g. "You are Order Assist, a fast, friendly print-order specialist..."') +
+        fieldBlock('Rules', 'agentRules', a.rules, 'Hard rules the agent must follow. One per line.') +
+        fieldBlock('Workflow Steps', 'agentWorkflow', a.workflow, 'Ordered steps for each request. E.g. 1) Identify client 2) Pull history 3) Quote') +
+        fieldBlock('Knowledge', 'agentKnowledge', a.knowledge, 'Extra business knowledge, product notes, pricing nuances.') +
+      '</div>' +
+      '<div style="margin:10px 0 24px"><button class="btn-solid" onclick="saveAgent(\'' + slug + '\')">Save training</button> <span id="agentSaveMsg" class="feedback" style="display:inline; margin-left:10px"></span></div>' +
+      '<h3 style="font-size:16px;font-weight:600;margin-bottom:6px">Learning from ratings</h3>' +
+      '<p style="color:var(--ink-soft);font-size:13px;max-width:640px;margin-bottom:14px">Approve good answers for the agent to emulate, and bad ones to avoid. Approved examples are included in the agent\'s context.</p>' +
+      '<div style="display:flex;gap:24px;flex-wrap:wrap">' +
+        '<div style="flex:1;min-width:300px"><div class="agent-sub">Candidates (rated, not yet approved)</div><div id="agentCandidates"></div></div>' +
+        '<div style="flex:1;min-width:300px"><div class="agent-sub">Approved examples</div><div id="agentExamples"></div></div>' +
+      '</div>';
+    renderExamples(j.examples);
+    loadCandidates(slug);
+  } catch (e) { ed.innerHTML = '<div class="feedback err">Connection error</div>'; }
+}
+
+function fieldBlock(label, id, val, hint) {
+  return '<div class="agent-field"><label>' + label + '</label>' +
+    '<div class="agent-hint">' + esc(hint) + '</div>' +
+    '<textarea id="' + id + '" rows="5">' + esc(val || '') + '</textarea></div>';
+}
+
+async function saveAgent(slug) {
+  const msg = document.getElementById('agentSaveMsg');
+  msg.className = 'feedback'; msg.textContent = 'Saving...';
+  try {
+    const res = await fetch('/api/admin/agents/' + slug, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({
+        role: document.getElementById('agentRole').value,
+        rules: document.getElementById('agentRules').value,
+        workflow: document.getElementById('agentWorkflow').value,
+        knowledge: document.getElementById('agentKnowledge').value
+      })
+    });
+    const j = await res.json();
+    if (j.success) { msg.className = 'feedback ok'; msg.textContent = 'Saved. New chats use this immediately.'; }
+    else { msg.className = 'feedback err'; msg.textContent = j.error || 'Error'; }
+  } catch (e) { msg.className = 'feedback err'; msg.textContent = 'Connection error'; }
+}
+
+async function loadCandidates(slug) {
+  const box = document.getElementById('agentCandidates');
+  box.innerHTML = '<div style="color:var(--muted);font-size:12px">Loading...</div>';
+  try {
+    const res = await fetch('/api/admin/agents/' + slug + '/candidates', { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await res.json();
+    if (!j.success || !j.candidates.length) { box.innerHTML = '<div style="color:var(--muted);font-size:12px">No new rated answers.</div>'; return; }
+    box.innerHTML = '';
+    j.candidates.forEach(c => {
+      const up = c.rating === 1;
+      const div = document.createElement('div');
+      div.className = 'ex-card';
+      div.innerHTML =
+        '<div class="ex-q">' + esc((c.question||'').slice(0,120)) + '</div>' +
+        '<div class="ex-a">' + esc((c.answer||'').slice(0,160)) + '...</div>' +
+        '<div class="ex-actions">' + (up ? '👍' : '👎') +
+        ' <button class="btn-mini" onclick="approveExample(\'' + slug + '\',' + c.id + ',\'' + (up?'good':'bad') + '\', this)">Approve as ' + (up?'good':'bad') + '</button>' +
+        ' <button class="btn-mini btn-mini-ignore" onclick="ignoreCandidate(\'' + slug + '\',' + c.id + ', this)">Ignore</button></div>';
+      div.dataset.q = c.question || ''; div.dataset.a = c.answer || '';
+      box.appendChild(div);
+    });
+  } catch (e) { box.innerHTML = '<div class="feedback err">Error</div>'; }
+}
+
+async function approveExample(slug, msgId, kind, btn) {
+  const card = btn.closest('.ex-card');
+  await fetch('/api/admin/agents/' + slug + '/examples', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify({ kind, question: card.dataset.q, answer: card.dataset.a, source_message_id: msgId })
+  });
+  openAgent(slug); // refresh
+}
+
+async function ignoreCandidate(slug, msgId, btn) {
+  const card = btn.closest('.ex-card');
+  await fetch('/api/admin/agents/' + slug + '/candidates/dismiss', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify({ message_id: msgId })
+  });
+  card.remove(); // drop it from the list immediately
+}
+
+function renderExamples(examples) {
+  const box = document.getElementById('agentExamples');
+  if (!examples || !examples.length) { box.innerHTML = '<div style="color:var(--muted);font-size:12px">None approved yet.</div>'; return; }
+  box.innerHTML = '';
+  examples.forEach(ex => {
+    const div = document.createElement('div');
+    div.className = 'ex-card ' + (ex.kind === 'good' ? 'ex-good' : 'ex-bad');
+    div.innerHTML =
+      '<div class="ex-q">' + (ex.kind === 'good' ? '👍 ' : '👎 ') + esc((ex.question||'').slice(0,120)) + '</div>' +
+      '<div class="ex-a">' + esc((ex.answer||'').slice(0,160)) + '...</div>' +
+      '<div class="ex-actions"><button class="btn-mini" onclick="deleteExample(\'' + currentAgentSlug + '\',' + ex.id + ')">Remove</button></div>';
+    box.appendChild(div);
+  });
+}
+async function deleteExample(slug, id) {
+  await fetch('/api/admin/agents/' + slug + '/examples/delete', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify({ id })
+  });
+  openAgent(slug);
+}
+
+async function loadConnections() {
+  const box = document.getElementById('connList');
+  box.innerHTML = '<div style="color:var(--muted);font-size:13px">Loading...</div>';
+  try {
+    const res = await fetch('/api/admin/connections', { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await res.json();
+    if (!j.success) { box.innerHTML = '<div class="feedback err">' + (j.error||'Error') + '</div>'; return; }
+    box.innerHTML = '';
+    j.connections.forEach(c => {
+      const dotClass = c.status === 'connected' ? 'on' : (c.status === 'error' ? 'err' : 'off');
+      const statusText = c.status === 'connected' ? 'Connected' : (c.status === 'error' ? 'Error' : 'Not connected');
+      const row = document.createElement('div');
+      row.className = 'conn-row';
+      row.innerHTML =
+        '<span class="conn-dot ' + dotClass + '"></span>' +
+        '<div class="conn-info"><div class="conn-name">' + esc(c.name) + '</div>' +
+        '<div class="conn-detail">' + esc(c.detail || '') + '</div></div>' +
+        '<span class="conn-status ' + dotClass + '">' + statusText + '</span>';
+      box.appendChild(row);
+    });
+  } catch (e) { box.innerHTML = '<div class="feedback err">Connection error</div>'; }
+}
+
+async function loadUsers() {
+  const tb = document.getElementById('usersBody');
+  tb.innerHTML = '<tr><td colspan="11" style="color:var(--muted)">Loading...</td></tr>';
+  try {
+    const res = await fetch('/api/admin/users-activity', { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await res.json();
+    if (!j.success) { tb.innerHTML = '<tr><td colspan="11" class="feedback err">' + (j.error||'Error') + '</td></tr>'; return; }
+    tb.innerHTML = '';
+    if (!j.members.length) { tb.innerHTML = '<tr><td colspan="11" style="color:var(--muted)">No members yet.</td></tr>'; return; }
+    j.members.forEach(m => {
+      const tr = document.createElement('tr');
+      const initial = (m.display_name || m.email || '?').charAt(0).toUpperCase();
+      const avatar = m.photo
+        ? '<img src="' + esc(photoUrl(m.photo)) + '" class="avatar-img" onerror="this.outerHTML=\'<span class=&quot;avatar-fallback&quot;>' + initial + '</span>\'">'
+        : '<span class="avatar-fallback">' + initial + '</span>';
+      const hist = '<span class="hist-count" title="Last 30 days: ' + (m.chats30||0) + ' · Total: ' + (m.chatsTotal||0) + '" onclick="event.stopPropagation(); goToUserHistory(\'' + (m.user_key||'').replace(/'/g,"\\'") + '\')">History: ' + (m.chats7||0) + ' <span class="hist-sub">(last 7 days)</span></span>';
+      const allowed = m.allowed_agents || [];
+      const agentLabel = allowed.length ? (allowed.length + ' selected') : 'All agents';
+      const agentCell = '<td><button class="agents-btn" onclick="openAgentAccess(' + m.id + ', \'' + esc(m.display_name || m.email).replace(/'/g, "\\'") + '\')" style="background:#eef;border:1px solid #c7c7f5;color:#4f46e5;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">⚙ ' + agentLabel + '</button></td>';
+      const kacc = m.knowledge_access || 'none';
+      const knowCell = '<td><select onchange="setKnowledgeAccess(' + m.id + ', this.value)" style="border:1px solid #ddd;border-radius:6px;padding:4px 6px;font-size:12px;cursor:pointer;">' +
+        '<option value="none"' + (kacc==='none'?' selected':'') + '>No access</option>' +
+        '<option value="own"' + (kacc==='own'?' selected':'') + '>Own area</option>' +
+        '<option value="all"' + (kacc==='all'?' selected':'') + '>See all</option>' +
+        '</select></td>';
+      const adminCell = '<td><label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#555;">' +
+        '<input type="checkbox" ' + (m.is_admin ? 'checked' : '') + ' onchange="setMemberAdmin(' + m.id + ', this.checked)" style="width:15px;height:15px;cursor:pointer;"> Admin</label></td>';
+      tr.innerHTML =
+        '<td>' + avatar + '</td>' +
+        '<td>' + esc(m.display_name || '-') + '</td>' +
+        '<td>' + esc(m.username || '-') + '</td>' +
+        '<td>' + esc(m.email) + '</td>' +
+        '<td>' + (m.last_login ? fmtDate(m.last_login) : '<span style="color:var(--muted)">never</span>') + '</td>' +
+        '<td>' + hist + '</td>' +
+        agentCell +
+        knowCell +
+        adminCell +
+        '<td>' + (m.enabled ? '<span class="badge on">Enabled</span>' : '<span class="badge off">Disabled</span>') + '</td>' +
+        '<td class="row-actions"><button class="toggle ' + (m.enabled?'on':'') + '" onclick="toggleMember(' + m.id + ',' + (m.enabled?0:1) + ')"></button></td>';
+      tb.appendChild(tr);
+    });
+  } catch (e) { tb.innerHTML = '<tr><td colspan="11" class="feedback err">Connection error</td></tr>'; }
+}
+
+async function addMember() {
+  const email = document.getElementById('newEmail').value.trim();
+  const msg = document.getElementById('msg');
+  if (!email) return;
+  msg.className = 'feedback'; msg.textContent = 'Adding...';
+  try {
+    const res = await fetch('/api/admin/members/add', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ email })
+    });
+    const j = await res.json();
+    if (!j.success) { msg.className = 'feedback err'; msg.textContent = j.error; return; }
+    msg.className = 'feedback ok'; msg.textContent = 'Member added and enabled.';
+    document.getElementById('newEmail').value = '';
+    loadUsers();
+  } catch (e) { msg.className = 'feedback err'; msg.textContent = 'Connection error'; }
+}
+
+async function toggleMember(id, enabled) {
+  await fetch('/api/admin/members/toggle', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify({ id, enabled })
+  });
+  loadUsers();
+}
+
+async function setKnowledgeAccess(id, level) {
+  await fetch('/api/admin/members/knowledge-access', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify({ id, level })
+  });
+}
+
+async function setMemberAdmin(id, makeAdmin) {
+  await fetch('/api/admin/members/set-admin', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify({ id, is_admin: makeAdmin })
+  });
+}
+
+// ===== Per-user agent access =====
+let agentAccessMemberId = null;
+async function openAgentAccess(memberId, name) {
+  agentAccessMemberId = memberId;
+  const modal = document.getElementById('agentAccessModal');
+  const body = document.getElementById('agentAccessBody');
+  document.getElementById('agentAccessName').textContent = name || '';
+  body.innerHTML = '<div style="color:var(--muted);font-size:13px;">Loading…</div>';
+  modal.style.display = 'flex';
+  try {
+    const res = await fetch('/api/admin/members/' + memberId + '/agents', { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await res.json();
+    if (!j.success) { body.innerHTML = '<div class="feedback err">' + (j.error || 'Error') + '</div>'; return; }
+    const allowedSet = new Set(j.allowed || []);
+    const alwaysOn = new Set(j.alwaysOn || ['chatbot']);
+    const rows = (j.allAgents || []).map(a => {
+      const locked = alwaysOn.has(a.slug);
+      // ChatBot is available to everyone — show it checked and locked so it can't
+      // be switched off by accident.
+      const checked = (locked || j.default_all || allowedSet.has(a.slug)) ? 'checked' : '';
+      const statusTag = a.status === 'active' ? '' : ' <span style="font-size:11px;color:var(--muted);">(' + esc(a.status.replace('_',' ')) + ')</span>';
+      const lockTag = locked ? ' <span style="font-size:10.5px;font-weight:700;text-transform:uppercase;background:#dcfce7;border:1px solid #bbf7d0;color:#166534;border-radius:4px;padding:1px 6px;margin-left:4px;">Always on</span>' : '';
+      return '<label style="display:flex;align-items:center;gap:10px;padding:8px 4px;' + (locked ? '' : 'cursor:pointer;') + 'border-bottom:1px solid #f0f0f5;">' +
+        '<input type="checkbox" class="agent-access-cb" value="' + esc(a.slug) + '" ' + checked +
+        (locked ? ' disabled data-always="1"' : '') +
+        ' style="width:16px;height:16px;' + (locked ? 'cursor:not-allowed;' : 'cursor:pointer;') + '"></input>' +
+        '<span style="font-size:14px;color:' + (locked ? '#555' : '#222') + ';">' + esc(a.name) + statusTag + lockTag + '</span></label>';
+    }).join('');
+    body.innerHTML = rows +
+      '<div style="font-size:12px;color:var(--muted);margin-top:10px;">Check the agents this user can access. If none are checked, the user gets all agents by default. ChatBot is always available to everyone.</div>';
+  } catch (e) { body.innerHTML = '<div class="feedback err">Connection error</div>'; }
+}
+function closeAgentAccess() {
+  document.getElementById('agentAccessModal').style.display = 'none';
+  agentAccessMemberId = null;
+}
+async function saveAgentAccess() {
+  if (!agentAccessMemberId) return;
+  const checks = Array.from(document.querySelectorAll('.agent-access-cb'));
+  const allChecked = checks.every(c => c.checked);
+  // If every box is checked, treat as default-allow (save empty list).
+  let slugs = allChecked ? [] : checks.filter(c => c.checked).map(c => c.value);
+  // Always-on agents (ChatBot) must survive any allow-list.
+  if (slugs.length) {
+    checks.filter(c => c.dataset.always === '1').forEach(c => {
+      if (slugs.indexOf(c.value) === -1) slugs.push(c.value);
+    });
+  }
+  const btn = document.getElementById('agentAccessSave');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/admin/members/agents', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ id: agentAccessMemberId, slugs })
+    });
+    const j = await res.json();
+    btn.disabled = false; btn.textContent = 'Save';
+    if (!j.success) { return; }
+    closeAgentAccess();
+    loadUsers();
+  } catch (e) { btn.disabled = false; btn.textContent = 'Save'; }
+}
+
+// ===== Domain Knowledge: Documents / Meetings tabs =====
+let dkActiveTab = 'docs';
+function dkSwitch(which) {
+  dkActiveTab = which;
+  const panels = { docs: 'dkPanelDocs', meetings: 'dkPanelMeetings', jargon: 'dkPanelJargon',
+                   profiles: 'dkPanelProfiles' };
+  const tabs   = { docs: 'dkTabDocs',   meetings: 'dkTabMeetings',   jargon: 'dkTabJargon',
+                   profiles: 'dkTabProfiles' };
+  Object.keys(panels).forEach(k => {
+    const p = document.getElementById(panels[k]);
+    if (p) p.style.display = (k === which) ? 'block' : 'none';
+    const t = document.getElementById(tabs[k]);
+    if (t) t.classList.toggle('active', k === which);
+  });
+  if (which === 'docs') loadKnowledge();
+  else if (which === 'meetings') loadMeetings();
+  else if (which === 'profiles') loadSavedGuides();
+  else loadJargon();
+}
+
+// Build a knowledge doc describing a whole product family.
+function copyProfile() {
+  const el = document.getElementById('pfBody');
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent).catch(() => {});
+}
+
+// Save the guide currently on screen, under whatever title you have given it.
+async function saveProfile() {
+  const title = document.getElementById('pfTitle').value.trim();
+  const body = document.getElementById('pfBody').textContent;
+  const family = document.getElementById('pfFamily').value;
+  const msg = document.getElementById('pfSaveMsg');
+  if (!title) { msg.textContent = 'Give it a title first.'; return; }
+  msg.textContent = 'Saving…';
+  try {
+    const r = await fetch('/api/admin/product-guides', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ title, body, family })
+    });
+    const j = await r.json();
+    msg.textContent = j.success ? (j.replaced ? 'Replaced the earlier guide.' : 'Saved.') : (j.error || 'Failed');
+    if (j.success) loadSavedGuides();
+  } catch (e) { msg.textContent = 'Could not save.'; }
+}
+
+
+
+
+
+
+
+async function loadSavedGuides() {
+  const box = document.getElementById('pfSaved');
+  try {
+    const r = await fetch('/api/admin/product-guides', { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await r.json();
+    if (!j.success || !(j.guides || []).length) {
+      box.innerHTML = '<div style="color:var(--muted);font-size:13px">No saved guides yet.</div>';
+      return;
+    }
+    let h = '<div class="dk-sub-hd">Saved guides</div><table><thead><tr>' +
+      '<th>Title</th><th>Family</th><th>Size</th><th>Updated</th><th></th></tr></thead><tbody>';
+    j.guides.forEach(g => {
+      h += '<tr><td><b>' + esc(g.title) + '</b></td><td>' + esc(g.family || '') + '</td>' +
+        '<td>' + Number(g.chars || 0).toLocaleString() + '</td>' +
+        '<td>' + esc((g.updated_at || '').slice(0, 10)) + '</td>' +
+        '<td style="text-align:right;white-space:nowrap">' +
+        '<button class="mini" onclick="viewGuide(' + g.id + ')">View</button> ' +
+        '<button class="mini danger" onclick="deleteGuide(' + g.id + ')">Delete</button></td></tr>';
+    });
+    box.innerHTML = h + '</tbody></table>';
+  } catch (e) { box.innerHTML = ''; }
+}
+
+async function viewGuide(id) {
+  const r = await fetch('/api/admin/product-guides/' + id, { headers: { 'Authorization': 'Bearer ' + token } });
+  const j = await r.json();
+  if (!j.success) return;
+  showProfile({ title: j.guide.title, family: j.guide.family, body: j.guide.body,
+                chars: (j.guide.body || '').length }, true);
+  window.scrollTo(0, 0);
+}
+
+async function deleteGuide(id) {
+  if (!confirm('Delete this guide? The agent will stop using it.')) return;
+  await fetch('/api/admin/product-guides/' + id, { method: 'DELETE',
+    headers: { 'Authorization': 'Bearer ' + token } });
+  loadSavedGuides();
+}
+
+// Render a generated or saved guide with an editable title and a Save button.
+function showProfile(j, saved) {
+  const out = document.getElementById('pfResult');
+  const cats = (j.categories || []).map(c =>
+    '<span class="pf-cat">' + esc(c.name) + ' <b>' + c.products + '</b></span>').join('');
+  out.innerHTML =
+    '<div class="pf-head">' +
+      '<label class="pf-title">Title<input type="text" id="pfTitle" value="' + esc(j.title || '') + '"></label>' +
+      '<input type="hidden" id="pfFamily" value="' + esc(j.family || '') + '">' +
+      '<button class="btn" onclick="saveProfile()">' + (saved ? 'Save changes' : 'Save guide') + '</button>' +
+      '<span id="pfSaveMsg" class="pf-msg"></span>' +
+    '</div>' +
+    (cats ? '<div class="pf-cats">' + cats + '</div>' : '') +
+    '<div class="pf-bar">' + Number(j.chars || 0).toLocaleString() + ' characters' +
+      (j.variants ? ' · <b style="color:#b45309">' + j.variants + ' naming inconsistencies</b>' : '') +
+      (j.odd_categories ? ' · ' + j.odd_categories + ' possibly miscategorised' : '') +
+      '<button class="mini" onclick="copyProfile()">Copy</button></div>' +
+    '<pre class="pf-pre" id="pfBody" contenteditable="true">' + esc(j.body || '') + '</pre>';
+}
+
+async function genProfile() {
+  const term = document.getElementById('pfTerm').value.trim();
+  const out = document.getElementById('pfResult');
+  if (!term) { out.textContent = 'Type a product family first.'; return; }
+  out.innerHTML = '<div style="color:var(--muted)">Reading the catalogue…</div>';
+  try {
+    const r = await fetch('/api/admin/product-profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ term })
+    });
+    const j = await r.json();
+    if (!j.success) { out.innerHTML = '<div style="color:#b45309">' + esc(j.error || 'Failed') + '</div>'; return; }
+    showProfile(j, false);
+  } catch (e) { out.innerHTML = '<div style="color:#b45309">Could not generate.</div>'; }
+}
+
+// ===== Print jargon =====
+// What clients say -> the words the product data uses. Adding a term here takes
+// effect immediately; no deploy.
+async function loadJargon() {
+  const box = document.getElementById('jargonBody');
+  box.innerHTML = '<div style="color:var(--muted);font-size:13px">Loading…</div>';
+  try {
+    const r = await fetch('/api/admin/jargon', { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await r.json();
+    if (!j.success) { box.innerHTML = 'Could not load.'; return; }
+
+    let html = '';
+    if ((j.misses || []).length) {
+      html += '<div class="jm-box"><div class="jm-hd">Words the chat did not recognise</div>' +
+        '<div class="jm-sub">Searches that found nothing. Teach the useful ones.</div>';
+      j.misses.forEach(m => {
+        html += '<div class="jm-row"><b>' + esc(m.term) + '</b>' +
+          '<span>' + m.misses + '\u00d7</span>' +
+          '<em>' + esc((m.last_query || '').slice(0, 60)) + '</em>' +
+          '<button onclick="jargonPrefill(\'' + esc(m.term) + '\')">Teach</button>' +
+          '<button class="ghost" onclick="jargonDismiss(\'' + esc(m.term) + '\')">Ignore</button></div>';
+      });
+      html += '</div>';
+    }
+
+    html += '<table><thead><tr><th>Client says</th><th>We search for</th><th>Category</th><th></th></tr></thead><tbody>';
+    (j.terms || []).forEach(t => {
+      html += '<tr' + (t.active ? '' : ' style="opacity:.5"') + '>' +
+        '<td><b>' + esc(t.term) + '</b></td>' +
+        '<td>' + esc(t.expands_to) + '</td>' +
+        '<td>' + esc(t.category || '') + '</td>' +
+        '<td style="text-align:right;white-space:nowrap">' +
+        '<button class="mini" onclick="jargonEdit(' + t.id + ',\'' + esc(t.term) + '\',\'' +
+          esc(t.expands_to) + '\',\'' + esc(t.category || '') + '\')">Edit</button> ' +
+        '<button class="mini danger" onclick="jargonDelete(' + t.id + ')">Delete</button></td></tr>';
+    });
+    html += '</tbody></table>';
+    box.innerHTML = html;
+  } catch (e) { box.innerHTML = 'Could not load.'; }
+}
+
+function jargonPrefill(term) {
+  document.getElementById('jgTerm').value = term;
+  document.getElementById('jgExpands').focus();
+}
+function jargonEdit(id, term, expands, cat) {
+  document.getElementById('jgId').value = id;
+  document.getElementById('jgTerm').value = term;
+  document.getElementById('jgExpands').value = expands;
+  document.getElementById('jgCat').value = cat || 'general';
+  document.getElementById('jgTerm').focus();
+}
+async function jargonSave() {
+  const body = {
+    id: document.getElementById('jgId').value || undefined,
+    term: document.getElementById('jgTerm').value.trim(),
+    expands_to: document.getElementById('jgExpands').value.trim(),
+    category: document.getElementById('jgCat').value
+  };
+  if (!body.term || !body.expands_to) { alert('Both fields are needed.'); return; }
+  await fetch('/api/admin/jargon', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify(body) });
+  document.getElementById('jgId').value = '';
+  document.getElementById('jgTerm').value = '';
+  document.getElementById('jgExpands').value = '';
+  loadJargon();
+}
+async function jargonDelete(id) {
+  if (!confirm('Remove this term?')) return;
+  await fetch('/api/admin/jargon/' + id, { method: 'DELETE',
+    headers: { 'Authorization': 'Bearer ' + token } });
+  loadJargon();
+}
+async function jargonDismiss(term) {
+  await fetch('/api/admin/jargon/dismiss', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify({ term }) });
+  loadJargon();
+}
+
+// ===== Meeting notes =====
+let meetingList = [];
+
+async function loadMeetings() {
+  document.getElementById('meetingEditor').style.display = 'none';
+  document.getElementById('meetingList').style.display = 'block';
+  const box = document.getElementById('meetingList');
+  box.innerHTML = '<div style="color:var(--muted);font-size:13px">Loading…</div>';
+  try {
+    const res = await fetch('/api/admin/meetings', { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await res.json();
+    if (!j.success) { box.innerHTML = '<div class="feedback err">' + (j.error || 'Error') + '</div>'; return; }
+    meetingList = j.meetings || [];
+    if (!meetingList.length) {
+      box.innerHTML = '<div style="color:var(--muted);font-size:13px;">No meeting notes yet. Click "+ New meeting note" and paste your Meet AI summary.</div>';
+      return;
+    }
+    const activeCount = meetingList.filter(m => m.active).length;
+    box.innerHTML =
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">' +
+        meetingList.length + ' meeting' + (meetingList.length === 1 ? '' : 's') + ' · ' +
+        activeCount + ' feeding the agents' +
+      '</div>' +
+      meetingList.map(m => {
+        const tagChips = (m.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+          .map(t => '<span style="background:#eef;border:1px solid #dcdcf7;color:#4f46e5;border-radius:5px;padding:2px 7px;font-size:11px;margin:0 4px 4px 0;display:inline-block;">' + esc(t) + '</span>').join('');
+        const preview = (m.body || '').slice(0, 240);
+        return '<div style="border:1px solid #e6e6f0;border-radius:10px;padding:14px 16px;margin-bottom:10px;background:' + (m.active ? '#fff' : '#fafafa') + ';' + (m.active ? '' : 'opacity:.7;') + '">' +
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">' +
+            '<div style="flex:1;min-width:0;">' +
+              '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+                '<span style="font-size:15px;font-weight:600;color:#1e1b2e;">' + esc(m.title) + '</span>' +
+                (m.active
+                  ? '<span style="background:#dcfce7;border:1px solid #bbf7d0;color:#166534;border-radius:5px;padding:1px 7px;font-size:10.5px;font-weight:700;text-transform:uppercase;">Active</span>'
+                  : '<span style="background:#eef1f5;border:1px solid #dfe4ea;color:#64748b;border-radius:5px;padding:1px 7px;font-size:10.5px;font-weight:700;text-transform:uppercase;">Paused</span>') +
+              '</div>' +
+              '<div style="font-size:12px;color:var(--muted);margin-top:3px;">' +
+                '📅 ' + esc(m.meeting_date || '—') +
+                (m.attendees ? ' · 👥 ' + esc(m.attendees) : '') +
+                ' · Added by ' + esc(m.created_by || 'admin') +
+              '</div>' +
+              (tagChips ? '<div style="margin-top:7px;">' + tagChips + '</div>' : '') +
+              (preview ? '<div style="font-size:13px;color:#555;margin-top:8px;white-space:pre-wrap;max-height:64px;overflow:hidden;">' + esc(preview) + ((m.body || '').length > 240 ? '…' : '') + '</div>' : '') +
+            '</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">' +
+              '<button onclick="openMeetingEditor(' + m.id + ')" style="background:#eef;border:1px solid #c7c7f5;color:#4f46e5;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;">Edit</button>' +
+              '<button onclick="toggleMeeting(' + m.id + ',' + (m.active ? 0 : 1) + ')" style="background:#f5f5fa;border:1px solid #ddd;color:#555;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;">' + (m.active ? 'Pause' : 'Activate') + '</button>' +
+              '<button onclick="deleteMeeting(' + m.id + ')" style="background:#fee;border:1px solid #f5c7c7;color:#e44;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;">Delete</button>' +
+            '</div>' +
+          '</div></div>';
+      }).join('');
+  } catch (e) { box.innerHTML = '<div class="feedback err">Connection error</div>'; }
+}
+
+function openMeetingEditor(id) {
+  const m = id ? meetingList.find(x => x.id === id) : null;
+  document.getElementById('meetingList').style.display = 'none';
+  const ed = document.getElementById('meetingEditor');
+  ed.style.display = 'block';
+  const today = new Date().toISOString().slice(0, 10);
+  const inputCss = 'width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;box-sizing:border-box;';
+  const labelCss = 'display:block;font-size:13px;font-weight:600;color:#333;margin:14px 0 4px;';
+  ed.innerHTML =
+    '<h2 class="h2">' + (m ? 'Edit meeting note' : 'New meeting note') + '</h2>' +
+    '<div style="max-width:760px;">' +
+      '<label style="' + labelCss + 'margin-top:10px;">Title</label>' +
+      '<input type="text" id="meetTitle" value="' + (m ? esc(m.title) : '') + '" placeholder="e.g. Packaging pricing training" style="' + inputCss + '">' +
+      '<div style="display:flex;gap:12px;flex-wrap:wrap;">' +
+        '<div style="flex:1;min-width:180px;">' +
+          '<label style="' + labelCss + '">Meeting date</label>' +
+          '<input type="date" id="meetDate" value="' + (m && m.meeting_date ? esc(m.meeting_date) : today) + '" style="' + inputCss + '">' +
+        '</div>' +
+        '<div style="flex:2;min-width:220px;">' +
+          '<label style="' + labelCss + '">Attendees <span style="font-weight:400;color:var(--muted);">(optional)</span></label>' +
+          '<input type="text" id="meetAttendees" value="' + (m ? esc(m.attendees || '') : '') + '" placeholder="Nova, Talin, Gary" style="' + inputCss + '">' +
+        '</div>' +
+      '</div>' +
+      '<label style="' + labelCss + '">Topics <span style="font-weight:400;color:var(--muted);">(optional, comma separated)</span></label>' +
+      '<input type="text" id="meetTags" value="' + (m ? esc(m.tags || '') : '') + '" placeholder="pricing, packaging, rush orders" style="' + inputCss + '">' +
+      '<label style="' + labelCss + '">Meeting notes</label>' +
+      '<div style="font-size:12px;color:var(--muted);margin:-2px 0 6px;">Paste the full Meet AI summary. No formatting needed.</div>' +
+      '<textarea id="meetBody" rows="18" placeholder="Paste the meeting summary here…" style="width:100%;padding:12px;border:1px solid #ddd;border-radius:8px;font-size:13.5px;line-height:1.55;box-sizing:border-box;resize:vertical;font-family:inherit;">' + (m ? esc(m.body || '') : '') + '</textarea>' +
+      '<label style="display:flex;align-items:center;gap:8px;margin:14px 0 0;cursor:pointer;">' +
+        '<input type="checkbox" id="meetActive" ' + (!m || m.active ? 'checked' : '') + ' style="width:15px;height:15px;cursor:pointer;">' +
+        '<span style="font-size:13px;color:#222;">Feed this meeting to the agents</span>' +
+      '</label>' +
+      '<div style="font-size:12px;color:var(--muted);margin-top:4px;">Uncheck to keep the record but stop the AI using it.</div>' +
+      '<div id="meetEditMsg" class="feedback"></div>' +
+      '<div style="display:flex;gap:8px;margin-top:16px;">' +
+        '<button class="btn-solid" onclick="saveMeeting(' + (m ? m.id : 'null') + ')">Save</button>' +
+        '<button onclick="loadMeetings()" style="background:#f0f0f5;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:600;color:#555;cursor:pointer;">Cancel</button>' +
+      '</div>' +
+    '</div>';
+  document.getElementById('meetTitle').focus();
+}
+
+async function saveMeeting(id) {
+  const msg = document.getElementById('meetEditMsg');
+  const payload = {
+    id: id || undefined,
+    title: document.getElementById('meetTitle').value.trim(),
+    meeting_date: document.getElementById('meetDate').value,
+    attendees: document.getElementById('meetAttendees').value.trim(),
+    tags: document.getElementById('meetTags').value.trim(),
+    body: document.getElementById('meetBody').value.trim(),
+    active: document.getElementById('meetActive').checked
+  };
+  if (!payload.title) { msg.className = 'feedback err'; msg.textContent = 'Give it a short title.'; return; }
+  if (!payload.body) { msg.className = 'feedback err'; msg.textContent = 'Paste the meeting notes before saving.'; return; }
+  msg.className = 'feedback'; msg.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/admin/meetings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify(payload)
+    });
+    const j = await res.json();
+    if (!j.success) { msg.className = 'feedback err'; msg.textContent = j.error || 'Save failed'; return; }
+    loadMeetings();
+  } catch (e) { msg.className = 'feedback err'; msg.textContent = 'Connection error'; }
+}
+
+async function toggleMeeting(id, active) {
+  try {
+    await fetch('/api/admin/meetings/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ id: id, active: active })
+    });
+    loadMeetings();
+  } catch (e) {}
+}
+
+async function deleteMeeting(id) {
+  const m = meetingList.find(x => x.id === id);
+  if (!confirm('Delete "' + (m ? m.title : 'this meeting note') + '"? This cannot be undone.')) return;
+  try {
+    await fetch('/api/admin/meetings/' + id, {
+      method: 'DELETE',
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    loadMeetings();
+  } catch (e) {}
+}
+
+// ===== Domain Knowledge =====
+let knowledgeAgentList = [];   // [{slug,name}] for the assignment checkboxes
+let knowledgeDocs = [];
+
+async function loadKnowledge() {
+  document.getElementById('knowledgeEditor').style.display = 'none';
+  document.getElementById('knowledgeList').style.display = 'block';
+  const box = document.getElementById('knowledgeList');
+  box.innerHTML = '<div style="color:var(--muted);font-size:13px">Loading…</div>';
+  // Load the agent list for the assignment checkboxes. Admins use the admin endpoint
+  // (full list incl. coming-soon); members use the public list of agents they can use.
+  try {
+    if (!knowledgeAgentList.length) {
+      const aurl = IS_ADMIN ? '/api/admin/agents' : '/api/agents';
+      const ar = await fetch(aurl, { headers: { 'Authorization': 'Bearer ' + token } });
+      const aj = await ar.json();
+      knowledgeAgentList = (aj.agents || []).map(a => ({ slug: a.slug, name: a.name }));
+    }
+  } catch (e) {}
+  try {
+    const res = await fetch('/api/admin/knowledge', { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await res.json();
+    if (!j.success) { box.innerHTML = '<div class="feedback err">' + (j.error || 'Error') + '</div>'; return; }
+    knowledgeDocs = j.docs || [];
+    if (!knowledgeDocs.length) { box.innerHTML = '<div style="color:var(--muted);font-size:13px;">No documents yet. Click "+ New document" to add one.</div>'; return; }
+    box.innerHTML = knowledgeDocs.map(d => {
+      let agentLabel;
+      if (!d.agents || d.agents === 'all') agentLabel = 'All agents';
+      else {
+        try { const arr = JSON.parse(d.agents); agentLabel = arr.map(s => agentName(s)).join(', ') || 'No agents'; }
+        catch (e) { agentLabel = 'All agents'; }
+      }
+      const fileChips = (d.files || []).map(f =>
+        '<a href="/api/admin/knowledge/file/' + f.id + '?token=" onclick="downloadKnowFile(event,' + f.id + ',\'' + esc(f.filename).replace(/'/g,"\\'") + '\')" style="display:inline-flex;align-items:center;gap:4px;background:#f0f0f5;border-radius:5px;padding:3px 8px;margin:2px 4px 2px 0;font-size:11.5px;color:#4f46e5;text-decoration:none;cursor:pointer;">📎 ' + esc(f.filename) + '</a>'
+      ).join('');
+      return '<div style="border:1px solid #e6e6f0;border-radius:10px;padding:14px 16px;margin-bottom:10px;background:#fff;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-size:15px;font-weight:600;color:#1e1b2e;">' + esc(d.title) + '</div>' +
+            '<div style="font-size:12px;color:var(--muted);margin-top:3px;">' +
+              'By ' + esc(d.created_by || 'admin') + ' · Created ' + fmtDate(d.created_at) +
+              (d.updated_at && d.updated_at !== d.created_at ? ' · Edited ' + fmtDate(d.updated_at) : '') +
+            '</div>' +
+            '<div style="font-size:12px;color:#4f46e5;margin-top:4px;">🔗 ' + esc(agentLabel) + '</div>' +
+            (d.body ? '<div style="font-size:13px;color:#555;margin-top:8px;white-space:pre-wrap;max-height:60px;overflow:hidden;">' + esc(d.body.slice(0,200)) + (d.body.length>200?'…':'') + '</div>' : '') +
+            (fileChips ? '<div style="margin-top:8px;">' + fileChips + '</div>' : '') +
+          '</div>' +
+          '<div style="display:flex;gap:6px;flex-shrink:0;">' +
+            '<button onclick="openKnowledgeEditor(' + d.id + ')" style="background:#eef;border:1px solid #c7c7f5;color:#4f46e5;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;">Edit</button>' +
+            '<button onclick="deleteKnowledge(' + d.id + ')" style="background:#fee;border:1px solid #f5c7c7;color:#e44;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;">Delete</button>' +
+          '</div>' +
+        '</div></div>';
+    }).join('');
+  } catch (e) { box.innerHTML = '<div class="feedback err">Connection error</div>'; }
+}
+
+// Download an attachment (auth header can't go on an <a>, so fetch as blob).
+async function downloadKnowFile(ev, fileId, filename) {
+  ev.preventDefault();
+  try {
+    const res = await fetch('/api/admin/knowledge/file/' + fileId, { headers: { 'Authorization': 'Bearer ' + token } });
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename || 'file';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } catch (e) {}
+}
+
+function agentName(slug) {
+  const a = knowledgeAgentList.find(x => x.slug === slug);
+  return a ? a.name : slug;
+}
+
+let knowPendingFiles = []; // newly selected files (base64) to upload on save
+
+function openKnowledgeEditor(id) {
+  const doc = id ? knowledgeDocs.find(d => d.id === id) : null;
+  knowPendingFiles = [];
+  document.getElementById('knowledgeList').style.display = 'none';
+  const ed = document.getElementById('knowledgeEditor');
+  ed.style.display = 'block';
+  let allChecked = true, allowedSet = new Set();
+  if (doc && doc.agents && doc.agents !== 'all') {
+    allChecked = false;
+    try { JSON.parse(doc.agents).forEach(s => allowedSet.add(s)); } catch (e) {}
+  }
+  // Agent assignment — available to anyone editing knowledge.
+  const agentSection = (
+    '<label style="display:block;font-size:13px;font-weight:600;color:#333;margin:14px 0 4px;">Share with agents</label>' +
+    '<div style="border:1px solid #eee;border-radius:8px;padding:8px 12px;">' +
+    (knowledgeAgentList.map(a =>
+      '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;">' +
+      '<input type="checkbox" class="know-agent-cb" value="' + esc(a.slug) + '" ' + ((allChecked || allowedSet.has(a.slug)) ? 'checked' : '') + ' style="width:15px;height:15px;cursor:pointer;">' +
+      '<span style="font-size:13px;color:#222;">' + esc(a.name) + '</span></label>'
+    ).join('') || '<span style="font-size:13px;color:var(--muted);">No agents available.</span>') +
+    '</div><div style="font-size:12px;color:var(--muted);margin-top:6px;">If all are checked, the doc is shared with all agents.</div>'
+  );
+  // Existing attachments (edit mode)
+  const existingFiles = (doc && doc.files || []).map(f =>
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid #f0f0f5;" id="exfile-' + f.id + '">' +
+    '<span style="font-size:13px;color:#222;">📎 ' + esc(f.filename) + '</span>' +
+    '<button onclick="deleteKnowFile(' + f.id + ')" style="background:none;border:none;color:#e44;font-size:12px;cursor:pointer;">Remove</button></div>'
+  ).join('');
+  ed.innerHTML =
+    '<h2 class="h2">' + (doc ? 'Edit document' : 'New document') + '</h2>' +
+    '<div style="max-width:680px;">' +
+      '<label style="display:block;font-size:13px;font-weight:600;color:#333;margin:10px 0 4px;">Title</label>' +
+      '<input type="text" id="knowTitle" value="' + (doc ? esc(doc.title) : '') + '" placeholder="e.g. Rush order policy" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;box-sizing:border-box;">' +
+      '<label style="display:block;font-size:13px;font-weight:600;color:#333;margin:14px 0 4px;">Content</label>' +
+      '<textarea id="knowBody" rows="10" placeholder="Write the knowledge here…" style="width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;line-height:1.5;box-sizing:border-box;resize:vertical;">' + (doc ? esc(doc.body || '') : '') + '</textarea>' +
+      '<label style="display:block;font-size:13px;font-weight:600;color:#333;margin:14px 0 4px;">Attachments (Word / PDF)</label>' +
+      (existingFiles ? '<div style="margin-bottom:8px;">' + existingFiles + '</div>' : '') +
+      '<input type="file" id="knowFileInput" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple onchange="onKnowFilePick(event)" style="font-size:13px;">' +
+      '<div id="knowPendingList" style="margin-top:6px;"></div>' +
+      agentSection +
+      '<div id="knowEditMsg" class="feedback"></div>' +
+      '<div style="display:flex;gap:8px;margin-top:16px;">' +
+        '<button class="btn-solid" onclick="saveKnowledge(' + (doc ? doc.id : 'null') + ')">Save</button>' +
+        '<button onclick="loadKnowledge()" style="background:#f0f0f5;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:600;color:#555;cursor:pointer;">Cancel</button>' +
+      '</div>' +
+    '</div>';
+}
+
+function onKnowFilePick(ev) {
+  const files = Array.from(ev.target.files || []);
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const b64 = String(reader.result).split(',')[1];
+      knowPendingFiles.push({ filename: file.name, mimetype: file.type, data: b64 });
+      renderKnowPending();
+    };
+    reader.readAsDataURL(file);
+  });
+  ev.target.value = '';
+}
+function renderKnowPending() {
+  const el = document.getElementById('knowPendingList');
+  if (!el) return;
+  el.innerHTML = knowPendingFiles.map((f, i) =>
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 0;font-size:13px;color:#222;">' +
+    '<span>📎 ' + esc(f.filename) + ' <span style="color:var(--muted);font-size:11px;">(new)</span></span>' +
+    '<button onclick="knowPendingFiles.splice(' + i + ',1);renderKnowPending()" style="background:none;border:none;color:#e44;font-size:12px;cursor:pointer;">Remove</button></div>'
+  ).join('');
+}
+async function deleteKnowFile(fileId) {
+  if (!confirm('Remove this attachment?')) return;
+  try {
+    await fetch('/api/admin/knowledge/file-delete', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ file_id: fileId }) });
+    const row = document.getElementById('exfile-' + fileId); if (row) row.remove();
+  } catch (e) {}
+}
+
+async function saveKnowledge(id) {
+  const title = document.getElementById('knowTitle').value.trim();
+  const body = document.getElementById('knowBody').value;
+  const msg = document.getElementById('knowEditMsg');
+  if (!title) { msg.className = 'feedback err'; msg.textContent = 'Title is required.'; return; }
+  let agents = 'all';
+  {
+    const checks = Array.from(document.querySelectorAll('.know-agent-cb'));
+    const allChecked = checks.every(c => c.checked);
+    agents = (!checks.length || allChecked) ? 'all' : checks.filter(c => c.checked).map(c => c.value);
+  }
+  const url = id ? '/api/admin/knowledge/update' : '/api/admin/knowledge/create';
+  const payload = id ? { id, title, body, agents, files: knowPendingFiles } : { title, body, agents, files: knowPendingFiles };
+  msg.className = 'feedback'; msg.textContent = 'Saving…';
+  try {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify(payload) });
+    const j = await res.json();
+    if (!j.success) { msg.className = 'feedback err'; msg.textContent = j.error || 'Error'; return; }
+    knowPendingFiles = [];
+    loadKnowledge();
+  } catch (e) { msg.className = 'feedback err'; msg.textContent = 'Connection error'; }
+}
+
+async function deleteKnowledge(id) {
+  if (!confirm('Delete this document?')) return;
+  try {
+    await fetch('/api/admin/knowledge/delete', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ id }) });
+    loadKnowledge();
+  } catch (e) {}
+}
+
+// Jump to History tab filtered by a specific user
+let pendingHistoryUser = null; // set when navigating from a user row; applied after load
+
+async function goToUserHistory(userKey) {
+  // Remember which user to filter to, then switch tabs. tab('history') triggers the
+  // load; we apply the filter once the user dropdown is populated (avoids a race).
+  pendingHistoryUser = userKey || '';
+  tab('history');
+}
+
+async function loadHistoryUsers() {
+  try {
+    const res = await fetch('/api/admin/chat-users', { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await res.json();
+    const sel = document.getElementById('fUser');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">All users</option>';
+    (j.users || []).forEach(u => {
+      const o = document.createElement('option');
+      o.value = u.key; o.textContent = u.label;
+      sel.appendChild(o);
+    });
+    sel.value = cur;
+  } catch (e) {}
+}
+
+// Populate the agent filter. Only active agents are selectable; others greyed out.
+async function loadHistoryClients() {
+  try {
+    const r = await fetch('/api/admin/chat-clients', { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await r.json();
+    const sel = document.getElementById('fClient');
+    if (!sel || !j.success) return;
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">All clients</option>';
+    (j.clients || []).forEach(c => {
+      const o = document.createElement('option');
+      o.value = c.client_id;
+      o.textContent = (c.client_name || 'Client #' + c.client_id) + ' (' + c.chats + ')';
+      sel.appendChild(o);
+    });
+    sel.value = cur;
+  } catch (e) {}
+}
+
+async function loadHistoryAgents() {
+  try {
+    const res = await fetch('/api/admin/agents', { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await res.json();
+    const sel = document.getElementById('fAgent');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">All agents</option>';
+    (j.agents || []).forEach(a => {
+      const o = document.createElement('option');
+      o.value = a.slug;
+      const active = a.status === 'active';
+      o.textContent = a.name + (active ? '' : ' (coming soon)');
+      if (!active) o.disabled = true;
+      sel.appendChild(o);
+    });
+    sel.value = cur;
+  } catch (e) {}
+}
+
+async function loadHistory() {
+  const tb = document.getElementById('histBody');
+  tb.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">Loading...</td></tr>';
+  const rating = document.getElementById('fRating').value;
+  const user = document.getElementById('fUser').value;
+  const agent = document.getElementById('fAgent') ? document.getElementById('fAgent').value : '';
+  const client = document.getElementById('fClient') ? document.getElementById('fClient').value : '';
+  try {
+    const res = await fetch('/api/admin/history?rating=' + rating +
+      '&user=' + encodeURIComponent(user) + '&agent=' + encodeURIComponent(agent) +
+      '&client_id=' + encodeURIComponent(client),
+      { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await res.json();
+    if (!j.success) { tb.innerHTML = '<tr><td colspan="6" class="feedback err">' + (j.error||'Error') + '</td></tr>'; return; }
+    tb.innerHTML = '';
+    if (!j.history.length) { tb.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">No conversations match.</td></tr>'; return; }
+    j.history.forEach(h => {
+      const tr = document.createElement('tr');
+      tr.className = 'hist-row';
+      let r = '';
+      if (h.ups) r += '<span class="badge on">👍 ' + h.ups + '</span> ';
+      if (h.downs) r += '<span class="badge off">👎 ' + h.downs + '</span>';
+      if (!r) r = '<span style="color:var(--muted)">—</span>';
+      const uname = h.display_name || h.user_key.replace(/^member:/,'').replace(/^user:/,'');
+      const uinitial = (uname || '?').charAt(0).toUpperCase();
+      const uavatar = h.photo
+        ? '<img src="' + esc(photoUrl(h.photo)) + '" class="hist-avatar" title="' + esc(uname) + '" onerror="this.outerHTML=\'<span class=&quot;hist-avatar-fb&quot; title=&quot;' + esc(uname) + '&quot;>' + uinitial + '</span>\'">'
+        : '<span class="hist-avatar-fb" title="' + esc(uname) + '">' + uinitial + '</span>';
+      tr.innerHTML =
+        '<td class="hist-when" title="' + esc(fmtDate(h.updated_at)) + '">' +
+          esc(fmtWhen(h.updated_at)) + '</td>' +
+        '<td>' + uavatar + '</td>' +
+        // Who the conversation was for. Blank when nobody was ever identified.
+        '<td>' + (h.client_name
+          ? '<span class="hist-client">' + esc(h.client_name) + '</span>'
+          : '<span style="color:var(--muted)">\u2014</span>') + '</td>' +
+        '<td>' + esc(h.agent_name || '\u2014') +
+          (h.source === 'crm-widget' ? ' <span class="src-tag">CRM</span>' : '') + '</td>' +
+        '<td>' + esc(h.title || '-') + '</td>' +
+        '<td>' + r + '</td>';
+      tr.onclick = () => openChat(h.id, h.title);
+      tb.appendChild(tr);
+    });
+  } catch (e) { tb.innerHTML = '<tr><td colspan="6" class="feedback err">Connection error</td></tr>'; }
+}
+
+async function openChat(id, title) {
+  const panel = document.getElementById('panel');
+  const body = document.getElementById('panelBody');
+  document.getElementById('panelTitle').textContent = title || 'Chat';
+  body.innerHTML = 'Loading...';
+  panel.style.display = 'flex';
+  try {
+    const res = await fetch('/api/chats/' + id, { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await res.json();
+    if (!j.success) { body.innerHTML = 'Could not load.'; return; }
+    body.innerHTML = '';
+    j.messages.forEach(m => {
+      const div = document.createElement('div');
+      div.className = 'panel-msg ' + m.role;
+      const who = m.role === 'user' ? 'User' : 'Axiom AI';
+      let rate = '';
+      if (m.role === 'assistant' && m.rating === 1) rate = ' <span class="badge on">👍</span>';
+      if (m.role === 'assistant' && m.rating === -1) rate = ' <span class="badge off">👎</span>';
+
+      // Teach from any answer, whether or not anyone rated it at the time. The
+      // team rarely remembers mid-conversation, but a good exchange is just as
+      // useful found later.
+      let train = '';
+      if (m.role === 'assistant' && m.id) {
+        train = '<div class="panel-train">' +
+          '<button class="tr-good" data-mid="' + m.id + '" data-kind="good">Use as a good example</button>' +
+          '<button class="tr-bad"  data-mid="' + m.id + '" data-kind="bad">Mark as a bad one</button>' +
+          '<span class="tr-msg"></span></div>';
+      }
+      div.innerHTML = '<div class="panel-msg-who">' + who + rate + '</div>' +
+        '<div class="panel-msg-body">' + md(m.content) + '</div>' + train;
+      body.appendChild(div);
+    });
+    // Wire the training buttons.
+    body.querySelectorAll('.tr-good, .tr-bad').forEach(b => {
+      b.onclick = async () => {
+        const row = b.parentElement;
+        const note = row.querySelector('.tr-msg');
+        row.querySelectorAll('button').forEach(x => x.disabled = true);
+        note.textContent = 'Saving…';
+        try {
+          const r = await fetch('/api/admin/train-from-chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: JSON.stringify({ message_id: Number(b.getAttribute('data-mid')),
+                                   kind: b.getAttribute('data-kind') })
+          });
+          const j = await r.json();
+          if (j.success) {
+            note.textContent = j.kind === 'good'
+              ? '✓ Added to approved examples'
+              : '✓ Marked as one to avoid';
+            note.className = 'tr-msg ok';
+          } else {
+            note.textContent = j.error || 'Could not save';
+            note.className = 'tr-msg err';
+            row.querySelectorAll('button').forEach(x => x.disabled = false);
+          }
+        } catch (e) {
+          note.textContent = 'Could not save';
+          note.className = 'tr-msg err';
+          row.querySelectorAll('button').forEach(x => x.disabled = false);
+        }
+      };
+    });
+  } catch (e) { body.innerHTML = 'Connection error.'; }
+}
+
+checkAccess();
+</script>
+</body>
+</html>

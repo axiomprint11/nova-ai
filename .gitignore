@@ -1,0 +1,27 @@
+# Secrets
+.env
+.env.*
+!.env.example
+gmail-key.json
+ca-certificate.crt
+*.pem
+*.key
+
+# Live data
+users.db
+users.db-journal
+knowledge_files/
+
+# Dependencies
+node_modules/
+
+# Backups and scratch
+*.bak
+*.bak.*
+*.backup-*
+*.broken
+patch_*.py
+probe-*.js
+
+# Logs
+*.log
