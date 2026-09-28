@@ -106,6 +106,60 @@ tr:last-child td { border-bottom: none; }
 .btn-mini:hover { border-color: var(--indigo); color: var(--indigo); }
 .btn-mini-ignore:hover { border-color: #ef4444; color: #ef4444; }
 @media (max-width: 700px) { .agent-edit-grid { grid-template-columns: 1fr; } }
+
+/* Installation Pricing */
+.ip-top { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; flex-wrap:wrap; position:sticky; top:-26px; background:var(--bg); padding:26px 0 10px; margin-top:-26px; z-index:5; }
+.ip-lede { color:var(--ink-soft); font-size:14px; max-width:620px; line-height:1.6; }
+.ip-meta { font-size:12px; color:var(--muted); margin-top:6px; }
+.ip-savebar { display:flex; align-items:center; gap:8px; }
+.ip-save { height:36px; }
+.ip-save:disabled { opacity:.45; cursor:default; }
+.ip-dirty { font-size:12.5px; font-weight:600; color:#b45309; }
+.ip-layout { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:22px; align-items:start; max-width:1180px; }
+@media (max-width:1100px) { .ip-layout { grid-template-columns:1fr; } }
+.ip-form { display:flex; flex-direction:column; gap:16px; }
+.ip-sec { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:18px 20px; }
+.ip-sec-h { font-size:15px; font-weight:700; margin-bottom:2px; }
+.ip-sec-d { font-size:12.5px; color:var(--muted); margin-bottom:14px; line-height:1.5; }
+.ip-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:12px 14px; }
+.ip-f { display:flex; flex-direction:column; gap:5px; font-size:12px; font-weight:600; color:var(--ink-soft); }
+.ip-f small { font-weight:400; color:var(--muted); font-size:11.5px; line-height:1.35; }
+.ip-f input, .ip-f select, .ip-t input, .ip-t select { padding:8px 10px; border:1.5px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit; background:#fcfcff; outline:none; width:100%; }
+.ip-f input:focus, .ip-f select:focus, .ip-t input:focus, .ip-t select:focus { border-color:var(--indigo); box-shadow:0 0 0 3px var(--indigo-light); }
+.ip-f input.changed, .ip-t input.changed, .ip-t select.changed, .ip-f select.changed { border-color:#f59e0b; background:#fffbeb; }
+.ip-unit { position:relative; }
+.ip-unit > span { position:absolute; top:50%; transform:translateY(-50%); color:var(--muted); font-size:12.5px; pointer-events:none; }
+.ip-unit .ip-pre { left:10px; }
+.ip-unit .ip-post { right:10px; }
+.ip-unit.pre input { padding-left:22px; }
+.ip-unit.post input { padding-right:52px; }
+.ip-t { width:100%; border-collapse:collapse; font-size:13px; border:none; border-radius:0; }
+.ip-t th { background:none; border-bottom:1px solid var(--line); padding:6px 8px 8px 0; font-size:11.5px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); }
+.ip-t td { padding:6px 8px 6px 0; border-bottom:none; vertical-align:middle; }
+.ip-t td.ip-id { font-family:ui-monospace,Menlo,monospace; font-size:11.5px; color:var(--muted); }
+.ip-t .ip-num { width:110px; }
+.ip-t .ip-chk { width:70px; text-align:center; }
+.ip-t input[type=checkbox] { width:auto; accent-color:var(--indigo-dark); }
+.ip-rm { border:1px solid var(--line); background:#fff; color:var(--muted); border-radius:7px; width:28px; height:28px; cursor:pointer; font-size:15px; }
+.ip-rm:hover { color:#dc2626; border-color:#fca5a5; }
+.ip-add { margin-top:10px; }
+.ip-side { display:flex; flex-direction:column; gap:16px; position:sticky; top:90px; }
+.ip-box { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:16px; }
+.ip-box-h { font-size:13.5px; font-weight:700; }
+.ip-hint { font-size:12px; color:var(--muted); margin:2px 0 10px; }
+.ip-ex { padding:9px 0; border-top:1px solid var(--line); font-size:12.5px; }
+.ip-ex:first-child { border-top:none; }
+.ip-ex-row { display:flex; justify-content:space-between; gap:8px; }
+.ip-ex-name { color:var(--ink-soft); }
+.ip-ex-val { font-weight:700; white-space:nowrap; }
+.ip-ex-was { font-size:11.5px; color:var(--muted); text-align:right; }
+.ip-ex-was.up { color:#b45309; }
+.ip-ex-was.down { color:#0f7a5a; }
+.ip-hist { display:flex; flex-direction:column; gap:6px; max-height:280px; overflow:auto; font-size:12px; }
+.ip-hist-row { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:6px 0; border-top:1px solid var(--line); }
+.ip-hist-row:first-child { border-top:none; }
+.ip-hist-who { color:var(--ink-soft); }
+.ip-hist-when { color:var(--muted); font-size:11px; }
 /* chat panel */
 .panel { position: fixed; inset: 0; background: rgba(30,27,46,0.5); display: none; align-items: center; justify-content: center; z-index: 200; }
 .panel-inner { background: var(--surface); border-radius: 16px; width: 720px; max-width: 92vw; max-height: 84vh; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(0,0,0,0.3); }
@@ -179,6 +233,7 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
       <button class="nav-item" id="navUsers" onclick="tab('users')">Users</button>
       <button class="nav-item" id="navAgents" onclick="tab('agents')">Agents</button>
       <button class="nav-item" id="navKnowledge" onclick="tab('knowledge')">Domain Knowledge</button>
+      <button class="nav-item" id="navPricing" onclick="tab('pricing')">Installation Pricing</button>
       <button class="nav-item" id="navConnections" onclick="tab('connections')">Connections</button>
     </aside>
     <div class="content">
@@ -298,6 +353,37 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
           <div id="meetingEditor" style="display:none"></div>
         </div>
       </div>
+      <div id="tabPricing" style="display:none">
+        <div class="ip-top">
+          <div>
+            <h2 class="h2" style="margin-bottom:6px">Installation Pricing</h2>
+            <p class="ip-lede">The fixed prices behind every installation and local delivery quote. Nova's chat
+              answers and the calculator card both read these the moment you save — no restart.</p>
+            <div id="ipMeta" class="ip-meta"></div>
+          </div>
+          <div class="ip-savebar">
+            <span id="ipDirty" class="ip-dirty"></span>
+            <button class="btn-ghost" onclick="ipDiscard()">Discard</button>
+            <button class="btn-solid ip-save" id="ipSaveBtn" onclick="ipSave()">Save prices</button>
+          </div>
+        </div>
+        <div id="ipMsg" class="feedback"></div>
+        <div class="ip-layout">
+          <div id="ipForm" class="ip-form"></div>
+          <aside class="ip-side">
+            <div class="ip-box">
+              <div class="ip-box-h">Check against the worked examples</div>
+              <div class="ip-hint">Totals with the prices on screen, before and after saving.</div>
+              <div id="ipPreview"></div>
+            </div>
+            <div class="ip-box">
+              <div class="ip-box-h">Change history</div>
+              <div id="ipHistory" class="ip-hist"></div>
+              <button class="btn-mini" style="margin-top:10px" onclick="ipRestore(0)">Reset everything to training-doc defaults</button>
+            </div>
+          </aside>
+        </div>
+      </div>
       <div id="tabConnections" style="display:none">
         <h2 class="h2">Connections</h2>
         <p style="color:var(--ink-soft); font-size:14px; max-width:640px; line-height:1.6; margin-bottom:22px;">
@@ -340,6 +426,7 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
   </div>
 </div>
 
+<script src="/install-pricing.js"></script>
 <script>
 const token = localStorage.getItem('axiom_token');
 let currentAgentSlug = null;
@@ -400,11 +487,12 @@ async function checkAccess() {
 function applyRoleVisibility() {
   const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
   if (IS_ADMIN) {
-    ['navUsers','navHistory','navAgents','navKnowledge','navConnections'].forEach(id => show(id, true));
+    ['navUsers','navHistory','navAgents','navKnowledge','navPricing','navConnections'].forEach(id => show(id, true));
   } else {
     // Regular member: no Users, no Connections. Agents (view) + History (own) always.
     show('navUsers', false);
     show('navConnections', false);
+    show('navPricing', false);
     show('navHistory', true);
     show('navAgents', true);
     show('navKnowledge', MY_KNOWLEDGE_LEVEL !== 'none');
@@ -418,6 +506,8 @@ function tab(t) {
   document.getElementById('tabAgents').style.display = t === 'agents' ? 'block' : 'none';
   document.getElementById('tabKnowledge').style.display = t === 'knowledge' ? 'block' : 'none';
   document.getElementById('tabConnections').style.display = t === 'connections' ? 'block' : 'none';
+  document.getElementById('tabPricing').style.display = t === 'pricing' ? 'block' : 'none';
+  document.getElementById('navPricing').classList.toggle('active', t === 'pricing');
   document.getElementById('navUsers').classList.toggle('active', t === 'users');
   document.getElementById('navHistory').classList.toggle('active', t === 'history');
   document.getElementById('navAgents').classList.toggle('active', t === 'agents');
@@ -438,6 +528,7 @@ function tab(t) {
     });
   }
   else if (t === 'connections') loadConnections();
+  else if (t === 'pricing') ipLoad();
   else if (t === 'agents') loadAgents();
   else if (t === 'knowledge') dkSwitch(dkActiveTab);
 }
@@ -1482,6 +1573,308 @@ async function openChat(id, title) {
 }
 
 checkAccess();
+</script>
+<script>
+// ===== Installation Pricing =====
+// Edits a copy of the live rate config (GET /api/install-pricing) and saves the
+// whole thing back (POST /api/admin/install-pricing). The preview runs the
+// same engine the chat and the calculator card use, so what it shows is what
+// Nova will quote.
+let ipSaved = null;      // config as saved on the server
+let ipCfg = null;        // working copy on screen
+
+const IP_SECTIONS = [
+  { h: 'Core rates', d: 'Charged on every installation.', fields: [
+    { p: 'install.fixed_fee', l: 'Fixed fee per piece', pre: '$', hint: 'Handling, on top of the sq ft charge' },
+    { p: 'install.hourly', l: 'Installer rate', pre: '$', post: '/hr' },
+    { p: 'install.mile_rate', l: 'Travel mileage', pre: '$', post: '/mi', hint: 'Billed round trip (miles × 2)' },
+    { p: 'install.minimum', l: 'Minimum job charge', pre: '$', hint: 'Totals below this are topped up' },
+    { p: 'install.handoff_miles', l: 'Hand-off distance', post: 'mi', hint: 'Past this, Nova flags a travel day / per diem' },
+    { p: 'install.max_height_ft', l: 'Highest Nova will quote', post: 'ft', hint: 'Above this it hands off to a person' }
+  ]},
+  { h: 'Material levels', d: 'The sq ft rate comes from the material’s level. Any piece can still be overridden on the calculator.',
+    table: { p: 'install.levels', fixedRows: true, cols: [
+      { k: 'label', l: 'Level', type: 'text' },
+      { k: 'rate', l: '$ / sq ft', type: 'num', pre: '$' }
+    ]}},
+  { h: 'Materials', d: 'Which level each material is priced at. Materials added here appear in the calculator and Nova can use them straight away.',
+    table: { p: 'install.materials', idFrom: 'label', cols: [
+      { k: 'label', l: 'Material', type: 'text' },
+      { k: 'level', l: 'Level', type: 'level' }
+    ]},
+    fields: [ { p: 'install.default_material', l: 'When the material is unknown, price as', type: 'material' } ] },
+  { h: 'Crew size', d: 'Installers by total job area, then raised to 2 by equipment at height or an oversized piece.',
+    table: { p: 'install.crew.steps', cols: [
+      { k: 'max_sqft', l: 'Up to (sq ft)', type: 'num', post: 'sq ft' },
+      { k: 'crew', l: 'Installers', type: 'num', step: 1 }
+    ]},
+    fields: [
+      { p: 'install.crew.max', l: 'Largest crew', post: 'people', step: 1, hint: 'Used above the last row' },
+      { p: 'install.crew.oversize_side_in', l: 'Oversize: any side at least', post: 'in' },
+      { p: 'install.crew.oversize_sqft', l: 'Oversize: single piece over', post: 'sq ft' }
+    ]},
+  { h: 'Hours on site', d: 'Setup + per piece + area ÷ (rate × crew) + rig time of the tallest equipment, rounded.', fields: [
+    { p: 'install.hours.setup', l: 'Setup and staging', post: 'hr' },
+    { p: 'install.hours.per_piece', l: 'Handling per piece', post: 'hr' },
+    { p: 'install.hours.sqft_per_installer_hour', l: 'Sq ft per installer-hour', post: 'sq ft' },
+    { p: 'install.hours.round_to', l: 'Round to nearest', post: 'hr' },
+    { p: 'install.hours.minimum', l: 'Minimum on site', post: 'hr' }
+  ]},
+  { h: 'Equipment', d: 'Each is its own line on the quote. Rig time uses the tallest selected, not the sum.',
+    table: { p: 'install.equipment', idFrom: 'label', cols: [
+      { k: 'label', l: 'Item', type: 'text' },
+      { k: 'fee', l: 'Price', type: 'num', pre: '$' },
+      { k: 'rig_hrs', l: 'Rig time', type: 'num', post: 'hr' },
+      { k: 'max_height_ft', l: 'Reaches', type: 'num', post: 'ft', optional: true },
+      { k: 'forces_two', l: '2 installers', type: 'bool' },
+      { k: 'crane', l: 'Crane', type: 'bool', hint: 'Flags the quote as provisional' }
+    ]}},
+  { h: 'Insurance', d: 'Default is used when the client says nothing about a certificate.',
+    table: { p: 'install.insurance', idFrom: 'label', cols: [
+      { k: 'label', l: 'Option', type: 'text' },
+      { k: 'amount', l: 'Charge', type: 'num', pre: '$' },
+      { k: 'editable', l: 'Amount editable', type: 'bool' }
+    ]},
+    fields: [ { p: 'install.default_insurance', l: 'Default option', type: 'insurance' } ] },
+  { h: 'Scheduling surcharges', d: 'Multipliers apply to labor only. The call-out fee is once per job.', fields: [
+    { p: 'install.business_hours.start', l: 'Business hours start', type: 'time', hint: 'Monday to Friday' },
+    { p: 'install.business_hours.end', l: 'Business hours end', type: 'time' },
+    { p: 'install.surcharge.after_hours_mult', l: 'Weekday after hours', post: '× labor' },
+    { p: 'install.surcharge.saturday_mult', l: 'Saturday', post: '× labor' },
+    { p: 'install.surcharge.sunday_mult', l: 'Sunday', post: '× labor' },
+    { p: 'install.surcharge.callout_fee', l: 'Call-out fee', pre: '$', hint: 'Any surcharged day or time' }
+  ]},
+  { h: 'Local delivery', d: 'Our own driver or Uber inside LA. Drive time is billed both ways.', fields: [
+    { p: 'delivery.mile_rate', l: 'Mileage', pre: '$', post: '/mi', hint: 'One way' },
+    { p: 'delivery.base_fee', l: 'Base fee', pre: '$' },
+    { p: 'delivery.driver_hourly', l: 'Driver rate', pre: '$', post: '/hr' },
+    { p: 'delivery.avg_mph', l: 'Average speed', post: 'mph', hint: 'Surface streets' }
+  ], table: { p: 'delivery.traffic', fixedRows: true, cols: [
+      { k: 'label', l: 'Traffic', type: 'text' },
+      { k: 'factor', l: 'Drive-time factor', type: 'num', post: '×' }
+    ]}},
+  { h: 'Distance zones', d: 'Shown on every address. The last zone has no upper limit.',
+    table: { p: 'zones', fixedRows: true, cols: [
+      { k: 'label', l: 'Zone', type: 'text' },
+      { k: 'max_mi', l: 'Under', type: 'num', post: 'mi', optional: true },
+      { k: 'guidance', l: 'Guidance', type: 'text' }
+    ]}}
+];
+
+function ipGet(obj, path) { return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj); }
+function ipSet(obj, path, v) {
+  const ks = path.split('.'); let o = obj;
+  for (let i = 0; i < ks.length - 1; i++) o = o[ks[i]];
+  o[ks[ks.length - 1]] = v;
+}
+function ipSame(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+function ipMoney(n) { return n == null ? 'Hand off' : InstallPricing.money(n); }
+
+async function ipLoad() {
+  document.getElementById('ipForm').innerHTML = '<div style="color:var(--muted);font-size:13px">Loading…</div>';
+  try {
+    const r = await fetch('/api/install-pricing', { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await r.json();
+    if (!j.success) throw new Error(j.error || 'Could not load');
+    ipSaved = InstallPricing.withDefaults(j.config);
+    ipCfg = JSON.parse(JSON.stringify(ipSaved));
+    ipMeta(j.meta);
+    ipRender();
+    ipHistory();
+  } catch (e) {
+    document.getElementById('ipForm').innerHTML = '<div class="feedback err">' + esc(e.message) + '</div>';
+  }
+}
+
+function ipMeta(m) {
+  document.getElementById('ipMeta').textContent = !m || m.is_default
+    ? 'Using the training-document defaults — nothing has been changed yet.'
+    : 'Last saved by ' + (m.updated_by || 'unknown') + ' · ' + fmtWhen(String(m.updated_at || '').replace('T', ' ').replace(/\.\d+Z$|Z$/, ''));
+}
+
+function ipInput(path, v, f) {
+  const saved = ipGet(ipSaved, path);
+  const cls = ipSame(saved, v) ? '' : ' class="changed"';
+  const t = f.type;
+  if (t === 'time') return '<input type="time" data-ip="' + path + '" value="' + esc(v) + '"' + cls + '>';
+  if (t === 'text') return '<input type="text" data-ip="' + path + '" value="' + esc(v) + '"' + cls + '>';
+  if (t === 'bool') return '<input type="checkbox" data-ip="' + path + '"' + (v ? ' checked' : '') + '>';
+  if (t === 'level' || t === 'material' || t === 'insurance') {
+    const list = t === 'level' ? ipCfg.install.levels.map(x => [x.id, x.label + ' · ' + InstallPricing.money(x.rate) + '/sq ft'])
+      : t === 'material' ? ipCfg.install.materials.map(x => [x.id, x.label])
+      : ipCfg.install.insurance.map(x => [x.id, x.label]);
+    return '<select data-ip="' + path + '" data-kind="' + t + '"' + cls + '>' +
+      list.map(([id, lab]) => '<option value="' + esc(id) + '"' + (String(id) === String(v) ? ' selected' : '') + '>' + esc(lab) + '</option>').join('') + '</select>';
+  }
+  const inner = '<input type="number" min="0" step="' + (f.step || 'any') + '" data-ip="' + path + '" data-num="1"' +
+    (f.optional ? ' data-opt="1" placeholder="none"' : '') + ' value="' + esc(v == null ? '' : v) + '"' + cls + '>';
+  if (!f.pre && !f.post) return inner;
+  return '<div class="ip-unit' + (f.pre ? ' pre' : '') + (f.post ? ' post' : '') + '">' +
+    (f.pre ? '<span class="ip-pre">' + esc(f.pre) + '</span>' : '') + inner +
+    (f.post ? '<span class="ip-post">' + esc(f.post) + '</span>' : '') + '</div>';
+}
+
+function ipRender() {
+  const form = document.getElementById('ipForm');
+  form.innerHTML = IP_SECTIONS.map((sec, si) => {
+    let html = '<section class="ip-sec"><div class="ip-sec-h">' + esc(sec.h) + '</div><div class="ip-sec-d">' + esc(sec.d) + '</div>';
+    if (sec.table) html += ipTable(sec.table);
+    if (sec.fields) html += '<div class="ip-grid"' + (sec.table ? ' style="margin-top:14px"' : '') + '>' + sec.fields.map(f =>
+      '<label class="ip-f">' + esc(f.l) + ipInput(f.p, ipGet(ipCfg, f.p), f) + (f.hint ? '<small>' + esc(f.hint) + '</small>' : '') + '</label>'
+    ).join('') + '</div>';
+    return html + '</section>';
+  }).join('');
+  ipAfterChange();
+}
+
+function ipTable(t) {
+  const rows = ipGet(ipCfg, t.p) || [];
+  const head = '<tr>' + t.cols.map(c => '<th' + (c.type === 'bool' ? ' class="ip-chk"' : '') + (c.hint ? ' title="' + esc(c.hint) + '"' : '') + '>' + esc(c.l) + '</th>').join('') +
+    (t.idFrom ? '<th>Id</th>' : '') + (t.fixedRows ? '' : '<th></th>') + '</tr>';
+  const body = rows.map((row, i) => '<tr>' + t.cols.map(c =>
+      '<td class="' + (c.type === 'num' ? 'ip-num' : c.type === 'bool' ? 'ip-chk' : '') + '">' + ipInput(t.p + '.' + i + '.' + c.k, row[c.k], c) + '</td>'
+    ).join('') +
+    (t.idFrom ? '<td class="ip-id">' + esc(row.id) + '</td>' : '') +
+    (t.fixedRows ? '' : '<td style="width:36px"><button class="ip-rm" title="Remove" onclick="ipRemove(\'' + t.p + '\',' + i + ')">&times;</button></td>') +
+    '</tr>').join('');
+  return '<table class="ip-t"><thead>' + head + '</thead><tbody>' + body + '</tbody></table>' +
+    (t.fixedRows ? '' : '<button class="btn-mini ip-add" onclick="ipAdd(\'' + t.p + '\')">+ Add row</button>');
+}
+
+function ipSlug(label, list) {
+  let base = String(label || 'item').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 24) || 'item';
+  let id = base, n = 2;
+  while (list.some(x => x.id === id)) id = base + '_' + n++;
+  return id;
+}
+
+function ipAdd(path) {
+  const list = ipGet(ipCfg, path);
+  const sec = IP_SECTIONS.find(s => s.table && s.table.p === path);
+  const row = {};
+  sec.table.cols.forEach(c => { row[c.k] = c.type === 'num' ? 0 : c.type === 'bool' ? false : c.type === 'level' ? ipCfg.install.levels[0].id : ''; });
+  if (path === 'install.crew.steps') { const last = list[list.length - 1] || { max_sqft: 0, crew: 0 }; row.max_sqft = last.max_sqft * 2 || 200; row.crew = last.crew + 1; }
+  if (sec.table.idFrom) { row.label = 'New ' + sec.h.toLowerCase().replace(/s$/, ''); row.id = ipSlug(row.label, list); }
+  list.push(row);
+  ipRender();
+}
+
+function ipRemove(path, i) {
+  const list = ipGet(ipCfg, path);
+  const row = list[i];
+  if (path === 'install.materials' && row.id === ipCfg.install.default_material) return ipMsg('That material is the default for unknown materials — pick another default first.', true);
+  if (path === 'install.insurance' && row.id === ipCfg.install.default_insurance) return ipMsg('That is the default insurance option — pick another default first.', true);
+  list.splice(i, 1);
+  ipRender();
+}
+
+document.addEventListener('input', ipOnEdit);
+document.addEventListener('change', ipOnEdit);
+function ipOnEdit(e) {
+  const el = e.target;
+  if (!el.matches || !el.matches('[data-ip]')) return;
+  const path = el.getAttribute('data-ip');
+  let v;
+  if (el.type === 'checkbox') v = el.checked;
+  else if (el.getAttribute('data-num')) v = el.value === '' ? (el.getAttribute('data-opt') ? null : 0) : parseFloat(el.value);
+  else if (el.getAttribute('data-kind') === 'level') v = parseInt(el.value, 10);
+  else v = el.value;
+  ipSet(ipCfg, path, v);
+  if (el.type !== 'checkbox') el.classList.toggle('changed', !ipSame(ipGet(ipSaved, path), v));
+  // Renaming a level or material changes the option text in other dropdowns.
+  if (e.type === 'change' && /^install\.(levels|materials|insurance)\.\d+\.(label|rate)$/.test(path)) { ipRender(); return; }
+  ipAfterChange();
+}
+
+function ipAfterChange() {
+  const dirty = !ipSame(ipCfg, ipSaved);
+  document.getElementById('ipDirty').textContent = dirty ? 'Unsaved changes' : '';
+  document.getElementById('ipSaveBtn').disabled = !dirty;
+  ipPreview();
+}
+
+const IP_EXAMPLES = [
+  { n: 'A · 2 decals, 3.5 mi, ladder', k: 'i', in: { pieces: [{ w_in: 36, h_in: 28.17, qty: 1, material: 'vinyl' }, { w_in: 13, h_in: 13, qty: 1, material: 'vinyl' }], distance_mi: 3.5, equipment: ['h14'], insurance: 'std', schedule: 'weekday_business' } },
+  { n: 'A on a Saturday', k: 'i', in: { pieces: [{ w_in: 36, h_in: 28.17, qty: 1, material: 'vinyl' }, { w_in: 13, h_in: 13, qty: 1, material: 'vinyl' }], distance_mi: 3.5, equipment: ['h14'], insurance: 'std', schedule: 'saturday' } },
+  { n: 'B · 5 panels, 200 mi, ground', k: 'i', in: { pieces: [[31.75, 140], [30.5, 140], [35.75, 97], [35.75, 97], [69, 43]].map(([w, h]) => ({ w_in: w, h_in: h, qty: 1, material: 'vinyl' })), distance_mi: 200, insurance: 'std', schedule: 'weekday_business' } },
+  { n: 'C · delivery 9.5 mi, midday', k: 'd', in: { distance_mi: 9.5, traffic: 'mid' } },
+  { n: 'C · delivery 9.5 mi, 5 PM', k: 'd', in: { distance_mi: 9.5, drop_time: '5 PM' } }
+];
+
+function ipPreview() {
+  const box = document.getElementById('ipPreview');
+  if (!box || !ipCfg) return;
+  box.innerHTML = IP_EXAMPLES.map(x => {
+    const run = (cfg) => { try { return (x.k === 'i' ? InstallPricing.quoteInstall(x.in, cfg) : InstallPricing.quoteDelivery(x.in, cfg)).total; } catch (e) { return null; } };
+    const now = run(ipCfg), was = run(ipSaved);
+    const diff = now != null && was != null ? Math.round((now - was) * 100) / 100 : 0;
+    return '<div class="ip-ex"><div class="ip-ex-row"><span class="ip-ex-name">' + esc(x.n) + '</span><span class="ip-ex-val">' + ipMoney(now) + '</span></div>' +
+      (diff ? '<div class="ip-ex-was ' + (diff > 0 ? 'up' : 'down') + '">was ' + ipMoney(was) + ' (' + (diff > 0 ? '+' : '−') + InstallPricing.money(Math.abs(diff)) + ')</div>' : '') + '</div>';
+  }).join('');
+}
+
+function ipMsg(t, err) {
+  const m = document.getElementById('ipMsg');
+  m.className = 'feedback ' + (err ? 'err' : 'ok');
+  m.textContent = t;
+  if (!err) setTimeout(() => { if (m.textContent === t) m.textContent = ''; }, 4000);
+}
+
+async function ipSave() {
+  const btn = document.getElementById('ipSaveBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const r = await fetch('/api/admin/install-pricing', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ config: ipCfg }) });
+    const j = await r.json();
+    if (!j.success) throw new Error(j.error || 'Save failed');
+    ipSaved = InstallPricing.withDefaults(j.config);
+    ipCfg = JSON.parse(JSON.stringify(ipSaved));
+    ipMeta(j.meta); ipRender(); ipHistory();
+    ipMsg('Saved. New quotes use these prices from now on.');
+  } catch (e) { ipMsg(e.message, true); ipAfterChange(); }
+  btn.textContent = 'Save prices';
+}
+
+function ipDiscard() {
+  if (!ipSaved) return;
+  ipCfg = JSON.parse(JSON.stringify(ipSaved));
+  ipRender();
+}
+
+async function ipHistory() {
+  const box = document.getElementById('ipHistory');
+  try {
+    const r = await fetch('/api/admin/install-pricing/history', { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await r.json();
+    if (!j.success) throw new Error(j.error);
+    box.innerHTML = j.history.length ? j.history.map((h, i) =>
+      '<div class="ip-hist-row"><div><div class="ip-hist-who">' + esc(h.changed_by || 'unknown') + (h.note ? ' · ' + esc(h.note) : '') + '</div>' +
+      '<div class="ip-hist-when">' + esc(fmtWhen(h.changed_at)) + (i === 0 ? ' · current' : '') + '</div></div>' +
+      (i === 0 ? '' : '<button class="btn-mini" onclick="ipRestore(' + h.id + ')">Restore</button>') + '</div>'
+    ).join('') : '<div style="color:var(--muted)">No changes saved yet.</div>';
+  } catch (e) { box.innerHTML = '<div class="feedback err">Could not load history</div>'; }
+}
+
+async function ipRestore(id) {
+  if (!confirm(id ? 'Put back this earlier version of the prices?' : 'Reset every price to the training-document defaults?')) return;
+  try {
+    const r = await fetch('/api/admin/install-pricing/restore', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ history_id: id || null }) });
+    const j = await r.json();
+    if (!j.success) throw new Error(j.error || 'Restore failed');
+    ipSaved = InstallPricing.withDefaults(j.config);
+    ipCfg = JSON.parse(JSON.stringify(ipSaved));
+    ipMeta(j.meta); ipRender(); ipHistory();
+    ipMsg(id ? 'Earlier version restored.' : 'Prices reset to defaults.');
+  } catch (e) { ipMsg(e.message, true); }
+}
+
+window.addEventListener('beforeunload', (e) => {
+  if (ipCfg && ipSaved && !ipSame(ipCfg, ipSaved)) { e.preventDefault(); e.returnValue = ''; }
+});
 </script>
 </body>
 </html>

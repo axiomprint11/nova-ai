@@ -126,6 +126,21 @@ No framework. Global functions, `innerHTML` string templates, `esc()` for escapi
 The stepped flow is the default; `sendMessage(forceClassic)` or the `steppedToggle` checkbox falls back
 to `/api/chat` for debugging.
 
+## Installation & local delivery pricing
+
+Separate from the product formula engine, and **not** duplicated: `public/install-pricing.js` is one UMD file
+that `server.js` requires and the browser loads. Every rate lives in the config it is given — never put a price
+in code. The live config is the single row of SQLite `install_pricing` (history in `install_pricing_history`),
+cached in memory as `installPricing`, edited in Admin → Installation Pricing (`GET /api/install-pricing` for any
+signed-in user; `POST /api/admin/install-pricing` and `/restore` for admins). Missing keys fall back to
+`DEFAULTS`, which mirror `docs/install-pricing-training.md`.
+
+In `/api/chatbot/chat` the `quote_installation` / `quote_delivery` tools price with it and send an
+`install_quote` SSE event carrying the input, the quote and the config; `public/install-calc.js` renders it as
+an editable calculator in both `chatbot.js` and `widget.js`. If a turn asks for an install/delivery price and
+the model never called the tool, an empty calculator is sent anyway. Tool enums (materials, equipment,
+insurance, traffic) and the prompt's hand-off thresholds are built from the live config.
+
 ## Known quirks worth respecting
 
 - **`estimate.production_status` is stale.** True production state is the newest `qr_scan_history` row

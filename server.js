@@ -23,8 +23,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.2.5';
-const NOVA_BUILT = '09-12-2026 9:56am';
+const NOVA_VERSION = '1.2.6';
+const NOVA_BUILT = '09-28-2026 7:45pm';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -455,7 +455,42 @@ db.serialize(() => {
     agent_slug TEXT,
     dismissed_at TEXT DEFAULT (datetime('now'))
   )`);
+  // Installation & delivery rates, edited in Admin → Installation Pricing.
+  // One live row (id=1) holding the whole config as JSON; every save also
+  // writes a history row so a bad edit can be traced and undone.
+  db.run(`CREATE TABLE IF NOT EXISTS install_pricing (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    config TEXT NOT NULL,
+    updated_by TEXT,
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`);
+  db.run(`CREATE TABLE IF NOT EXISTS install_pricing_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    config TEXT NOT NULL,
+    changed_by TEXT,
+    note TEXT,
+    changed_at TEXT DEFAULT (datetime('now'))
+  )`, () => loadInstallPricing());
 });
+
+// ---- Installation & delivery pricing (config lives in SQLite, engine is shared) ----
+// The engine file is the same one the browser loads, so chat and calculator
+// can never disagree about a number.
+const InstallPricing = require('./public/install-pricing.js');
+let installPricing = InstallPricing.withDefaults(null);
+let installPricingMeta = { updated_by: null, updated_at: null, is_default: true };
+function loadInstallPricing() {
+  db.get('SELECT config, updated_by, updated_at FROM install_pricing WHERE id = 1', [], (e, row) => {
+    if (e || !row) { installPricing = InstallPricing.withDefaults(null); installPricingMeta = { is_default: true }; return; }
+    try {
+      installPricing = InstallPricing.withDefaults(JSON.parse(row.config));
+      installPricingMeta = { updated_by: row.updated_by, updated_at: row.updated_at, is_default: false };
+    } catch (err) {
+      console.error('install_pricing config unreadable, using defaults:', err.message);
+      installPricing = InstallPricing.withDefaults(null);
+    }
+  });
+}
 
 const dbConfig = {
   host: process.env.MYSQL_HOST,
@@ -3829,6 +3864,96 @@ function cleanPrefs(raw) {
   };
 }
 
+// ===== Installation & delivery pricing =====
+// Everyone signed in reads the rates (the calculator card needs them); only
+// admins change them.
+function installPricingWho(req) {
+  return (req.user && (req.user.username || req.user.email || String(req.user.key || '').replace(/^(member|user):/, ''))) || 'unknown';
+}
+
+// A saved config must still be a working price list: every rate a number,
+// nothing negative, and the lists the calculator draws from not empty.
+function validateInstallPricing(cfg) {
+  const errs = [];
+  const walk = (v, path) => {
+    if (typeof v === 'number') {
+      if (!isFinite(v)) errs.push(path + ' is not a number');
+      else if (v < 0) errs.push(path + ' cannot be negative');
+    } else if (Array.isArray(v)) v.forEach((x, i) => walk(x, path + '[' + i + ']'));
+    else if (v && typeof v === 'object') Object.keys(v).forEach(k => walk(v[k], path ? path + '.' + k : k));
+  };
+  walk(cfg, '');
+  const I = cfg.install || {}, D = cfg.delivery || {};
+  const need = [['install.levels', I.levels], ['install.materials', I.materials], ['install.insurance', I.insurance],
+                ['install.crew.steps', I.crew && I.crew.steps], ['delivery.traffic', D.traffic], ['zones', cfg.zones]];
+  need.forEach(([n, a]) => { if (!Array.isArray(a) || !a.length) errs.push(n + ' needs at least one row'); });
+  const ids = (a) => (a || []).map(x => x && x.id);
+  [['materials', I.materials], ['equipment', I.equipment], ['insurance', I.insurance], ['traffic', D.traffic]].forEach(([n, a]) => {
+    const list = ids(a);
+    if (list.some(x => !x)) errs.push(n + ': every row needs an id');
+    if (new Set(list).size !== list.length) errs.push(n + ': ids must be unique');
+  });
+  if (I.hours && !(Number(I.hours.sqft_per_installer_hour) > 0)) errs.push('Sq ft per installer-hour must be above 0');
+  if (I.hours && !(Number(I.hours.round_to) > 0)) errs.push('Hour rounding must be above 0');
+  if (D && !(Number(D.avg_mph) > 0)) errs.push('Average speed must be above 0');
+  return errs;
+}
+
+app.get('/api/install-pricing', auth, (req, res) => {
+  res.json({ success: true, config: installPricing, meta: installPricingMeta, defaults: InstallPricing.DEFAULTS });
+});
+
+app.get('/api/admin/install-pricing/history', auth, adminOnly, (req, res) => {
+  db.all('SELECT id, changed_by, note, changed_at FROM install_pricing_history ORDER BY id DESC LIMIT 25', [], (e, rows) => {
+    if (e) return res.json({ success: false, error: e.message });
+    res.json({ success: true, history: rows || [] });
+  });
+});
+
+app.post('/api/admin/install-pricing', auth, adminOnly, (req, res) => {
+  let cfg;
+  try { cfg = InstallPricing.withDefaults(req.body && req.body.config); }
+  catch (e) { return res.json({ success: false, error: 'Config could not be read' }); }
+  const errs = validateInstallPricing(cfg);
+  if (errs.length) return res.json({ success: false, error: errs.slice(0, 6).join('; ') });
+  const who = installPricingWho(req);
+  const json = JSON.stringify(cfg);
+  db.run('INSERT INTO install_pricing (id, config, updated_by, updated_at) VALUES (1, ?, ?, datetime(\'now\')) ' +
+         'ON CONFLICT(id) DO UPDATE SET config=excluded.config, updated_by=excluded.updated_by, updated_at=excluded.updated_at',
+    [json, who], (err) => {
+      if (err) return res.json({ success: false, error: err.message });
+      db.run('INSERT INTO install_pricing_history (config, changed_by, note) VALUES (?,?,?)',
+        [json, who, String((req.body && req.body.note) || '').slice(0, 200)], () => {});
+      installPricing = cfg;
+      installPricingMeta = { updated_by: who, updated_at: new Date().toISOString(), is_default: false };
+      res.json({ success: true, config: installPricing, meta: installPricingMeta });
+    });
+});
+
+// Put back an earlier saved version (or the training-document defaults).
+app.post('/api/admin/install-pricing/restore', auth, adminOnly, (req, res) => {
+  const who = installPricingWho(req);
+  const apply = (cfg, note) => {
+    const json = JSON.stringify(cfg);
+    db.run('INSERT INTO install_pricing (id, config, updated_by, updated_at) VALUES (1, ?, ?, datetime(\'now\')) ' +
+           'ON CONFLICT(id) DO UPDATE SET config=excluded.config, updated_by=excluded.updated_by, updated_at=excluded.updated_at',
+      [json, who], (err) => {
+        if (err) return res.json({ success: false, error: err.message });
+        db.run('INSERT INTO install_pricing_history (config, changed_by, note) VALUES (?,?,?)', [json, who, note], () => {});
+        installPricing = cfg;
+        installPricingMeta = { updated_by: who, updated_at: new Date().toISOString(), is_default: false };
+        res.json({ success: true, config: installPricing, meta: installPricingMeta });
+      });
+  };
+  const hid = parseInt(req.body && req.body.history_id);
+  if (!hid) return apply(InstallPricing.withDefaults(null), 'Reset to defaults');
+  db.get('SELECT config, changed_at FROM install_pricing_history WHERE id = ?', [hid], (e, row) => {
+    if (e || !row) return res.json({ success: false, error: 'That version was not found' });
+    try { apply(InstallPricing.withDefaults(JSON.parse(row.config)), 'Restored version from ' + row.changed_at); }
+    catch (err) { res.json({ success: false, error: 'That version could not be read' }); }
+  });
+});
+
 app.get('/api/widget-prefs', auth, (req, res) => {
   const key = String((req.user && req.user.key) || '');
   db.get('SELECT prefs FROM widget_prefs WHERE user_key = ?', [key], (err, row) => {
@@ -5503,6 +5628,50 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
       },
       required: ['e_number']
     }
+  }, {
+    name: 'quote_installation',
+    description: 'Price an ON-SITE INSTALLATION (putting up decals, window film, wall graphics, panels, letters, banners at the client\'s location) and show the team an editable installation calculator. ' +
+      'CALL THIS EVERY TIME installation / install / mounting / applying graphics on site / an installer / an install crew comes up with any interest in price, cost, quote or what it takes — even with almost nothing known. Pass only what was actually said; ' +
+      'the card shows every field and the team fills the gaps. NEVER work out installation prices yourself and never state a rate from memory — the rates are admin-edited and only this tool has them. ' +
+      'Equipment ids are listed on the equipment field. Ground level = no equipment. Pick the SMALLEST that reaches the stated height; above ' + installPricing.install.max_height_ft + ' ft pass height_ft and do not choose equipment.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pieces: { type: 'array', description: 'Every graphic to install, one row per distinct size.',
+          items: { type: 'object', properties: {
+            name: { type: 'string', description: 'Short label, e.g. "Front window decal"' },
+            w_in: { type: 'number', description: 'Width in inches (convert feet × 12)' },
+            h_in: { type: 'number', description: 'Height in inches' },
+            qty: { type: 'integer', description: 'How many of this size' },
+            material: { type: 'string', enum: installPricing.install.materials.map(m => m.id),
+              description: installPricing.install.materials.map(m => m.id + '=' + m.label).join(', ') + '. OMIT if not stated — do not guess.' }
+          }, required: ['w_in', 'h_in'] } },
+        address: { type: 'string', description: 'Install address, if given.' },
+        distance_mi: { type: 'number', description: 'ONE-WAY driving miles from AxiomPrint (Glendale 91204) ONLY if the person or a record states it. Never estimate it. "At AxiomPrint" / in-shop = 0.' },
+        equipment: { type: 'array', items: Object.assign({ type: 'string' },
+            installPricing.install.equipment.length ? { enum: installPricing.install.equipment.map(e => e.id) } : {}),
+          description: installPricing.install.equipment.map(e => e.id + '=' + e.label).join(', ') },
+        height_ft: { type: 'number', description: 'Highest point of the install in feet, if stated.' },
+        insurance: { type: 'string', enum: installPricing.install.insurance.map(i => i.id),
+          description: installPricing.install.insurance.map(i => i.id + '=' + i.label).join(', ') + '. Omit unless stated; waived only if the client says no certificate is needed.' },
+        date: { type: 'string', description: 'Install date YYYY-MM-DD, if given.' },
+        arrival_start: { type: 'string', description: 'Arrival window start, e.g. "11:00 AM".' },
+        arrival_end: { type: 'string', description: 'Arrival window end, e.g. "11:30 AM".' },
+        schedule: { type: 'string', enum: ['weekday_business', 'weekday_after', 'saturday', 'sunday'], description: 'Only when stated without a date ("on a Saturday", "after hours").' }
+      }
+    }
+  }, {
+    name: 'quote_delivery',
+    description: 'Price a LOCAL DELIVERY (our own driver or Uber, inside the LA area) and show an editable delivery calculator. Call this whenever someone asks what delivering / dropping off an order costs locally. Never work the price out yourself.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        address: { type: 'string' },
+        distance_mi: { type: 'number', description: 'ONE-WAY driving miles from AxiomPrint (Glendale 91204), only if stated. Never estimate.' },
+        drop_time: { type: 'string', description: 'Drop-off time if stated, e.g. "5 PM" — sets the traffic factor.' },
+        traffic: { type: 'string', enum: installPricing.delivery.traffic.map(t => t.id), description: 'Only if stated in those terms.' }
+      }
+    }
   }];
 
   // What has actually been said, so only the relevant product guide is pulled in.
@@ -5548,6 +5717,9 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
   // ...and one client search. Two "which client?" lists in one answer means two
   // sets of buttons where only one can be acted on.
   let clientSearchThisTurn = 0;
+  // Installation / delivery calculators drawn in this answer. A second one
+  // (after the model learns more) replaces the first on screen.
+  let installShown = 0;
 
   // A client pinned to this conversation carries across turns — the agent should
   // never re-ask who a job is for once it has been told.
@@ -5951,6 +6123,32 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
         'the tool mechanics — you still price with the calculator, never invent numbers, and never send ' +
         'anything on someone\'s behalf.\n' + brain.training + '\n\n'
       : '') +
+
+    // Installation & local delivery. Rates are deliberately NOT written here —
+    // they are admin-edited and live only in the quote tools, so the prompt can
+    // never go stale against the calculator.
+    '\n\n=== INSTALLATION & LOCAL DELIVERY QUOTES ===\n' +
+    'AxiomPrint installs graphics on site (decals, window film, wall graphics, panels, letters, banners) and ' +
+    'delivers locally with its own driver. Whenever someone asks about installing, mounting or delivering — ' +
+    'price, cost, quote, "how much", what it takes — call quote_installation (or quote_delivery) STRAIGHT AWAY ' +
+    'with whatever is known, even if that is nothing but the word "install". The team always gets the ' +
+    'calculator on screen and fills in the rest there. Never do installation arithmetic yourself and never quote ' +
+    'a rate from memory.\n' +
+    'Answer rules:\n' +
+    '- Lead with the number, rounded ("About **$290**"). The card shows exact cents and the breakdown — do not repeat it.\n' +
+    '- Then every assumption the tool reports, on one line. A quote built on silent assumptions is worse than none.\n' +
+    '- Ask at most ONE question, only when the answer moves the price by more than ~15%. In order of impact: ' +
+    'distance, piece sizes, height/access, day and time. Never ask for something already given or on the job record.\n' +
+    '- Never invent a distance, a material level or a rate. Unknown material → the tool assumes Level 1; say so.\n' +
+    '- Hand off to a person, do not guess, when: above ' + installPricing.install.max_height_ft + ' ft; installs past ~' +
+    installPricing.install.handoff_miles + ' miles (mileage is billed but crew drive time is not — it needs a travel-day / ' +
+    'per-diem rate); any crane work (the crane price is a placeholder); permits or union sites; a client disputing ' +
+    'a quoted price; anything where a wrong number goes on a signed contract.\n' +
+    '- There is no per-diem, lodging or permit line in the model — say so if the job needs one.\n' +
+    '- Client ships on their own UPS/FedEx account: that is a flat handling fee instead of shipping, do not quote freight.\n' +
+    '- Delivery zones by one-way miles: ' + installPricing.zones.map((z, i, a) =>
+      z.label + ' ' + (i === 0 ? 'under ' + z.max_mi : (z.max_mi == null ? a[i - 1].max_mi + '+' : a[i - 1].max_mi + '-' + z.max_mi)) +
+      ' (' + z.guidance + ')').join(' · ') + '.\n' +
 
     // Knowledge the team wrote comes BEFORE the data dictionary. The dictionary
     // is reference material for building SQL; these are the answers themselves,
@@ -7786,6 +7984,34 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
         } catch (e) {
           toolResult = 'Could not load those options: ' + e.message;
         }
+      } else if (toolUse.name === 'quote_installation' || toolUse.name === 'quote_delivery') {
+        const isInstall = toolUse.name === 'quote_installation';
+        send({ type: 'query', description: isInstall ? 'Pricing the installation' : 'Pricing the delivery' });
+        const input = Object.assign({}, toolUse.input || {});
+        const q = isInstall ? InstallPricing.quoteInstall(input, installPricing)
+                            : InstallPricing.quoteDelivery(input, installPricing);
+        installShown++;
+        send({ type: 'install_quote', kind: q.kind, input: input, quote: q, config: installPricing, replace: installShown > 1 });
+        const missing = [];
+        if (q.inputs.distance_mi == null) missing.push('distance');
+        if (isInstall && !(q.inputs.pieces || []).length) missing.push('piece sizes');
+        toolResult = JSON.stringify({
+          total: q.total,
+          total_includes_travel: q.inputs.distance_mi != null,
+          lines: q.lines,
+          assumptions: q.assumptions,
+          warnings: q.warnings,
+          missing: missing,
+          ui: 'An editable ' + (isInstall ? 'installation' : 'delivery') + ' calculator with the full line-by-line ' +
+              'breakdown is ALREADY on screen. Do NOT repeat the table or the line items. Answer in this shape: ' +
+              '(1) lead with the rounded number in bold, e.g. "About **$290** for the Partridge Ave install." — ' +
+              (missing.indexOf('distance') > -1 ? 'say it is BEFORE travel because no distance was given; ' : '') +
+              (q.total == null ? 'there is NO number: say it must go to a person and why; ' : '') +
+              '(2) ONE line naming every assumption listed above; ' +
+              '(3) if warnings is not empty, say plainly it is provisional and should be handed off, with the reason; ' +
+              '(4) at most ONE question, only for the most price-moving missing fact (order: distance, piece sizes, ' +
+              'height/access, day and time), and never for anything already given. Round the spoken number; the card keeps exact cents.'
+        });
       } else {
         toolResult = 'Unknown tool.';
       }
@@ -7814,6 +8040,23 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
       currentMessages.push({ role: 'assistant', content: assistantBlocks });
       currentMessages.push({ role: 'user', content: results });
       queryCount++;
+    }
+
+    // The team should get the calculator EVERY time they ask for an install or
+    // delivery price. If the model answered without calling the tool, put an
+    // empty calculator under the answer anyway.
+    if (!aborted && !installShown) {
+      const lastUser = [...(messages || [])].reverse().find(m => m.role === 'user');
+      const txt = !lastUser ? '' : (typeof lastUser.content === 'string' ? lastUser.content
+        : (Array.isArray(lastUser.content) ? lastUser.content.map(c => c.text || '').join(' ') : ''));
+      const priceAsk = /\b(price|pricing|cost|costs|quote|quoted|estimate|how much|charge|rate)\b|\$/i.test(txt);
+      const isInstall = /\binstall(s|ing|ation|ations|er|ers)?\b|\bmount(ing)?\b|\bon[- ]site\b/i.test(txt);
+      const isDelivery = /\b(local )?deliver(y|ies|ing)?\b|\bdrop[- ]?off\b/i.test(txt);
+      if (priceAsk && (isInstall || isDelivery)) {
+        const kind = isInstall ? 'installation' : 'delivery';
+        const q = isInstall ? InstallPricing.quoteInstall({}, installPricing) : InstallPricing.quoteDelivery({}, installPricing);
+        send({ type: 'install_quote', kind: kind, input: {}, quote: q, config: installPricing, replace: false });
+      }
     }
   } catch (err) {
     console.error('CHATBOT_ERROR:', err.message);

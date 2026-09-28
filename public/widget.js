@@ -370,7 +370,7 @@ document.addEventListener('click', (e) => {
 // Card events that belong to an answer. Saved with the message so reopening a
 // conversation rebuilds what was on screen, not just the sentence above it.
 const WG_CARD_TYPES = ['job_card', 'price_quote', 'client_card', 'client_picks', 'product_cards',
-                       'turnaround', 'choice_picks', 'option_picks', 'product_picks'];
+                       'turnaround', 'choice_picks', 'option_picks', 'product_picks', 'install_quote'];
 
 // A card with nothing in it is worse than no card. An empty client placeholder,
 // a "WHICH CLIENT?" header over no options, a turnaround sentence with no dates —
@@ -407,6 +407,10 @@ function wgRenderCard(box, j) {
     case 'product_picks':
       box.appendChild(AxiomCards.picks(j.products || [],
         { intent: j.intent, ask_about: j.ask_about, replace: j.replace }));
+      break;
+    case 'install_quote':
+      // Installation / local delivery calculator — see install-calc.js.
+      if (window.InstallCalc) InstallCalc.render(box, j, { getToken: () => token });
       break;
   }
   wgScroll();

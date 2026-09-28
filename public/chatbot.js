@@ -213,7 +213,8 @@ function greet() {
       'What paper stocks do we offer for postcards?',
       'What did we decide about rush orders?',
       'Which products have multiple versions enabled?',
-      'What is our turnaround for business cards?'
+      'What is our turnaround for business cards?',
+      'Quote an installation: two vinyl decals, 3.5 miles away, 14 ft ladder'
     ];
     sg.innerHTML = examples.map(t => '<button class="suggestion" onclick="ask(' + JSON.stringify(t).replace(/"/g,'&quot;') + ')">' + esc(t) + '</button>').join('');
     sg.style.display = 'flex';
@@ -728,7 +729,7 @@ document.addEventListener('click', (e) => {
 // Card events that belong to an answer. Stored with the message so reopening a
 // chat rebuilds what was on screen, not just the sentence above it.
 const CARD_TYPES = ['job_card', 'price_quote', 'client_card', 'client_picks', 'product_cards',
-                    'turnaround', 'choice_picks', 'option_picks', 'product_picks'];
+                    'turnaround', 'choice_picks', 'option_picks', 'product_picks', 'install_quote'];
 
 // A card with nothing in it is worse than no card. An empty client placeholder,
 // a "WHICH CLIENT?" header over no options, a turnaround sentence with no dates —
@@ -1635,6 +1636,10 @@ function renderCard(box, j) {
     case 'product_picks':
       box.appendChild(buildPicks(j.products || [],
         { intent: j.intent, ask_about: j.ask_about, replace: j.replace }));
+      break;
+    case 'install_quote':
+      // Installation / local delivery calculator — see install-calc.js.
+      if (window.InstallCalc) InstallCalc.render(box, j, { getToken: () => token });
       break;
   }
 }
