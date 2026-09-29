@@ -209,14 +209,25 @@ function greet() {
   document.getElementById('messagesInner').appendChild(row);
   const sg = document.getElementById('suggestions');
   if (sg) {
+    // Short labels on the chips; a click still asks the full question.
+    const ICON = {
+      paper: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
+      rush:  '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>',
+      copy:  '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+      clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+      tool:  '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>'
+    };
     const examples = [
-      'What paper stocks do we offer for postcards?',
-      'What did we decide about rush orders?',
-      'Which products have multiple versions enabled?',
-      'What is our turnaround for business cards?',
-      'Quote an installation: two vinyl decals, 3.5 miles away, 14 ft ladder'
+      ['tool',  'Quote an install',          'I need an installation quote'],
+      ['paper', 'Postcard papers',           'What paper stocks do we offer for postcards?'],
+      ['clock', 'Business card turnaround',  'What is our turnaround for business cards?'],
+      ['rush',  'Rush order rules',          'What did we decide about rush orders?'],
+      ['copy',  'Multi-version products',    'Which products have multiple versions enabled?']
     ];
-    sg.innerHTML = examples.map(t => '<button class="suggestion" onclick="ask(' + JSON.stringify(t).replace(/"/g,'&quot;') + ')">' + esc(t) + '</button>').join('');
+    sg.innerHTML = examples.map(([ic, label, q]) =>
+      '<button type="button" class="suggestion" title="' + esc(q) + '" onclick="ask(' + JSON.stringify(q).replace(/"/g,'&quot;') + ')">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + ICON[ic] + '</svg>' +
+        esc(label) + '</button>').join('');
     sg.style.display = 'flex';
   }
 }

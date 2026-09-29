@@ -1001,9 +1001,12 @@ async function doLogin() {
 function greet() {
   addMsg('ai', "Hi! Ask me anything about AxiomPrint \u2014 products and their options, pricing, or what the team agreed in training.");
   const sg = document.getElementById('wgSugg');
-  const ex = ['Paper options for postcards?', 'Turnaround for business cards?', 'Show me product 299'];
-  sg.innerHTML = ex.map(t =>
-    '<button class="wg-chip" onclick="ask(this.textContent)">' + esc(t) + '</button>').join('');
+  // Short labels; a click asks the full question.
+  const ex = [['Quote an install', 'I need an installation quote'],
+              ['Postcard papers', 'Paper options for postcards?'],
+              ['Card turnaround', 'Turnaround for business cards?']];
+  sg.innerHTML = ex.map(([label, q]) =>
+    '<button class="wg-chip" title="' + esc(q) + '" data-q="' + esc(q) + '" onclick="ask(this.dataset.q)">' + esc(label) + '</button>').join('');
 }
 
 // A click on a card must always go through. wgSend() bails while a turn is still
