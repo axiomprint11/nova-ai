@@ -220,7 +220,6 @@ function greet() {
     };
     const examples = [
       ['tool',  'Quote an install',          'I need an installation quote'],
-      ['users', 'Client follow-up',          'Which clients are due a follow-up? No orders in the last 3 months.'],
       ['paper', 'Postcard papers',           'What paper stocks do we offer for postcards?'],
       ['clock', 'Business card turnaround',  'What is our turnaround for business cards?'],
       ['rush',  'Rush order rules',          'What did we decide about rush orders?'],

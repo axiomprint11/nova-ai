@@ -1007,7 +1007,6 @@ function greet() {
   const sg = document.getElementById('wgSugg');
   // Short labels; a click asks the full question.
   const ex = [['Quote an install', 'I need an installation quote'],
-              ['Client follow-up', 'Which clients are due a follow-up? No orders in the last 3 months.'],
               ['Postcard papers', 'Paper options for postcards?'],
               ['Card turnaround', 'Turnaround for business cards?']];
   sg.innerHTML = ex.map(([label, q]) =>
