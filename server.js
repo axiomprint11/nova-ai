@@ -23,8 +23,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.2.8';
-const NOVA_BUILT = '09-28-2026 11:55pm';
+const NOVA_VERSION = '1.3.0';
+const NOVA_BUILT = '09-29-2026 1:30am';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -635,6 +635,9 @@ const dbConfig = {
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const mountMcp = require('./mcp');
+// Reports (client follow-up, top clients, unpaid invoices, product sales) —
+// read-only queries drawn by public/nova-report.js. One connection per run.
+const Reports = require('./reports')({ openConn: () => mysql.createConnection(dbConfig) });
 
 // ---- Gmail (read-only, impersonating the shared order@ inbox) ----
 const GMAIL_USER = 'order@axiomprint.com';
@@ -4035,6 +4038,18 @@ app.get('/api/install-pricing', auth, (req, res) => {
   res.json({ success: true, config: installPricing, meta: installPricingMeta, defaults: InstallPricing.DEFAULTS });
 });
 
+// ===== Reports =====
+app.get('/api/reports', auth, (req, res) => res.json({ success: true, reports: Reports.list() }));
+app.post('/api/reports/:id', auth, async (req, res) => {
+  try {
+    const out = await Reports.run(req.params.id, (req.body && req.body.params) || {});
+    res.json({ success: true, report: out });
+  } catch (e) {
+    console.error('REPORT ' + req.params.id + ' failed:', e.message);
+    res.json({ success: false, error: e.message });
+  }
+});
+
 // Road miles and drive time from the shop to an address, for the calculator.
 app.get('/api/route', auth, async (req, res) => {
   const r = await routeLookup(req.query.address, { date: req.query.date, time: req.query.time });
@@ -5816,6 +5831,23 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
         traffic: { type: 'string', enum: installPricing.delivery.traffic.map(t => t.id), description: 'Only if stated in those terms.' }
       }
     }
+  }, {
+    name: 'run_report',
+    description: 'Run one of Nova\'s ready-made reports and show it as an interactive table beside the chat (with a full-screen view, filters, sorting, Copy emails and CSV). ' +
+      'USE THIS instead of query_database whenever the question matches one of these:\n' +
+      Reports.list().map(r => '- ' + r.id + ': ' + r.description + ' Params: ' + r.params).join('\n') +
+      '\nExamples: "who hasn\'t ordered in 3 months" -> client_followup {months:3, window:"1m"}; ' +
+      '"clients to follow up this week" -> client_followup {months:3, window:"1w"}; "best clients this year" -> top_clients {period:"ytd"}; ' +
+      '"who owes us money" -> unpaid_invoices; "what sold last month" -> product_sales {period:"last_month"}. ' +
+      'The team can change every setting on the report itself, so pick sensible defaults rather than asking.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        report: { type: 'string', enum: Reports.list().map(r => r.id) },
+        params: { type: 'object', description: 'Report settings as listed above. Omit anything not stated.' }
+      },
+      required: ['report']
+    }
   }];
 
   // What has actually been said, so only the relevant product guide is pulled in.
@@ -5864,6 +5896,8 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
   // Installation / delivery calculators drawn in this answer. A second one
   // (after the model learns more) replaces the first on screen.
   let installShown = 0;
+  // Reports drawn in this answer; a second one replaces the first.
+  let reportsShown = 0;
 
   // A client pinned to this conversation carries across turns — the agent should
   // never re-ask who a job is for once it has been told.
@@ -6271,7 +6305,10 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     // Installation & local delivery. Rates are deliberately NOT written here —
     // they are admin-edited and live only in the quote tools, so the prompt can
     // never go stale against the calculator.
-    '\n\n=== INSTALLATION & LOCAL DELIVERY QUOTES ===\n' +
+    '\n\n=== REPORTS ===\n' +
+    'For client follow-up lists, top clients, unpaid invoices or product sales, call run_report — it draws a ' +
+    'full interactive table beside the chat. Use query_database only for questions none of the reports answers.\n' +
+    '\n=== INSTALLATION & LOCAL DELIVERY QUOTES ===\n' +
     'AxiomPrint installs graphics on site (decals, window film, wall graphics, panels, letters, banners) and ' +
     'delivers locally with its own driver. Whenever someone asks about installing, mounting or delivering — ' +
     'price, cost, quote, "how much", what it takes — call quote_installation (or quote_delivery) STRAIGHT AWAY ' +
@@ -8130,6 +8167,22 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
           }
         } catch (e) {
           toolResult = 'Could not load those options: ' + e.message;
+        }
+      } else if (toolUse.name === 'run_report') {
+        const rid = String(toolUse.input.report || '');
+        send({ type: 'query', description: 'Running the ' + ((Reports.REPORTS[rid] || {}).title || 'report') + ' report' });
+        try {
+          const rep = await Reports.run(rid, toolUse.input.params || {});
+          reportsShown++;
+          send({ type: 'report', report: rid, params: rep.params, result: rep, replace: reportsShown > 1 });
+          toolResult = JSON.stringify(Object.assign(Reports.digest(rep, 8), {
+            ui: 'The report is ALREADY open beside the chat as an interactive table with a full-screen view. Do NOT ' +
+                'list its rows or repeat the summary numbers as a table. Reply in 1-3 short lines: the headline ' +
+                '(how many / how much), anything that stands out in the first rows, and one useful next step ' +
+                '(e.g. filter by manager, widen the window). Mention any note that limits the data.'
+          }));
+        } catch (e) {
+          toolResult = 'The report could not run: ' + e.message + '. Say so plainly; do not guess the numbers.';
         }
       } else if (toolUse.name === 'quote_installation' || toolUse.name === 'quote_delivery') {
         const isInstall = toolUse.name === 'quote_installation';

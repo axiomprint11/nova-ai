@@ -149,6 +149,21 @@ traffic factors applied. Results are cached in memory for 6 hours. On the ChatBo
 in the right-hand calc pane (`showInstallInPane`) with a live "Estimated price is $…" line in the chat; the
 CRM widget has no pane and draws it inline.
 
+## Reports
+
+`reports.js` (server) defines Nova's reports — `client_followup`, `top_clients`, `unpaid_invoices`, `product_sales` —
+as parameterised, read-only queries that all return one table shape (controls, range, summary cards, columns,
+filters, rows, method, notes). `GET /api/reports` lists them; `POST /api/reports/:id {params}` runs one. In
+`/api/chatbot/chat` the `run_report` tool runs a report and sends a `report` SSE event; `public/nova-report.js`
+draws it as a compact card (ChatBot right pane, or inline in the widget) with a full-screen view. Changing a
+report setting re-runs it; search, filters and sorting are client-side. Saved chat messages keep only the
+report's settings (`NovaReport.toSaved`) and re-run it on reopen.
+
+`calls`, `email_from_system` and `invoice` have no index on their date column: date-bounded queries first find
+an id floor by binary search on the primary key (`idFloor()`), then filter on the date as well. Keep that
+pattern for any new report over a large log table. To add a report, add an entry to `REPORTS` with
+`normalize()` and `run()`; the tool description, the endpoints and the viewer pick it up automatically.
+
 ## Known quirks worth respecting
 
 - **`estimate.production_status` is stale.** True production state is the newest `qr_scan_history` row

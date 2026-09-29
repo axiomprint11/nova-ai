@@ -370,7 +370,7 @@ document.addEventListener('click', (e) => {
 // Card events that belong to an answer. Saved with the message so reopening a
 // conversation rebuilds what was on screen, not just the sentence above it.
 const WG_CARD_TYPES = ['job_card', 'price_quote', 'client_card', 'client_picks', 'product_cards',
-                       'turnaround', 'choice_picks', 'option_picks', 'product_picks', 'install_quote'];
+                       'turnaround', 'choice_picks', 'option_picks', 'product_picks', 'install_quote', 'report'];
 
 // A card with nothing in it is worse than no card. An empty client placeholder,
 // a "WHICH CLIENT?" header over no options, a turnaround sentence with no dates —
@@ -407,6 +407,10 @@ function wgRenderCard(box, j) {
     case 'product_picks':
       box.appendChild(AxiomCards.picks(j.products || [],
         { intent: j.intent, ask_about: j.ask_about, replace: j.replace }));
+      break;
+    case 'report':
+      // Nova report — compact card here; "Full view" fills the widget panel.
+      if (window.NovaReport) NovaReport.render(box, j, { getToken: () => token });
       break;
     case 'install_quote':
       // Installation / local delivery calculator — see install-calc.js.
@@ -1003,6 +1007,7 @@ function greet() {
   const sg = document.getElementById('wgSugg');
   // Short labels; a click asks the full question.
   const ex = [['Quote an install', 'I need an installation quote'],
+              ['Client follow-up', 'Which clients are due a follow-up? No orders in the last 3 months.'],
               ['Postcard papers', 'Paper options for postcards?'],
               ['Card turnaround', 'Turnaround for business cards?']];
   sg.innerHTML = ex.map(([label, q]) =>
@@ -1295,7 +1300,7 @@ async function wgSend() {
           wgScroll();
         } else if (WG_CARD_TYPES.indexOf(j.type) > -1) {
           if (dots.parentNode) dots.remove();
-          turnCards.push(j);
+          turnCards.push(j.type === 'report' && window.NovaReport ? NovaReport.toSaved(j) : j);
           wgRenderCard(box, j);
           if (dots.parentNode === box) box.appendChild(dots);
         } else if (j.type === 'client_pinned') {

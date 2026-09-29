@@ -215,10 +215,12 @@ function greet() {
       rush:  '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>',
       copy:  '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
       clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
-      tool:  '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>'
+      tool:  '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>',
+      users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>'
     };
     const examples = [
       ['tool',  'Quote an install',          'I need an installation quote'],
+      ['users', 'Client follow-up',          'Which clients are due a follow-up? No orders in the last 3 months.'],
       ['paper', 'Postcard papers',           'What paper stocks do we offer for postcards?'],
       ['clock', 'Business card turnaround',  'What is our turnaround for business cards?'],
       ['rush',  'Rush order rules',          'What did we decide about rush orders?'],
@@ -740,7 +742,7 @@ document.addEventListener('click', (e) => {
 // Card events that belong to an answer. Stored with the message so reopening a
 // chat rebuilds what was on screen, not just the sentence above it.
 const CARD_TYPES = ['job_card', 'price_quote', 'client_card', 'client_picks', 'product_cards',
-                    'turnaround', 'choice_picks', 'option_picks', 'product_picks', 'install_quote'];
+                    'turnaround', 'choice_picks', 'option_picks', 'product_picks', 'install_quote', 'report'];
 
 // A card with nothing in it is worse than no card. An empty client placeholder,
 // a "WHICH CLIENT?" header over no options, a turnaround sentence with no dates —
@@ -1666,6 +1668,33 @@ function renderCard(box, j) {
       box.appendChild(buildPicks(j.products || [],
         { intent: j.intent, ask_about: j.ask_about, replace: j.replace }));
       break;
+    case 'report': {
+      // A Nova report — see nova-report.js. Compact card in the pane, one line in the chat.
+      if (!window.NovaReport) break;
+      if (!usePane()) { NovaReport.render(box, j, { getToken: () => token }); break; }
+      if (j.replace) box.querySelectorAll('.nr-moved').forEach(n => n.remove());
+      const marker = document.createElement('div');
+      marker.className = 'nr-moved';
+      const describe = (r) => {
+        const head = r && r.summary && r.summary[0];
+        const t = marker.querySelector('.nr-moved-t');
+        if (t) t.innerHTML = '<b>' + esc((r && r.title) || 'Report') + '</b>' +
+          (head ? ' · ' + esc(head.label) + ': <b>' + esc(head.fmt === 'money'
+            ? '$' + Number(head.value).toLocaleString('en-US', { maximumFractionDigits: 0 })
+            : Number(head.value).toLocaleString('en-US')) + '</b>' : '') + ' — open beside the chat.';
+      };
+      marker.innerHTML = '<span class="nr-moved-t">Running the report\u2026</span>' +
+        '<button type="button" data-m="show">Show</button><button type="button" class="pri" data-m="full">Full view</button>';
+      const card = NovaReport.build(j, { getToken: () => token, onChange: describe });
+      if (j.result) describe(j.result);
+      else { const t0 = setInterval(() => { const r = card.__novaReport.result(); if (r) { describe(r); clearInterval(t0); } }, 400);
+             setTimeout(() => clearInterval(t0), 30000); }
+      marker.querySelector('[data-m="show"]').onclick = () => showInstallInPane(card, marker);
+      marker.querySelector('[data-m="full"]').onclick = () => { showInstallInPane(card, marker); card.__novaReport.open(); };
+      box.appendChild(marker);
+      showInstallInPane(card, marker);
+      break;
+    }
     case 'install_quote': {
       // Installation / local delivery calculator — see install-calc.js.
       if (!window.InstallCalc) break;
@@ -1841,7 +1870,8 @@ async function sendMessage() {
           scrollDown();
         } else if (CARD_TYPES.indexOf(j.type) > -1) {
           // Draw it, and keep it so reopening this chat shows the same thing.
-          turnCards.push(j);
+          // A report is saved as its settings only — its rows are re-run on reopen.
+          turnCards.push(j.type === 'report' && window.NovaReport ? NovaReport.toSaved(j) : j);
           renderCard(bubble, j);
           scrollDown();
         } else if (j.type === 'client_pinned') {
