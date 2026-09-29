@@ -94,7 +94,20 @@ function scrollDown(force) {
   if (!m) return;
   if (force || stickToBottom) m.scrollTop = m.scrollHeight;
 }
+// Stamp the build in the footer. "Is the new code live?" has cost us hours more
+// than once — this makes it a glance.
+async function showVersion() {
+  const el = document.getElementById('novaVer');
+  if (!el) return;
+  try {
+    const r = await fetch('/api/version');
+    const j = await r.json();
+    if (j.version) el.textContent = 'Nova ' + j.version + (j.built ? ' (' + j.built + ')' : '') + ' · ';
+  } catch (e) {}
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+  showVersion();
   renderCart();                       // show the empty cart from the start
   const m = document.getElementById('messages');
   if (!m) return;
@@ -820,6 +833,12 @@ function saveToShelf(moveOn) {
 // Saved items stack above the live one as accordion tabs, so an earlier quote
 // can be reopened and corrected without re-pricing it from the chat.
 let shelfOpen = -1;
+let shelfCollapsed = false;
+
+function toggleShelfSection() {
+  shelfCollapsed = !shelfCollapsed;
+  renderShelf();
+}
 
 function renderShelf() {
   let bar = document.getElementById('shelfBar');
@@ -832,7 +851,14 @@ function renderShelf() {
     if (hd && hd.parentNode) hd.parentNode.insertBefore(bar, hd.nextSibling);
   }
 
-  bar.innerHTML = quoteShelf.map((q, i) => {
+  const sent = quoteShelf.filter(q => q.quote_id).length;
+  bar.innerHTML =
+    '<div class="shelf-head" onclick="toggleShelfSection()">' +
+      '<span>Saved</span><em>' + quoteShelf.length + '</em>' +
+      (sent ? '<span class="shelf-sent">' + sent + ' in CRM</span>' : '') +
+      '<span class="shelf-fold">' + (shelfCollapsed ? '\u2304' : '\u2303') + '</span>' +
+    '</div>' +
+    (shelfCollapsed ? '' : '<div class="shelf-list">' + quoteShelf.map((q, i) => {
     const open = shelfOpen === i;
     const total = q.rows.length === 1
       ? '$' + Number(q.rows[0].price).toFixed(2)
@@ -852,13 +878,22 @@ function renderShelf() {
               Number(r.price).toFixed(2) + '</td></tr>').join('') + '</table>' +
             '<div class="shelf-acts">' +
               '<button type="button" class="sa-view" data-view="' + i + '">View</button>' +
-              '<button type="button" data-edit="' + i + '">Re-price this</button>' +
+              '<button type="button" data-edit="' + i + '">Re-price</button>' +
+              (q.quote_id
+                ? '<span class="sa-sent">\u2713 E' + q.quote_id + '</span>'
+                : '<button type="button" class="sa-crm" data-crm="' + i + '">Send to CRM</button>') +
               '<button type="button" data-rm="' + i + '">Remove</button>' +
             '</div>' +
           '</div>'
         : '') +
     '</div>';
-  }).join('');
+  }).join('') +
+    // One button for the lot, once there is more than one to send.
+    (quoteShelf.filter(q => !q.quote_id).length > 1
+      ? '<button type="button" class="shelf-all" id="shelfSendAll">Send all ' +
+        quoteShelf.filter(q => !q.quote_id).length + ' to CRM</button>'
+      : '') +
+  '</div>');
 
   bar.querySelectorAll('.shelf-tab').forEach(b => {
     b.onclick = () => {
@@ -901,6 +936,25 @@ function renderShelf() {
     };
   });
 
+  // Send one saved item to the CRM as a quote.
+  bar.querySelectorAll('[data-crm]').forEach(x => {
+    x.onclick = (e) => {
+      e.stopPropagation();
+      sendShelfItem(Number(x.getAttribute('data-crm')), x);
+    };
+  });
+
+  const all = document.getElementById('shelfSendAll');
+  if (all) all.onclick = async () => {
+    all.disabled = true;
+    const pending = quoteShelf.map((q, i) => i).filter(i => !quoteShelf[i].quote_id);
+    for (const i of pending) {
+      all.textContent = 'Sending ' + quoteShelf[i].product + '…';
+      await sendShelfItem(i, null);
+    }
+    renderShelf();
+  };
+
   bar.querySelectorAll('[data-edit]').forEach(x => {
     x.onclick = (e) => {
       e.stopPropagation();
@@ -928,6 +982,89 @@ function renderLiveTab(name) {
   body.insertBefore(tab, body.firstChild);
 }
 
+// A saved item -> a CRM quote. Its whole ladder goes in the description, so a
+// manager sees the alternatives rather than one figure without context.
+async function sendShelfItem(i, btn) {
+  const q = quoteShelf[i];
+  if (!q || q.quote_id) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  try {
+    const first = q.rows[0] || {};
+    const r = await fetch('/api/chatbot/quote-to-crm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({
+        product_id: q.product_id,
+        product: q.product,
+        name: q.product,
+        price: first.price,
+        summary: 'Qty ' + Number(first.quantity || 0).toLocaleString(),
+        specs: q.specs || [],
+        ladder: q.rows,
+        client_hint: chatClientName || ''
+      })
+    });
+    const j = await r.json();
+    if (j.ok) { q.quote_id = j.quote_id; }
+    else if (btn) { btn.disabled = false; btn.textContent = 'Send to CRM'; btn.title = j.error || ''; }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Send to CRM'; }
+  }
+  renderShelf();
+}
+
+async function sendQuoteToCrm(btn) {
+  const latest = paneQuotes[paneQuotes.length - 1];
+  if (!latest) return;
+  const d = latest.data;
+
+  // Every quantity quoted for this product goes in the description, so the
+  // manager sees the ladder rather than a single figure with no context.
+  const mine = {};
+  paneQuotes.forEach(x => {
+    if (Number(x.data.product_id) !== Number(d.product_id)) return;
+    const n = Number(x.data.quantity);
+    if (n > 0) mine[n] = x.data;
+  });
+  const ladder = Object.keys(mine).map(Number).sort((a, b) => a - b)
+    .map(n => ({ quantity: n, price: mine[n].price }));
+
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try {
+    const r = await fetch('/api/chatbot/quote-to-crm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({
+        product_id: d.product_id,
+        product: d.product,
+        price: d.price,
+        name: d.product,
+        summary: 'Qty ' + Number(d.quantity || 0).toLocaleString() +
+                 (d.size ? ', ' + d.size : ''),
+        specs: (d.specs || []).filter(sp => !sp.isVersionRow),
+        ladder: ladder,
+        client_hint: chatClientName || ''
+      })
+    });
+    const j = await r.json();
+    if (!j.ok) {
+      btn.disabled = false;
+      btn.textContent = 'Send to CRM as a quote';
+      const m = document.createElement('div');
+      m.className = 'co-msg';
+      m.textContent = j.error || 'Could not send it';
+      btn.parentNode.appendChild(m);
+      return;
+    }
+    btn.className = 'pa-quote done';
+    btn.textContent = j.e_number ? 'Quote ' + j.e_number + ' created' : 'Quote created';
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Send to CRM as a quote';
+  }
+}
+
 function renderPaneActions() {
   const body = document.getElementById('calcPaneBody');
   if (!body || paneMode !== 'calc') return;
@@ -940,20 +1077,23 @@ function renderPaneActions() {
   bar.id = 'paneActions';
   bar.className = 'pane-actions';
   const shelved = quoteShelf.length;
-  // On the last item there is nothing to go on to, so the button would lie.
+  // On the last item there is nothing to go on to, so the label would lie.
   const moreToCome = jobItemCount > 0 && shelved < jobItemCount - 1;
+  // Two buttons, not four. Ordering belongs to the cart and sending to the CRM
+  // belongs to Saved — putting every route here made the pane a wall of choices.
   bar.innerHTML =
-    (moreToCome
-      ? '<button type="button" class="pa-save">Save this &amp; price the next item</button>'
-      : '<button type="button" class="pa-save">Save this quote</button>') +
-    '<button type="button" class="pa-order">' +
-      (n ? 'Proceed with order — ' + n + ' item' + (n === 1 ? '' : 's') : 'Proceed with order') +
-    '</button>' +
-    '<button type="button" class="pa-draft">' +
-      (shelved > 1 ? 'Draft an email with all ' + shelved + ' items' : 'Help me draft an email') +
-    '</button>';
+    '<div class="pa-row">' +
+      '<button type="button" class="pa-save">' +
+        (moreToCome ? 'Save &amp; next item' : 'Save') +
+      '</button>' +
+      '<button type="button" class="pa-draft">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+        'stroke-linecap="round" stroke-linejoin="round">' +
+        '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>' +
+        (shelved > 1 ? 'Draft email — ' + shelved + ' items' : 'Draft an email') +
+      '</button>' +
+    '</div>';
   bar.querySelector('.pa-save').onclick = () => saveToShelf(moreToCome);
-  bar.querySelector('.pa-order').onclick = () => startCheckout();
   bar.querySelector('.pa-draft').onclick = () => startDraft();
   body.appendChild(bar);
 }

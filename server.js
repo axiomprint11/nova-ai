@@ -20,6 +20,11 @@ const { google } = require('googleapis');
 const fs = require('fs');
 
 const app = express();
+
+// Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
+// rather than an investigation — we have lost hours to that question.
+const NOVA_VERSION = '1.2.5';
+const NOVA_BUILT = '09-12-2026 9:56am';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -64,6 +69,10 @@ app.get('/api/asset-hash', (req, res) => {
 });
 
 app.get('/api/version', (req, res) => {
+  res.json({ version: NOVA_VERSION, built: NOVA_BUILT, build: BUILD_ID });
+});
+
+app.get('/api/version-old', (req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json({
     build: computeBuildId(),
@@ -1506,7 +1515,7 @@ async function quoteProduct(pid, opts) {
         // rows that predate it being filled in.
         let d = (sel && sel.dayCount != null && sel.dayCount !== '')
           ? parseInt(sel.dayCount) : null;
-        if (d == null || !isFinite(d)) d = parseTurnaroundDays(title);
+        if (d == null || !isFinite(d)) d = turnaroundDaysOf(title);
         if (d == null) return null;
         // Same-day / zero-day turnarounds can't be promised from a calculator —
         // whether it makes it depends on the floor, not the arithmetic.
@@ -2606,15 +2615,26 @@ app.get('/api/chatbot/job-peek', auth, async (req, res) => {
 //   "3 Business Days" -> 3      "4-5 Business Days" -> 5
 //   "Next Day" -> 1             "Same Day" / "Express (Same Day)" -> 0
 //   bare "Express" -> 1, flagged ambiguous (no number in the name)
+// Returns { days, ambiguous } — NOT a number. Several callers treated the object
+// as a number, which made every comparison against it meaningless.
 function parseTurnaroundDays(title) {
   const t = String(title || '').toLowerCase();
   if (!t) return { days: null, ambiguous: true };
   if (/same\s*day/.test(t)) return { days: 0, ambiguous: false };
+  // Weeks are business weeks: "2 weeks" is 10 working days, not 2.
+  const wk = t.match(/(\d+)\s*week/);
+  if (wk) return { days: parseInt(wk[1]) * 5, ambiguous: false };
   const nums = (t.match(/\d+/g) || []).map(Number).filter(n => n >= 0 && n < 200);
   if (nums.length) return { days: Math.max.apply(null, nums), ambiguous: false };
   if (/next\s*(business\s*)?day/.test(t)) return { days: 1, ambiguous: false };
   if (/express|rush/.test(t)) return { days: 1, ambiguous: true };
   return { days: null, ambiguous: true };
+}
+
+// When a plain number is all that's wanted.
+function turnaroundDaysOf(text) {
+  const r = parseTurnaroundDays(text);
+  return (r && r.days != null && isFinite(r.days)) ? r.days : null;
 }
 
 // Build ONE estimate object for the order payload. Extracted so a cart of
@@ -2788,12 +2808,86 @@ function readyFromTurnaround(turnaround, given) {
   if (given) return given;
   if (!turnaround) return null;
   try {
-    const days = parseTurnaroundDays(turnaround);
+    const days = turnaroundDaysOf(turnaround);
     if (days == null) return null;
     const t = buildTimeline(days);
     return t ? t.readyDate : null;
   } catch (e) { return null; }
 }
+
+// Push a priced item to the CRM as a QUOTE. No customer needed — it lands on
+// Estimates -> Quotes, where a manager assigns it later, and that assignment is
+// what creates the project, applies the discount and sorts taxation. So this is
+// the right endpoint for the common case: a price asked for before we know who
+// is asking.
+const QUOTE_API_URL = process.env.AXIOM_QUOTE_API_URL ||
+  'https://laravelapi.axiomprint.com/api/v1/nova-ai-bot/quotes';
+
+app.post('/api/chatbot/quote-to-crm', auth, async (req, res) => {
+  const b = req.body || {};
+  const productId = parseInt(b.product_id);
+  const price = Number(b.price);
+  if (!productId) return res.json({ ok: false, error: 'Which product?' });
+  if (!isFinite(price) || price < 0) return res.json({ ok: false, error: 'No price to send' });
+
+  const options = (b.specs || [])
+    .filter(sp => sp && sp.field && sp.value != null)
+    .map((sp, i) => ({
+      optionname: String(sp.field).replace(/_/g, ' '),
+      selected: String(sp.value),
+      variabletype: sp.variable_type || undefined,
+      optionVariableId: sp.variable_id || undefined,
+      optionVariableItemId: sp.item_id || undefined,
+      order: i + 1
+    }));
+
+  // A price ladder is ONE quote, not three — the alternatives go in the
+  // description so a manager sees them without three estimates to reconcile.
+  const ladder = Array.isArray(b.ladder) && b.ladder.length > 1
+    ? b.ladder.map(r => Number(r.quantity).toLocaleString() + ': $' + Number(r.price).toFixed(2)).join('  |  ')
+    : '';
+
+  const payload = {
+    estimate: {
+      estimate_productid: productId,
+      estimate_price: Number(price.toFixed(2)),
+      estimate_name: String(b.name || b.product || 'Quote').slice(0, 255),
+      estimate_description: [b.summary, ladder].filter(Boolean).join(' - ').slice(0, 2000) || undefined,
+      estimateoption: options.length ? options : undefined,
+      design_details: b.design_type
+        ? { design_type: b.design_type, notes: String(b.notes || '') }
+        : undefined
+    },
+    ai_bot_note: ('Quoted in Nova by ' + ((req.user && (req.user.username || req.user.email)) || 'an AM') +
+      ' on ' + shopToday() + '.' + (b.client_hint ? ' Client mentioned: ' + b.client_hint : '') +
+      ' No customer assigned yet.').slice(0, 5000)
+  };
+
+  try {
+    const r = await fetch(QUOTE_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const text = await r.text();
+    console.log('QUOTE_CRM status=' + r.status + ' product=' + productId + ' body=' + text.slice(0, 400));
+    let out = {};
+    try { out = JSON.parse(text); } catch (e) {}
+
+    if (!r.ok || out.success === false) {
+      // 422 carries Laravel's per-field errors; surface those rather than a code.
+      const detail = out.errors
+        ? Object.keys(out.errors).map(k => k + ': ' + [].concat(out.errors[k]).join(', ')).join('; ')
+        : (out.error || out.message || ('HTTP ' + r.status));
+      return res.json({ ok: false, error: detail });
+    }
+
+    const id = (out.data && (out.data.quote_id || (out.data.estimate && out.data.estimate.id))) || null;
+    res.json({ ok: true, quote_id: id, e_number: id ? ('E' + id) : null });
+  } catch (e) {
+    res.json({ ok: false, error: 'Could not reach the quote API: ' + e.message });
+  }
+});
 
 // ===== Chat cart =====
 app.get('/api/chats/:id/cart', auth, (req, res) => {
@@ -5303,7 +5397,8 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     input_schema: {
       type: 'object',
       properties: {
-        days: { type: 'integer', description: 'Production turnaround in BUSINESS days, e.g. 3 for "3 Business Days".' },
+        days: { type: 'integer', description: 'BUSINESS days of production, taken from what the person actually said. "5 business days" is 5. NEVER guess and never default to 1 — a one-day timeline against a five-day job is the worst answer this tool can give.' },
+        turnaround_text: { type: 'string', description: 'The turnaround EXACTLY as they wrote it — "5 business days", "next day", "2 weeks". Parsed server-side and preferred over `days`, so pass it whenever they said one in words.' },
         label: { type: 'string', description: 'What to call it, e.g. "3 Business Days" or "Next Day".' },
         approval_date: { type: 'string', description: 'Optional YYYY-MM-DD the artwork is approved. Defaults to today in Los Angeles.' },
         before_cutoff: { type: 'boolean', description: 'Ignored for today — the 5PM cutoff is read from the Los Angeles clock. Only used with a past approval_date.'
@@ -5567,6 +5662,21 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     'product guides, what was decided in a meeting — outranks your own printing knowledge. If a question ' +
     'is answered there, answer FROM it, in its terms. Never give a general-industry answer when the team ' +
     'has written a specific one.\n' +
+    '- THE CUTOFF IS 5PM LOS ANGELES. Not 4PM, not anything else. The rule, in full:\n' +
+    '    Approved BY 5PM  -> today is the START DAY. Day 1 is tomorrow.\n' +
+    '    Approved AFTER 5PM -> today does not count. Tomorrow is the START DAY, and Day 1 is the day\n' +
+    '      after that.\n' +
+    '    Weekends and holidays are never counted. The start day is never Day 1 — counting begins the\n' +
+    '      following business day.\n' +
+    '    Worked example, because this is the one people get wrong: approved Wednesday at 10PM, 5 business\n' +
+    '      days. After the cutoff, so Wednesday is out. Thursday is the start day. Friday is Day 1, Monday\n' +
+    '      Day 2, Tuesday Day 3, Wednesday Day 4, Thursday Day 5 — READY THURSDAY.\n' +
+    '- ALWAYS DRAW THE CALENDAR for any turnaround question. Call calculate_turnaround and let the visual ' +
+    'answer it — never work the dates out in prose. Pass `turnaround_text` exactly as they said it ' +
+    '("5 business days") and `days` to match. Passing 1 for a five-day job draws a one-day schedule and ' +
+    'is worse than not answering.\n' +
+    '- If they say your timeline is wrong, CHECK THEIR ARITHMETIC BEFORE DEFENDING IT. Re-read the rule ' +
+    'above and count it out. They know this work; a confident wrong answer costs far more than a correction.\n' +
     '- DPI, BLEED AND SAFE AREA are stored on every product. Any question about resolution, DPI, bleed, ' +
     'safe zone or file setup goes to get_file_specs — there is always a real answer, so never say we have ' +
     'no spec and never fall back to an industry rule of thumb. Answer in one line: "For Fabric Banners the ' +
@@ -6752,6 +6862,25 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
         // and "4-5 Business Days" is programmed as 5.
         let days = parseInt(toolUse.input.days);
         const lbl = String(toolUse.input.label || '').trim();
+
+        // What they actually said outranks whatever the model decided. "5 business
+        // days" arriving as days:1 drew a one-day schedule for a five-day job,
+        // twice, and then argued the point. Read their own message rather than
+        // relying on the model to pass it along.
+        let spokenText = String(toolUse.input.turnaround_text || '').trim();
+        if (!spokenText) {
+          const lastUser = [].concat(messages || []).reverse()
+            .find(m => m.role === 'user' && typeof m.content === 'string');
+          const m2 = lastUser && String(lastUser.content).match(
+            /(same\s*day|next\s*(?:business\s*)?day|\d+\s*(?:-\s*\d+\s*)?(?:business\s*)?(?:day|week)s?)/i);
+          if (m2) spokenText = m2[1];
+        }
+        const spoken = turnaroundDaysOf(spokenText);
+        if (spoken != null && spoken !== days) {
+          console.log('TURNAROUND corrected from "' + spokenText + '" = ' + spoken +
+                      ' days (model said ' + days + ')');
+        }
+        if (spoken != null) days = spoken;
         const tpid = parseInt(toolUse.input.product_id) || 0;
 
         let dbDays = null;
@@ -6772,7 +6901,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
           }
           days = dbDays;
         } else {
-          const fromLabel = parseTurnaroundDays(lbl);
+          const fromLabel = turnaroundDaysOf(lbl);
           if (fromLabel != null && fromLabel !== days) days = fromLabel;
         }
         // `|| 1` used to turn a missing count into a one-day job silently.

@@ -1239,3 +1239,37 @@ textarea { flex: 1; border: none; background: transparent; font-size: 14.5px; re
 .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--indigo); flex: none; }
 .live-tab em { margin-left: auto; font-style: normal; font-size: 11px; font-weight: 500;
   color: var(--muted); }
+
+/* Send to CRM as a quote — the no-client route */
+.pa-quote { padding: 9px; border: 1px solid #fde68a; background: #fffbeb; color: #92400e;
+  font-family: inherit; font-size: 12.5px; font-weight: 600; border-radius: 9px; cursor: pointer; }
+.pa-quote:hover:not(:disabled) { border-color: #f59e0b; background: #fef3c7; }
+.pa-quote:disabled { opacity: .7; cursor: default; }
+.pa-quote.done { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
+
+/* Saved section header */
+.shelf-head { display: flex; align-items: center; gap: 7px; padding: 7px 4px 9px;
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); cursor: pointer; user-select: none; }
+.shelf-head em { font-style: normal; background: var(--indigo); color: #fff; border-radius: 9px;
+  padding: 0 6px; font-size: 10px; }
+.shelf-sent { text-transform: none; letter-spacing: 0; font-weight: 500; color: #166534; font-size: 10.5px; }
+.shelf-fold { margin-left: auto; font-size: 11px; }
+.shelf-head:hover { color: var(--indigo-dark); }
+.shelf-all { width: 100%; margin-top: 4px; padding: 8px; border: 1px solid #fde68a;
+  background: #fffbeb; color: #92400e; font-family: inherit; font-size: 11.5px; font-weight: 600;
+  border-radius: 8px; cursor: pointer; }
+.shelf-all:hover:not(:disabled) { border-color: #f59e0b; background: #fef3c7; }
+.shelf-all:disabled { opacity: .7; cursor: default; }
+.sa-crm { border-color: #fde68a !important; background: #fffbeb !important; color: #92400e !important; }
+.sa-crm:hover:not(:disabled) { border-color: #f59e0b !important; }
+.sa-sent { font-size: 11px; font-weight: 700; color: #166534; padding: 3px 8px;
+  background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; }
+
+/* Two-up action row */
+.pa-row { display: flex; gap: 7px; }
+.pa-row .pa-save { flex: 0 0 38%; }
+.pa-row .pa-draft { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.pa-row .pa-draft svg { width: 14px; height: 14px; flex: none; }
+
+.nova-ver { color: var(--muted); opacity: .75; }
