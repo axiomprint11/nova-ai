@@ -57,7 +57,8 @@
       case 'text_strong': return v ? '<b>' + esc(v) + '</b>' : none;
       case 'text': return v !== '' && v != null ? esc(v) : none;
       case 'int': return v == null ? none : int(v);
-      case 'money': return v == null ? none : money(v);
+      case 'money': return (v == null ? none : money(v)) +
+        (col.sub_key && row[col.sub_key] ? '<div class="nr-sub">' + esc(row[col.sub_key]) + '</div>' : '');
       case 'date': return v ? us(v) : none;
       case 'date_ago': {
         if (!v) return none;

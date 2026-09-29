@@ -23,8 +23,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.3.0';
-const NOVA_BUILT = '09-29-2026 1:30am';
+const NOVA_VERSION = '1.3.1';
+const NOVA_BUILT = '09-29-2026 4:15am';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -2049,7 +2049,11 @@ AXIOMPRINT DATABASE GUIDE (Laravel/Yii MySQL app for a print business)
 CORE CONCEPT - how a sale works:
 - The \`estimate\` table is the central object. Each row = ONE product line item for a customer (NOT a quote). ~1.17M rows.
 - A "job number" shown as E1169106 maps directly to estimate.id = 1169106. Strip the "E" prefix.
-- An estimate becomes a real SALE when linked to an invoice via the \`invoiceestimate\` pivot AND that invoice has payment_status='paid'.
+- An estimate becomes a real SALE when its estimate.estimate_invoiceid points at an invoice with payment_status='paid'.
+- *** There is NO invoiceestimate table in this database. Estimates link to invoices ONLY through
+  estimate.estimate_invoiceid -> invoice.id (and both belong to a project: estimate.estimate_projectid,
+  invoice.invoice_projectid -> project.id). estimate.estimate_invoice_order is the line's position on the invoice
+  (0 = first line).
 
 KEY TABLES & COLUMNS:
 
@@ -2083,7 +2087,7 @@ estimateoption (product configuration - sizes, quantities, options) - KEY-VALUE 
 - estimate_id -> estimate.id
 - estimate_option_name (e.g. 'Size','Quantity','Material')
 - estimate_option_value (the chosen value)
-- *** IMPORTANT: The actual ORDER QUANTITY lives HERE as estimate_option_name='Quantity', estimate_option_value=<number>. Do NOT rely on invoiceestimate.invoice_estcount for quantity - it is often 0. Always get quantity from estimateoption. ***
+- *** IMPORTANT: The actual ORDER QUANTITY lives HERE as estimate_option_name='Quantity', estimate_option_value=<number>. Always get quantity from estimateoption. ***
 - *** SIZE WARNING: sizes are often stored as internal codes (e.g. '864'), NOT human strings like '24x36'. To match a size you may need to look at distinct estimate_option_value where name='Size' for that product first. Do not assume a literal '24x36' text match will work. ***
 
 product (catalog, ~1300 rows):
@@ -2098,11 +2102,22 @@ invoice (~127k rows):
 - payment_status: paid,unpaid,partial,void  <-- filter paid for real sales
 - invoice_total_payment (total), invoice_total_payment_done (paid so far)
 - invoice_creation_date (datetime)
-- invoice_type: invoice,estimate,bad_debt (use ='invoice' for real invoices)
+- invoice_type: invoice,estimate,bad_debt (use ='invoice' for real invoices; 'estimate' = a quote sent, not yet invoiced)
+- invoice_projectid -> project.id
+- Line items: SELECT * FROM estimate WHERE estimate_invoiceid = <invoice.id> ORDER BY estimate_invoice_order.
+  A line's billed amount is COALESCE(estimate.new_total, estimate.estimate_price) — new_total is after discounts and
+  the lines add up to invoice_subtotal_payment; estimate_price is the pre-discount list price.
 
-invoiceestimate (pivot invoices<->estimates):
-- invoice_id -> invoice.id, invoice_estimateid -> estimate.id, invoice_estproductid -> product.id, invoice_estprice
-- (invoice_estcount exists but is unreliable/0 - get quantity from estimateoption instead)
+project (an order / job folder, ~97k): id, projectclientid -> customer.id, projectname, created_at, active.
+- A client's "last order" (as in the weekly Client Follow-up report) is MAX(project.created_at) for that client.
+
+dialpad_calls (THE phone log, since 2026-08-10): customer_id -> customer.id, direction ('inbound'|'outbound'),
+  call_type ('internal' = staff-to-staff), date_started, conversation_key, is_primary_leg, duration_ms, ai_summary,
+  transcript_text. One call that rings several phones creates several rows ("legs") — count calls with
+  COUNT(DISTINCT conversation_key). The old \`calls\` table stopped in May 2024; do not use it.
+
+email_from_system (emails the CRM sent): customer_id -> customer.id, to_email, subject, type, estimate_id, invoiceid.
+- The send time is sent_at. Rows since spring 2026 leave created_at NULL, so use COALESCE(sent_at, created_at).
 
 customer (~35k): id, name, last_name, email, company_name, phone, manager_id->user.id
 user (staff, ~420): id, name, last_name, email, title
@@ -2127,7 +2142,7 @@ CANONICAL QUERY PATTERNS:
    - Quantity and Turnaround: show the stored value directly (Quantity is the real count; Turnaround maps via the join).
 
 2) Units of a product sold in last year (the right way):
-   Join product -> estimate (estimate_productid) -> invoiceestimate (invoice_estimateid) -> invoice (paid) and SUM the quantity from estimateoption where name='Quantity'. Filter invoice.payment_status='paid' AND invoice.invoice_creation_date >= DATE_SUB(CURDATE(),INTERVAL 1 YEAR). When the user names a size, first inspect distinct Size option values for that product, then report what you find rather than forcing a 24x36 text match.
+   Join product -> estimate (estimate_productid) -> invoice ON invoice.id = estimate.estimate_invoiceid (paid) and SUM the quantity from estimateoption where name='Quantity'. Filter invoice.payment_status='paid' AND invoice.invoice_creation_date >= DATE_SUB(CURDATE(),INTERVAL 1 YEAR). When the user names a size, first inspect distinct Size option values for that product, then report what you find rather than forcing a 24x36 text match.
 
 3) Revenue: SUM(invoice_total_payment) FROM invoice WHERE payment_status='paid' AND invoice_type='invoice' AND <date>.
 
@@ -2135,7 +2150,7 @@ CANONICAL QUERY PATTERNS:
 
 5) "Where is my order" / status for a client reply (e.g. from an invoice number like INV125472):
    a. Find the invoice: the number after "INV" is invoice.id (INV125472 -> invoice.id=125472). Get invoice_clientid, payment_status, dates.
-   b. Find the linked estimate(s)/job: SELECT invoice_estimateid FROM invoiceestimate WHERE invoice_id=<invoice_id>. If none found there, the job may be linkable via estimate.estimate_invoiceid=<invoice_id>. The estimate.id IS the job number (shown as E<id>).
+   b. Find the linked estimate(s)/job: SELECT id FROM estimate WHERE estimate_invoiceid=<invoice_id> ORDER BY estimate_invoice_order. The estimate.id IS the job number (shown as E<id>).
    c. *** Get REAL production status from qr_scan_history (latest scan), NOT production_status. ***
    d. Check logs for shipping events (shipping_label_created, tracking_number_updated, product_shipped_email_sent) to answer whether it shipped.
    e. Summarize for the rep: product, qty, current production step + when last scanned, whether shipped/tracking, and a suggested honest reply. Do NOT claim "not started" unless the latest qr_scan_history scan actually says not_started.

@@ -47,6 +47,12 @@ SQLite migrations are additive `ALTER TABLE ... , () => {}` calls that swallow t
 error — that is the intended idiom for adding a column, not a bug.
 
 `schema.sql` is a 109-table mysqldump of the production schema, kept for reference. Do not run it.
+It is **out of date** — check the live DB (MCP `describe_schema`) before trusting it. Known drift:
+there is **no `invoiceestimate` table** (estimates link to invoices only by `estimate.estimate_invoiceid`,
+and to projects by `estimate.estimate_projectid`); the `calls` table stopped in May 2024 — phone calls are
+in `dialpad_calls` (count `DISTINCT conversation_key`, skip `call_type='internal'`); `email_from_system`
+has `customer_id` and `sent_at`, and newer rows leave `created_at` NULL. A client's "last order" in the
+reports is their newest `project.created_at`.
 
 ## Authentication
 

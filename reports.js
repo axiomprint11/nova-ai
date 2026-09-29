@@ -39,6 +39,10 @@ module.exports = function makeReports(deps) {
       year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()));
   }
   const sqlDate = d => iso(d) + ' 00:00:00';     // start of that day
+  // Dates come back as the stored text ("2026-06-18 22:57:00") — see run(), which
+  // turns on dateStrings. The day is read straight off it, never through a
+  // timezone, so a report shows the same day the CRM and the weekly report do.
+  const day = v => (v == null ? '' : String(v).slice(0, 10));
 
   // Named periods, shared by the revenue reports.
   const PERIODS = [
@@ -90,7 +94,7 @@ module.exports = function makeReports(deps) {
     while (lo < hi) {
       const mid = Math.floor((lo + hi) / 2);
       const [[r]] = await conn.query('SELECT ' + col + ' AS d FROM ' + table + ' WHERE id >= ? ORDER BY id LIMIT 1', [mid]);
-      if (!r || r.d == null || new Date(r.d) < new Date(date)) lo = mid + 1; else hi = mid;
+      if (!r || r.d == null || String(r.d) < String(date)) lo = mid + 1; else hi = mid;
     }
     const id = Math.max(0, lo - 5000);
     floorCache.set(key, { at: Date.now(), id });
@@ -154,69 +158,86 @@ module.exports = function makeReports(deps) {
       const winLabel = { '1w': '1 week', '2w': '2 weeks', '1m': '1 month', '3m': '3 months' }[p.window] ||
         (p.window_n + ' ' + { d: 'day', w: 'week', m: 'month' }[p.window_unit] + (p.window_n === 1 ? '' : 's'));
 
-      // 1. Each client's last order (latest non-void invoice), kept when it lands in the window.
+      // 1. Each client's last order = their most recent PROJECT, kept when it lands
+      //    in the window. This is the weekly Client Follow-up report's own rule:
+      //    checked against its 09-21 snapshot, the dates agree on every client
+      //    both lists share. Line items added to an existing project later do
+      //    not move the date; a job with no project does not count.
       const [lastRows] = await conn.query(
-        'SELECT invoice_clientid AS cid, MAX(invoice_creation_date) AS last_at FROM invoice ' +
-        "WHERE invoice_type = 'invoice' AND payment_status <> 'void' AND invoice_clientid > 0 " +
-        'GROUP BY invoice_clientid HAVING last_at >= ? AND last_at < ? ORDER BY last_at DESC LIMIT 2000',
+        'SELECT projectclientid AS cid, MAX(created_at) AS last_at FROM project WHERE projectclientid > 0 ' +
+        'GROUP BY projectclientid HAVING last_at >= ? AND last_at < ? ORDER BY last_at DESC LIMIT 2000',
         [sqlDate(from), sqlDate(toEx)]);
       const cids = lastRows.map(r => r.cid);
       const cust = await customers(conn, cids);
 
-      // 2. That last invoice, and its first line item for the product and E-number.
-      const lastInv = {};
+      // 2. That project, its first job (product + E-number) and its invoice total.
+      const lastProj = {};
       if (cids.length) {
-        const [inv] = await conn.query(
-          'SELECT id, invoice_clientid AS cid, invoice_creation_date AS at, invoice_total_payment AS total FROM invoice ' +
-          "WHERE invoice_clientid IN (?) AND invoice_type = 'invoice' AND payment_status <> 'void' " +
-          'AND invoice_creation_date >= ? AND invoice_creation_date < ?', [cids, sqlDate(from), sqlDate(toEx)]);
-        inv.forEach(r => {
-          const cur = lastInv[r.cid];
-          if (!cur || new Date(r.at) > new Date(cur.at) || (+new Date(r.at) === +new Date(cur.at) && r.id > cur.id)) lastInv[r.cid] = r;
+        const [projs] = await conn.query(
+          'SELECT id, projectclientid AS cid, created_at AS at FROM project ' +
+          'WHERE projectclientid IN (?) AND created_at >= ? AND created_at < ?', [cids, sqlDate(from), sqlDate(toEx)]);
+        projs.forEach(r => {
+          const cur = lastProj[r.cid];
+          if (!cur || r.at > cur.at || (r.at === cur.at && r.id > cur.id)) lastProj[r.cid] = r;
         });
       }
-      const invIds = Object.values(lastInv).map(r => r.id);
-      const firstLine = {};
-      if (invIds.length) {
-        const [lines] = await conn.query(
-          'SELECT ie.id, ie.invoice_id, ie.invoice_estimateid AS eid, p.title AS product FROM invoiceestimate ie ' +
-          'LEFT JOIN product p ON p.id = ie.invoice_estproductid WHERE ie.invoice_id IN (?) ORDER BY ie.id', [invIds]);
-        lines.forEach(l => { if (!firstLine[l.invoice_id]) firstLine[l.invoice_id] = l; });
+      const projIds = Object.values(lastProj).map(r => r.id);
+      // The job shown is the FIRST LINE ON THE PROJECT'S INVOICE
+      // (estimate_invoice_order = 0), and the total is that invoice — which may
+      // still be a quote (invoice_type 'estimate'). With no invoiced job the
+      // product and E-number stay blank and the total falls back to an invoice
+      // on the project itself. Checked field by field against the weekly report.
+      const pickJob = {}, jobInvoice = {}, projInvoice = {};
+      if (projIds.length) {
+        const [jobs] = await conn.query(
+          'SELECT e.id, e.estimate_projectid AS pid, e.estimate_invoiceid AS inv, e.estimate_invoice_order AS ord, ' +
+          'p.title AS product, i.invoice_total_payment AS total, i.invoice_type AS itype FROM estimate e ' +
+          'JOIN invoice i ON i.id = e.estimate_invoiceid ' +
+          "AND i.invoice_type IN ('invoice','estimate') AND i.payment_status <> 'void' " +
+          'LEFT JOIN product p ON p.id = e.estimate_productid WHERE e.estimate_projectid IN (?)', [projIds]);
+        jobs.sort((a, b) => (b.inv - a.inv) || ((a.ord || 0) - (b.ord || 0)) || (a.id - b.id));
+        jobs.forEach(j => { if (!pickJob[j.pid]) pickJob[j.pid] = j; });
+        const [invs] = await conn.query(
+          'SELECT id, invoice_projectid AS pid, invoice_total_payment AS total, invoice_type AS itype FROM invoice ' +
+          "WHERE invoice_projectid IN (?) AND invoice_type IN ('invoice','estimate') AND payment_status <> 'void' ORDER BY id",
+          [projIds]);
+        invs.forEach(v => { projInvoice[v.pid] = v; });            // latest invoice on the project wins
       }
 
       // 3. Engagement: always the 3 months before the as-of date.
+      //    Calls: Dialpad (dialpad_calls), one per conversation — a call that rang
+      //    five phones is one call — and never internal calls.
+      //    Emails: the CRM's own sent emails (email_from_system) by customer_id.
+      //    Newer rows fill sent_at and leave created_at empty, so both are read.
       const engFrom = addMonths(asOf, -3), engTo = addDays(asOf, 1);
       const touch = {};
       cids.forEach(id => { touch[id] = { call_in: 0, call_out: 0, email_in: 0, email_out: 0 }; });
+      let callsSince = null;
       if (cids.length) {
-        const callFloor = await idFloor(conn, 'calls', 'created_at', sqlDate(engFrom));
         const [calls] = await conn.query(
-          'SELECT direction, from_customer_id AS f, to_customer_id AS t, COUNT(*) AS n FROM calls ' +
-          'WHERE id >= ? AND created_at >= ? AND created_at < ? AND is_internal = 0 ' +
-          'AND (from_customer_id IN (?) OR to_customer_id IN (?)) GROUP BY direction, from_customer_id, to_customer_id',
-          [callFloor, sqlDate(engFrom), sqlDate(engTo), cids, cids]);
+          'SELECT customer_id AS cid, direction, COUNT(DISTINCT conversation_key) AS n FROM dialpad_calls ' +
+          "WHERE customer_id IN (?) AND date_started >= ? AND date_started < ? AND call_type <> 'internal' " +
+          'GROUP BY customer_id, direction', [cids, sqlDate(engFrom), sqlDate(engTo)]);
         calls.forEach(c => {
-          if (c.direction === 'inbound' && touch[c.f]) touch[c.f].call_in += Number(c.n);
-          if (c.direction === 'outbound' && touch[c.t]) touch[c.t].call_out += Number(c.n);
+          if (!touch[c.cid]) return;
+          if (c.direction === 'inbound') touch[c.cid].call_in += Number(c.n);
+          else if (c.direction === 'outbound') touch[c.cid].call_out += Number(c.n);
         });
-        const byEmail = {};
-        cids.forEach(id => { const e = String((cust[id] || {}).email || '').trim().toLowerCase(); if (e) byEmail[e] = id; });
-        const emails = Object.keys(byEmail);
-        if (emails.length) {
-          const mailFloor = await idFloor(conn, 'email_from_system', 'created_at', sqlDate(engFrom));
-          const [mails] = await conn.query(
-            'SELECT LOWER(TRIM(to_email)) AS e, COUNT(*) AS n FROM email_from_system ' +
-            'WHERE id >= ? AND created_at >= ? AND created_at < ? AND LOWER(TRIM(to_email)) IN (?) GROUP BY e',
-            [mailFloor, sqlDate(engFrom), sqlDate(engTo), emails]);
-          mails.forEach(m => { const id = byEmail[m.e]; if (id) touch[id].email_out += Number(m.n); });
-        }
+        const [mails] = await conn.query(
+          'SELECT customer_id AS cid, COUNT(*) AS n FROM email_from_system WHERE customer_id IN (?) AND ' +
+          '((sent_at >= ? AND sent_at < ?) OR (sent_at IS NULL AND created_at >= ? AND created_at < ?)) GROUP BY customer_id',
+          [cids, sqlDate(engFrom), sqlDate(engTo), sqlDate(engFrom), sqlDate(engTo)]);
+        mails.forEach(m => { if (touch[m.cid]) touch[m.cid].email_out += Number(m.n); });
+        const [[first]] = await conn.query('SELECT MIN(date_started) AS d FROM dialpad_calls');
+        callsSince = first && first.d ? parse(day(first.d)) : null;
       }
       const mgr = await managers(conn, cids.map(id => (cust[id] || {}).manager_id));
 
       let rows = lastRows.map(r => {
         const c = cust[r.cid] || {};
-        const inv = lastInv[r.cid] || {};
-        const line = firstLine[inv.id] || {};
+        const proj = lastProj[r.cid] || {};
+        const line = pickJob[proj.id] || {};
+        const inv = line.id ? { total: line.total, itype: line.itype } : (projInvoice[proj.id] || {});
         const t = touch[r.cid];
         const W = ENG.weights;
         const pts = t.call_in * W.call_in + t.email_in * W.email_in + t.call_out * W.call_out + t.email_out * W.email_out;
@@ -236,10 +257,11 @@ module.exports = function makeReports(deps) {
                         action: high ? ((total || 0) < ENG.reprice_below ? 'Reprice' : 'Train') : null },
           eng_sort: eng + (high ? 0.5 : 0),
           eng_tags: [eng >= 6 ? 'active' : eng >= 1 ? 'low' : 'none'].concat(high ? ['high'] : []),
-          last_order: iso(new Date(r.last_at)),
+          last_order: day(r.last_at),
           product: line.product || '',
-          enumber: line.eid ? 'E' + line.eid : '',
-          total: total
+          enumber: line.id ? 'E' + line.id : '',
+          total: total,
+          total_note: inv.itype === 'estimate' ? 'Quote — not invoiced yet' : ''
         };
       });
       if (p.manager) rows = rows.filter(r => r.manager.toLowerCase().indexOf(p.manager.toLowerCase()) > -1);
@@ -276,7 +298,7 @@ module.exports = function makeReports(deps) {
           { key: 'last_order', label: 'Last order', type: 'date_ago', sort: true, compact: true },
           { key: 'product', label: 'Last product', type: 'text', sort: true, empty: 'No product on the invoice' },
           { key: 'enumber', label: 'E-number', type: 'text' },
-          { key: 'total', label: 'Invoice total', type: 'money', sort: true, compact: true }
+          { key: 'total', label: 'Invoice total', type: 'money', sort: true, compact: true, sub_key: 'total_note' }
         ],
         filters: [
           { key: 'score', label: 'All scores', field: 'score_band',
@@ -289,13 +311,19 @@ module.exports = function makeReports(deps) {
         email_key: 'email',
         search_keys: ['name', 'company', 'email', 'product', 'enumber'],
         as_of: p.as_of,
-        method: 'Last order is the client’s latest invoice that is not void. Engagement always looks at the 3 months ' +
-          'before the as-of date (' + us(engFrom) + ' to ' + us(asOf) + '), whatever window is selected. Contact the client ' +
-          'started counts more than contact we started: inbound call 1.5, inbound email 1, outbound call 0.5, outbound ' +
-          'email 0.25; 12 points = 10. High touch is ' + ENG.high_touch + '+ inbound calls and emails in those 3 months: ' +
-          'Reprice when the last invoice was under $' + ENG.reprice_below + ', otherwise Train. Score is the CRM’s client score.',
-        notes: ['Inbound emails are not counted yet — they live in Gmail, not the database. Outbound emails are the CRM’s ' +
-                'system emails (invoices, proofs), matched on the client’s email address.'],
+        method: 'Last order is the date of the client’s most recent project — the same rule as the weekly Client ' +
+          'Follow-up report. Product and E-number are the first line on that project’s invoice, and the total is that ' +
+          'invoice — marked when it is still a quote. Both are blank when nothing on the project has been invoiced. Engagement always looks at the 3 months before the as-of date (' +
+          us(engFrom) + ' to ' + us(asOf) + '), whatever window is selected: Dialpad calls counted once per conversation, ' +
+          'and the CRM’s own emails to the client. Contact the client started counts more than contact we started: inbound ' +
+          'call 1.5, inbound email 1, outbound call 0.5, outbound email 0.25; 12 points = 10. High touch is ' + ENG.high_touch +
+          '+ inbound calls and emails in those 3 months: Reprice when the last invoice was under $' + ENG.reprice_below +
+          ', otherwise Train. Score is the CRM’s client score.',
+        notes: [
+          'Inbound emails are not counted — they are in Gmail, not the database. Outbound emails are the CRM’s own ' +
+          '(invoices, proofs, notices), not personal emails from managers.'
+        ].concat(callsSince && callsSince > engFrom
+          ? ['Dialpad call history starts ' + us(callsSince) + ', so calls before then are not in the engagement score.'] : []),
         truncated: lastRows.length >= 2000,
         rows: rows
       };
@@ -336,7 +364,7 @@ module.exports = function makeReports(deps) {
           orders: Number(x.orders), revenue: money(x.revenue),
           avg: money(Number(x.revenue) / Math.max(1, Number(x.orders))),
           share: all ? Math.round(Number(x.revenue) / all * 1000) / 10 : 0,
-          last_order: iso(new Date(x.last_at))
+          last_order: day(x.last_at)
         };
       });
       if (p.manager) rows = rows.filter(x => x.manager.toLowerCase().indexOf(p.manager.toLowerCase()) > -1);
@@ -402,15 +430,15 @@ module.exports = function makeReports(deps) {
       const bucket = d => d <= 0 ? 'current' : d <= 30 ? '1_30' : d <= 60 ? '31_60' : d <= 90 ? '61_90' : '90_plus';
       let rows = inv.map(x => {
         const c = cust[x.cid] || {};
-        const from = x.due ? new Date(x.due) : new Date(x.created);
-        const age = Math.floor((today - Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate())) / 864e5);
+        const from = parse(day(x.due) || day(x.created));
+        const age = from ? Math.floor((today - from) / 864e5) : 0;
         const balance = money((Number(x.total) || 0) - (Number(x.paid) || 0));
         return {
           invoice: 'INV' + x.id, client_id: x.cid,
           name: fullName(c.name, c.last_name) || c.company_name || (x.cid ? 'Client #' + x.cid : 'No client'),
           email: c.email || '', company: c.company_name || '', phone: c.phone || '',
           manager: mgr[x.mid] || mgr[c.manager_id] || '',
-          created: iso(new Date(x.created)), due: x.due ? iso(new Date(x.due)) : '',
+          created: day(x.created), due: day(x.due),
           age: age, age_band: bucket(age), status: x.status,
           total: money(x.total), paid: money(x.paid), balance: balance
         };
@@ -475,9 +503,13 @@ module.exports = function makeReports(deps) {
     async run(conn, p) {
       const r = periodRange(p);
       const floor = await idFloor(conn, 'invoice', 'invoice_creation_date', sqlDate(r.from));
+      // Line items are estimates pointing at their invoice (estimate.estimate_invoiceid).
+      // new_total is the line's billed amount — the lines add up to the invoice
+      // subtotal exactly; estimate_price is the pre-discount list price.
       const [lines] = await conn.query(
-        'SELECT ie.invoice_id, ie.invoice_estimateid AS eid, ie.invoice_estproductid AS pid, ie.invoice_estprice AS price ' +
-        'FROM invoice i JOIN invoiceestimate ie ON ie.invoice_id = i.id ' +
+        'SELECT e.estimate_invoiceid AS invoice_id, e.id AS eid, e.estimate_productid AS pid, ' +
+        'COALESCE(e.new_total, e.estimate_price) AS price ' +
+        'FROM invoice i JOIN estimate e ON e.estimate_invoiceid = i.id ' +
         "WHERE i.id >= ? AND i.invoice_type = 'invoice' AND i.payment_status = 'paid' " +
         'AND i.invoice_creation_date >= ? AND i.invoice_creation_date < ? LIMIT 200000',
         [floor, sqlDate(r.from), sqlDate(r.to)]);
@@ -534,7 +566,8 @@ module.exports = function makeReports(deps) {
         filters: [],
         sort: { key: 'revenue', dir: 'desc' },
         search_keys: ['product'],
-        method: 'Line items on paid invoices created in the period, grouped by product. Revenue is the line price; ' +
+        method: 'Line items on paid invoices created in the period, grouped by product. Revenue is each line’s billed ' +
+          'amount (after any discount, before tax and shipping); ' +
           'units are each line’s Quantity option. Covers every product sold through the CRM.',
         notes: [],
         truncated: lines.length >= 200000,
@@ -553,6 +586,10 @@ module.exports = function makeReports(deps) {
     if (!def) throw new Error('Unknown report "' + id + '". Available: ' + Object.keys(REPORTS).join(', '));
     const params = def.normalize(rawParams || {});
     const conn = await openConn();
+    // Every query returns dates as their stored text, whatever the server's
+    // timezone — the reports compare and display days, not instants.
+    const rawQuery = conn.query.bind(conn);
+    conn.query = (sql, values) => rawQuery({ sql: sql, values: values, dateStrings: true });
     const started = Date.now();
     try {
       const out = await def.run(conn, params);
