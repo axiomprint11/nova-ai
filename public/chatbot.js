@@ -774,6 +774,24 @@ function showInPane(card, name) {
   body.scrollTop = 0;
 }
 
+// The installation / delivery calculator in the pane. It has no Save / Draft
+// bar — those belong to product quotes — so it is placed directly rather than
+// through showInPane.
+function showInstallInPane(card, marker) {
+  const body = document.getElementById('calcPaneBody');
+  if (!body) return;
+  const pane = document.getElementById('calcPane');
+  if (pane && pane.classList.contains('folded')) togglePaneFold();
+  paneMode = 'calc';
+  body.innerHTML = '';
+  body.appendChild(card);
+  const hd = document.querySelector('.calc-pane-hd span');
+  if (hd) hd.textContent = 'Calculator';
+  body.scrollTop = 0;
+  document.querySelectorAll('.ic-moved.on, .pq-moved.on').forEach(n => n.classList.remove('on'));
+  if (marker) marker.classList.add('on');
+}
+
 // Order and draft, under the card where they are actually needed. They used to
 // live inside the cart popover, which meant they were invisible until you had
 // already carted something and opened it.
@@ -1637,10 +1655,32 @@ function renderCard(box, j) {
       box.appendChild(buildPicks(j.products || [],
         { intent: j.intent, ask_about: j.ask_about, replace: j.replace }));
       break;
-    case 'install_quote':
+    case 'install_quote': {
       // Installation / local delivery calculator — see install-calc.js.
-      if (window.InstallCalc) InstallCalc.render(box, j, { getToken: () => token });
+      if (!window.InstallCalc) break;
+      if (!usePane()) { InstallCalc.render(box, j, { getToken: () => token }); break; }
+      // Wide screens: the calculator opens in the right pane and the chat keeps
+      // one line with the live estimate, so the conversation stays readable.
+      if (j.replace) box.querySelectorAll('.ic-moved').forEach(n => n.remove());
+      const marker = document.createElement('div');
+      marker.className = 'ic-moved';
+      marker.innerHTML = '<span class="ic-moved-t">Opening calculator…</span><button type="button">Show</button>';
+      const card = InstallCalc.build(j, {
+        getToken: () => token,
+        onChange: (q) => {
+          const t = marker.querySelector('.ic-moved-t');
+          if (!t) return;
+          t.innerHTML = (q.total == null
+            ? 'This one needs a person — see the calculator for why.'
+            : 'Estimated price is <b>' + esc(InstallPricing.money(q.total)) + '</b>' +
+              (q.provisional ? ' (provisional)' : '') + '. See details on the calculator.');
+        }
+      });
+      marker.querySelector('button').onclick = () => showInstallInPane(card, marker);
+      box.appendChild(marker);
+      showInstallInPane(card, marker);
       break;
+    }
   }
 }
 

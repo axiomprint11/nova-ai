@@ -1648,7 +1648,10 @@ const IP_SECTIONS = [
     { p: 'delivery.mile_rate', l: 'Mileage', pre: '$', post: '/mi', hint: 'One way' },
     { p: 'delivery.base_fee', l: 'Base fee', pre: '$' },
     { p: 'delivery.driver_hourly', l: 'Driver rate', pre: '$', post: '/hr' },
-    { p: 'delivery.avg_mph', l: 'Average speed', post: 'mph', hint: 'Surface streets' }
+    { p: 'delivery.drive_time_source', l: 'Drive time from', type: 'choice',
+      opts: [['route', 'Map route × traffic factor'], ['speed', 'Miles ÷ average speed × traffic factor']],
+      hint: 'Map route uses real road time from the Glendale shop (Google live traffic when a key is set).' },
+    { p: 'delivery.avg_mph', l: 'Average speed', post: 'mph', hint: 'Used when there is no route, or with the setting above' }
   ], table: { p: 'delivery.traffic', fixedRows: true, cols: [
       { k: 'label', l: 'Traffic', type: 'text' },
       { k: 'factor', l: 'Drive-time factor', type: 'num', post: '×' }
@@ -1699,6 +1702,10 @@ function ipInput(path, v, f) {
   if (t === 'time') return '<input type="time" data-ip="' + path + '" value="' + esc(v) + '"' + cls + '>';
   if (t === 'text') return '<input type="text" data-ip="' + path + '" value="' + esc(v) + '"' + cls + '>';
   if (t === 'bool') return '<input type="checkbox" data-ip="' + path + '"' + (v ? ' checked' : '') + '>';
+  if (t === 'choice') {
+    return '<select data-ip="' + path + '"' + cls + '>' + f.opts.map(([id, lab]) =>
+      '<option value="' + esc(id) + '"' + (String(id) === String(v) ? ' selected' : '') + '>' + esc(lab) + '</option>').join('') + '</select>';
+  }
   if (t === 'level' || t === 'material' || t === 'insurance') {
     const list = t === 'level' ? ipCfg.install.levels.map(x => [x.id, x.label + ' · ' + InstallPricing.money(x.rate) + '/sq ft'])
       : t === 'material' ? ipCfg.install.materials.map(x => [x.id, x.label])

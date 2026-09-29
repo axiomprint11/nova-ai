@@ -141,6 +141,14 @@ an editable calculator in both `chatbot.js` and `widget.js`. If a turn asks for 
 the model never called the tool, an empty calculator is sent anyway. Tool enums (materials, equipment,
 insurance, traffic) and the prompt's hand-off thresholds are built from the live config.
 
+Distance and drive time are always measured from the shop (`origin` in the config) by `routeLookup()` in
+server.js, exposed as `GET /api/route` and called by the tools whenever an address is given. With
+`GOOGLE_MAPS_API_KEY` in `.env` it uses Google's Distance Matrix (live traffic for the job's date and time);
+without it, OpenStreetMap (Nominatim + the public OSRM server) for road miles and road time, with the admin
+traffic factors applied. Results are cached in memory for 6 hours. On the ChatBot page the calculator opens
+in the right-hand calc pane (`showInstallInPane`) with a live "Estimated price is $…" line in the chat; the
+CRM widget has no pane and draws it inline.
+
 ## Known quirks worth respecting
 
 - **`estimate.production_status` is stale.** True production state is the newest `qr_scan_history` row

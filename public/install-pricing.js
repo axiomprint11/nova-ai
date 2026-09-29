@@ -95,6 +95,10 @@
         { id: 'peak', label: 'Peak (7–10 AM, 3–7 PM)',      factor: 1.9 }
       ],
       default_traffic: 'mid',
+      // 'route': drive time from the map (road time × traffic factor, or Google's
+      // live prediction). 'speed': miles ÷ avg_mph × traffic factor, the original
+      // rule, also used whenever no route is available.
+      drive_time_source: 'route',
       peak_windows: [ ['07:00', '10:00'], ['15:00', '19:00'] ],
       offpeak_before: '07:00',
       offpeak_after: '19:00'
@@ -196,6 +200,17 @@
     }
     if (t < hm(d.offpeak_before) || t >= hm(d.offpeak_after)) return 'off';
     return 'mid';
+  }
+
+  // Drive minutes one way, from a map route (see /api/route). A live Google
+  // prediction is used as-is unless someone picked a different traffic level;
+  // otherwise it is road time × that level's factor.
+  function routeMinutes(route, trafficId, trafficChosen, cfg) {
+    if (!route || !route.ok || route.minutes == null) return null;
+    if (route.live && !trafficChosen && route.traffic_minutes != null) return Math.round(route.traffic_minutes);
+    var tr = null, T = cfg.delivery.traffic;
+    for (var i = 0; i < T.length; i++) if (T[i].id === trafficId) tr = T[i];
+    return Math.round(num(route.minutes, 0) * num(tr ? tr.factor : 1, 1));
   }
 
   var SCHEDULE_LABEL = {
@@ -331,6 +346,14 @@
     if (miles == null) warnings.push('Distance not given — travel is $0 until a driving distance from ' + cfg.origin.split(',')[0] + ' is entered.');
     var travel = (miles || 0) * 2 * num(C.mile_rate, 0);
     var zone = zoneFor(miles, cfg);
+    if (input.route && input.route.approximate) assumptions.push('Address not found exactly — distance measured to ' + (input.route.matched || 'the area'));
+    // Crew drive time is shown, not billed (see the travel-day hand-off rule).
+    var drive = null;
+    if (input.route && input.route.ok && input.route.minutes != null) {
+      var dTraffic = trafficFor(input.arrival_start, cfg) || cfg.delivery.default_traffic;
+      drive = { minutes: routeMinutes(input.route, dTraffic, false, cfg), free_minutes: input.route.minutes,
+                traffic: dTraffic, live: !!input.route.live };
+    }
 
     // ---- total
     var materials = sqftChg + fixed;
@@ -388,6 +411,7 @@
       lines: lines,
       total: tooHigh ? null : cents(total),
       zone: zone,
+      drive: drive,
       assumptions: assumptions,
       warnings: warnings,
       provisional: warnings.length > 0 || tooHigh
@@ -410,9 +434,12 @@
     for (var i = 0; i < D.traffic.length; i++) if (D.traffic[i].id === traffic) tr = D.traffic[i];
     if (!tr) tr = D.traffic[0];
 
+    var fromRoute = D.drive_time_source !== 'speed'
+      ? routeMinutes(input.route, tr.id, !!input.traffic, cfg) : null;
     var oneWay = (input.minutes_one_way != null && input.minutes_one_way !== '')
       ? Math.round(num(input.minutes_one_way, 0))
-      : Math.round((m / num(D.avg_mph, 22)) * 60 * num(tr.factor, 1));
+      : (fromRoute != null ? fromRoute : Math.round((m / num(D.avg_mph, 22)) * 60 * num(tr.factor, 1)));
+    if (input.route && input.route.approximate) assumptions.push('Address not found exactly — distance measured to ' + (input.route.matched || 'the area'));
     var mileage = m * num(D.mile_rate, 0);
     var base = num(D.base_fee, 0);
     var timeChg = (oneWay * 2) / 60 * num(D.driver_hourly, 0);
@@ -434,6 +461,7 @@
       lines: lines,
       total: cents(total),
       zone: zone,
+      drive: { minutes: oneWay, from_route: fromRoute != null, live: !!(input.route && input.route.live && !input.traffic) },
       assumptions: assumptions,
       warnings: warnings,
       provisional: warnings.length > 0
@@ -459,6 +487,7 @@
     quoteDelivery: quoteDelivery,
     scheduleFor: scheduleFor,
     trafficFor: trafficFor,
+    routeMinutes: routeMinutes,
     zoneFor: zoneFor,
     rateForMaterial: rateForMaterial,
     SCHEDULE_LABEL: SCHEDULE_LABEL,

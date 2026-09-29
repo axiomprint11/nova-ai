@@ -1395,3 +1395,110 @@ textarea { flex: 1; border: none; background: transparent; font-size: 14.5px; re
 .ic-adv[open] summary::before { content:'− '; }
 .ic-adv > .ic-grid { margin-top:10px; }
 .bubble.ai.has-cards .ic-card { max-width:none; width:100%; }
+
+/* ---- Installation calculator v2: summary, route, calendar, schedule, accordions ---- */
+.ic-sum { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
+  padding:12px 14px; border-radius:12px; background:var(--ic-accent-soft); border:1px solid var(--ic-accent-line); }
+.ic-sum-l { font-size:12px; font-weight:600; color:var(--ic-accent-ink); text-transform:uppercase; letter-spacing:.06em; }
+.ic-sum-v { font-size:24px; font-weight:700; color:var(--ic-text); line-height:1.2; }
+.ic-prov { font-size:11.5px; font-weight:700; color:var(--ic-warn-ink); background:var(--ic-warn-bg);
+  border:1px solid var(--ic-warn-line); border-radius:999px; padding:2px 9px; margin-left:6px; vertical-align:middle; }
+.ic-grid.ic-where { grid-template-columns:2fr 1fr; }
+@media (max-width:520px) { .ic-grid.ic-where { grid-template-columns:1fr; } }
+
+.ic-route { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--ic-muted); min-height:18px; margin-top:-4px; }
+.ic-route:empty { display:none; }
+.ic-route svg { width:15px; height:15px; flex:none; color:var(--ic-accent); }
+.ic-route > span:first-of-type { flex:1; min-width:0; }
+.ic-route b { color:var(--ic-text); }
+.ic-route i { font-style:normal; color:var(--ic-warn-ink); }
+.ic-route.bad { color:var(--ic-warn-ink); }
+.ic-src { flex:none; font-size:11px; color:var(--ic-faint); border:1px solid var(--ic-border); border-radius:999px; padding:1px 8px; background:var(--ic-surface); }
+.ic-spin { width:12px; height:12px; flex:none; border:2px solid var(--ic-accent-line); border-top-color:var(--ic-accent);
+  border-radius:50%; animation:icSpin .7s linear infinite; }
+@keyframes icSpin { to { transform:rotate(360deg); } }
+
+/* tones shared by the calendar, schedule pills and dots */
+.ic-t-green  { --tone:#146c43; --tone-bg:#e9f8f0; --tone-line:#b6e6cd; }
+.ic-t-amber  { --tone:#8a5a00; --tone-bg:#fff6e5; --tone-line:#f3d79b; }
+.ic-t-purple { --tone:#6b21a8; --tone-bg:#f4ecfe; --tone-line:#ddc6f7; }
+.ic-t-red    { --tone:#9a1c1c; --tone-bg:#fef2f2; --tone-line:#f5a3a3; }
+.ic-dot { width:9px; height:9px; border-radius:50%; background:var(--tone, var(--ic-faint)); flex:none; display:inline-block; }
+
+/* date field + calendar */
+.ic-datewrap { position:relative; }
+.ic-datebtn { width:100%; height:40px; display:flex; align-items:center; gap:8px; padding:0 10px; border:1px solid var(--ic-border-strong);
+  border-radius:8px; background:var(--ic-surface); color:var(--ic-text); font:500 14px 'DM Sans',system-ui,sans-serif; cursor:pointer; text-align:left; }
+.ic-datebtn.empty { color:var(--ic-faint); }
+.ic-datebtn svg { width:16px; height:16px; margin-left:auto; color:var(--ic-accent); flex:none; }
+.ic-datebtn:hover, .ic-datebtn:focus { border-color:var(--ic-accent); outline:none; }
+.ic-cal { position:absolute; top:calc(100% + 6px); left:0; z-index:70; width:268px; padding:12px; background:var(--ic-surface);
+  border:1px solid var(--ic-border-strong); border-radius:12px; box-shadow:0 14px 34px rgba(25,25,52,.18); }
+.ic-cal-h { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.ic-cal-h b { font-size:14px; color:var(--ic-text); }
+.ic-cal-h button { width:28px; height:28px; border:1px solid var(--ic-border); border-radius:7px; background:var(--ic-surface);
+  color:var(--ic-accent-ink); font-size:16px; cursor:pointer; }
+.ic-cal-h button:disabled { opacity:.35; cursor:default; }
+.ic-cal-w, .ic-cal-g { display:grid; grid-template-columns:repeat(7, 1fr); gap:3px; }
+.ic-cal-w span { text-align:center; font-size:11px; font-weight:700; color:var(--ic-faint); padding:2px 0; }
+.ic-cal-w .sat { color:#6b21a8; } .ic-cal-w .sun { color:#9a1c1c; }
+.ic-day { height:32px; border:1px solid transparent; border-radius:8px; background:none; font:600 13px 'DM Sans',system-ui,sans-serif;
+  color:var(--ic-text); cursor:pointer; }
+.ic-day:hover:not(:disabled) { border-color:var(--ic-accent-line); background:var(--ic-accent-soft); }
+.ic-day.sat { background:#f8f2ff; color:#6b21a8; }
+.ic-day.sun { background:#fff5f5; color:#9a1c1c; }
+.ic-day.today { border-color:var(--ic-accent); }
+.ic-day.sel { background:var(--ic-accent); color:#fff; border-color:var(--ic-accent); }
+.ic-day.past { opacity:.3; cursor:default; }
+.ic-cal-f { display:flex; align-items:center; gap:8px; margin-top:10px; padding-top:9px; border-top:1px solid var(--ic-border); flex-wrap:wrap; }
+.ic-cal-f button { border:none; background:none; color:var(--ic-accent-ink); font:600 12.5px 'DM Sans',system-ui,sans-serif; cursor:pointer; padding:2px 4px; }
+.ic-leg { display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--ic-muted); }
+.ic-leg i { width:8px; height:8px; border-radius:50%; background:var(--tone); display:inline-block; }
+
+/* schedule pills */
+.ic-sched { display:flex; flex-wrap:wrap; gap:6px; }
+.ic-pill { display:inline-flex; align-items:center; gap:6px; height:34px; padding:0 11px; border-radius:999px; cursor:pointer;
+  border:1px solid var(--ic-border-strong); background:var(--ic-surface); color:var(--ic-muted); font:600 12.5px 'DM Sans',system-ui,sans-serif; }
+.ic-pill small { font-weight:500; font-size:11px; opacity:.85; }
+.ic-pill:hover:not(:disabled) { border-color:var(--tone-line); background:var(--tone-bg); color:var(--tone); }
+.ic-pill.on { border-color:var(--tone); background:var(--tone-bg); color:var(--tone); box-shadow:0 0 0 2px var(--tone-bg); }
+.ic-pill:disabled { opacity:.4; cursor:default; }
+.ic-sched-h { width:100%; font-size:11.5px; color:var(--ic-faint); }
+
+/* accordions: pieces, crew */
+.ic-acc { border:1px solid var(--ic-border); border-radius:10px; background:var(--ic-surface); }
+.ic-acc > summary { display:flex; align-items:center; gap:10px; padding:11px 12px; cursor:pointer; list-style:none; user-select:none; }
+.ic-acc > summary::-webkit-details-marker { display:none; }
+.ic-acc-t { font-size:12px; font-weight:700; color:var(--ic-muted); text-transform:uppercase; letter-spacing:.06em; flex:none; }
+.ic-acc-m { flex:1; min-width:0; font-size:13px; color:var(--ic-text); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ic-acc-v { flex:none; font-size:14px; font-weight:700; color:var(--ic-text); }
+.ic-chev { width:16px; height:16px; flex:none; color:var(--ic-accent); transition:transform .15s; }
+.ic-acc[open] .ic-chev { transform:rotate(180deg); }
+.ic-acc-b { padding:0 12px 12px; display:flex; flex-direction:column; gap:10px; }
+.ic-acc .ic-piece { background:var(--ic-surface-2); }
+.ic-addp { align-self:flex-start; }
+.ic-warnt { color:var(--ic-warn-ink); font-weight:600; }
+.ic-crew-why { font-size:12px; color:var(--ic-faint); }
+.ic-crew-why:empty { display:none; }
+
+/* in the ChatBot side pane the card fills the column */
+.calc-pane .ic-card { max-width:none; width:100%; margin:0 0 12px; }
+
+/* chat line that points at the calculator in the pane */
+.ic-moved { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:8px 0 2px; padding:10px 12px; border-radius:11px;
+  border:1px solid #c7d2fe; background:#eef2ff; color:#3730a3; font-size:13.5px; }
+.ic-moved .ic-moved-t { flex:1; min-width:0; }
+.ic-moved b { font-size:15px; color:#1e1b4b; }
+.ic-moved button { border:1px solid #a5b4fc; background:#fff; color:#3730a3; border-radius:8px; padding:5px 11px;
+  font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer; }
+.ic-moved button:hover { background:#e0e7ff; }
+.ic-moved.opening .ic-moved-t::after { content:'…'; }
+/* The page's global `input` rule adds a bottom margin and padding; none of it belongs in the card. */
+.ic-card input, .ic-card select { margin:0; }
+.ic-card .ic-f .ic-money input { padding:0 8px 0 0; line-height:normal; }
+.ic-datebtn { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* Accordion header: title and amount on one line, the one-line summary under it. */
+.ic-acc > summary { flex-wrap:wrap; row-gap:3px; }
+.ic-acc-t { flex:1; }
+.ic-acc-m { order:3; flex-basis:100%; white-space:normal; overflow:visible; color:var(--ic-muted); font-size:13px; }
+.ic-acc-m:empty { display:none; }

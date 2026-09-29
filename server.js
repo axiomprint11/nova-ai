@@ -23,8 +23,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.2.6';
-const NOVA_BUILT = '09-28-2026 7:45pm';
+const NOVA_VERSION = '1.2.7';
+const NOVA_BUILT = '09-28-2026 11:15pm';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -490,6 +490,138 @@ function loadInstallPricing() {
       installPricing = InstallPricing.withDefaults(null);
     }
   });
+}
+
+// ---- Driving distance and time from the shop ----
+// Every install and delivery is measured from the Glendale shop (config
+// `origin`). With GOOGLE_MAPS_API_KEY in .env, Google's Distance Matrix gives
+// road miles and a real traffic prediction for the job's date and time.
+// Without a key, OpenStreetMap does it for free: Nominatim finds the address,
+// OSRM gives road miles and free-flow minutes, and the admin traffic factors
+// turn that into a traffic estimate.
+const ROUTE_CACHE = new Map();          // address|provider -> { at, value }
+const ROUTE_TTL_MS = 6 * 60 * 60 * 1000;
+const ROUTE_UA = 'AxiomPrint-Nova/1.2 (order@axiomprint.com)';
+
+// Wall-clock time in Los Angeles -> epoch ms. The shop's schedule is local, and
+// the server clock may not be.
+function laEpoch(dateISO, hhmm) {
+  const m = String(dateISO || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const t = String(hhmm || '').match(/^(\d{1,2}):(\d{2})/);
+  if (!m || !t) return null;
+  const guess = Date.UTC(+m[1], +m[2] - 1, +m[3], +t[1], +t[2]);
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(guess));
+  const g = k => +parts.find(p => p.type === k).value;
+  const asLA = Date.UTC(g('year'), g('month') - 1, g('day'), g('hour'), g('minute'));
+  return guess + (guess - asLA);
+}
+
+// "11:00 AM" / "5 PM" / "17:30" -> "HH:MM", or '' when it is not a time.
+function toTime24(s) {
+  const m = String(s || '').trim().match(/^(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?m?\.?$/i);
+  if (!m) return '';
+  let h = parseInt(m[1], 10); const mi = m[2] || '00'; const ap = (m[3] || '').toLowerCase();
+  if (ap === 'p' && h < 12) h += 12;
+  if (ap === 'a' && h === 12) h = 0;
+  return (h < 10 ? '0' : '') + h + ':' + mi;
+}
+
+async function osmGeocode(q) {
+  const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=us' +
+    '&viewbox=-119.2,34.9,-117.3,33.3&q=' + encodeURIComponent(q);
+  const r = await fetch(url, { headers: { 'User-Agent': ROUTE_UA, 'Accept': 'application/json' },
+    signal: AbortSignal.timeout(7000) });
+  if (!r.ok) throw new Error('Address lookup failed (HTTP ' + r.status + ')');
+  const j = await r.json();
+  return Array.isArray(j) && j[0] ? { lat: +j[0].lat, lon: +j[0].lon, label: j[0].display_name } : null;
+}
+
+async function routeViaOsm(address) {
+  const origin = await osmGeocode(installPricing.origin.replace(/^AxiomPrint,\s*/i, ''));
+  if (!origin) throw new Error('Could not locate the shop address');
+  let dest = await osmGeocode(address), approximate = false;
+  // "Vons, Sun Valley, CA" — a business name the map does not know. Fall back to
+  // the rest of the address and say the distance is approximate.
+  if (!dest && address.indexOf(',') > -1) {
+    dest = await osmGeocode(address.split(',').slice(1).join(',').trim());
+    approximate = !!dest;
+  }
+  if (!dest) return { ok: false, error: 'Could not find "' + address + '" on the map — enter the miles by hand.' };
+  const r = await fetch('https://router.project-osrm.org/route/v1/driving/' +
+    origin.lon + ',' + origin.lat + ';' + dest.lon + ',' + dest.lat + '?overview=false',
+    { headers: { 'User-Agent': ROUTE_UA }, signal: AbortSignal.timeout(7000) });
+  if (!r.ok) throw new Error('Routing failed (HTTP ' + r.status + ')');
+  const j = await r.json();
+  const route = j && j.routes && j.routes[0];
+  if (!route) return { ok: false, error: 'No driving route found to that address.' };
+  return { ok: true, meters: route.distance, seconds: route.duration, live_seconds: null,
+           matched: dest.label, approximate: approximate, source: 'openstreetmap' };
+}
+
+async function routeViaGoogle(address, departEpoch) {
+  const key = process.env.GOOGLE_MAPS_API_KEY;
+  const dep = departEpoch && departEpoch > Date.now() ? Math.floor(departEpoch / 1000) : null;
+  const url = 'https://maps.googleapis.com/maps/api/distancematrix/json?units=imperial' +
+    '&origins=' + encodeURIComponent(installPricing.origin.replace(/^AxiomPrint,\s*/i, '')) +
+    '&destinations=' + encodeURIComponent(address) +
+    (dep ? '&departure_time=' + dep + '&traffic_model=best_guess' : '') + '&key=' + encodeURIComponent(key);
+  const r = await fetch(url, { signal: AbortSignal.timeout(7000) });
+  const j = await r.json();
+  const el = j && j.rows && j.rows[0] && j.rows[0].elements && j.rows[0].elements[0];
+  if (!el || el.status !== 'OK') {
+    return { ok: false, error: (j && j.error_message) || 'Google could not route to "' + address + '".' };
+  }
+  return { ok: true, meters: el.distance.value, seconds: el.duration.value,
+           live_seconds: el.duration_in_traffic ? el.duration_in_traffic.value : null,
+           matched: (j.destination_addresses || [])[0] || address, approximate: false, source: 'google' };
+}
+
+// { ok, miles, minutes (no traffic), traffic_minutes, traffic, traffic_label,
+//   live (true = Google's prediction for that time), source, matched, approximate }
+async function routeLookup(address, opts) {
+  opts = opts || {};
+  address = String(address || '').trim();
+  if (!address) return { ok: false, error: 'No address' };
+  if (/^at\s+axiom|axiomprint\s*(shop)?$|in[- ]shop/i.test(address)) {
+    return { ok: true, miles: 0, minutes: 0, traffic_minutes: 0, source: 'shop', matched: 'At AxiomPrint' };
+  }
+  const useGoogle = !!process.env.GOOGLE_MAPS_API_KEY;
+  const departEpoch = laEpoch(opts.date, opts.time);
+  const cacheKey = address.toLowerCase() + '|' + (useGoogle ? 'g|' + (departEpoch || '') : 'osm');
+  const hit = ROUTE_CACHE.get(cacheKey);
+  let base;
+  if (hit && Date.now() - hit.at < ROUTE_TTL_MS) base = hit.value;
+  else {
+    try {
+      base = useGoogle ? await routeViaGoogle(address, departEpoch) : await routeViaOsm(address);
+    } catch (e) {
+      console.error('ROUTE lookup failed:', e.message);
+      return { ok: false, error: 'Distance lookup is unavailable right now (' + e.message + ') — enter the miles by hand.' };
+    }
+    if (base.ok) ROUTE_CACHE.set(cacheKey, { at: Date.now(), value: base });
+  }
+  if (!base.ok) return base;
+
+  // Traffic: Google's own prediction when it gave one for a future time;
+  // otherwise road time × the admin traffic factor for that time of day.
+  const D = installPricing.delivery;
+  const trafficId = InstallPricing.trafficFor(opts.time, installPricing) || D.default_traffic;
+  const tr = D.traffic.find(t => t.id === trafficId) || D.traffic[0];
+  const minutes = Math.round(base.seconds / 60);
+  const live = base.live_seconds != null;
+  return {
+    ok: true,
+    miles: Math.round(base.meters / 1609.344 * 10) / 10,
+    minutes: minutes,
+    traffic_minutes: live ? Math.round(base.live_seconds / 60) : Math.round(minutes * Number(tr.factor || 1)),
+    traffic: tr.id,
+    traffic_label: tr.label.split(' (')[0],
+    live: live,
+    source: base.source,
+    matched: base.matched,
+    approximate: !!base.approximate
+  };
 }
 
 const dbConfig = {
@@ -3903,6 +4035,12 @@ app.get('/api/install-pricing', auth, (req, res) => {
   res.json({ success: true, config: installPricing, meta: installPricingMeta, defaults: InstallPricing.DEFAULTS });
 });
 
+// Road miles and drive time from the shop to an address, for the calculator.
+app.get('/api/route', auth, async (req, res) => {
+  const r = await routeLookup(req.query.address, { date: req.query.date, time: req.query.time });
+  res.json(r);
+});
+
 app.get('/api/admin/install-pricing/history', auth, adminOnly, (req, res) => {
   db.all('SELECT id, changed_by, note, changed_at FROM install_pricing_history ORDER BY id DESC LIMIT 25', [], (e, rows) => {
     if (e) return res.json({ success: false, error: e.message });
@@ -5081,6 +5219,12 @@ app.get('/api/admin/connections', auth, adminOnly, async (req, res) => {
   conns.push({ key: 'gmail', name: 'Gmail (order@axiomprint.com)', status: gmailOk ? 'connected' : 'disconnected', detail: gmailOk ? 'Reading shared inbox via service account' : 'No credentials found' });
   // Google Drive - same service account
   conns.push({ key: 'drive', name: 'Google Drive', status: gmailOk ? 'connected' : 'disconnected', detail: gmailOk ? 'Job files access via service account' : 'No credentials found' });
+  // Driving distance for installation and delivery quotes.
+  conns.push(process.env.GOOGLE_MAPS_API_KEY
+    ? { key: 'maps', name: 'Driving distance — Google Maps', status: 'connected',
+        detail: 'Road miles and live traffic predictions from the Glendale shop' }
+    : { key: 'maps', name: 'Driving distance — OpenStreetMap', status: 'connected',
+        detail: 'Road miles from the Glendale shop; traffic estimated from the admin traffic factors. Add GOOGLE_MAPS_API_KEY to .env for live traffic.' });
   res.json({ success: true, connections: conns });
 });
 
@@ -5646,8 +5790,8 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
             material: { type: 'string', enum: installPricing.install.materials.map(m => m.id),
               description: installPricing.install.materials.map(m => m.id + '=' + m.label).join(', ') + '. OMIT if not stated — do not guess.' }
           }, required: ['w_in', 'h_in'] } },
-        address: { type: 'string', description: 'Install address, if given.' },
-        distance_mi: { type: 'number', description: 'ONE-WAY driving miles from AxiomPrint (Glendale 91204) ONLY if the person or a record states it. Never estimate it. "At AxiomPrint" / in-shop = 0.' },
+        address: { type: 'string', description: 'Install address or place ("Vons, Sun Valley, CA") whenever it is mentioned. Road miles and drive time from the Glendale shop are looked up from it automatically — do not ask for miles.' },
+        distance_mi: { type: 'number', description: 'Only if the person states the miles themselves. Otherwise pass the address and it is measured. "At AxiomPrint" / in-shop = 0.' },
         equipment: { type: 'array', items: Object.assign({ type: 'string' },
             installPricing.install.equipment.length ? { enum: installPricing.install.equipment.map(e => e.id) } : {}),
           description: installPricing.install.equipment.map(e => e.id + '=' + e.label).join(', ') },
@@ -5666,8 +5810,8 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     input_schema: {
       type: 'object',
       properties: {
-        address: { type: 'string' },
-        distance_mi: { type: 'number', description: 'ONE-WAY driving miles from AxiomPrint (Glendale 91204), only if stated. Never estimate.' },
+        address: { type: 'string', description: 'Drop-off address or place. Miles and drive time are measured from it automatically.' },
+        distance_mi: { type: 'number', description: 'Only if the person states the miles themselves. Otherwise pass the address.' },
         drop_time: { type: 'string', description: 'Drop-off time if stated, e.g. "5 PM" — sets the traffic factor.' },
         traffic: { type: 'string', enum: installPricing.delivery.traffic.map(t => t.id), description: 'Only if stated in those terms.' }
       }
@@ -6135,10 +6279,13 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     'calculator on screen and fills in the rest there. Never do installation arithmetic yourself and never quote ' +
     'a rate from memory.\n' +
     'Answer rules:\n' +
-    '- Lead with the number, rounded ("About **$290**"). The card shows exact cents and the breakdown — do not repeat it.\n' +
-    '- Then every assumption the tool reports, on one line. A quote built on silent assumptions is worse than none.\n' +
+    '- Keep the words short. The calculator opens beside the chat and the chat already shows "Estimated price is $…", ' +
+    'so never repeat the total, the breakdown or the route.\n' +
+    '- Say every assumption the tool reports, on one line. A quote built on silent assumptions is worse than none.\n' +
     '- Ask at most ONE question, only when the answer moves the price by more than ~15%. In order of impact: ' +
-    'distance, piece sizes, height/access, day and time. Never ask for something already given or on the job record.\n' +
+    'address, piece sizes, height/access, day and time. Never ask for something already given or on the job record.\n' +
+    '- Distance and drive time are measured from the Glendale shop (4544 San Fernando Rd) from the address, ' +
+    'so pass the address and never ask for miles.\n' +
     '- Never invent a distance, a material level or a rate. Unknown material → the tool assumes Level 1; say so.\n' +
     '- Hand off to a person, do not guess, when: above ' + installPricing.install.max_height_ft + ' ft; installs past ~' +
     installPricing.install.handoff_miles + ' miles (mileage is billed but crew drive time is not — it needs a travel-day / ' +
@@ -7988,29 +8135,43 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
         const isInstall = toolUse.name === 'quote_installation';
         send({ type: 'query', description: isInstall ? 'Pricing the installation' : 'Pricing the delivery' });
         const input = Object.assign({}, toolUse.input || {});
+        // Measure the trip from the shop whenever there is an address. A distance
+        // someone actually stated still wins.
+        let routeNote = null;
+        if (input.address && (input.distance_mi == null || input.distance_mi === '')) {
+          send({ type: 'query', description: 'Measuring the drive from the Glendale shop' });
+          const rt = await routeLookup(input.address, {
+            date: input.date, time: isInstall ? toTime24(input.arrival_start) : toTime24(input.drop_time) });
+          if (rt.ok) { input.distance_mi = rt.miles; input.route = rt; }
+          else routeNote = rt.error;
+        }
         const q = isInstall ? InstallPricing.quoteInstall(input, installPricing)
                             : InstallPricing.quoteDelivery(input, installPricing);
         installShown++;
         send({ type: 'install_quote', kind: q.kind, input: input, quote: q, config: installPricing, replace: installShown > 1 });
         const missing = [];
-        if (q.inputs.distance_mi == null) missing.push('distance');
+        if (q.inputs.distance_mi == null) missing.push(input.address ? 'distance (address not found on the map)' : 'address');
         if (isInstall && !(q.inputs.pieces || []).length) missing.push('piece sizes');
         toolResult = JSON.stringify({
           total: q.total,
           total_includes_travel: q.inputs.distance_mi != null,
+          route: input.route ? { miles: input.route.miles, drive_minutes: (q.drive && q.drive.minutes),
+            traffic: input.route.traffic_label, live_traffic: !!input.route.live, approximate: input.route.approximate,
+            matched: input.route.matched } : null,
+          route_problem: routeNote,
           lines: q.lines,
           assumptions: q.assumptions,
           warnings: q.warnings,
           missing: missing,
-          ui: 'An editable ' + (isInstall ? 'installation' : 'delivery') + ' calculator with the full line-by-line ' +
-              'breakdown is ALREADY on screen. Do NOT repeat the table or the line items. Answer in this shape: ' +
-              '(1) lead with the rounded number in bold, e.g. "About **$290** for the Partridge Ave install." — ' +
-              (missing.indexOf('distance') > -1 ? 'say it is BEFORE travel because no distance was given; ' : '') +
-              (q.total == null ? 'there is NO number: say it must go to a person and why; ' : '') +
-              '(2) ONE line naming every assumption listed above; ' +
-              '(3) if warnings is not empty, say plainly it is provisional and should be handed off, with the reason; ' +
-              '(4) at most ONE question, only for the most price-moving missing fact (order: distance, piece sizes, ' +
-              'height/access, day and time), and never for anything already given. Round the spoken number; the card keeps exact cents.'
+          ui: 'The editable ' + (isInstall ? 'installation' : 'delivery') + ' calculator is ALREADY open beside ' +
+              'the chat, and the chat already shows "Estimated price is $…" under your answer. So do NOT repeat the ' +
+              'total, the line items or the route. Write at most TWO short lines: ' +
+              '(1) the assumptions that matter, in one line; ' +
+              (q.total == null ? 'say it must go to a person and why; ' : '') +
+              (missing.length ? 'mention the total leaves out travel until the ' + missing[0] + ' is known; ' : '') +
+              '(2) if warnings is not empty, say it is provisional and should be handed off, with the reason. ' +
+              'Ask at most ONE question, only for the most price-moving missing fact (order: address, piece sizes, ' +
+              'height/access, day and time), and never for anything already given.'
         });
       } else {
         toolResult = 'Unknown tool.';
