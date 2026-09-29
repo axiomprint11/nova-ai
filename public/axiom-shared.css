@@ -1683,3 +1683,30 @@ html.nr-lock, html.nr-lock body { overflow:hidden; }
 .nr-moved button:hover { background:#e0e7ff; }
 .nr-moved button.pri { background:#4f46e5; border-color:#4f46e5; color:#fff; }
 .nr-asof { white-space:nowrap; }
+
+/* ===== CRM widget: the ChatBot page inside the embedded panel =====
+   widget.html puts the same split layout under its own header, so the bubble
+   works like the ChatBot page: chat on the left; client, cart, calculator and
+   saved items on the right. It is a panel rather than a page, so the pane stays
+   from a narrower width and everything is a little tighter. */
+body.nova-embed { height: 100%; background: #fff; }
+body.nova-embed #app { flex: 1; min-height: 0; height: auto; }
+body.nova-embed .split { flex: 1; min-height: 0; }
+body.nova-embed .messages { padding: 18px 0; }
+body.nova-embed .messages-inner { padding: 0 16px; gap: 18px; }
+body.nova-embed .bubble { font-size: var(--chat-fs, 14px); padding: 11px 14px; }
+body.nova-embed .composer { padding: 10px 0 12px; }
+body.nova-embed .composer-inner { padding: 0 14px; }
+body.nova-embed .hint { margin-top: 7px; font-size: 10.5px; }
+body.nova-embed .calc-pane { flex: 0 0 min(500px, 48%); }
+body.nova-embed .calc-pane-body { padding: 12px; }
+@media (max-width: 1200px) {
+  body.nova-embed .calc-pane { display: flex; }
+}
+/* Too narrow for two columns: the client and cart bar stays, across the top,
+   and quotes go back into the conversation. */
+@media (max-width: 700px) {
+  body.nova-embed .split { flex-direction: column; }
+  body.nova-embed .calc-pane { order: -1; flex: none; border-left: 0; border-bottom: 1px solid var(--line); }
+  body.nova-embed .calc-pane-hd, body.nova-embed .calc-pane-body { display: none; }
+}

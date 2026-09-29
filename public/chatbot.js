@@ -2,6 +2,11 @@
 // Answers staff questions from domain knowledge, meeting notes, agent training,
 // approved answers, and the live product database.
 // Auth happens on the homepage (/). This page requires a token; if missing, bounce home.
+// Embedded mode: the CRM widget (widget.html) loads this same file, so the
+// bubble gets the ChatBot page's interface — chat on the left, calculator, cart
+// and saved items on the right. The widget's own shell (widget.js) signs the
+// person in and decides when to show the chat; this file only draws it.
+const EMBED = !!window.NOVA_EMBED;
 let token = localStorage.getItem('axiom_token');
 let username = localStorage.getItem('axiom_user');
 let isAdmin = localStorage.getItem('axiom_admin') === '1';
@@ -48,7 +53,9 @@ const AGENT_ROUTES = { 'order-assist': '/order-assist', 'chatbot': '/chatbot', '
 // localStorage alone means an expired or revoked token gets through and fails
 // later, mid-task, with a confusing error instead of a clean sign-in.
 let me = null;
-if (!token) {
+if (EMBED) {
+  // widget.js verifies the session and calls showApp() once it has one.
+} else if (!token) {
   window.location.href = '/';
 } else {
   showApp();
@@ -81,7 +88,16 @@ if (!token) {
 }
 
 function autoResize(el) { el.style.height = '40px'; el.style.height = Math.min(el.scrollHeight, 120) + 'px'; }
-function logout() { localStorage.clear(); window.location.href = '/'; }
+function logout() {
+  if (EMBED && typeof window.signOutClick === 'function') return window.signOutClick();
+  localStorage.clear(); window.location.href = '/';
+}
+// Tell the widget shell something changed (it remembers the open chat so a page
+// change in the CRM picks the conversation back up). A no-op on the page.
+function embedNotify(ev) {
+  if (!EMBED) return;
+  try { if (window.NovaEmbedHooks && NovaEmbedHooks[ev]) NovaEmbedHooks[ev](); } catch (e) {}
+}
 // Follow the answer only while the person is already at the bottom. Yanking the
 // view down while they are reading something further up is the single most
 // irritating thing a streaming chat can do.
@@ -164,11 +180,14 @@ function stopCurrentAnswer(reason) {
 
 function showApp() {
   document.getElementById('app').style.display = 'flex';
-  document.getElementById('userLabel').textContent = username || '';
-  document.getElementById('avatar').textContent = (username || 'U').charAt(0).toUpperCase();
+  const lbl = document.getElementById('userLabel');
+  if (lbl) lbl.textContent = username || '';
+  const av = document.getElementById('avatar');
+  if (av) av.textContent = (username || 'U').charAt(0).toUpperCase();
   const ab = document.getElementById('adminBtn');
   if (ab) ab.style.display = isAdmin ? 'inline-flex' : 'none';
-  loadAgents();
+  // In the widget the shell decides whether to greet or reopen the last chat.
+  if (!EMBED) loadAgents();
 }
 
 async function loadAgents() {
@@ -245,7 +264,10 @@ function clearChat() {
   renderClientBar();
   renderCart();
   document.getElementById('messagesInner').innerHTML = '';
+  const sg = document.getElementById('suggestions');
+  if (sg) sg.innerHTML = '';
   greet();
+  embedNotify('chat');
 }
 
 // ===== Chat history sidebar =====
@@ -278,7 +300,7 @@ async function openChat(id) {
   try {
     const res = await fetch('/api/chats/' + id, { headers: { 'Authorization': 'Bearer ' + token } });
     const j = await res.json();
-    if (!j.success) return;
+    if (!j.success) return false;
     currentChatId = id;
     chatHistory = [];
     loadChatClient();          // whoever this conversation belongs to
@@ -315,7 +337,9 @@ async function openChat(id) {
     });
     loadChatList();
     scrollDown();
-  } catch (e) {}
+    embedNotify('chat');
+    return true;
+  } catch (e) { return false; }
 }
 
 
@@ -765,7 +789,8 @@ function cardHasContent(j) {
 // collapses to one column and cards go back into the conversation.
 function usePane() {
   const pane = document.getElementById('calcPane');
-  return !!pane && window.innerWidth > 1200 && getComputedStyle(pane).display !== 'none';
+  // The widget is a panel, not a page, so it gets the pane from a narrower width.
+  return !!pane && window.innerWidth > (EMBED ? 700 : 1200) && getComputedStyle(pane).display !== 'none';
 }
 
 function showInPane(card, name) {
@@ -1763,13 +1788,15 @@ async function sendMessage() {
   // Ensure a chat exists; persist the user message
   if (!currentChatId) {
     try {
-      const r = await fetch('/api/chats/create', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ agent_slug: currentAgent, title: text.slice(0, 120) }) });
+      const r = await fetch('/api/chats/create', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ agent_slug: currentAgent, title: text.slice(0, 120),
+        source: EMBED ? 'crm-widget' : undefined }) });
       const j = await r.json();
       if (j.success) {
         currentChatId = j.chat_id;
         // A client picked before the first message still belongs to this chat.
         if (chatClientId) setChatClient(chatClientId, chatClientName);
         loadChatList();
+        embedNotify('chat');
       }
     } catch (e) {}
   }
@@ -1945,6 +1972,7 @@ async function sendMessage() {
   isLoading = false;
   document.getElementById('sendBtn').disabled = false;
   input.focus();
+  embedNotify('chat');
 }
 
 

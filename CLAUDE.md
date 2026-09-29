@@ -126,6 +126,16 @@ No framework. Global functions, `innerHTML` string templates, `esc()` for escapi
 - `order-assist.html` + `order-assist.js` (~2700 lines) — the real product: stepped flow, calculator
   widget, quote boxes, reorder, file upload/paste, Drive thumbnails
 - `admin.html` — members, agent training, knowledge docs, connection status
+- `chatbot.html` + `chatbot.js` — the ChatBot page: chat on the left; client, cart, calculator and saved
+  items in the right-hand pane
+- `widget.html` + `widget.js` — the CRM widget (framed by `embed.js`). It is the ChatBot page inside a
+  compact header: `widget.html` repeats chatbot.html's split markup with the **same element ids** and loads
+  `chatbot.js` with `window.NOVA_EMBED = true`, so the cart, Save / Draft and checkout are the same code.
+  `widget.js` is only the shell — CRM single sign-on, login form, recent chats, appearance settings,
+  reopening the chat after a CRM page change (`NovaEmbedHooks.chat`), talking to the host page. The two
+  scripts share one global scope: never declare a name in `widget.js` that `chatbot.js` already declares.
+  The panel opens 1080×700 (server `WIDGET_DEFAULTS`; saved sizes from before `WIDGET_LAYOUT` 2 are reset);
+  the pane shows above 700px wide, below that the client/cart bar sits on top and cards go inline.
 - `prepress.html` + `prepress.js` — **orphaned**: it calls `/api/prepress/chat`, which does not exist in
   server.js. The `prepress-ai` agent is seeded as `coming_soon`.
 
@@ -143,7 +153,7 @@ signed-in user; `POST /api/admin/install-pricing` and `/restore` for admins). Mi
 
 In `/api/chatbot/chat` the `quote_installation` / `quote_delivery` tools price with it and send an
 `install_quote` SSE event carrying the input, the quote and the config; `public/install-calc.js` renders it as
-an editable calculator in both `chatbot.js` and `widget.js`. If a turn asks for an install/delivery price and
+an editable calculator by `chatbot.js` (the ChatBot page and the CRM widget). If a turn asks for an install/delivery price and
 the model never called the tool, an empty calculator is sent anyway. Tool enums (materials, equipment,
 insurance, traffic) and the prompt's hand-off thresholds are built from the live config.
 
@@ -153,7 +163,7 @@ server.js, exposed as `GET /api/route` and called by the tools whenever an addre
 without it, OpenStreetMap (Nominatim + the public OSRM server) for road miles and road time, with the admin
 traffic factors applied. Results are cached in memory for 6 hours. On the ChatBot page the calculator opens
 in the right-hand calc pane (`showInstallInPane`) with a live "Estimated price is $…" line in the chat; the
-CRM widget has no pane and draws it inline.
+CRM widget uses the same pane whenever it is wider than 700px.
 
 ## Reports
 
@@ -161,7 +171,7 @@ CRM widget has no pane and draws it inline.
 as parameterised, read-only queries that all return one table shape (controls, range, summary cards, columns,
 filters, rows, method, notes). `GET /api/reports` lists them; `POST /api/reports/:id {params}` runs one. In
 `/api/chatbot/chat` the `run_report` tool runs a report and sends a `report` SSE event; `public/nova-report.js`
-draws it as a compact card (ChatBot right pane, or inline in the widget) with a full-screen view. Changing a
+draws it as a compact card (right-hand pane, or inline when the window is too narrow for it) with a full-screen view. Changing a
 report setting re-runs it; search, filters and sorting are client-side. Saved chat messages keep only the
 report's settings (`NovaReport.toSaved`) and re-run it on reopen.
 

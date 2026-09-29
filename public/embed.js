@@ -32,12 +32,12 @@
   var SCALE = typeof CFG.scale === 'number' ? CFG.scale : 1;
   var HIDE_LOGGED_OUT = CFG.hideWhenLoggedOut !== false;
 
-  // Bubble is 20% smaller than the original 56. The panel is deliberately WIDER
-  // than the bubble shrink would imply - the chat needs room to be readable,
-  // especially for tables, timelines and product cards.
+  // Bubble is 20% smaller than the original 56. The panel opens wide: it holds
+  // the ChatBot page's two columns — chat on the left, calculator and cart on
+  // the right. On a small screen it is capped to the window.
   var BUBBLE = Math.round(45 * SCALE);
-  var PANEL_W = Math.round(480 * SCALE);
-  var PANEL_H = Math.round(560 * SCALE);
+  var PANEL_W = Math.round(1080 * SCALE);
+  var PANEL_H = Math.round(700 * SCALE);
   var GAP = 10;
 
   var STORE_KEY = 'novaChatBottom';
@@ -249,8 +249,8 @@
         var p = ev.data.prefs;
         var sc = Number(p.scale) || 1;
         BUBBLE = Math.round(45 * sc);
-        PANEL_W = Math.round((Number(p.panelWidth) || 480) * sc);
-        PANEL_H = Math.round((Number(p.panelHeight) || 560) * sc);
+        PANEL_W = Math.round((Number(p.panelWidth) || 1080) * sc);
+        PANEL_H = Math.round((Number(p.panelHeight) || 700) * sc);
         SIDE = p.side === 'left' ? 'left' : 'right';
 
         // Reset both edges before setting the active one, or a side switch would

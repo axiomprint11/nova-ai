@@ -23,8 +23,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.3.1';
-const NOVA_BUILT = '09-29-2026 4:15am';
+const NOVA_VERSION = '1.4.0';
+const NOVA_BUILT = '09-29-2026 9:30am';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -3986,9 +3986,13 @@ const WIDGET_DEFAULTS = {
   side: 'right',     // 'right' | 'left'
   accent: 'indigo',  // colour theme
   fontSize: 14,      // 12 - 17 px
-  panelWidth: 480,   // 340 - 720 px
-  panelHeight: 560   // 420 - 820 px
+  panelWidth: 1080,  // 760 - 1600 px — wide enough for chat + calculator side by side
+  panelHeight: 700   // 480 - 1000 px
 };
+// Bumped when the widget layout changes size. 2 = the two-panel ChatBot layout;
+// sizes saved for the old one-column widget (480 x 560) are replaced, or the
+// panel would open too narrow for its second column.
+const WIDGET_LAYOUT = 2;
 const ACCENTS = {
   indigo:  { main: '#7C6FE0', dark: '#5F51C7', light: '#efedfd', grad: '#5B6EF5' },
   violet:  { main: '#8B5CF6', dark: '#6D28D9', light: '#f3ecfe', grad: '#A78BFA' },
@@ -4000,6 +4004,10 @@ const ACCENTS = {
 
 function cleanPrefs(raw) {
   const p = Object.assign({}, WIDGET_DEFAULTS, raw || {});
+  if (!raw || Number(raw.layout) !== WIDGET_LAYOUT) {
+    p.panelWidth = WIDGET_DEFAULTS.panelWidth;
+    p.panelHeight = WIDGET_DEFAULTS.panelHeight;
+  }
   const num = (v, min, max, dflt) => {
     const n = Number(v);
     return isFinite(n) ? Math.min(max, Math.max(min, n)) : dflt;
@@ -4009,8 +4017,9 @@ function cleanPrefs(raw) {
     side: p.side === 'left' ? 'left' : 'right',
     accent: ACCENTS[p.accent] ? p.accent : 'indigo',
     fontSize: Math.round(num(p.fontSize, 12, 17, 14)),
-    panelWidth: Math.round(num(p.panelWidth, 340, 720, 480)),
-    panelHeight: Math.round(num(p.panelHeight, 420, 820, 560))
+    panelWidth: Math.round(num(p.panelWidth, 760, 1600, WIDGET_DEFAULTS.panelWidth)),
+    panelHeight: Math.round(num(p.panelHeight, 480, 1000, WIDGET_DEFAULTS.panelHeight)),
+    layout: WIDGET_LAYOUT
   };
 }
 
