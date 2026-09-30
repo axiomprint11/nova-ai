@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova · AxiomPrint</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/axiom-shared.css">
+<style>
+  /* The customer-facing chat, for the axiomprint.com website (in an iframe). */
+  html, body { height: 100%; }
+  body { background: #fff; }
+  .pc-head { flex: none; display: flex; align-items: center; gap: 10px; padding: 11px 14px;
+    background: linear-gradient(120deg, var(--indigo), var(--violet)); color: #fff; }
+  .pc-mark { width: 28px; height: 28px; border-radius: 8px; background: rgba(255,255,255,.18); display: flex;
+    align-items: center; justify-content: center; font-weight: 700; }
+  .pc-title { font-weight: 700; font-size: 14px; line-height: 1.2; }
+  .pc-sub { font-size: 11.5px; opacity: .85; }
+  .pc-x { margin-left: auto; background: rgba(255,255,255,.16); border: none; color: #fff; width: 26px; height: 26px;
+    border-radius: 7px; cursor: pointer; }
+  .pc-off { flex: 1; display: flex; align-items: center; justify-content: center; padding: 30px; text-align: center; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="pc-head">
+  <div class="pc-mark">✦</div>
+  <div><div class="pc-title">Nova</div><div class="pc-sub" id="pcSub">AxiomPrint assistant</div></div>
+  <button type="button" class="pc-x" title="Close" onclick="parentSay({ type: 'nova-client:close' })">✕</button>
+</div>
+<div id="pcBody" class="cc"></div>
+<script src="/client-chat.js"></script>
+<script>
+  // Sign-in comes from the website page that embeds this (see docs/CLIENT_BOT.md).
+  // Only these sites may hand us a sign-in.
+  const PARENTS = ['https://axiomprint.com', 'https://www.axiomprint.com'];
+  const KEY = 'novaClientToken';
+  let token = null, chat = null;
+  try { token = sessionStorage.getItem(KEY); } catch (e) {}
+  function parentSay(msg) { PARENTS.forEach(o => { try { parent.postMessage(msg, o); } catch (e) {} }); }
+  function keep(t) { token = t; try { sessionStorage.setItem(KEY, t); } catch (e) {} }
+
+  async function session(body) {
+    const r = await fetch('/api/client-bot/session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ previous: token || undefined }, body || {})) });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 403) { closed(); return null; }
+    if (!j.ok) return null;
+    keep(j.token);
+    return j;
+  }
+  function closed() {
+    document.getElementById('pcBody').innerHTML = '<div class="pc-off">Nova is coming soon. Please contact the AxiomPrint team for help.</div>';
+  }
+  async function hello() {
+    let r = await fetch('/api/client-bot/hello', { headers: { 'Authorization': 'Bearer ' + token } });
+    if (r.status === 401) {                       // an old or expired visitor token: start fresh
+      token = null; try { sessionStorage.removeItem(KEY); } catch (e) {}
+      if (!(await session({}))) return;
+      r = await fetch('/api/client-bot/hello', { headers: { 'Authorization': 'Bearer ' + token } });
+    }
+    if (r.status === 403) { closed(); return; }
+    const j = await r.json().catch(() => ({}));
+    document.getElementById('pcSub').textContent = j.customer && j.customer.name ? 'Signed in as ' + j.customer.name : 'AxiomPrint assistant';
+    const opts = {
+      getToken: () => token, greeting: j.greeting,
+      suggestions: j.customer
+        ? [['Where is my order?', 'Where is my latest order?'], ['Business card prices', 'How much are 500 business cards?']]
+        : [['Business card prices', 'How much are 500 business cards?'], ['Banner options', 'What banner materials do you have?']]
+    };
+    if (!chat) chat = ClientChat.mount(document.getElementById('pcBody'), opts);
+    else chat.reset(j.greeting);
+  }
+
+  window.addEventListener('message', async (ev) => {
+    if (PARENTS.indexOf(ev.origin) === -1 || !ev.data) return;
+    // Signed out on the website: back to products only.
+    if (ev.data.type === 'nova-client:signout') { token = null; if (await session({})) hello(); return; }
+    if (ev.data.type !== 'nova-client:signin') return;
+    const body = ev.data.payload && ev.data.sig ? { payload: ev.data.payload, sig: ev.data.sig }
+               : ev.data.customer_token ? { customer_token: ev.data.customer_token } : null;
+    if (!body) return;
+    if (await session(body)) hello();
+  });
+
+  (async function start() {
+    // Every page load starts as "not signed in" (keeping the same visitor), and
+    // only a fresh sign-in from the website upgrades it. A token left over from an
+    // earlier page never shows one customer's orders to whoever uses the tab next.
+    if (!(await session({}))) return;
+    await hello();
+    parentSay({ type: 'nova-client:ready' });     // the website answers with nova-client:signin
+  })();
+</script>
+</body>
+</html>

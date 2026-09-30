@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Client ChatBot · Axiom AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/axiom-shared.css">
+<style>
+  /* Admin console for the customer-facing bot. Admins only. */
+  .cb-top { flex: none; display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: #fff; }
+  .cb-top h1 { font-size: 15px; margin: 0; }
+  .cb-top h1 span { font-weight: 500; color: var(--muted); }
+  .cb-pill { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 20px; }
+  .cb-pill.off { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+  .cb-pill.on { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+  .cb-top .sp { flex: 1; }
+  .cb-tabs { display: flex; gap: 4px; }
+  .cb-tabs button { border: 1px solid transparent; background: none; padding: 7px 13px; border-radius: 9px; font-family: inherit;
+    font-size: 13px; font-weight: 600; color: var(--ink-soft); cursor: pointer; }
+  .cb-tabs button.on { background: var(--indigo-light); color: var(--indigo-dark); }
+  .cb-main { flex: 1; min-height: 0; display: flex; }
+  .cb-view { flex: 1; min-height: 0; display: none; }
+  .cb-view.on { display: flex; }
+  /* Try it */
+  .cb-side { width: 300px; flex: none; border-right: 1px solid var(--line); background: #fcfcfe; padding: 14px; overflow-y: auto; }
+  .cb-h { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 4px 0 8px; }
+  .cb-as { display: flex; flex-direction: column; gap: 6px; }
+  .cb-as label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+  .cb-as input[type=radio] { width: auto; margin: 0; }
+  .cb-side input[type=text] { margin: 6px 0 0; padding: 8px 10px; font-size: 13px; }
+  .cb-res { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+  .cb-res button, .cb-list button.cb-row { text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 9px; padding: 7px 9px;
+    font-family: inherit; font-size: 12px; cursor: pointer; }
+  .cb-res button:hover, .cb-list button.cb-row:hover { border-color: var(--indigo); background: #f8f7ff; }
+  .cb-res small, .cb-row small { display: block; color: var(--muted); font-size: 11px; }
+  .cb-who { margin-top: 10px; padding: 9px 11px; border-radius: 10px; background: var(--indigo-light); color: var(--indigo-dark); font-size: 12.5px; }
+  .cb-who b { display: block; }
+  .cb-tools { margin-top: 14px; font-size: 11.5px; color: var(--ink-soft); }
+  .cb-tools div { padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: #fff; margin-bottom: 4px; word-break: break-word; }
+  .cb-tools code { font-size: 11px; color: var(--indigo-dark); }
+  .cb-chatwrap { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .cb-new { margin-top: 12px; width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 9px; background: #fff; font-family: inherit;
+    font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  /* Conversations */
+  .cb-list { width: 360px; flex: none; border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: #fcfcfe; }
+  .cb-filters { padding: 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 7px; }
+  .cb-filters input { margin: 0; padding: 8px 10px; font-size: 13px; }
+  .cb-filters .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .cb-filters .row button { border: 1px solid var(--line); background: #fff; border-radius: 7px; padding: 4px 10px; font-family: inherit; font-size: 12px; cursor: pointer; }
+  .cb-filters .row button.on { border-color: var(--indigo); background: var(--indigo-light); color: var(--indigo-dark); font-weight: 600; }
+  .cb-rows { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .cb-row.on { border-color: var(--indigo) !important; background: var(--indigo-light) !important; }
+  .cb-row .t { font-weight: 600; font-size: 12.5px; color: var(--ink); display: flex; gap: 6px; align-items: center; }
+  .cb-tag { font-size: 9.5px; font-weight: 700; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; background: #eef1f5; color: #475569; }
+  .cb-tag.web { background: #dcfce7; color: #166534; } .cb-tag.pre { background: #fef3c7; color: #92400e; }
+  .cb-transcript { flex: 1; min-width: 0; overflow-y: auto; padding: 18px 24px; }
+  .cb-tr-hd { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; background: #fff; font-size: 13px; }
+  .cb-tr-hd b { font-size: 14.5px; } .cb-tr-hd small { display: block; color: var(--muted); margin-top: 3px; }
+  .cb-msg { max-width: 760px; margin-bottom: 12px; }
+  .cb-msg .bubble { display: inline-block; max-width: 100%; }
+  .cb-msg.user { text-align: right; } .cb-msg.user .bubble { text-align: left; }
+  .cb-msg .when { font-size: 10.5px; color: var(--muted); margin: 2px 4px; }
+  .cb-used { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .cb-used span { font-size: 10.5px; background: #f1f0fb; color: #4c1d95; border-radius: 5px; padding: 1px 6px; }
+  .cb-empty { color: var(--muted); font-size: 13px; padding: 30px; text-align: center; }
+  /* Training */
+  .cb-train { flex: 1; overflow-y: auto; padding: 20px 24px; }
+  .cb-train-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; max-width: 1200px; }
+  .cb-card { border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 14px 16px; margin-bottom: 14px; }
+  .cb-card h3 { font-size: 14px; margin: 0 0 4px; } .cb-card p.sub { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+  .cb-card textarea { width: 100%; box-sizing: border-box; border: 1.5px solid var(--line); border-radius: 10px; padding: 10px 12px;
+    font-family: inherit; font-size: 13px; line-height: 1.5; resize: vertical; outline: none; height: auto; min-height: 220px; }
+  .cb-card textarea#tGreeting { min-height: 64px; }
+  .cb-card textarea#tKnowledge { min-height: 280px; }
+  .cb-card textarea:focus, .cb-card input:focus { border-color: var(--indigo); }
+  .cb-card input[type=text] { margin: 0; padding: 9px 11px; font-size: 13px; }
+  .cb-fixed { white-space: pre-wrap; font-size: 12px; line-height: 1.55; color: var(--ink-soft); background: #fafafd; border-radius: 9px; padding: 10px 12px; max-height: 340px; overflow-y: auto; }
+  .cb-save { display: flex; align-items: center; gap: 10px; }
+  .cb-btn { border: none; background: var(--indigo); color: #fff; padding: 9px 16px; border-radius: 9px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .cb-btn.ghost { background: #fff; color: var(--ink-soft); border: 1px solid var(--line); }
+  .cb-hist div { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .cb-hist div span { flex: 1; } .cb-hist small { color: var(--muted); display: block; }
+  .cb-hist button { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 2px 8px; font-family: inherit; font-size: 11px; cursor: pointer; }
+  /* Setup */
+  .cb-setup { flex: 1; overflow-y: auto; padding: 20px 24px; max-width: 900px; font-size: 13.5px; line-height: 1.6; }
+  .cb-setup code { background: #f3f3fb; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .cb-setup pre { background: #1e1b2e; color: #e9e7f5; padding: 12px 14px; border-radius: 10px; font-size: 12px; overflow-x: auto; }
+  .cb-check { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+  .cb-check i { font-style: normal; font-weight: 700; } .cb-check i.y { color: #16a34a; } .cb-check i.n { color: #b45309; }
+</style>
+</head>
+<body>
+<div class="cb-top">
+  <a class="btn-ghost" href="/admin" style="text-decoration:none" title="Back to Admin">&larr;</a>
+  <h1>Client ChatBot <span>· customer-facing Nova</span></h1>
+  <span class="cb-pill off" id="cbPublic">Admins only</span>
+  <div class="sp"></div>
+  <div class="cb-tabs">
+    <button type="button" data-v="try" class="on">Try it</button>
+    <button type="button" data-v="convos">Conversations</button>
+    <button type="button" data-v="train">Training</button>
+    <button type="button" data-v="setup">Setup</button>
+  </div>
+</div>
+
+<div class="cb-main">
+  <!-- Try it -->
+  <div class="cb-view on" id="vTry">
+    <aside class="cb-side">
+      <div class="cb-h">Talk as</div>
+      <div class="cb-as">
+        <label><input type="radio" name="as" value="anon" checked> A visitor who is not signed in</label>
+        <label><input type="radio" name="as" value="cust"> A signed-in customer…</label>
+      </div>
+      <input type="text" id="custSearch" placeholder="Name, company, email or #id" style="display:none">
+      <div class="cb-res" id="custRes"></div>
+      <div class="cb-who" id="asWho">Not signed in — products and prices only.</div>
+      <button type="button" class="cb-new" id="newChat">Start a new conversation</button>
+      <div class="cb-tools" id="toolsBox"></div>
+    </aside>
+    <div class="cb-chatwrap" id="chatHost"></div>
+  </div>
+
+  <!-- Conversations -->
+  <div class="cb-view" id="vConvos">
+    <div class="cb-list">
+      <div class="cb-filters">
+        <input type="text" id="convQ" placeholder="Search name, email, company or words said">
+        <div class="row" id="convSrc">
+          <button type="button" data-s="" class="on">All</button>
+          <button type="button" data-s="website">Website</button>
+          <button type="button" data-s="preview">Admin preview</button>
+          <button type="button" data-s="signed">Signed-in only</button>
+        </div>
+      </div>
+      <div class="cb-rows" id="convRows"><div class="cb-empty">Loading…</div></div>
+    </div>
+    <div class="cb-transcript" id="convView"><div class="cb-empty">Pick a conversation.</div></div>
+  </div>
+
+  <!-- Training -->
+  <div class="cb-view" id="vTrain">
+    <div class="cb-train">
+      <div class="cb-train-grid">
+        <div>
+          <div class="cb-card">
+            <h3>House rules</h3>
+            <p class="sub">How Nova should behave with customers. Change these any time — the next message uses them.</p>
+            <textarea id="tRules" rows="10"></textarea>
+          </div>
+          <div class="cb-card">
+            <h3>What Nova knows</h3>
+            <p class="sub">Facts customers ask about: hours, pickup, shipping, artwork guidelines, common questions. Nova answers from this and the product pages only.</p>
+            <textarea id="tKnowledge" rows="12"></textarea>
+          </div>
+          <div class="cb-card">
+            <h3>Greeting</h3>
+            <textarea id="tGreeting" rows="2"></textarea>
+            <h3 style="margin-top:12px">Hand-off contact</h3>
+            <p class="sub">Where Nova sends people when a person is needed.</p>
+            <input type="text" id="tContact">
+          </div>
+          <div class="cb-save"><button type="button" class="cb-btn" id="tSave">Save training</button><span id="tMsg" style="font-size:12px;color:var(--muted)"></span></div>
+        </div>
+        <div>
+          <div class="cb-card">
+            <h3>Fixed safety rules</h3>
+            <p class="sub">Built into the code and always on top of the house rules. These are what keep other customers' data out of reach.</p>
+            <div class="cb-fixed" id="tFixed"></div>
+          </div>
+          <div class="cb-card">
+            <h3>Earlier versions</h3>
+            <div class="cb-hist" id="tHist"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Setup -->
+  <div class="cb-view" id="vSetup"><div class="cb-setup" id="setupBox"></div></div>
+</div>
+
+<script src="/client-chat.js"></script>
+<script src="/client-bot-admin.js"></script>
+</body>
+</html>

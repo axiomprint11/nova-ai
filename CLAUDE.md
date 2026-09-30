@@ -162,6 +162,17 @@ No framework. Global functions, `innerHTML` string templates, `esc()` for escapi
 The stepped flow is the default; `sendMessage(forceClassic)` or the `steppedToggle` checkbox falls back
 to `/api/chat` for debugging.
 
+## Nova for clients (customer-facing bot)
+
+`client-bot.js` mounts a **separate** bot for axiomprint.com customers: its own SQLite tables (`client_chats`,
+`client_messages`, `client_bot_rules` + `_history`), its own tokens (signed with a key derived from `JWT_SECRET`,
+`kind:'client'` — staff `auth` rejects them), its own five tools (no SQL). The customer id always comes from the
+session: `my_orders` / `order_status` filter on `estimate_clientid` themselves; products are limited to active
+`axiom_print` products and `available_for_customers` is honoured. Admin console at `/client-bot` (Try it as any
+customer, Conversations, Training, Setup); public page `/client-chat` for the website iframe. Admins only until
+`CLIENT_BOT_PUBLIC=1`. Website sign-in: signed handoff (`CLIENT_SSO_SECRET`) or customer token
+(`CUSTOMER_VERIFY_URL`). Full write-up: `docs/CLIENT_BOT.md`. Never give it a tool that takes a customer id or SQL.
+
 ## Installation & local delivery pricing
 
 Separate from the product formula engine, and **not** duplicated: `public/install-pricing.js` is one UMD file

@@ -23,8 +23,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.4.3';
-const NOVA_BUILT = '09-30-2026 12:30am';
+const NOVA_VERSION = '1.5.0';
+const NOVA_BUILT = '09-30-2026 1:15am';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -186,6 +186,11 @@ app.get('/embed.js', (req, res) => {
 app.get('/widget', allowFraming, serveVersionedHtml('widget.html'));
 app.get('/widget.html', allowFraming, serveVersionedHtml('widget.html'));
 
+// Client bot pages are served by client-bot.js. Their .html paths would otherwise
+// come straight from express.static — without the framing rules — so send them
+// to the real routes.
+app.get('/client-chat.html', (req, res) => res.redirect(301, '/client-chat'));
+app.get('/client-bot.html', (req, res) => res.redirect(301, '/client-bot'));
 app.get('/chatbot', serveVersionedHtml('chatbot.html'));
 app.get('/chatbot.html', serveVersionedHtml('chatbot.html'));
 app.get('/admin', serveVersionedHtml('admin.html'));
@@ -2209,8 +2214,11 @@ loadSchema();
 function auth(req, res, next) {
   const token = req.headers.authorization && req.headers.authorization.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
-  try { req.user = jwt.verify(token, process.env.JWT_SECRET); next(); }
-  catch(e) { res.status(401).json({ error: 'Invalid token' }); }
+  try { req.user = jwt.verify(token, process.env.JWT_SECRET); }
+  catch(e) { return res.status(401).json({ error: 'Invalid token' }); }
+  // A website visitor's token (client-facing bot) never opens a staff endpoint.
+  if (req.user && req.user.kind === 'client') return res.status(401).json({ error: 'Invalid token' });
+  next();
 }
 
 function adminOnly(req, res, next) {
@@ -8508,6 +8516,10 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
 // SPA catch-all: any non-API GET that isn't a real static file serves the app shell.
 // Prevents "Cannot GET /<path>" when a slug or deep link hits the server.
 mountMcp(app, { runQuery, dataDictionary: DATA_DICTIONARY });
+
+// The customer-facing bot — separate tables, rules, tools and tokens (client-bot.js).
+require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly,
+  quoteProduct, buildOrderLink, stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming });
 
 app.get(/^(?!\/api).*/, serveVersionedHtml('index.html'));
 
