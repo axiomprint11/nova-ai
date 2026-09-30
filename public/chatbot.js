@@ -852,6 +852,89 @@ function noteJobSize(text) {
   if (m && m.length > 1) jobItemCount = m.length;
 }
 
+// ===== "Order now" links =====
+// Every priced quantity can open the product page on axiomprint.com with its
+// options already selected (server: /api/chatbot/order-links). Links are cached
+// by the options they carry, so a re-priced or edited card gets a fresh one.
+const orderLinkCache = {};
+
+function orderLinkPayload(d) {
+  d = d || {};
+  return {
+    product_id: d.product_id, quantity: d.quantity, width: d.width || null, height: d.height || null,
+    specs: (d.specs || []).filter(sp => sp.variable_id).map(sp => ({
+      variable_id: sp.variable_id, item_id: sp.item_id, value: sp.value,
+      isQuantity: !!sp.isQuantity, isVersions: !!sp.isVersions, isVersionRow: !!sp.isVersionRow
+    }))
+  };
+}
+
+// states -> urls (null where no link could be made), in one request.
+async function orderLinks(states) {
+  const keys = states.map(d => JSON.stringify(orderLinkPayload(d)));
+  const todo = [];
+  keys.forEach((k, i) => { if (!(k in orderLinkCache) && !todo.some(t => t.k === k)) todo.push({ k: k, d: states[i] }); });
+  if (todo.length) {
+    const job = fetch('/api/chatbot/order-links', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ items: todo.map(t => orderLinkPayload(t.d)) })
+    }).then(r => r.json()).then(j => (j && j.links) || []).catch(() => []);
+    todo.forEach((t, i) => {
+      orderLinkCache[t.k] = job.then(links => {
+        const l = links[i];
+        if (!l || !l.ok || !l.url) { delete orderLinkCache[t.k]; return null; }
+        return l.url;
+      });
+    });
+  }
+  return Promise.all(keys.map(k => orderLinkCache[k] || null));
+}
+
+// "Order now": the tab opens straight away (a tab opened after a network wait
+// is blocked as a pop-up), then goes to the link once it is ready.
+async function openOrderLink(d, btn) {
+  const tab = window.open('', '_blank');
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Opening\u2026'; }
+  const url = (await orderLinks([d]))[0];
+  if (btn) { btn.disabled = false; btn.textContent = url ? label : 'No link'; }
+  if (!url) { if (tab) tab.close(); return; }
+  if (tab) { try { tab.opener = null; } catch (e) {} tab.location.href = url; }
+  else window.open(url, '_blank', 'noopener');
+}
+
+// Put a url on every row of the given saved items (rows[i] belongs to cards[i]).
+async function attachOrderLinks(entries) {
+  const flat = [];
+  entries.forEach(e => (e.cards || []).forEach((c, i) => flat.push({ row: e.rows[i], d: c.data })));
+  const urls = await orderLinks(flat.map(f => f.d));
+  flat.forEach((f, i) => { if (f.row) f.row.url = urls[i] || null; });
+}
+
+// What the draft and the email are built from: the saved items, or — before
+// anything is saved — the product on screen with every quantity quoted for it.
+function draftEntries() {
+  if (quoteShelf.length) return quoteShelf;
+  const latest = paneQuotes[paneQuotes.length - 1];
+  if (!latest) return [];
+  const d = liveOf(latest);
+  const mine = {};
+  paneQuotes.forEach(q => {
+    const qd = liveOf(q);
+    if (Number(qd.product_id) !== Number(d.product_id)) return;
+    if (Number(qd.quantity) > 0) mine[Number(qd.quantity)] = { card: q.card, data: qd };
+  });
+  const entry = {
+    product_id: d.product_id, product: d.product, image: d.product_image || null,
+    specs: (d.specs || []).filter(sp => !sp.isVersionRow),
+    cards: Object.keys(mine).map(n => ({ quantity: Number(n), card: mine[n].card, data: mine[n].data }))
+  };
+  if (!entry.cards.length) entry.cards = [{ quantity: d.quantity, card: latest.card, data: d }];
+  sortRows(entry);
+  return [entry];
+}
+
 // More items in the job still to price? Read from the recap ("1) … 2) …").
 function moreItemsToCome() {
   return jobItemCount > 0 && quoteShelf.length < jobItemCount - 1;
@@ -1016,7 +1099,8 @@ function renderShelf() {
         ? '<div class="shelf-body">' +
             '<table class="shelf-rows">' + q.rows.map((r, ri) =>
               '<tr data-open="' + i + '-' + ri + '"><td>' +
-              Number(r.quantity).toLocaleString() + '</td><td>' +
+              Number(r.quantity).toLocaleString() + '</td>' +
+              '<td class="shelf-order"><button type="button" data-order="' + i + '-' + ri + '">Order now</button></td><td>' +
               (r.discount && r.list_price > r.price
                 ? '<s>$' + Number(r.list_price).toFixed(2) + '</s> ' : '') + '$' +
               Number(r.price).toFixed(2) + '</td></tr>').join('') + '</table>' +
@@ -1065,6 +1149,15 @@ function renderShelf() {
       const [si, ri] = row.getAttribute('data-open').split('-').map(Number);
       const q = quoteShelf[si];
       if (q && q.cards && q.cards[ri]) showInPane(q.cards[ri].card, q.product);
+    };
+  });
+
+  bar.querySelectorAll('[data-order]').forEach(x => {
+    x.onclick = (e) => {
+      e.stopPropagation();
+      const [si, ri] = x.getAttribute('data-order').split('-').map(Number);
+      const c = quoteShelf[si] && quoteShelf[si].cards && quoteShelf[si].cards[ri];
+      if (c) openOrderLink(c.card && c.card.__getState ? c.card.__getState() : c.data, x);
     };
   });
 
@@ -1281,55 +1374,24 @@ function restoreCalc() {
 // The client-facing quote: every item on the shelf, each with its thumbnail,
 // specs and price ladder. Falls back to the item on screen when nothing is
 // shelved yet.
-function drawDraft() {
+async function drawDraft() {
   const body = document.getElementById('calcPaneBody');
   if (!body) return;
-
-  if (quoteShelf.length) {
+  const entries = draftEntries();
+  if (!entries.length) return;
+  const paint = (ready) => {
+    if (paneMode !== 'draft') return;
     body.innerHTML =
       '<div class="draft" id="draftBlock">' +
-        quoteShelf.map(q => draftItemHtml(q)).join('<div class="draft-gap"></div>') +
+        entries.map(q => draftItemHtml(q)).join('<div class="draft-gap"></div>') +
       '</div>' +
-      '<button type="button" class="draft-copy" id="draftCopy">Copy for email</button>';
+      '<button type="button" class="draft-copy" id="draftCopy"' + (ready ? '' : ' disabled') + '>' +
+        (ready ? 'Copy for email' : 'Preparing order links…') + '</button>';
     document.getElementById('draftCopy').onclick = () => copyDraft();
-    return;
-  }
-
-  const ladder = quantityLadder();
-  if (!ladder) return;
-  const d = ladder.sample;
-
-  // Specs are shared across the ladder, so show them once. Quantity, versions
-  // and turnaround are handled separately: the first varies, the last two sit
-  // under the table where a client expects them.
-  const skip = /^(quantity|versions?|turnaround)$/i;
-  const specRows = (d.specs || [])
-    .filter(sp => !sp.isVersionRow && !skip.test(String(sp.field).replace(/_/g, ' ')))
-    .map(sp => '<tr><td>' + esc(String(sp.field).replace(/_/g, ' ')) + '</td><td>' +
-               esc(sp.value) + '</td></tr>').join('');
-
-  const qtyRows = ladder.rows.map(n => {
-    const q = ladder.quotes[n].data;
-    return '<tr><td>' + n.toLocaleString() + '</td><td><b>$' +
-           Number(q.price).toFixed(2) + '</b>' +
-           (q.each ? ' <span class="dr-each">$' + Number(q.each).toFixed(2) + ' each</span>' : '') +
-           '</td></tr>';
-  }).join('');
-
-  const turn = (d.specs || []).find(sp => /turnaround/i.test(sp.field));
-
-  body.innerHTML =
-    '<div class="draft" id="draftBlock">' +
-      '<div class="draft-title">' + esc(d.product || '') + '</div>' +
-      '<table class="draft-t">' + specRows + '</table>' +
-      '<div class="draft-sub">Quantity</div>' +
-      '<table class="draft-t draft-qty">' + qtyRows + '</table>' +
-      (turn ? '<table class="draft-t"><tr><td>Turnaround</td><td>' + esc(turn.value) +
-              '</td></tr></table>' : '') +
-    '</div>' +
-    '<button type="button" class="draft-copy" id="draftCopy">Copy for email</button>';
-
-  document.getElementById('draftCopy').onclick = () => copyDraft();
+  };
+  paint(false);
+  await attachOrderLinks(entries);
+  paint(true);
 }
 
 // One shelved item, rendered for an email. The thumbnail earns its place —
@@ -1344,6 +1406,8 @@ function draftItemHtml(q) {
     '<tr><td>' + Number(r.quantity).toLocaleString() + '</td><td><b>$' +
     Number(r.price).toFixed(2) + '</b>' +
     (r.each ? ' <span class="dr-each">$' + Number(r.each).toFixed(2) + ' each</span>' : '') +
+    '</td><td class="dr-order">' +
+      (r.url ? '<a href="' + esc(r.url) + '" target="_blank" rel="noopener">Order now</a>' : '') +
     '</td></tr>').join('');
   const turn = (q.specs || []).find(sp => /turnaround/i.test(sp.field));
 
@@ -1360,31 +1424,49 @@ function draftItemHtml(q) {
   '</div>';
 }
 
-async function copyDraft() {
-  const block = document.getElementById('draftBlock');
-  const btn = document.getElementById('draftCopy');
-  if (!block) return;
-  // Rich HTML so it pastes into an email as a table, with plain text behind it
-  // for anything that can't take HTML.
-  const html = '<div style="font-family:Arial,sans-serif;font-size:13px;color:#222">' +
-    block.innerHTML.replace(/class="[^"]*"/g, '')
+// Rich HTML so it pastes into an email as a table with working "Order now"
+// links, and plain text behind it (links spelled out) for anything that can't
+// take HTML.
+function emailHtml(block) {
+  return '<div style="font-family:Arial,sans-serif;font-size:13px;color:#222">' +
+    block.innerHTML.replace(/ class="[^"]*"/g, '').replace(/ contenteditable="[^"]*"/g, '')
       .replace(/<table/g, '<table cellpadding="5" cellspacing="0" style="border-collapse:collapse;margin-bottom:6px"')
       .replace(/<td/g, '<td style="border-bottom:1px solid #e5e5ef;padding:5px 10px"')
+      .replace(/<a /g, '<a style="color:#4f46e5;font-weight:bold;text-decoration:underline" ')
       // Thumbnails survive the paste at a sensible size.
       .replace(/<img /g, '<img width="90" style="border-radius:6px;margin-right:12px;vertical-align:middle" ') +
     '</div>';
-  const text = block.innerText;
+}
+function emailText(block) {
+  const copy = block.cloneNode(true);
+  copy.querySelectorAll('a[href]').forEach(a => {
+    a.replaceWith(document.createTextNode('Order now: ' + a.getAttribute('href')));
+  });
+  // innerText needs layout; a detached copy has none, so lay it out off-screen.
+  copy.style.cssText = 'position:fixed;left:-9999px;top:0;width:600px';
+  document.body.appendChild(copy);
+  const text = copy.innerText;
+  copy.remove();
+  return text;
+}
+async function copyRich(block, btn, label) {
   try {
     await navigator.clipboard.write([new ClipboardItem({
-      'text/html': new Blob([html], { type: 'text/html' }),
-      'text/plain': new Blob([text], { type: 'text/plain' })
+      'text/html': new Blob([emailHtml(block)], { type: 'text/html' }),
+      'text/plain': new Blob([emailText(block)], { type: 'text/plain' })
     })]);
     btn.textContent = 'Copied';
   } catch (e) {
-    try { await navigator.clipboard.writeText(text); btn.textContent = 'Copied'; }
+    try { await navigator.clipboard.writeText(emailText(block)); btn.textContent = 'Copied'; }
     catch (e2) { btn.textContent = 'Could not copy'; }
   }
-  setTimeout(() => { btn.textContent = 'Copy for email'; }, 1800);
+  setTimeout(() => { btn.textContent = label; }, 1800);
+}
+async function copyDraft() {
+  const block = document.getElementById('draftBlock');
+  const btn = document.getElementById('draftCopy');
+  if (!block || !btn) return;
+  copyRich(block, btn, 'Copy for email');
 }
 
 // ===== Draft a reply, in the side pane =====
@@ -1393,50 +1475,64 @@ async function copyDraft() {
 // rather than reading as a form letter.
 async function startDraft() {
   hideCart();
-  paneMode = 'draft-email';
+  const entries = draftEntries();
   const body = document.getElementById('calcPaneBody');
+  if (!body) return;
+  if (!entries.length) {
+    const m = document.createElement('div');
+    m.className = 'co-msg';
+    m.textContent = 'Price something first, then Save it — the email is built from what is saved.';
+    body.appendChild(m);
+    return;
+  }
+  paneMode = 'draft-email';
   const hd = document.querySelector('.calc-pane-hd span');
   if (hd) hd.textContent = 'Draft reply';
   body.innerHTML = '<div class="co-loading">Writing the reply…</div>';
 
   // The opening message is usually the client's own email, pasted in.
-  const first = (chatHistory.find(m => m.role === 'user') || {}).content || '';
+  const firstMsg = (chatHistory.find(m => m.role === 'user') || {}).content || '';
+  const first = typeof firstMsg === 'string' ? firstMsg
+    : ((firstMsg.find && firstMsg.find(b => b.type === 'text')) || {}).text || '';
+  const lines = [];
+  entries.forEach(e => e.rows.forEach(r => lines.push(
+    Number(r.quantity).toLocaleString() + ' × ' + e.product + ' — $' + Number(r.price).toFixed(2))));
 
-  const lines = cartItems.map(it =>
-    (it.quantity ? Number(it.quantity).toLocaleString() + ' × ' : '') + it.product +
-    (it.summary ? ' (' + it.summary + ')' : '') +
-    ' — $' + Number(it.price).toFixed(2) +
-    (it.turnaround ? ', ' + it.turnaround : ''));
-
+  let words = {};
   try {
-    const r = await fetch('/api/draft-email', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-      body: JSON.stringify({
-        quote: cartItems.reduce((a, b) => a + (Number(b.price) || 0), 0).toFixed(2),
-        client_name: chatClientName || '',
-        client_emails: first ? [{ body: first }] : [],
-        product: cartItems.map(i => i.product).join(', '),
-        lines: lines
-      })
-    });
-    const j = await r.json();
-    const text = j.email || j.draft || j.text || '';
-    if (!text) { body.innerHTML = '<div class="co-none">Could not draft that one.</div>'; return; }
-    body.innerHTML =
-      '<textarea class="draft-mail" id="draftMail" rows="18">' + esc(text) + '</textarea>' +
-      '<button type="button" class="draft-copy" id="draftMailCopy">Copy the reply</button>';
-    document.getElementById('draftMailCopy').onclick = async () => {
-      const b = document.getElementById('draftMailCopy');
-      try {
-        await navigator.clipboard.writeText(document.getElementById('draftMail').value);
-        b.textContent = 'Copied';
-      } catch (e) { b.textContent = 'Could not copy'; }
-      setTimeout(() => { b.textContent = 'Copy the reply'; }, 1800);
-    };
-  } catch (e) {
-    body.innerHTML = '<div class="co-none">Could not draft that one.</div>';
-  }
+    const [j] = await Promise.all([
+      fetch('/api/draft-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({
+          quote: first || lines.join('\n'),
+          client_name: (chatClientInfo && chatClientInfo.name) || chatClientName || '',
+          client_emails: first ? [{ body: first }] : [],
+          product: entries.map(e => e.product).join(', '),
+          lines: lines
+        })
+      }).then(r => r.json()).catch(() => ({})),
+      attachOrderLinks(entries)
+    ]);
+    words = j || {};
+  } catch (e) {}
+  if (paneMode !== 'draft-email') return;
+
+  const para = (t) => t ? '<p>' + esc(t).replace(/\n/g, '<br>') + '</p>' : '';
+  // The words are editable in place; the quote tables and links come from the
+  // saved items, so the prices cannot be mistyped.
+  body.innerHTML =
+    '<div class="draft draft-mail-box" id="draftMailBlock">' +
+      '<div contenteditable="true">' + para(words.greeting || 'Hi,') + para(words.intro ||
+        'Thanks for reaching out! Here is your quote:') + '</div>' +
+      entries.map(q => draftItemHtml(q)).join('<div class="draft-gap"></div>') +
+      '<div contenteditable="true">' + para(words.outro ||
+        'Use the Order now link next to the quantity you want — everything is already selected. ' +
+        'Let me know if you have any questions.') + para(words.signoff || 'Best,') + '</div>' +
+    '</div>' +
+    '<button type="button" class="draft-copy" id="draftMailCopy">Copy the reply</button>';
+  const btn = document.getElementById('draftMailCopy');
+  btn.onclick = () => copyRich(document.getElementById('draftMailBlock'), btn, 'Copy the reply');
 }
 
 // ===== Checkout, in the side pane =====
@@ -1693,9 +1789,14 @@ function paneMarker(data, card) {
     (isFinite(qty) && qty ? ' <span class="pq-moved-q">Qty ' + qty.toLocaleString() + '</span>' : '') +
     ((data && data.price) != null ? ' <span class="pq-moved-p">$' +
       Number(data.price).toFixed(2) + '</span>' : '') +
-    '<button type="button">Show</button>';
+    '<button type="button" class="pq-moved-order">Order now</button>' +
+    '<button type="button" class="pq-moved-show">Show</button>';
 
-  d.querySelector('button').onclick = () => {
+  d.querySelector('.pq-moved-order').onclick = (e) => {
+    const q = paneQuotes[idx];
+    if (q) openOrderLink(liveOf(q), e.currentTarget);
+  };
+  d.querySelector('.pq-moved-show').onclick = () => {
     // Bring that exact quote back into the pane rather than just scrolling to
     // whatever happens to be there.
     const q = paneQuotes[idx];
@@ -2251,6 +2352,8 @@ AxiomCards.init({
   onSave: CART_ON ? null : (card, st) => saveToShelf(card, st),
   saveLabel: () => moreItemsToCome() ? 'Save & next item' : 'Save',
   onChange: (card, st) => onCardRepriced(card, st),
+  orderLink: (st) => orderLinks([st]).then(u => u[0]),
+  openOrder: (st, btn) => openOrderLink(st, btn),
   onCartAdd: () => {
     renderPaneActions();
     // Carting item 1 is the cue to start item 2 — the person has finished with

@@ -35,7 +35,11 @@
     saveLabel: null,
     // Called after the card re-prices (edit, clarify, client connected), so the
     // page can keep its copies of the figure in step: onChange(cardEl, state).
-    onChange: null
+    onChange: null,
+    // "Order now": orderLink(state) -> Promise<url|null> for the product page with
+    // these options selected; openOrder(state, btn) opens it.
+    orderLink: null,
+    openOrder: null
   };
 
   function esc(s) {
@@ -751,7 +755,9 @@ function buildPriceCard(d) {
         '<div class="pq-note">' + (state.discount
           ? esc((state.client_name ? state.client_name + '\u2019s' : 'Client') + ' price \u2014 ' +
                 Number(state.discount.percent) + '% ' + (state.discount.name || 'discount') + ' applied.')
-          : 'List price from the calculator.') + '</div>' +
+          : 'List price from the calculator.') +
+          (CTX.openOrder ? ' <button type="button" class="pq-orderlink" title="Open this on axiomprint.com with every option selected">Order now \u2197</button>' : '') +
+          '</div>' +
         '<div class="pq-actions">' +
           '<button type="button" class="pq-copybtn">Copy</button>' +
           '<button type="button" class="pq-editbtn">Edit</button>' +
@@ -1114,7 +1120,7 @@ function buildPriceCard(d) {
 
   // Plain-text quote for pasting into a reply to the client. Deliberately leaves
   // out anything internal — no discount tier name, no "default"/"auto" tags.
-  function quoteText() {
+  function quoteText(url) {
     const lines = [state.product || ''];
     lines.push('');
     (state.specs || []).forEach(sp => {
@@ -1130,13 +1136,14 @@ function buildPriceCard(d) {
       lines.push('Total: $' + Number(state.price || 0).toFixed(2) +
         '  ($' + Number(state.each || 0).toFixed(2) + ' each)');
     }
+    if (url) { lines.push(''); lines.push('Order now: ' + url); }
     return lines.join('\n');
   }
 
   // Build the quote as EMAIL-SAFE HTML: inline styles only (mail clients strip
   // <style> blocks), a real table rather than CSS grid, and the product photo so
   // the AM has something to send that doesn't read like a database dump.
-  function quoteHtml() {
+  function quoteHtml(url) {
     const esc2 = (x) => esc(x);
     const rows = (state.specs || []).map(sp => {
       if (sp.isVersions && (!state.versions || state.versions < 2)) return '';
@@ -1183,6 +1190,11 @@ function buildPriceCard(d) {
       '</table>' +
       '<table cellpadding="0" cellspacing="0" border="0" ' +
         'style="width:100%;border-collapse:collapse;margin-top:16px;">' + rows + '</table>' +
+      (url
+        ? '<div style="margin-top:16px;"><a href="' + esc2(url) + '" style="display:inline-block;' +
+          'background:#4f46e5;color:#ffffff;font-weight:bold;font-size:14px;text-decoration:none;' +
+          'padding:10px 18px;border-radius:8px;">Order now</a></div>'
+        : '') +
       '<div style="font-size:11px;color:#8b8fa3;margin-top:14px;">' +
         'Price excludes shipping and tax.' +
       '</div>' +
@@ -1190,6 +1202,23 @@ function buildPriceCard(d) {
   }
 
   async function copyQuote(btn) {
+    // With order links on, the copy carries an "Order now" button. The link may
+    // still be on its way, so hand the clipboard promises — writing after an
+    // await would lose the click that allows it.
+    if (CTX.orderLink && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+      const link = CTX.orderLink(JSON.parse(JSON.stringify(state))).catch(() => null);
+      try {
+        await navigator.clipboard.write([new ClipboardItem({
+          'text/html': link.then(u => new Blob([quoteHtml(u)], { type: 'text/html' })),
+          'text/plain': link.then(u => new Blob([quoteText(u)], { type: 'text/plain' }))
+        })]);
+        const old = btn.textContent;
+        btn.textContent = 'Copied';
+        btn.classList.add('ok');
+        setTimeout(() => { btn.textContent = old; btn.classList.remove('ok'); }, 1600);
+        return;
+      } catch (e) { /* fall through to the plain copy */ }
+    }
     const text = quoteText();
     const html = quoteHtml();
     const done = () => {
@@ -1234,6 +1263,8 @@ function buildPriceCard(d) {
 
   function wire() {
     // "Save" — the page files this quote (and its other quantities) under Saved.
+    const ol = el.querySelector('.pq-orderlink');
+    if (ol) ol.onclick = () => CTX.openOrder(JSON.parse(JSON.stringify(state)), ol);
     const sv = el.querySelector('.pq-savebtn');
     if (sv) sv.onclick = () => {
       if (CTX.onSave) CTX.onSave(el, JSON.parse(JSON.stringify(state)));
@@ -1482,6 +1513,8 @@ function buildPriceCard(d) {
       if (opts.onSave) CTX.onSave = opts.onSave;
       if (opts.saveLabel) CTX.saveLabel = opts.saveLabel;
       if (opts.onChange) CTX.onChange = opts.onChange;
+      if (opts.orderLink) CTX.orderLink = opts.orderLink;
+      if (opts.openOrder) CTX.openOrder = opts.openOrder;
     },
     priceCard:   function (d) { token = CTX.getToken(); return buildPriceCard(d); },
     jobCard:     function (d) { token = CTX.getToken(); return buildJobCard(d); },

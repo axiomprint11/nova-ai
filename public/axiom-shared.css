@@ -1732,3 +1732,21 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .calc-pane > .client-bar { padding: 8px 14px; }
 .calc-pane > .client-bar .cbar-btn { flex: 0 1 auto; max-width: 100%; padding: 5px 12px; font-size: 12px; }
 .calc-pane > .client-bar.on .cbar-btn { padding: 6px 12px; }
+
+/* ===== "Order now" links (product page with every option selected) ===== */
+.pq-orderlink { border: none; background: none; padding: 0; margin-left: 6px; font-family: inherit;
+  font-size: 11.5px; font-weight: 700; color: var(--indigo-dark); cursor: pointer; text-decoration: underline; }
+.pq-orderlink:disabled { opacity: .6; cursor: default; }
+.pq-moved .pq-moved-order { margin-left: auto; border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
+.pq-moved .pq-moved-order:hover { border-color: #16a34a; background: #dcfce7; }
+.pq-moved .pq-moved-order + .pq-moved-show { margin-left: 6px; }
+.shelf-rows td.shelf-order { text-align: right; width: 1%; white-space: nowrap; padding-left: 8px; }
+.shelf-rows td.shelf-order button { border: 1px solid #bbf7d0; background: #f0fdf4; color: #166534; font-family: inherit;
+  font-size: 10.5px; font-weight: 600; border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+.shelf-rows td.shelf-order button:hover { border-color: #16a34a; background: #dcfce7; }
+.draft-t td.dr-order { text-align: right; white-space: nowrap; }
+.draft-t td.dr-order a { color: var(--indigo-dark); font-weight: 700; font-size: 12.5px; }
+.draft-mail-box [contenteditable] { outline: none; border-radius: 6px; padding: 2px 4px; margin: 0 -4px 10px; }
+.draft-mail-box [contenteditable]:hover { background: #fafaff; }
+.draft-mail-box [contenteditable]:focus { background: #f5f3ff; }
+.draft-mail-box p { margin: 0 0 8px; font-size: 13px; line-height: 1.55; }

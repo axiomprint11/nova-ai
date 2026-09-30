@@ -23,8 +23,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.4.1';
-const NOVA_BUILT = '09-29-2026 10:15pm';
+const NOVA_VERSION = '1.4.2';
+const NOVA_BUILT = '09-29-2026 11:30pm';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -3512,6 +3512,102 @@ app.post('/api/chatbot/reprice', auth, async (req, res) => {
       client_id: req.body.client_id
     });
     res.json(q);
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+// ===== "Order now" links =====
+// A priced quote -> a link to the product page on axiomprint.com with every
+// option already selected, so the client only has to upload and check out.
+// See docs/NOVA_AI_URL_GENERATOR.md. The selections are keyed by the variable's
+// exact title (underscores and all) and hold the chosen item ids.
+//   Short link (default): POST the config to the product-shares API and link
+//     ?shareId=… — short, and orders placed from it are tracked.
+//   Inline (fallback when that API is down): ?config=<url-encoded JSON>.
+const SITE_URL = 'https://axiomprint.com';
+const PRODUCT_SHARE_API = process.env.PRODUCT_SHARE_API || 'https://website.workroomapp.com/api/v1/product-shares';
+const orderLinkCache = new Map();        // product + config -> url
+const productLinkCache = new Map();      // product id -> { slug, vars, at }
+
+async function productLinkInfo(pid) {
+  const hit = productLinkCache.get(pid);
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit;
+  const rows = await runQuery('SELECT id, title, url FROM product WHERE id = ' + parseInt(pid));
+  if (!rows.length) return null;
+  const vars = await runQuery('SELECT id, title, type, internal FROM product_variables WHERE product_id = ' + parseInt(pid));
+  const p = rows[0];
+  // product.url is the page slug, normally already ending in -<id>
+  // ("raised-spot-uv-cards-184"). The id after the last "-" is what the site reads.
+  let slug = String(p.url || '').trim().replace(/^https?:\/\/[^/]+/i, '').replace(/^\/+|\/+$/g, '').replace(/^product\//, '');
+  if (!slug) slug = String(p.title || 'product').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!new RegExp('-' + parseInt(pid) + '$').test(slug)) slug += '-' + parseInt(pid);
+  const info = { slug: slug, vars: {}, at: Date.now() };
+  vars.forEach(v => { info.vars[v.id] = { title: v.title, type: v.type, internal: Number(v.internal) === 1 }; });
+  productLinkCache.set(pid, info);
+  return info;
+}
+
+async function buildOrderLink(item) {
+  const pid = parseInt(item && item.product_id);
+  if (!pid) return { ok: false, error: 'No product' };
+  const info = await productLinkInfo(pid);
+  if (!info) return { ok: false, error: 'Unknown product' };
+  const selections = {};
+  const config = { selections: selections, selectedMetric: 'inch' };
+  let qtyTitle = null, qtyItem = null, custom = false;
+  (Array.isArray(item.specs) ? item.specs : []).forEach(sp => {
+    if (!sp || sp.isVersionRow || sp.isVersions) return;
+    const v = info.vars[parseInt(sp.variable_id)];
+    if (!v || v.internal) return;
+    if (sp.isQuantity) { qtyTitle = v.title; qtyItem = parseInt(sp.item_id) || null; return; }
+    if (v.type === 'text' || v.type === 'number') return;      // no raw values on a quote
+    if (!parseInt(sp.item_id)) return;
+    selections[v.title] = parseInt(sp.item_id);
+    if (/\(custom\)/i.test(String(sp.value || ''))) custom = true;
+  });
+  const qty = parseInt(item.quantity) || 0;
+  if (qtyTitle && qtyItem) selections[qtyTitle] = qtyItem;           // a listed quantity
+  else if (qty > 0) { config.isCustomQuantity = true; config.customQuantity = qty; }
+  const w = Number(item.width), h = Number(item.height);
+  if (custom && w > 0 && h > 0) config.customSize = { width: w, height: h };
+  if (!Object.keys(selections).length) return { ok: false, error: 'Nothing to select' };
+
+  const base = SITE_URL + '/product/' + info.slug;
+  const key = pid + '|' + JSON.stringify(config);
+  const cached = orderLinkCache.get(key);
+  if (cached) return cached;
+  let out;
+  try {
+    const r = await fetch(PRODUCT_SHARE_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ productId: String(pid), config: config }),
+      signal: AbortSignal.timeout(6000)
+    });
+    const j = await r.json().catch(() => ({}));
+    const id = j && j.data && j.data.id;
+    if (!r.ok || !/^[0-9a-f]{24}$/i.test(String(id || ''))) throw new Error('share API ' + r.status);
+    out = { ok: true, url: base + '?shareId=' + id, share_id: id, method: 'share' };
+  } catch (e) {
+    // Still a working link — just long, and not tracked. Not cached, so the
+    // next request tries for a short one again.
+    console.error('ORDER_LINK share failed for product ' + pid + ': ' + e.message);
+    return { ok: true, url: base + '?config=' + encodeURIComponent(JSON.stringify(config)), method: 'inline' };
+  }
+  orderLinkCache.set(key, out);
+  if (orderLinkCache.size > 2000) orderLinkCache.delete(orderLinkCache.keys().next().value);
+  return out;
+}
+
+// { items: [{ product_id, quantity, width, height, specs:[{variable_id,item_id,isQuantity,value}] }] }
+app.post('/api/chatbot/order-links', auth, async (req, res) => {
+  const items = Array.isArray(req.body && req.body.items) ? req.body.items.slice(0, 40) : [];
+  if (!items.length) return res.json({ ok: false, error: 'No items' });
+  try {
+    const links = await Promise.all(items.map(it =>
+      buildOrderLink(it).catch(e => ({ ok: false, error: e.message }))));
+    res.json({ ok: true, links: links });
   } catch (e) {
     res.json({ ok: false, error: e.message });
   }

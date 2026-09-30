@@ -134,6 +134,14 @@ No framework. Global functions, `innerHTML` string templates, `esc()` for escapi
   markers — via `repriceForClient()`; cards report new figures back through `AxiomCards` `onChange`, which
   keeps Saved, the markers and the draft in step. A card re-price sends only the specs the person asked
   for (`source` requested), so defaults and auto-linked fields resolve as they did the first time.
+  **Order now links**: every priced quantity (price card, chat marker, Saved row, Draft table, drafted
+  email, card Copy) can open the product on axiomprint.com with its options preselected.
+  `POST /api/chatbot/order-links` builds `config.selections` keyed by the **exact** `product_variables.title`
+  (underscores kept) → chosen item id (internal variables skipped; an unlisted quantity becomes
+  `isCustomQuantity`), posts it to the product-shares API (`PRODUCT_SHARE_API`, default
+  website.workroomapp.com) for a tracked `?shareId=` link on `product.url`, and falls back to an inline
+  `?config=` link if that API fails. See `docs/NOVA_AI_URL_GENERATOR.md`. "Draft an email" is built from
+  Saved (or the product on screen), not the cart.
 - `widget.html` + `widget.js` — the CRM widget (framed by `embed.js`). It is the ChatBot page inside a
   compact header: `widget.html` repeats chatbot.html's split markup with the **same element ids** and loads
   `chatbot.js` with `window.NOVA_EMBED = true`, so Save, Saved, Draft and the client bar are the same code.
