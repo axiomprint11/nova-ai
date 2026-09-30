@@ -307,6 +307,12 @@ module.exports = function mountClientBot(app, deps) {
     input_schema: { type: 'object', properties: { order_number: { type: 'string' } }, required: ['order_number'] }
   }];
 
+  // The picture for an order: its own artwork preview when there is one, else the product photo.
+  const PROOF_BASE = 'https://axiomprint.s3.us-west-1.amazonaws.com/EstimateImages/';
+  const orderImage = (r) => r.proof
+    ? { image: PROOF_BASE + String(r.proof).replace(/^\/+/, ''), image_kind: 'proof' }
+    : (r.product_image ? { image: r.product_image, image_kind: 'product' } : {});
+
   const STEP_LABEL = {
     not_started: 'Not started yet', printing: 'Printing', cutting: 'Cutting', coating_lamination: 'Coating / lamination',
     embellishment: 'Embellishment (foil, spot UV)', finishing: 'Finishing', fulfillment_pack: 'Packing', complete: 'Production complete'
@@ -352,7 +358,8 @@ module.exports = function mountClientBot(app, deps) {
   // linked invoice must be theirs too (and not void).
   const ownOrdersSql = (cid) =>
     'SELECT e.id, COALESCE(NULLIF(e.estimate_name,\'\'), p.title) AS name, p.title AS product, e.estimate_type, e.created, ' +
-    'COALESCE(e.new_total, e.estimate_price) AS total, i.id AS invoice_id, i.invoice_type, i.payment_status ' +
+    'COALESCE(e.new_total, e.estimate_price) AS total, i.id AS invoice_id, i.invoice_type, i.payment_status, ' +
+    'e.estimate_proofimage AS proof, p.image AS product_image ' +
     'FROM estimate e LEFT JOIN product p ON p.id = e.estimate_productid ' +
     'LEFT JOIN invoice i ON i.id = e.estimate_invoiceid ' +
     'WHERE e.estimate_clientid = ' + parseInt(cid) + ' AND (i.id IS NULL OR (i.invoice_clientid = ' + parseInt(cid) +
@@ -452,7 +459,7 @@ module.exports = function mountClientBot(app, deps) {
         const st = await statusFor(rows.map(r => r.id));
         const list = rows.map(r => ({ order: 'E' + r.id, name: r.name, product: r.product, placed: day(r.created),
           quantity: st[r.id].quantity || null, status: statusLine(r, st[r.id]), payment: r.payment_status || null }));
-        if (list.length) cards.push({ type: 'orders', orders: list });
+        if (list.length) cards.push({ type: 'orders', orders: list.map((o, i) => Object.assign({}, o, orderImage(rows[i]))) });
         return { orders: list };
       }
       const raw = String(input.order_number || '').trim();
@@ -472,8 +479,8 @@ module.exports = function mountClientBot(app, deps) {
         options: specs.filter(s => s.estimate_id === r.id && s.v != null && String(s.v).trim() !== '').slice(0, 14)
           .map(s => ({ field: s.f, value: String(s.v).slice(0, 80) }))
       }));
-      cards.push({ type: 'orders', orders: out.map(o => ({ order: o.order, name: o.name, product: o.product, placed: o.placed,
-        quantity: o.quantity, status: o.status, payment: o.payment })) });
+      cards.push({ type: 'orders', orders: out.map((o, i) => Object.assign({ order: o.order, name: o.name, product: o.product,
+        placed: o.placed, quantity: o.quantity, status: o.status, payment: o.payment }, orderImage(rows[i]))) });
       return { orders: out };
     }
     return { error: 'Unknown tool.' };

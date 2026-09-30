@@ -50,7 +50,15 @@
     if (c.type === 'price') return quote(c);
     if (c.type === 'orders') {
       return '<div class="cc-orders">' + (c.orders || []).map(o =>
-        '<div class="cc-ord"><div><b>' + esc(o.order) + '</b> ' + esc(o.name || o.product || '') +
+        '<div class="cc-ord">' +
+          // Their artwork preview when we have one, otherwise the product photo. Click for full size.
+          (o.image && /^https:\/\//.test(o.image)
+            ? '<a class="cc-ord-img" href="' + esc(o.image) + '" target="_blank" rel="noopener" title="' +
+              (o.image_kind === 'proof' ? 'Your artwork preview' : 'Product photo') + ' — open full size">' +
+              '<img src="' + esc(o.image) + '" alt="" loading="lazy" onerror="this.parentNode.remove()">' +
+              (o.image_kind === 'proof' ? '' : '<span>Product</span>') + '</a>'
+            : '') +
+          '<div><b>' + esc(o.order) + '</b> ' + esc(o.name || o.product || '') +
           '<small>' + [o.product && o.product !== o.name ? o.product : null, o.quantity ? 'Qty ' + o.quantity : null,
                        o.placed ? 'placed ' + o.placed : null].filter(Boolean).map(esc).join(' · ') + '</small></div>' +
           '<span class="cc-st">' + esc(o.status || '') + '</span></div>').join('') + '</div>';
