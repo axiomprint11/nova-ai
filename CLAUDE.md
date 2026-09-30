@@ -198,8 +198,10 @@ insurance, traffic) and the prompt's hand-off thresholds are built from the live
 
 Distance and drive time are always measured from the shop (`origin` in the config) by `routeLookup()` in
 server.js, exposed as `GET /api/route` and called by the tools whenever an address is given. With
-`GOOGLE_MAPS_API_KEY` in `.env` it uses Google's Distance Matrix (live traffic for the job's date and time);
-without it, OpenStreetMap (Nominatim + the public OSRM server) for road miles and road time, with the admin
+`GOOGLE_ROUTES_API_KEY` in `.env` (or `GOOGLE_MAPS_API_KEY`) it uses the Google **Routes API** `computeRoutes`
+(`TRAFFIC_UNAWARE`, or `TRAFFIC_AWARE` with Google's prediction when a future date and time are known). If Google
+refuses (key restriction, billing, outage) it logs `ROUTE google failed` and falls back to OpenStreetMap. Without a key,
+OpenStreetMap (Nominatim + the public OSRM server) for road miles and road time, with the admin
 traffic factors applied. Results are cached in memory for 6 hours. On the ChatBot page the calculator opens
 in the right-hand calc pane (`showInstallInPane`) with a live "Estimated price is $…" line in the chat; the
 CRM widget uses the same pane whenever it is wider than 700px.

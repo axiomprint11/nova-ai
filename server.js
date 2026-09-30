@@ -23,8 +23,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.5.4';
-const NOVA_BUILT = '09-30-2026 10:00am';
+const NOVA_VERSION = '1.5.5';
+const NOVA_BUILT = '09-30-2026 10:30am';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -499,8 +499,8 @@ function loadInstallPricing() {
 
 // ---- Driving distance and time from the shop ----
 // Every install and delivery is measured from the Glendale shop (config
-// `origin`). With GOOGLE_MAPS_API_KEY in .env, Google's Distance Matrix gives
-// road miles and a real traffic prediction for the job's date and time.
+// `origin`). With GOOGLE_ROUTES_API_KEY in .env, Google's Routes API gives
+// road miles and, for a future date and time, a real traffic prediction.
 // Without a key, OpenStreetMap does it for free: Nominatim finds the address,
 // OSRM gives road miles and free-flow minutes, and the admin traffic factors
 // turn that into a traffic estimate.
@@ -564,22 +564,45 @@ async function routeViaOsm(address) {
            matched: dest.label, approximate: approximate, source: 'openstreetmap' };
 }
 
+// Google Routes API (computeRoutes). The key lives in .env as GOOGLE_ROUTES_API_KEY
+// (GOOGLE_MAPS_API_KEY is accepted too). With a future date and time it asks for
+// Google's traffic prediction (TRAFFIC_AWARE); otherwise the cheapest
+// TRAFFIC_UNAWARE route, and the admin traffic factors estimate the traffic.
+const routesKey = () => process.env.GOOGLE_ROUTES_API_KEY || process.env.GOOGLE_MAPS_API_KEY || '';
 async function routeViaGoogle(address, departEpoch) {
-  const key = process.env.GOOGLE_MAPS_API_KEY;
-  const dep = departEpoch && departEpoch > Date.now() ? Math.floor(departEpoch / 1000) : null;
-  const url = 'https://maps.googleapis.com/maps/api/distancematrix/json?units=imperial' +
-    '&origins=' + encodeURIComponent(installPricing.origin.replace(/^AxiomPrint,\s*/i, '')) +
-    '&destinations=' + encodeURIComponent(address) +
-    (dep ? '&departure_time=' + dep + '&traffic_model=best_guess' : '') + '&key=' + encodeURIComponent(key);
-  const r = await fetch(url, { signal: AbortSignal.timeout(7000) });
-  const j = await r.json();
-  const el = j && j.rows && j.rows[0] && j.rows[0].elements && j.rows[0].elements[0];
-  if (!el || el.status !== 'OK') {
-    return { ok: false, error: (j && j.error_message) || 'Google could not route to "' + address + '".' };
+  const dep = departEpoch && departEpoch > Date.now() + 60 * 1000 ? new Date(departEpoch).toISOString() : null;
+  const body = {
+    origin: { address: installPricing.origin.replace(/^AxiomPrint,\s*/i, '') },
+    destination: { address: address },
+    travelMode: 'DRIVE',
+    routingPreference: dep ? 'TRAFFIC_AWARE' : 'TRAFFIC_UNAWARE',
+    units: 'IMPERIAL',
+    regionCode: 'us'
+  };
+  if (dep) body.departureTime = dep;
+  const r = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': routesKey(),
+               'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration,routes.staticDuration' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(8000)
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    // A key / billing / permission problem, not an address problem.
+    const err = new Error('Google Routes ' + r.status + ': ' + ((j.error && (j.error.status + ' ' + j.error.message)) || 'error'));
+    err.keyProblem = true;
+    throw err;
   }
-  return { ok: true, meters: el.distance.value, seconds: el.duration.value,
-           live_seconds: el.duration_in_traffic ? el.duration_in_traffic.value : null,
-           matched: (j.destination_addresses || [])[0] || address, approximate: false, source: 'google' };
+  const route = j.routes && j.routes[0];
+  if (!route || route.distanceMeters == null) {
+    return { ok: false, error: 'Google could not route to "' + address + '" — check the address or enter the miles by hand.' };
+  }
+  const secs = (v) => v ? parseInt(String(v).replace(/s$/, ''), 10) : null;
+  const withTraffic = secs(route.duration), free = secs(route.staticDuration) || withTraffic;
+  return { ok: true, meters: route.distanceMeters, seconds: free,
+           live_seconds: dep ? withTraffic : null,
+           matched: address, approximate: false, source: 'google' };
 }
 
 // { ok, miles, minutes (no traffic), traffic_minutes, traffic, traffic_label,
@@ -591,7 +614,7 @@ async function routeLookup(address, opts) {
   if (/^at\s+axiom|axiomprint\s*(shop)?$|in[- ]shop/i.test(address)) {
     return { ok: true, miles: 0, minutes: 0, traffic_minutes: 0, source: 'shop', matched: 'At AxiomPrint' };
   }
-  const useGoogle = !!process.env.GOOGLE_MAPS_API_KEY;
+  const useGoogle = !!routesKey();
   const departEpoch = laEpoch(opts.date, opts.time);
   const cacheKey = address.toLowerCase() + '|' + (useGoogle ? 'g|' + (departEpoch || '') : 'osm');
   const hit = ROUTE_CACHE.get(cacheKey);
@@ -599,7 +622,15 @@ async function routeLookup(address, opts) {
   if (hit && Date.now() - hit.at < ROUTE_TTL_MS) base = hit.value;
   else {
     try {
-      base = useGoogle ? await routeViaGoogle(address, departEpoch) : await routeViaOsm(address);
+      if (useGoogle) {
+        try { base = await routeViaGoogle(address, departEpoch); }
+        catch (ge) {
+          // Google refused (key, billing, IP restriction) or is down: keep quoting
+          // with OpenStreetMap rather than failing the estimate.
+          console.error('ROUTE google failed, using OpenStreetMap:', ge.message);
+          base = await routeViaOsm(address);
+        }
+      } else base = await routeViaOsm(address);
     } catch (e) {
       console.error('ROUTE lookup failed:', e.message);
       return { ok: false, error: 'Distance lookup is unavailable right now (' + e.message + ') — enter the miles by hand.' };
@@ -5467,11 +5498,11 @@ app.get('/api/admin/connections', auth, adminOnly, async (req, res) => {
   // Google Drive - same service account
   conns.push({ key: 'drive', name: 'Google Drive', status: gmailOk ? 'connected' : 'disconnected', detail: gmailOk ? 'Job files access via service account' : 'No credentials found' });
   // Driving distance for installation and delivery quotes.
-  conns.push(process.env.GOOGLE_MAPS_API_KEY
-    ? { key: 'maps', name: 'Driving distance — Google Maps', status: 'connected',
-        detail: 'Road miles and live traffic predictions from the Glendale shop' }
+  conns.push(routesKey()
+    ? { key: 'maps', name: 'Driving distance — Google Routes API', status: 'connected',
+        detail: 'Road miles from the Glendale shop, with Google traffic predictions when a date and time are given (falls back to OpenStreetMap if Google refuses — see pm2 logs "ROUTE google failed")' }
     : { key: 'maps', name: 'Driving distance — OpenStreetMap', status: 'connected',
-        detail: 'Road miles from the Glendale shop; traffic estimated from the admin traffic factors. Add GOOGLE_MAPS_API_KEY to .env for live traffic.' });
+        detail: 'Road miles from the Glendale shop; traffic estimated from the admin traffic factors. Add GOOGLE_ROUTES_API_KEY to .env for Google.' });
   res.json({ success: true, connections: conns });
 });
 
