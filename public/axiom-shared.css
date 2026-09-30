@@ -1860,3 +1860,10 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .cc-ord-img span { position: absolute; left: 0; right: 0; bottom: 0; font-size: 9px; font-weight: 700; text-align: center;
   color: #fff; background: rgba(30,27,46,.55); padding: 1px 0; }
 .cc-ord-img:hover { border-color: var(--indigo); }
+.cc-prod { cursor: pointer; position: relative; }
+.cc-prod.chosen { border-color: var(--indigo); background: var(--indigo-light); }
+.cc-prod.dim { opacity: .55; }
+.cc-prod-link { flex: none; margin-left: 2px; width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--line);
+  display: inline-flex; align-items: center; justify-content: center; font-size: 12px; text-decoration: none;
+  color: var(--muted) !important; background: #fff; }
+.cc-prod-link:hover { border-color: var(--indigo); color: var(--indigo-dark) !important; }

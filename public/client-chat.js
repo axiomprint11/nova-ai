@@ -42,10 +42,14 @@
 
   function card(c) {
     if (c.type === 'products') {
+      // Clicking a product picks it: the chat is told to price that one. The small
+      // arrow still opens its page on the website.
       return '<div class="cc-prods">' + (c.products || []).map(p =>
-        '<a class="cc-prod" href="' + esc(p.url || '#') + '" target="_blank" rel="noopener">' +
+        '<div class="cc-prod" role="button" tabindex="0" data-pick="' + esc(p.id) + '" data-name="' + esc(p.name) + '" title="Price this product">' +
           (p.image ? '<img src="' + esc(p.image) + '" alt="" loading="lazy" onerror="this.remove()">' : '<span class="cc-ph"></span>') +
-          '<span>' + esc(p.name) + '</span></a>').join('') + '</div>';
+          '<span>' + esc(p.name) + '</span>' +
+          (p.url ? '<a class="cc-prod-link" href="' + esc(p.url) + '" target="_blank" rel="noopener" title="Open the product page">\u2197</a>' : '') +
+        '</div>').join('') + '</div>';
     }
     if (c.type === 'price') return quote(c);
     if (c.type === 'orders') {
@@ -146,6 +150,25 @@
     // Add to Cart: the page that hosts the chat decides (on the website it puts
     // the item in the real cart). Without a host that can, the link opens the
     // product with everything already selected.
+    // Picking a product from a list = "price this one".
+    function pick(el) {
+      if (!el || busy) return;
+      const list = el.closest('.cc-prods');
+      if (list) list.querySelectorAll('.cc-prod').forEach(x => {
+        x.classList.toggle('chosen', x === el); x.classList.toggle('dim', x !== el);
+      });
+      ask('I\u2019d like to price ' + el.getAttribute('data-name') + ' (product #' + el.getAttribute('data-pick') + ').');
+    }
+    root.addEventListener('keydown', (e) => {
+      const el = e.target.closest && e.target.closest('.cc-prod[data-pick]');
+      if (el && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); pick(el); }
+    });
+    root.addEventListener('click', (e) => {
+      if (e.target.closest && e.target.closest('.cc-prod-link')) return;     // the arrow opens the page
+      const el = e.target.closest && e.target.closest('.cc-prod[data-pick]');
+      if (el) pick(el);
+    });
+
     root.addEventListener('click', async (e) => {
       const a = e.target.closest && e.target.closest('a.cc-cart');
       if (!a || !opts.addToCart) return;
