@@ -37,7 +37,8 @@
   const chat = ClientChat.mount($('chatHost'), {
     getToken: () => token,
     extraBody: () => ({ as_customer_id: asCustomer ? asCustomer.id : null }),
-    hint: 'Admin preview — saved under Conversations as "Admin preview".',
+    hint: 'Admin preview — saved under Conversations as "Admin preview". Add to Cart opens the product page here; on the website it adds to the cart.',
+    addToCart: async () => false,        // no website cart in the preview: open the product with its options
     suggestions: [['Business card prices', 'How much are 500 business cards?'], ['Banner options', 'What banner materials do you have?'],
                   ['Where is my order?', 'Where is my latest order?']],
     onAnswer: (j) => {

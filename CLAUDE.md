@@ -172,6 +172,10 @@ session: `my_orders` / `order_status` filter on `estimate_clientid` themselves; 
 customer, Conversations, Training, Setup); public page `/client-chat` for the website iframe. Admins only until
 `CLIENT_BOT_PUBLIC=1`. Website sign-in: signed handoff (`CLIENT_SSO_SECRET`) or customer token
 (`CUSTOMER_VERIFY_URL`). Full write-up: `docs/CLIENT_BOT.md`. Never give it a tool that takes a customer id or SQL.
+`price_product` takes `quantities` and returns one card (`rows` of qty/price/cart data); `client-chat.js` merges cards
+with the same product+options into a "Your quote" pane (≥860px) with Qty · Price · Add to Cart. Add to Cart is a
+postMessage hand-off to the hosting website (`nova-client:add-to-cart` → `cart-result`); without a host that
+declared `cart-ready`, it opens the share link.
 
 ## Installation & local delivery pricing
 

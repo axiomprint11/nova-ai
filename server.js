@@ -23,8 +23,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.5.0';
-const NOVA_BUILT = '09-30-2026 1:15am';
+const NOVA_VERSION = '1.5.1';
+const NOVA_BUILT = '09-30-2026 8:30am';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -3596,12 +3596,12 @@ async function buildOrderLink(item) {
     const j = await r.json().catch(() => ({}));
     const id = j && j.data && j.data.id;
     if (!r.ok || !/^[0-9a-f]{24}$/i.test(String(id || ''))) throw new Error('share API ' + r.status);
-    out = { ok: true, url: base + '?shareId=' + id, share_id: id, method: 'share' };
+    out = { ok: true, url: base + '?shareId=' + id, share_id: id, method: 'share', product_id: pid, config: config };
   } catch (e) {
     // Still a working link — just long, and not tracked. Not cached, so the
     // next request tries for a short one again.
     console.error('ORDER_LINK share failed for product ' + pid + ': ' + e.message);
-    return { ok: true, url: base + '?config=' + encodeURIComponent(JSON.stringify(config)), method: 'inline' };
+    return { ok: true, url: base + '?config=' + encodeURIComponent(JSON.stringify(config)), method: 'inline', product_id: pid, config: config };
   }
   orderLinkCache.set(key, out);
   if (orderLinkCache.size > 2000) orderLinkCache.delete(orderLinkCache.keys().next().value);

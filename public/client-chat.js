@@ -47,20 +47,7 @@
           (p.image ? '<img src="' + esc(p.image) + '" alt="" loading="lazy" onerror="this.remove()">' : '<span class="cc-ph"></span>') +
           '<span>' + esc(p.name) + '</span></a>').join('') + '</div>';
     }
-    if (c.type === 'price') {
-      return '<div class="cc-price">' +
-        '<div class="cc-price-hd">' +
-          (c.image ? '<img src="' + esc(c.image) + '" alt="" onerror="this.remove()">' : '') +
-          '<div><b>' + esc(c.product) + '</b><small>Qty ' + Number(c.quantity || 0).toLocaleString() +
-            (c.ready ? ' · ' + esc(c.ready) : '') + '</small></div>' +
-          '<div class="cc-price-n">' + (c.discount && c.list_price > c.price ? '<s>' + money(c.list_price) + '</s>' : '') +
-            money(c.price) + '<small>' + money(c.each) + ' each</small></div>' +
-        '</div>' +
-        '<table>' + (c.specs || []).slice(0, 12).map(s => '<tr><td>' + esc(s.field) + '</td><td>' + esc(s.value) + '</td></tr>').join('') + '</table>' +
-        (c.order_url ? '<a class="cc-order" href="' + esc(c.order_url) + '" target="_blank" rel="noopener">Order now</a>' : '') +
-        '<div class="cc-note">Excludes shipping and tax.</div>' +
-      '</div>';
-    }
+    if (c.type === 'price') return quote(c);
     if (c.type === 'orders') {
       return '<div class="cc-orders">' + (c.orders || []).map(o =>
         '<div class="cc-ord"><div><b>' + esc(o.order) + '</b> ' + esc(o.name || o.product || '') +
@@ -71,11 +58,46 @@
     return '';
   }
 
+  // One quote: the options once, then Qty · Price · Add to Cart for each quantity.
+  // Older saved cards (one quantity, no rows) are drawn the same way.
+  function rowsOf(c) {
+    if (Array.isArray(c.rows)) return c.rows;
+    return [{ quantity: c.quantity, price: c.price, each: c.each, list_price: c.list_price, discount: c.discount,
+              ready: c.ready, cart: c.order_url ? { url: c.order_url } : null }];
+  }
+  function quote(c) {
+    const rows = rowsOf(c);
+    const ready = rows.map(r => r.ready).filter(Boolean);
+    const sameReady = ready.length && ready.every(x => x === ready[0]) ? ready[0] : null;
+    return '<div class="cc-price" data-key="' + esc(c.key || '') + '">' +
+      '<div class="cc-price-hd">' +
+        (c.image ? '<img src="' + esc(c.image) + '" alt="" onerror="this.remove()">' : '') +
+        '<div><b>' + esc(c.product) + '</b>' + (sameReady ? '<small>Ready ' + esc(sameReady) + '</small>' : '') + '</div>' +
+      '</div>' +
+      '<table class="cc-specs">' + (c.specs || []).filter(s => !/^quantity$/i.test(s.field)).slice(0, 14).map(s =>
+        '<tr><td>' + esc(s.field) + '</td><td>' + esc(s.value) + '</td></tr>').join('') + '</table>' +
+      '<table class="cc-ladder"><thead><tr><th>Qty</th><th>Price</th><th></th></tr></thead><tbody>' +
+      rows.map(r => {
+        const item = { product_id: c.product_id || null, product: c.product, quantity: r.quantity, price: r.price,
+          url: r.cart && r.cart.url, share_id: r.cart && r.cart.share_id, config: r.cart && r.cart.config };
+        return '<tr><td>' + Number(r.quantity || 0).toLocaleString() + '</td>' +
+          '<td>' + (r.discount && r.list_price > r.price ? '<s>' + money(r.list_price) + '</s> ' : '') + '<b>' + money(r.price) + '</b>' +
+            '<small>' + money(r.each) + ' each' + (!sameReady && r.ready ? ' · ready ' + esc(r.ready) : '') + '</small></td>' +
+          '<td>' + (item.url ? '<a class="cc-cart" href="' + esc(item.url) + '" target="_blank" rel="noopener" data-item="' +
+            esc(JSON.stringify(item)) + '">Add to Cart</a>' : '') + '</td></tr>';
+      }).join('') + '</tbody></table>' +
+      '<div class="cc-note">Excludes shipping and tax.</div>' +
+    '</div>';
+  }
+
   function mount(root, opts) {
     opts = opts || {};
     let chatId = null, busy = false;
     root.classList.add('cc');
+    // Chat on the left, quotes on the right when there is room (the pane shows
+    // from 860px wide); narrower, quotes stay in the conversation.
     root.innerHTML =
+      '<div class="cc-main">' +
       '<div class="cc-msgs"><div class="cc-inner"></div></div>' +
       '<div class="cc-composer">' +
         '<div class="cc-sugg"></div>' +
@@ -83,7 +105,53 @@
           '<button type="button" class="cc-send" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" ' +
           'stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button></div>' +
         '<div class="cc-hint">' + esc(opts.hint || 'Nova can make mistakes. Prices are confirmed at checkout.') + '</div>' +
-      '</div>';
+      '</div>' +
+      '</div>' +
+      '<aside class="cc-pane"><div class="cc-pane-hd">Your quote</div>' +
+        '<div class="cc-pane-body"><div class="cc-pane-empty">Prices you ask about appear here, with Add to Cart for each quantity.</div></div></aside>';
+    const paneBody = root.querySelector('.cc-pane-body');
+    const wide = () => root.classList.contains('cc-wide');
+    const fit = () => root.classList.toggle('cc-wide', root.clientWidth >= 860);
+    fit();
+    if (window.ResizeObserver) new ResizeObserver(fit).observe(root); else window.addEventListener('resize', fit);
+
+    // Quotes for the same product and options join into one card; a quantity
+    // asked for again replaces its row.
+    let groups = [];
+    function remember(c) {
+      const key = c.key || (c.product_id + '|' + JSON.stringify(c.specs || []));
+      let g = groups.find(x => x.key === key);
+      if (!g) { g = Object.assign({}, c, { key: key, rows: [] }); groups.unshift(g); }
+      else { groups = [g].concat(groups.filter(x => x !== g)); g.specs = c.specs; }
+      rowsOf(c).forEach(r => {
+        const i = g.rows.findIndex(x => Number(x.quantity) === Number(r.quantity));
+        if (i > -1) g.rows[i] = r; else g.rows.push(r);
+      });
+      g.rows.sort((a, b) => Number(a.quantity) - Number(b.quantity));
+      return g;
+    }
+    function paintPane() {
+      paneBody.innerHTML = groups.length ? groups.map(quote).join('')
+        : '<div class="cc-pane-empty">Prices you ask about appear here, with Add to Cart for each quantity.</div>';
+    }
+
+    // Add to Cart: the page that hosts the chat decides (on the website it puts
+    // the item in the real cart). Without a host that can, the link opens the
+    // product with everything already selected.
+    root.addEventListener('click', async (e) => {
+      const a = e.target.closest && e.target.closest('a.cc-cart');
+      if (!a || !opts.addToCart) return;
+      e.preventDefault();
+      let item = {};
+      try { item = JSON.parse(a.getAttribute('data-item') || '{}'); } catch (x) {}
+      const label = a.textContent;
+      a.classList.add('busy'); a.textContent = 'Adding…';
+      let ok = false;
+      try { ok = await opts.addToCart(item); } catch (x) { ok = false; }
+      a.classList.remove('busy');
+      if (ok) { a.classList.add('done'); a.textContent = '✓ In cart'; }
+      else { a.textContent = label; window.open(item.url || a.href, '_blank', 'noopener'); }
+    });
     const inner = root.querySelector('.cc-inner');
     const box = root.querySelector('.cc-msgs');
     const ta = root.querySelector('textarea');
@@ -127,7 +195,18 @@
         if (!j.ok) { b.innerHTML = '<p class="cc-err">' + esc(j.error || 'Something went wrong. Please try again.') + '</p>'; }
         else {
           chatId = j.chat_id;
-          b.innerHTML = md(j.reply) + (j.cards || []).map(card).join('');
+          const cardsNow = j.cards || [];
+          const prices = cardsNow.filter(c => c.type === 'price');
+          const merged = prices.map(remember);
+          if (wide() && merged.length) {
+            paintPane();
+            b.innerHTML = md(j.reply) + cardsNow.filter(c => c.type !== 'price').map(card).join('') +
+              merged.filter((g, i, a) => a.indexOf(g) === i).map(g => '<div class="cc-moved"><b>' + esc(g.product) + '</b> — ' +
+                g.rows.length + ' quantit' + (g.rows.length === 1 ? 'y' : 'ies') + ' on the quote at the right.</div>').join('');
+          } else {
+            b.innerHTML = md(j.reply) + cardsNow.map(c => c.type === 'price' ? quote(c) : card(c)).join('');
+            if (merged.length) paintPane();
+          }
           if (opts.onAnswer) opts.onAnswer(j, b);
         }
       } catch (e) { b.innerHTML = '<p class="cc-err">Could not reach Nova. Please try again.</p>'; }
@@ -140,11 +219,11 @@
     ta.oninput = () => { ta.style.height = ''; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; };
     greet(opts.greeting);
     return {
-      reset: (g) => { chatId = null; greet(g || opts.greeting); },
+      reset: (g) => { chatId = null; groups = []; paintPane(); greet(g || opts.greeting); },
       setGreeting: (g) => { opts.greeting = g; if (!chatId) greet(g); },
       ask: ask
     };
   }
 
-  global.ClientChat = { mount: mount, md: md, card: card };
+  global.ClientChat = { mount: mount, md: md, card: card, quote: quote };
 })(window);

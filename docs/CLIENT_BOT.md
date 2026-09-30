@@ -100,6 +100,44 @@ match the customer exactly; an id is only used together with a matching email.
 Only `https://axiomprint.com` and `https://www.axiomprint.com` may send a sign-in to the chat page, and only those
 sites may frame it.
 
+## Add to Cart
+
+Prices show as one quote per product and options — the options once, then **Qty · Price · Add to Cart** for each
+quantity — in a "Your quote" pane on the right (from 860px wide; narrower, in the conversation).
+
+The website owns its cart, so the chat asks the page that hosts it to add the item. Nova has no access to the
+website cart itself.
+
+1. When the chat loads it posts `{ type: 'nova-client:ready' }` to the page.
+2. A page that can add to its cart answers `{ type: 'nova-client:cart-ready' }` (alongside the sign-in message).
+3. On Add to Cart the chat posts:
+
+```js
+{ type: 'nova-client:add-to-cart', id: 'k3j9…', item: {
+    product_id: 184, product: 'Raised Spot UV Business Cards', quantity: 500,
+    price: 122.00,                                   // for display only — the website prices it itself
+    share_id: '66f8a1c2e4b0a91d2c3f4e5a',            // the saved selection (product-shares API)
+    config: { selections: { Shape: 10, Raised_Spot_UV: 21, Quantity: 93 }, selectedMetric: 'inch' },
+    url: 'https://axiomprint.com/product/raised-spot-uv-cards-184?shareId=66f8…' } }
+```
+
+4. The page adds it with its own cart code (the same `selections` the product page applies from a share link) and
+   answers `{ type: 'nova-client:cart-result', id: 'k3j9…', ok: true }`. The button turns into "✓ In cart".
+
+If the page never said `cart-ready`, or does not answer within 6 seconds, the button opens the product page with
+every option preselected (the share link), where the customer adds it to the cart themselves. The admin preview
+always does this.
+
+```js
+// on the website page, next to the sign-in code
+if (ev.data.type === 'nova-client:ready') frame.postMessage({ type: 'nova-client:cart-ready' }, 'https://nova.axiomprint.com');
+if (ev.data.type === 'nova-client:add-to-cart') {
+  addToCartFromSelections(ev.data.item)            // the website's own cart logic
+    .then(() => frame.postMessage({ type: 'nova-client:cart-result', id: ev.data.id, ok: true }, 'https://nova.axiomprint.com'))
+    .catch(() => frame.postMessage({ type: 'nova-client:cart-result', id: ev.data.id, ok: false }, 'https://nova.axiomprint.com'));
+}
+```
+
 ## Going live — checklist
 
 1. Fill in **Training → What Nova knows** (hours, phone, shipping, pickup, artwork rules) and review the house rules.

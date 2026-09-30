@@ -1825,3 +1825,32 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .cc-ord { display: flex; align-items: center; gap: 10px; padding: 8px 11px; border: 1px solid var(--line); border-radius: 10px; background: #fff; font-size: 12.5px; }
 .cc-ord > div { flex: 1; min-width: 0; } .cc-ord small { display: block; color: var(--muted); font-size: 11px; }
 .cc-st { flex: none; font-size: 11px; font-weight: 600; color: var(--indigo-dark); background: var(--indigo-light); border-radius: 7px; padding: 3px 8px; }
+
+/* ===== Nova for clients: quote pane + Qty · Price · Add to Cart ===== */
+.cc.cc { flex-direction: row; }   /* doubled: wins over a host container's own column layout */
+.cc-main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.cc-pane { display: none; }
+.cc.cc-wide .cc-pane { display: flex; flex-direction: column; flex: 0 0 min(440px, 44%); min-height: 0;
+  border-left: 1px solid var(--line); background: #fbfbfe; }
+.cc-pane-hd { flex: none; padding: 11px 16px; border-bottom: 1px solid var(--line); background: #fff; font-size: 11px;
+  font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.cc-pane-body { flex: 1; overflow-y: auto; padding: 14px; }
+.cc-pane-body .cc-price { margin: 0 0 12px; background: #fff; }
+.cc-pane-empty { color: var(--muted); font-size: 12.5px; line-height: 1.6; padding: 22px 8px; text-align: center; }
+.cc-moved { margin-top: 8px; padding: 8px 11px; border: 1px dashed #c7d2fe; border-radius: 9px; background: #f5f7ff;
+  font-size: 12.5px; color: var(--ink-soft); }
+.cc-price .cc-specs { margin-top: 8px; }
+.cc-ladder { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+.cc-ladder th { text-align: left; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); padding: 0 0 5px; border: none !important; }
+.cc-ladder td { padding: 8px 0; border-top: 1px solid #ebe8f8; vertical-align: middle; }
+.cc-ladder td:first-child { font-weight: 700; color: var(--ink) !important; width: 22%; }
+.cc-ladder td:nth-child(2) b { color: var(--indigo-dark); font-size: 14px; }
+.cc-ladder td:nth-child(2) s { color: var(--muted); font-size: 11.5px; }
+.cc-ladder td:nth-child(2) small { display: block; font-size: 11px; color: var(--muted); }
+.cc-ladder td:last-child { text-align: right; width: 1%; white-space: nowrap; }
+.cc-cart { display: inline-block; padding: 7px 13px; border-radius: 8px; background: var(--indigo); color: #fff !important;
+  font-size: 12.5px; font-weight: 700 !important; text-decoration: none; }
+.cc-cart:hover { background: var(--indigo-dark); }
+.cc-cart.busy { opacity: .7; pointer-events: none; }
+.cc-cart.done { background: #16a34a; }
