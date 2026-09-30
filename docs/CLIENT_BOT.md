@@ -100,6 +100,19 @@ match the customer exactly; an id is only used together with a matching email.
 Only `https://axiomprint.com` and `https://www.axiomprint.com` may send a sign-in to the chat page, and only those
 sites may frame it.
 
+## Templates, installation and delivery
+
+- **Templates** — `get_template` finds a product's template / die line files (the same `die_line` records the
+  staff chat uses), only on options customers can see, and never a die made for another customer
+  (`die_line.customer_id`). Each comes with a **Download PDF** button. The file is streamed by Nova from Drive through
+  a signed link (`/api/client-bot/template/:item/:customer/:sig/:name`), re-checked on every download, so the Drive
+  files stay private.
+- **Installation / local delivery** — `estimate_installation` and `estimate_delivery` use the same engine and the same
+  admin-edited rates as the staff calculator (Admin → Installation Pricing), with the distance measured from the
+  Glendale shop. The customer sees an **estimate** card: the total and what it covers (materials, crew, equipment,
+  insurance, travel) — not our hourly or per-mile rates. Jobs the engine flags (too high, too far, crane) say our
+  team will confirm or quote it.
+
 ## Add to Cart
 
 Prices show as one quote per product and options — the options once, then **Qty · Price · Add to Cart** for each

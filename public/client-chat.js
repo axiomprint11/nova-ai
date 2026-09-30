@@ -38,7 +38,7 @@
         '" target="_blank" rel="noopener">' + (/[?&](shareId|config)=/.test(url) ? 'Order now' : 'View product') + '</a>')
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   }
-  const money = (n) => '$' + Number(n || 0).toFixed(2);
+  const money = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   function card(c) {
     if (c.type === 'products') {
@@ -52,6 +52,28 @@
         '</div>').join('') + '</div>';
     }
     if (c.type === 'price') return quote(c);
+    if (c.type === 'templates') {
+      return '<div class="cc-tpl">' +
+        '<div class="cc-tpl-hd">' + (c.image ? '<img src="' + esc(c.image) + '" alt="" onerror="this.remove()">' : '') +
+          '<b>' + esc(c.product) + ' \u2014 template' + ((c.templates || []).length === 1 ? '' : 's') + '</b></div>' +
+        (c.templates || []).map(t =>
+          '<div class="cc-tpl-row"><div><b>' + esc(t.size || t.option || 'Template') + '</b>' +
+            '<small>' + esc([t.size && t.option ? t.option : null, t.applies_when].filter(Boolean).join(' · ')) + '</small>' +
+            '<small class="cc-tpl-file">' + esc(t.file_name) + '</small></div>' +
+          '<a class="cc-cart" href="' + esc(t.url) + '" target="_blank" rel="noopener">Download PDF</a></div>').join('') +
+      '</div>';
+    }
+    if (c.type === 'estimate') {
+      const title = c.kind === 'delivery' ? 'Local delivery estimate' : 'Installation estimate';
+      return '<div class="cc-est">' +
+        '<div class="cc-est-hd"><div><b>' + title + '</b>' + (c.place ? '<small>' + esc(c.place) + '</small>' : '') + '</div>' +
+          '<div class="cc-est-n">' + (c.total == null ? '<span>Needs our team</span>' : money(c.total)) + '</div></div>' +
+        (c.lines && c.lines.length ? '<table>' + c.lines.map(l => '<tr><td>' + esc(l.label) + '</td><td>' + money(l.amount) + '</td></tr>').join('') + '</table>' : '') +
+        (c.missing && c.missing.length ? '<div class="cc-est-miss">Still needed for a full estimate: ' + esc(c.missing.join(', ')) + '</div>' : '') +
+        '<div class="cc-note">' + (c.total == null ? 'This one needs a site review — our team will quote it.'
+          : 'Estimate only' + (c.confirm ? ' — our team will confirm it with you.' : ' — final price confirmed by our team.')) + '</div>' +
+      '</div>';
+    }
     if (c.type === 'orders') {
       return '<div class="cc-orders">' + (c.orders || []).map(o =>
         '<div class="cc-ord">' +

@@ -23,8 +23,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.5.3';
-const NOVA_BUILT = '09-30-2026 9:15am';
+const NOVA_VERSION = '1.5.4';
+const NOVA_BUILT = '09-30-2026 10:00am';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -8519,7 +8519,8 @@ mountMcp(app, { runQuery, dataDictionary: DATA_DICTIONARY });
 
 // The customer-facing bot — separate tables, rules, tools and tokens (client-bot.js).
 require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly,
-  quoteProduct, buildOrderLink, stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming });
+  quoteProduct, buildOrderLink, stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming,
+  InstallPricing, getInstallPricing: () => installPricing, routeLookup, toTime24, driveFileBytes });
 
 app.get(/^(?!\/api).*/, serveVersionedHtml('index.html'));
 

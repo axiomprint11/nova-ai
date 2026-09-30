@@ -1867,3 +1867,20 @@ body.nova-embed .calc-pane-body { padding: 12px; }
   display: inline-flex; align-items: center; justify-content: center; font-size: 12px; text-decoration: none;
   color: var(--muted) !important; background: #fff; }
 .cc-prod-link:hover { border-color: var(--indigo); color: var(--indigo-dark) !important; }
+
+/* ===== Nova for clients: templates and installation / delivery estimates ===== */
+.cc-tpl, .cc-est { margin-top: 8px; border: 1px solid #e0dbf7; border-radius: 12px; padding: 11px 13px; background: linear-gradient(160deg,#fbfaff,#f5f3ff); }
+.cc-tpl-hd { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 13.5px; }
+.cc-tpl-hd img { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; border: 1px solid var(--line); }
+.cc-tpl-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid #ebe8f8; font-size: 13px; }
+.cc-tpl-row > div { flex: 1; min-width: 0; }
+.cc-tpl-row small { display: block; font-size: 11px; color: var(--muted); }
+.cc-tpl-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-est-hd { display: flex; align-items: flex-start; gap: 10px; }
+.cc-est-hd > div:first-child { flex: 1; min-width: 0; font-size: 13.5px; }
+.cc-est-hd small { display: block; font-size: 11.5px; color: var(--muted); }
+.cc-est-n { font-size: 20px; font-weight: 700; color: var(--indigo-dark); white-space: nowrap; }
+.cc-est-n span { font-size: 13px; color: #92400e; background: #fef3c7; border-radius: 7px; padding: 3px 8px; }
+.cc-est table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12.5px; }
+.cc-est td { padding: 5px 0; border-top: 1px solid #ebe8f8; } .cc-est td:last-child { text-align: right; font-weight: 600; }
+.cc-est-miss { margin-top: 8px; font-size: 12px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 6px 9px; }

@@ -176,6 +176,10 @@ customer, Conversations, Training, Setup); public page `/client-chat` for the we
 with the same product+options into a "Your quote" pane (≥860px) with Qty · Price · Add to Cart. Add to Cart is a
 postMessage hand-off to the hosting website (`nova-client:add-to-cart` → `cart-result`); without a host that
 declared `cart-ready`, it opens the share link.
+It also has `get_template` (die lines of visible options; customer-specific dies only for that customer; PDFs streamed
+by Nova through a signed `/api/client-bot/template/...` link) and `estimate_installation` / `estimate_delivery` (the
+shared `InstallPricing` engine and live admin config via `getInstallPricing()`; customers see totals and line names,
+not rates). Express 5 route syntax: optional segments are `{/:name}`, not `:name?` — the latter crashes at boot.
 
 ## Installation & local delivery pricing
 
