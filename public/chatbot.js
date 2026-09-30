@@ -328,11 +328,14 @@ async function openChat(id) {
         (m.cards || []).forEach(c => {
           try { renderCard(bubble, c); } catch (e) {}
         });
-        bubble.appendChild(buildRating(m.id, m.rating));
+        const isDraft = (m.cards || []).some(c => c && c.type === 'email_draft');
+        if (!isDraft) bubble.appendChild(buildRating(m.id, m.rating));
         row.innerHTML = '<div class="msg-avatar ai">AI</div>';
         row.appendChild(col);
         inner.appendChild(row);
-        chatHistory.push({ role: 'assistant', content: m.content });
+        // A drafted email is not part of the conversation with the model (and
+        // would put two assistant turns side by side).
+        if (!isDraft) chatHistory.push({ role: 'assistant', content: m.content });
       }
     });
     loadChatList();
@@ -1116,11 +1119,18 @@ function renderShelf() {
         : '') +
     '</div>';
   }).join('') +
-    // One button for the lot, once there is more than one to send.
-    (quoteShelf.filter(q => !q.quote_id).length > 1
-      ? '<button type="button" class="shelf-all" id="shelfSendAll">Send all ' +
-        quoteShelf.filter(q => !q.quote_id).length + ' to CRM</button>'
-      : '') +
+    // Send the lot to the CRM (once there is more than one), and draft the
+    // reply to the client — side by side.
+    '<div class="shelf-acts-row">' +
+      (quoteShelf.filter(q => !q.quote_id).length > 1
+        ? '<button type="button" class="shelf-all" id="shelfSendAll">Send all ' +
+          quoteShelf.filter(q => !q.quote_id).length + ' to CRM</button>'
+        : '') +
+      '<button type="button" class="shelf-mail" id="shelfDraftMail">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+        'stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>' +
+        'Help to draft email</button>' +
+    '</div>' +
   '</div>');
 
   bar.querySelectorAll('.shelf-tab').forEach(b => {
@@ -1181,6 +1191,9 @@ function renderShelf() {
       sendShelfItem(Number(x.getAttribute('data-crm')), x);
     };
   });
+
+  const dm = document.getElementById('shelfDraftMail');
+  if (dm) dm.onclick = (e) => { e.stopPropagation(); draftReplyInChat(); };
 
   const all = document.getElementById('shelfSendAll');
   if (all) all.onclick = async () => {
@@ -1322,7 +1335,7 @@ function renderPaneActions() {
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
         'stroke-linecap="round" stroke-linejoin="round">' +
         '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>' +
-        (shelved > 1 ? 'Draft email — ' + shelved + ' items' : 'Draft an email') +
+        'Help to draft email' + (shelved > 1 ? ' \u2014 ' + shelved + ' items' : '') +
       '</button>' +
     '</div>';
   bar.querySelector('.pa-draft').onclick = () => startDraft();
@@ -1473,66 +1486,135 @@ async function copyDraft() {
 // The client wrote in; this answers them. It uses the first message of the
 // conversation as the thing being replied to, so the tone matches what they sent
 // rather than reading as a form letter.
-async function startDraft() {
-  hideCart();
-  const entries = draftEntries();
-  const body = document.getElementById('calcPaneBody');
-  if (!body) return;
-  if (!entries.length) {
-    const m = document.createElement('div');
-    m.className = 'co-msg';
-    m.textContent = 'Price something first, then Save it — the email is built from what is saved.';
-    body.appendChild(m);
-    return;
-  }
-  paneMode = 'draft-email';
-  const hd = document.querySelector('.calc-pane-hd span');
-  if (hd) hd.textContent = 'Draft reply';
-  body.innerHTML = '<div class="co-loading">Writing the reply…</div>';
+// Kept for the old entry points (cart popover, pane button).
+function startDraft() { hideCart(); draftReplyInChat(); }
 
-  // The opening message is usually the client's own email, pasted in.
+// ===== Help to draft email — the reply, drafted in the conversation =====
+// Personal when the client is known ("Hi John, …"); in the tone of the last 30
+// days of mail with them when their email is known (server: /api/chatbot/draft-reply).
+// Under the words comes the quote itself — the saved items with an "Order now"
+// link on every quantity — and one Copy puts the whole thing on the clipboard
+// as an email-ready HTML (links and all), with a plain-text version behind it.
+let drafting = false;
+async function draftReplyInChat() {
+  if (drafting) return;
+  const entries = draftEntries();
+  if (!entries.length) return;
+  drafting = true;
+  stickToBottom = true;
+
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+  row.innerHTML = '<div class="msg-avatar ai">AI</div>';
+  const col = document.createElement('div');
+  col.className = 'msg-col';
+  col.innerHTML = '<div class="msg-meta">ChatBot</div>';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble ai has-cards';
+  const who = (chatClientInfo && chatClientInfo.name) || chatClientName || '';
+  bubble.innerHTML = '<div class="mail-wait"><span class="action-spin"></span>Drafting the reply' +
+    (who ? ' to ' + esc(who) : '') + (chatClientInfo && chatClientInfo.email ? ' — reading your last 30 days of emails with them' : '') +
+    '…</div>';
+  col.appendChild(bubble);
+  row.appendChild(col);
+  document.getElementById('messagesInner').appendChild(row);
+  scrollDown(true);
+
+  // What they asked for: the first thing said in this chat, usually their email.
   const firstMsg = (chatHistory.find(m => m.role === 'user') || {}).content || '';
-  const first = typeof firstMsg === 'string' ? firstMsg
-    : ((firstMsg.find && firstMsg.find(b => b.type === 'text')) || {}).text || '';
-  const lines = [];
-  entries.forEach(e => e.rows.forEach(r => lines.push(
-    Number(r.quantity).toLocaleString() + ' × ' + e.product + ' — $' + Number(r.price).toFixed(2))));
+  const request = typeof firstMsg === 'string' ? firstMsg
+    : ((firstMsg.find && firstMsg.find(x => x.type === 'text')) || {}).text || '';
+  const summary = (e) => (e.specs || [])
+    .filter(sp => !/^(quantity|versions?)$/i.test(String(sp.field)))
+    .slice(0, 6).map(sp => sp.field + ': ' + sp.value).join('; ');
 
   let words = {};
   try {
     const [j] = await Promise.all([
-      fetch('/api/draft-email', {
+      fetch('/api/chatbot/draft-reply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
         body: JSON.stringify({
-          quote: first || lines.join('\n'),
-          client_name: (chatClientInfo && chatClientInfo.name) || chatClientName || '',
-          client_emails: first ? [{ body: first }] : [],
-          product: entries.map(e => e.product).join(', '),
-          lines: lines
+          chat_id: currentChatId, client_id: chatClientId || null,
+          client_name: who, client_email: (chatClientInfo && chatClientInfo.email) || '',
+          company: (chatClientInfo && chatClientInfo.company) || '',
+          request: request,
+          items: entries.map(e => ({ product: e.product, summary: summary(e),
+            rows: e.rows.map(r => ({ quantity: r.quantity, price: r.price })) }))
         })
       }).then(r => r.json()).catch(() => ({})),
       attachOrderLinks(entries)
     ]);
     words = j || {};
   } catch (e) {}
-  if (paneMode !== 'draft-email') return;
 
+  // A snapshot, so the draft reads the same when the chat is reopened.
+  const card = {
+    type: 'email_draft',
+    data: {
+      to: words.to || null, client_name: words.client_name || who || null,
+      subject: words.subject || ('Your quote: ' + entries[0].product),
+      greeting: words.greeting || 'Hi there,', intro: words.intro || 'Here is the pricing based on your request:',
+      outro: words.outro || 'Each quantity has an Order now link that opens the product with everything already selected. Let me know if you have any questions.',
+      signoff: words.signoff || 'Best,',
+      tone_emails: words.tone_emails || 0,
+      entries: entries.map(e => ({
+        product: e.product, image: e.image || null, specs: e.specs || [],
+        rows: e.rows.map(r => ({ quantity: r.quantity, price: r.price, each: r.each, url: r.url || null }))
+      }))
+    }
+  };
+  bubble.innerHTML = '';
+  bubble.appendChild(buildEmailDraft(card.data));
+  scrollDown();
+  drafting = false;
+
+  if (currentChatId) {
+    fetch('/api/chats/message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ chat_id: currentChatId, role: 'assistant',
+        content: 'Drafted a reply email' + (card.data.client_name ? ' to ' + card.data.client_name : '') + '.',
+        cards: [card] })
+    }).catch(() => {});
+  }
+}
+
+function buildEmailDraft(d) {
+  const el = document.createElement('div');
+  el.className = 'mail-card';
   const para = (t) => t ? '<p>' + esc(t).replace(/\n/g, '<br>') + '</p>' : '';
-  // The words are editable in place; the quote tables and links come from the
-  // saved items, so the prices cannot be mistyped.
-  body.innerHTML =
-    '<div class="draft draft-mail-box" id="draftMailBlock">' +
-      '<div contenteditable="true">' + para(words.greeting || 'Hi,') + para(words.intro ||
-        'Thanks for reaching out! Here is your quote:') + '</div>' +
-      entries.map(q => draftItemHtml(q)).join('<div class="draft-gap"></div>') +
-      '<div contenteditable="true">' + para(words.outro ||
-        'Use the Order now link next to the quantity you want — everything is already selected. ' +
-        'Let me know if you have any questions.') + para(words.signoff || 'Best,') + '</div>' +
+  el.innerHTML =
+    '<div class="mail-hd">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+      'stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>' +
+      '<b>Draft reply</b>' +
+      (d.client_name || d.to ? '<span class="mail-to">to ' + esc(d.client_name || '') +
+        (d.to ? ' &lt;' + esc(d.to) + '&gt;' : '') + '</span>' : '') +
     '</div>' +
-    '<button type="button" class="draft-copy" id="draftMailCopy">Copy the reply</button>';
-  const btn = document.getElementById('draftMailCopy');
-  btn.onclick = () => copyRich(document.getElementById('draftMailBlock'), btn, 'Copy the reply');
+    '<div class="mail-tone">' + (d.tone_emails
+      ? 'Tone taken from ' + d.tone_emails + ' email' + (d.tone_emails === 1 ? '' : 's') + ' with them in the last 30 days.'
+      : (d.to ? 'No emails with them in the last 30 days — standard tone.' : 'No client email connected — standard tone.')) +
+      ' Click any text to edit it.</div>' +
+    '<label class="mail-subj"><span>Subject</span><input type="text" value="' + esc(d.subject || '') + '"></label>' +
+    '<div class="mail-body draft">' +
+      '<div contenteditable="true">' + para(d.greeting) + para(d.intro) + '</div>' +
+      (d.entries || []).map(q => draftItemHtml(q)).join('<div class="draft-gap"></div>') +
+      '<div contenteditable="true">' + para(d.outro) + para(d.signoff) + '</div>' +
+    '</div>' +
+    '<div class="mail-acts">' +
+      '<button type="button" class="mail-copy">Copy email</button>' +
+      '<button type="button" class="mail-copysubj">Copy subject</button>' +
+    '</div>';
+  const cp = el.querySelector('.mail-copy');
+  cp.onclick = () => copyRich(el.querySelector('.mail-body'), cp, 'Copy email');
+  const cs = el.querySelector('.mail-copysubj');
+  cs.onclick = async () => {
+    try { await navigator.clipboard.writeText(el.querySelector('.mail-subj input').value); cs.textContent = 'Copied'; }
+    catch (e) { cs.textContent = 'Could not copy'; }
+    setTimeout(() => { cs.textContent = 'Copy subject'; }, 1600);
+  };
+  return el;
 }
 
 // ===== Checkout, in the side pane =====
@@ -1902,6 +1984,9 @@ function renderCard(box, j) {
       showInstallInPane(card, marker);
       break;
     }
+    case 'email_draft':
+      if (j.data) { box.innerHTML = ''; box.appendChild(buildEmailDraft(j.data)); }
+      break;
     case 'install_quote': {
       // Installation / local delivery calculator — see install-calc.js.
       if (!window.InstallCalc) break;

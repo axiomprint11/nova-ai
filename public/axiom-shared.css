@@ -1750,3 +1750,34 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .draft-mail-box [contenteditable]:hover { background: #fafaff; }
 .draft-mail-box [contenteditable]:focus { background: #f5f3ff; }
 .draft-mail-box p { margin: 0 0 8px; font-size: 13px; line-height: 1.55; }
+
+/* ===== Saved: Send all to CRM + Help to draft email, side by side ===== */
+.shelf-acts-row { display: flex; gap: 7px; margin-top: 4px; }
+.shelf-acts-row .shelf-all { flex: 1 1 0; width: auto; margin-top: 0; }
+.shelf-mail { flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 8px; border: 1px solid #c7d2fe; background: #eef2ff; color: #3730a3; font-family: inherit;
+  font-size: 12.5px; font-weight: 600; border-radius: 9px; cursor: pointer; }
+.shelf-mail:hover { border-color: var(--indigo); background: #e0e7ff; }
+.shelf-mail svg { width: 14px; height: 14px; flex: none; }
+
+/* ===== The drafted reply, in the conversation ===== */
+.mail-wait { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--muted); }
+.mail-card { border: 1px solid #ddd6fe; border-radius: 12px; background: #fff; padding: 12px 14px; }
+.mail-hd { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; }
+.mail-hd svg { width: 16px; height: 16px; color: var(--indigo-dark); flex: none; }
+.mail-to { color: var(--muted); font-size: 12.5px; }
+.mail-tone { font-size: 11.5px; color: var(--muted); margin: 4px 0 10px; }
+.mail-subj { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 12px; color: var(--muted); }
+.mail-subj span { flex: none; font-weight: 600; }
+.mail-subj input { flex: 1; min-width: 0; margin: 0; padding: 7px 10px; font-size: 13px; border-radius: 8px; }
+.mail-body { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.mail-body [contenteditable] { outline: none; border-radius: 6px; padding: 2px 4px; margin: 0 -4px 8px; }
+.mail-body [contenteditable]:hover { background: #fafaff; }
+.mail-body [contenteditable]:focus { background: #f5f3ff; }
+.mail-body p { margin: 0 0 8px; font-size: 13.5px; line-height: 1.55; }
+.mail-acts { display: flex; gap: 8px; margin-top: 10px; }
+.mail-acts button { padding: 8px 14px; border-radius: 9px; font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.mail-copy { border: 1px solid var(--indigo); background: var(--indigo); color: #fff; }
+.mail-copy:hover { background: var(--indigo-dark); }
+.mail-copysubj { border: 1px solid var(--line); background: #fff; color: var(--ink-soft); }
+.mail-copysubj:hover { border-color: var(--indigo); color: var(--indigo-dark); }

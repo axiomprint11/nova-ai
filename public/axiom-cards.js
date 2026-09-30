@@ -821,7 +821,7 @@ function buildPriceCard(d) {
         })
       });
       const j = await r.json();
-      if (!j.ok) { if (status) status.textContent = j.error || 'Could not price that'; return; }
+      if (!j.ok) { if (status) status.textContent = j.error || 'Could not price that'; return false; }
       const keptNames = state.version_names, keptQtys = state.version_quantities;
       state = j;
       if (keptNames && Number(j.versions) === keptNames.length) state.version_names = keptNames;
@@ -830,7 +830,8 @@ function buildPriceCard(d) {
       const s2 = el.querySelector('.pq-status');
       if (s2) s2.textContent = 'Updated';
       if (CTX.onChange) { try { CTX.onChange(el, JSON.parse(JSON.stringify(state))); } catch (e) {} }
-    } catch (e) { if (status) status.textContent = 'Connection error'; }
+      return true;
+    } catch (e) { if (status) status.textContent = 'Connection error'; return false; }
   }
 
   // "Order estimate" — asks for the few things a priced estimate doesn't carry,
@@ -1490,11 +1491,17 @@ function buildPriceCard(d) {
 
   el.__repriceForClient = async function (clientId, clientName) {
     if (!clientId || Number(state.client_id) === Number(clientId)) return;
+    const was = { client_id: state.client_id, client_name: state.client_name };
     state.client_id = clientId;
     if (clientName) state.client_name = clientName;
     const card = el.querySelector('.pq-total');
     if (card) card.innerHTML = '<span class="pq-recalc">Recalculating…</span>';
-    await reprice();
+    // Could not re-price: put the card back as it was (so a later connect can
+    // try again) rather than leaving "Recalculating…" on it for good.
+    if (!(await reprice())) {
+      state.client_id = was.client_id; state.client_name = was.client_name;
+      paint();
+    }
   };
 
   paint();

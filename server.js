@@ -23,8 +23,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.4.2';
-const NOVA_BUILT = '09-29-2026 11:30pm';
+const NOVA_VERSION = '1.4.3';
+const NOVA_BUILT = '09-30-2026 12:30am';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -3608,6 +3608,110 @@ app.post('/api/chatbot/order-links', auth, async (req, res) => {
     const links = await Promise.all(items.map(it =>
       buildOrderLink(it).catch(e => ({ ok: false, error: e.message }))));
     res.json({ ok: true, links: links });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+// ===== Draft a reply email (ChatBot "Help to draft email") =====
+// Writes the words around a quote — greeting, a short intro tied to what the
+// client asked for, a close, a sign-off. The quote tables and "Order now" links
+// are added by the page from the saved items, so no price is ever retyped by
+// the model. When the client's email is known, the last 30 days of mail with
+// them in the shared inbox set the tone.
+function stripQuoted(body) {
+  const lines = String(body || '').replace(/\r/g, '').split('\n');
+  const out = [];
+  for (const l of lines) {
+    if (/^\s*>/.test(l)) continue;
+    if (/^On .+wrote:\s*$/i.test(l.trim()) || /^-{2,}\s*Original Message/i.test(l.trim()) ||
+        /^From:\s.+/i.test(l.trim()) && out.length > 3) break;
+    out.push(l);
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+app.post('/api/chatbot/draft-reply', auth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    let clientName = String(b.client_name || '').trim();
+    let clientEmail = String(b.client_email || '').trim().toLowerCase();
+    let company = String(b.company || '').trim();
+    // Fill in from the CRM when only the client id is known.
+    if (parseInt(b.client_id) && (!clientName || !clientEmail)) {
+      try {
+        const r = await runQuery("SELECT name, last_name, company_name, email FROM customer WHERE id = " + parseInt(b.client_id));
+        if (r.length) {
+          if (!clientName) clientName = [r[0].name, r[0].last_name].filter(Boolean).join(' ').trim();
+          if (!clientEmail) clientEmail = String(r[0].email || '').trim().toLowerCase();
+          if (!company) company = String(r[0].company_name || '').trim();
+        }
+      } catch (e) {}
+    }
+    if (/@axiomprint\.com$/i.test(clientEmail)) clientEmail = '';     // staff, never the client
+    const firstName = (clientName.split(/\s+/)[0] || '').replace(/[^A-Za-z'\-]/g, '');
+
+    // Last 30 days of mail with this client, oldest first, quotes trimmed.
+    let samples = [], toneNote = '';
+    if (clientEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail)) {
+      try {
+        const q = '(from:' + clientEmail + ' OR to:' + clientEmail + ') newer_than:30d';
+        const mails = await gmailSearch(q, 8);
+        samples = mails.reverse().map(m => {
+          const fromClient = String(m.from || '').toLowerCase().indexOf(clientEmail) > -1;
+          return (fromClient ? 'CLIENT' : 'AXIOMPRINT') + ' · ' + (m.date || '') + ' · ' + (m.subject || '') + '\n' +
+            stripQuoted(m.body || m.snippet || '').slice(0, 700);
+        });
+      } catch (e) { toneNote = 'Could not read the inbox: ' + e.message; }
+    }
+    let toneText = samples.join('\n---\n');
+    if (toneText.length > 5000) toneText = toneText.slice(-5000);
+
+    const items = (Array.isArray(b.items) ? b.items : []).slice(0, 12).map(it =>
+      '- ' + String(it.product || '') + ': ' + (Array.isArray(it.rows) ? it.rows : []).map(r =>
+        Number(r.quantity || 0).toLocaleString() + ' for $' + Number(r.price || 0).toFixed(2)).join(', ') +
+      (it.summary ? ' (' + String(it.summary).slice(0, 200) + ')' : ''));
+    const request = String(b.request || '').slice(0, 2500);
+
+    const sys = 'You write the words of a quote reply email for AxiomPrint, a print shop. ' +
+      'Return STRICT JSON only: {"subject":"...","greeting":"...","intro":"...","outro":"...","signoff":"..."}.\n' +
+      '- greeting: "Hi <first name>," when the first name is known, otherwise "Hi there,".\n' +
+      '- intro: one or two sentences in the spirit of "here is the pricing based on your request", naming what ' +
+      'they asked for in plain words (product, quantities). No prices — the quote table follows the intro.\n' +
+      '- outro: one or two sentences. Say each quantity has an "Order now" link that opens the product with ' +
+      'everything already selected, and invite questions. If the request left something open, ask it here.\n' +
+      '- signoff: e.g. "Best," or "Thanks,".\n' +
+      '- subject: short, e.g. "Your quote: Raised Spot UV Business Cards".\n' +
+      'Match the tone AxiomPrint has used with this client in the recent emails (warmth, formality, length); ' +
+      'if there are none, warm and professional. Never invent prices, dates or promises. No markdown.';
+    const userMsg = 'CLIENT: ' + (clientName || 'unknown') + (company ? ' (' + company + ')' : '') +
+      '\nFIRST NAME: ' + (firstName || 'unknown') +
+      '\n\nWHAT THEY ASKED FOR:\n' + (request || '(not available — describe the items below)') +
+      '\n\nWHAT WE ARE QUOTING:\n' + (items.join('\n') || '(none)') +
+      (toneText ? '\n\nRECENT EMAILS WITH THIS CLIENT (last 30 days, oldest first — match this tone):\n' + toneText : '');
+
+    let parsed = {};
+    try {
+      const r = await anthropic.messages.create({ model: MODEL_LIGHT, max_tokens: 700, system: sys,
+        messages: [{ role: 'user', content: userMsg }] });
+      let txt = (r.content.find(x => x.type === 'text') || {}).text || '{}';
+      txt = txt.replace(/```json|```/g, '').trim();
+      const i = txt.indexOf('{'), j = txt.lastIndexOf('}');
+      if (i >= 0 && j > i) txt = txt.slice(i, j + 1);
+      parsed = JSON.parse(txt);
+    } catch (e) { parsed = {}; }
+    const firstProduct = ((b.items || [])[0] || {}).product || 'your print job';
+    res.json({
+      ok: true,
+      to: clientEmail || null, client_name: clientName || null, first_name: firstName || null,
+      subject: parsed.subject || ('Your quote: ' + firstProduct),
+      greeting: parsed.greeting || (firstName ? 'Hi ' + firstName + ',' : 'Hi there,'),
+      intro: parsed.intro || 'Here is the pricing based on your request:',
+      outro: parsed.outro || 'Each quantity has an Order now link that opens the product with everything already ' +
+        'selected. Let me know if you have any questions.',
+      signoff: parsed.signoff || 'Best,',
+      tone_emails: samples.length, tone_note: toneNote || undefined
+    });
   } catch (e) {
     res.json({ ok: false, error: e.message });
   }

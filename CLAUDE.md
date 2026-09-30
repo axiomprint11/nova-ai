@@ -142,6 +142,12 @@ No framework. Global functions, `innerHTML` string templates, `esc()` for escapi
   website.workroomapp.com) for a tracked `?shareId=` link on `product.url`, and falls back to an inline
   `?config=` link if that API fails. See `docs/NOVA_AI_URL_GENERATOR.md`. "Draft an email" is built from
   Saved (or the product on screen), not the cart.
+  **Help to draft email** (Saved, beside "Send all to CRM", and under the calculator) drafts the reply
+  *in the conversation* (`draftReplyInChat`). `POST /api/chatbot/draft-reply` writes only the words —
+  subject, greeting ("Hi <first name>," when the client is known), intro, outro, sign-off — reading the last
+  30 days of shared-inbox mail with the client's email (`gmailSearch`, quoted text stripped) for tone.
+  The quote tables and Order now links come from Saved, so the model never retypes a price. The draft is
+  stored with the chat as an `email_draft` card and is kept out of the model's history on reopen.
 - `widget.html` + `widget.js` — the CRM widget (framed by `embed.js`). It is the ChatBot page inside a
   compact header: `widget.html` repeats chatbot.html's split markup with the **same element ids** and loads
   `chatbot.js` with `window.NOVA_EMBED = true`, so Save, Saved, Draft and the client bar are the same code.
