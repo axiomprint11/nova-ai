@@ -27,7 +27,19 @@ module.exports = function mountClientBot(app, deps) {
           stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming,
           InstallPricing, getInstallPricing, routeLookup, toTime24, driveFileBytes } = deps;
   const MODEL = process.env.CLIENT_BOT_MODEL || deps.model;
-  const publicOn = () => String(process.env.CLIENT_BOT_PUBLIC || '') === '1';
+  // CLIENT_BOT_PUBLIC: '1' = open to every visitor; 'test' = only visitors whose
+  // chat was opened with CLIENT_BOT_TEST_KEY (the header script's test mode);
+  // anything else = admins only.
+  const mode = () => {
+    const v = String(process.env.CLIENT_BOT_PUBLIC || '').trim().toLowerCase();
+    return v === '1' || v === 'true' ? 'open' : (v === 'test' && process.env.CLIENT_BOT_TEST_KEY ? 'test' : 'off');
+  };
+  const publicOn = () => mode() === 'open';
+  const testKeyOk = (k) => {
+    const want = String(process.env.CLIENT_BOT_TEST_KEY || '');
+    const got = String(k || '');
+    return !!want && got.length === want.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want));
+  };
   // Its own signing key: a client token is useless anywhere else in Nova.
   const CLIENT_KEY = crypto.createHmac('sha256', String(process.env.JWT_SECRET || ''))
     .update('nova-client-bot/v1').digest('hex');
@@ -155,7 +167,7 @@ module.exports = function mountClientBot(app, deps) {
     try {
       const c = jwt.verify(tok, CLIENT_KEY);
       if (c && c.kind === 'client' && c.vid) {
-        if (!publicOn()) return { error: 'The client chat is not open to the public yet.', status: 403 };
+        if (!(publicOn() || (mode() === 'test' && c.t))) return { error: 'The client chat is not open to the public yet.', status: 403 };
         return { source: 'website', vid: String(c.vid), customer: c.cid ? {
           id: parseInt(c.cid), name: c.name || null, email: c.email || null, company: c.company || null } : null };
       }
@@ -172,9 +184,9 @@ module.exports = function mountClientBot(app, deps) {
     } catch (e) { return null; }
   }
 
-  function issueVisitorToken(customer, vid) {
+  function issueVisitorToken(customer, vid, test) {
     return jwt.sign({
-      kind: 'client', vid: vid || crypto.randomBytes(12).toString('hex'),
+      kind: 'client', vid: vid || crypto.randomBytes(12).toString('hex'), t: test ? 1 : undefined,
       cid: customer ? customer.id : null, name: customer ? customer.name : null,
       email: customer ? customer.email : null, company: customer ? customer.company : null
     }, CLIENT_KEY, { expiresIn: '2h' });
@@ -188,7 +200,8 @@ module.exports = function mountClientBot(app, deps) {
   //     ask CUSTOMER_VERIFY_URL who it belongs to.
   // Either way the customer is then looked up in our own database.
   app.post('/api/client-bot/session', async (req, res) => {
-    if (!publicOn()) return res.status(403).json({ ok: false, error: 'The client chat is not open to the public yet.' });
+    const testing = mode() === 'test' && testKeyOk(req.body && req.body.test_key);
+    if (!publicOn() && !testing) return res.status(403).json({ ok: false, error: 'The client chat is not open to the public yet.' });
     if (overLimit('session:' + clientIp(req), 30, 10 * 60 * 1000)) {
       return res.status(429).json({ ok: false, error: 'Too many requests — please wait a few minutes.' });
     }
@@ -215,7 +228,7 @@ module.exports = function mountClientBot(app, deps) {
         if (!data.email || !cust.email || String(data.email).trim().toLowerCase() !== cust.email) {
           return res.status(401).json({ ok: false, error: 'Sign-in does not match the account.' });
         }
-        return res.json({ ok: true, token: issueVisitorToken(cust, prevVid), signed_in: true, name: cust.name });
+        return res.json({ ok: true, token: issueVisitorToken(cust, prevVid, testing), signed_in: true, name: cust.name });
       }
       if (b.customer_token) {
         const url = process.env.CUSTOMER_VERIFY_URL;
@@ -237,10 +250,10 @@ module.exports = function mountClientBot(app, deps) {
           if (rows.length === 1) cust = await customerById(rows[0].id);
         }
         if (!cust || cust.email !== email) return res.status(401).json({ ok: false, error: 'Account not found.' });
-        return res.json({ ok: true, token: issueVisitorToken(cust, prevVid), signed_in: true, name: cust.name });
+        return res.json({ ok: true, token: issueVisitorToken(cust, prevVid, testing), signed_in: true, name: cust.name });
       }
       // Not signed in: products only.
-      return res.json({ ok: true, token: issueVisitorToken(null, prevVid), signed_in: false });
+      return res.json({ ok: true, token: issueVisitorToken(null, prevVid, testing), signed_in: false });
     } catch (e) {
       return res.status(500).json({ ok: false, error: 'Sign-in failed.' });
     }
@@ -595,7 +608,7 @@ module.exports = function mountClientBot(app, deps) {
         let label = NAMES[l.key] || String(l.label || '').split(' · ')[0];
         if (l.key === 'materials' && q.breakdown) label += ' (' + q.breakdown.piece_count + ' piece' + (q.breakdown.piece_count === 1 ? '' : 's') + ', ' + q.breakdown.sqft + ' sq ft)';
         if (l.key === 'equipment') label = 'Equipment: ' + String(l.label || '').split(' (')[0];
-        if (l.key === 'travel' && inp.distance_mi != null) label += ' (' + Math.round(inp.distance_mi) + ' mi each way)';
+        if (l.key === 'travel' && inp.distance_mi != null) label += ' (' + Math.round(inp.distance_mi) + ' miles)';
         return { label: label, amount: l.amount };
       });
       const needsPerson = q.total == null || !!q.provisional;
@@ -775,7 +788,7 @@ module.exports = function mountClientBot(app, deps) {
   app.get('/api/admin/client-bot/overview', auth, adminOnly, async (req, res) => {
     const c = await dbGet("SELECT COUNT(*) AS chats, SUM(CASE WHEN source='website' THEN 1 ELSE 0 END) AS website, " +
       "SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END) AS signed_in FROM client_chats");
-    res.json({ ok: true, public_on: publicOn(), sso_secret: !!process.env.CLIENT_SSO_SECRET,
+    res.json({ ok: true, public_on: publicOn(), mode: mode(), sso_secret: !!process.env.CLIENT_SSO_SECRET,
       verify_url: !!process.env.CUSTOMER_VERIFY_URL, model: MODEL, counts: c || {} });
   });
 

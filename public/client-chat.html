@@ -35,6 +35,9 @@
   // Only these sites may hand us a sign-in.
   const PARENTS = ['https://axiomprint.com', 'https://www.axiomprint.com'];
   const KEY = 'novaClientToken';
+  // Test mode: the header script passes the test key (?k=…) while the chat is
+  // open only to testers.
+  const TEST_KEY = new URLSearchParams(location.search).get('k') || '';
   let token = null, chat = null;
   try { token = sessionStorage.getItem(KEY); } catch (e) {}
   function parentSay(msg) { PARENTS.forEach(o => { try { parent.postMessage(msg, o); } catch (e) {} }); }
@@ -42,7 +45,7 @@
 
   async function session(body) {
     const r = await fetch('/api/client-bot/session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.assign({ previous: token || undefined }, body || {})) });
+      body: JSON.stringify(Object.assign({ previous: token || undefined, test_key: TEST_KEY || undefined }, body || {})) });
     const j = await r.json().catch(() => ({}));
     if (r.status === 403) { closed(); return null; }
     if (!j.ok) return null;

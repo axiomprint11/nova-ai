@@ -44,6 +44,40 @@ cannot switch them off.
 | `CLIENT_BOT_MODEL` | Optional model override (default: the light model used elsewhere). |
 | `CLIENT_BOT_DAILY_CAP` | Most public messages per 24 hours (default 3000). |
 
+## Putting it on the website — the header script
+
+Paste into the `<head>` of axiomprint.com (every page):
+
+```html
+<script>
+  window.NovaClientChat = {
+    testKey: 'PASTE_CLIENT_BOT_TEST_KEY'   // test mode — remove this line when going live
+  };
+</script>
+<script src="https://nova.axiomprint.com/client-embed.js" defer></script>
+```
+
+It adds an **Ask Nova** button (bottom right) that opens the chat — a panel on desktop, full screen on a phone.
+
+**Test mode** — with `CLIENT_BOT_PUBLIC=test` and `CLIENT_BOT_TEST_KEY=…` in Nova's `.env`, and the same key as
+`testKey`: the button only appears in a browser that opened any page with **`?nova=test`** once (remembered;
+`?nova=off` hides it again). Everyone else sees nothing, and the chat refuses sessions without the key. The key is
+visible in the page source, so treat test mode as "hidden", not "secret" — the rate limits and daily cap still apply.
+Test conversations show under Conversations as Website.
+
+**Going live** — set `CLIENT_BOT_PUBLIC=1`, restart, and remove `testKey` from the snippet.
+
+Optional settings in `window.NovaClientChat`:
+
+| Setting | What it does |
+|---|---|
+| `signin: { payload, sig }` (or a function returning it) | Signed-in customer, option A below. |
+| `customerToken: 'token'` (or a function) | Signed-in customer, option B below. If neither is given, the script looks for a customer token in the site's `localStorage` (`customer_token`, `access_token`, `token`, `auth_token`, or `tokenKey`). `customerToken: false` turns that off. |
+| `addToCart: (item) => Promise` | Makes Add to Cart put the item in the site's own cart (see Add to Cart). |
+| `position: 'left'` | Button on the left. |
+
+`NovaClientChatAPI.open()` opens the chat from any link or button on the site.
+
 ## Recognising a signed-in customer
 
 The website tells the chat who is signed in; Nova verifies it and loads the customer from `axiomprint_new.customer`.

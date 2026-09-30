@@ -179,7 +179,10 @@ declared `cart-ready`, it opens the share link.
 It also has `get_template` (die lines of visible options; customer-specific dies only for that customer; PDFs streamed
 by Nova through a signed `/api/client-bot/template/...` link) and `estimate_installation` / `estimate_delivery` (the
 shared `InstallPricing` engine and live admin config via `getInstallPricing()`; customers see totals and line names,
-not rates). Express 5 route syntax: optional segments are `{/:name}`, not `:name?` — the latter crashes at boot.
+not rates). Website loader: `public/client-embed.js` (header script; `window.NovaClientChat` config; handles
+sign-in, cart-ready / add-to-cart and close over postMessage). `CLIENT_BOT_PUBLIC=test` + `CLIENT_BOT_TEST_KEY` = test
+mode: sessions need the key (the script passes it as `?k=`), tokens carry `t:1`, and the button only shows after
+`?nova=test`. Express 5 route syntax: optional segments are `{/:name}`, not `:name?` — the latter crashes at boot.
 
 ## Installation & local delivery pricing
 

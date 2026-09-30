@@ -184,6 +184,7 @@
   function paintOverview() {
     const p = $('cbPublic');
     if (overview && overview.public_on) { p.className = 'cb-pill on'; p.textContent = 'Live on the website'; }
+    else if (overview && overview.mode === 'test') { p.className = 'cb-pill off'; p.textContent = 'Testing on the website'; }
     else { p.className = 'cb-pill off'; p.textContent = 'Admins only'; }
   }
   function paintSetup() {
