@@ -28,7 +28,14 @@
     // Park a priced item in the conversation's cart. Returns true on success.
     addToCart: function () { return Promise.resolve(false); },
     // Called after a successful add, so the page can refresh its own UI.
-    onCartAdd: null
+    onCartAdd: null,
+    // When set, the card offers "Save" (keep this quote for the reply) in place
+    // of "Add to cart": onSave(cardEl, state). saveLabel(cardEl) may relabel it.
+    onSave: null,
+    saveLabel: null,
+    // Called after the card re-prices (edit, clarify, client connected), so the
+    // page can keep its copies of the figure in step: onChange(cardEl, state).
+    onChange: null
   };
 
   function esc(s) {
@@ -741,13 +748,20 @@ function buildPriceCard(d) {
         : '') +
       (editing ? editRows() : '<table class="pq-tbl">' + specRows() + '</table>' + versionsPanel()) +
       (editing ? '' :
-        '<div class="pq-note">List price from the calculator.</div>' +
+        '<div class="pq-note">' + (state.discount
+          ? esc((state.client_name ? state.client_name + '\u2019s' : 'Client') + ' price \u2014 ' +
+                Number(state.discount.percent) + '% ' + (state.discount.name || 'discount') + ' applied.')
+          : 'List price from the calculator.') + '</div>' +
         '<div class="pq-actions">' +
           '<button type="button" class="pq-copybtn">Copy</button>' +
           '<button type="button" class="pq-editbtn">Edit</button>' +
 
-          '<button type="button" class="pq-cartbtn" title="Keep this quote and price the next item">' +
-            'Add to cart</button>' +
+          (CTX.onSave
+            ? '<button type="button" class="pq-savebtn' + (el.__saved ? ' on' : '') + '" ' +
+                'title="Keep this quote for the reply — it goes to Saved at the top">' +
+                (el.__saved ? '\u2713 Saved' : esc((CTX.saveLabel && CTX.saveLabel(el)) || 'Save')) + '</button>'
+            : '<button type="button" class="pq-cartbtn" title="Keep this quote and price the next item">' +
+                'Add to cart</button>') +
         '</div>' + scheduleStrip()) +
       '<div class="pq-order" style="display:none"></div>';
     wire();
@@ -757,6 +771,15 @@ function buildPriceCard(d) {
     const status = el.querySelector('.pq-status');
     if (status) status.textContent = 'Pricing…';
     const itemIds = {};
+    // Outside edit mode there are no dropdowns, so start from what this card was
+    // priced with — otherwise a re-price (e.g. for a newly connected client)
+    // silently falls back to every default and loses the specs asked for.
+    // Only the requested ones: defaults and auto-linked fields resolve the same
+    // way again, and keep their tags.
+    (state.specs || []).forEach(sp => {
+      if (sp.variable_id && sp.item_id && !sp.isQuantity && !sp.isVersions && !sp.isVersionRow &&
+          (sp.source === 'requested' || sp.source === 'specified')) itemIds[sp.variable_id] = Number(sp.item_id);
+    });
     el.querySelectorAll('select[data-var]').forEach(sel => {
       itemIds[sel.getAttribute('data-var')] = Number(sel.value);
     });
@@ -787,8 +810,8 @@ function buildPriceCard(d) {
                 quantity: Number(q) || 0
               }))
             : undefined,
-          width: wEl && wEl.value ? Number(wEl.value) : null,
-          height: hEl && hEl.value ? Number(hEl.value) : null
+          width: wEl && wEl.value ? Number(wEl.value) : (state.width || null),
+          height: hEl && hEl.value ? Number(hEl.value) : (state.height || null)
         })
       });
       const j = await r.json();
@@ -800,6 +823,7 @@ function buildPriceCard(d) {
       paint();
       const s2 = el.querySelector('.pq-status');
       if (s2) s2.textContent = 'Updated';
+      if (CTX.onChange) { try { CTX.onChange(el, JSON.parse(JSON.stringify(state))); } catch (e) {} }
     } catch (e) { if (status) status.textContent = 'Connection error'; }
   }
 
@@ -1209,6 +1233,11 @@ function buildPriceCard(d) {
   }
 
   function wire() {
+    // "Save" — the page files this quote (and its other quantities) under Saved.
+    const sv = el.querySelector('.pq-savebtn');
+    if (sv) sv.onclick = () => {
+      if (CTX.onSave) CTX.onSave(el, JSON.parse(JSON.stringify(state)));
+    };
     // A Clarify dropdown reprices the card in place, so the answer lands where
     // the question was asked.
     const qsel = el.querySelector('.pq-clarify-qty');
@@ -1417,6 +1446,17 @@ function buildPriceCard(d) {
 
   // Re-price this card for a newly pinned client, without touching what was
   // configured on it. Called when the conversation gets connected to a client.
+  // The live figures, for the page's own copies (Saved, markers, the draft).
+  el.__getState = function () { return JSON.parse(JSON.stringify(state)); };
+  el.__setSaved = function (on) {
+    el.__saved = !!on;
+    const b = el.querySelector('.pq-savebtn');
+    if (b) {
+      b.classList.toggle('on', el.__saved);
+      b.textContent = el.__saved ? '\u2713 Saved' : ((CTX.saveLabel && CTX.saveLabel(el)) || 'Save');
+    }
+  };
+
   el.__repriceForClient = async function (clientId, clientName) {
     if (!clientId || Number(state.client_id) === Number(clientId)) return;
     state.client_id = clientId;
@@ -1439,6 +1479,9 @@ function buildPriceCard(d) {
       if (opts.pinClient) CTX.pinClient = opts.pinClient;
       if (opts.addToCart) CTX.addToCart = opts.addToCart;
       if (opts.onCartAdd) CTX.onCartAdd = opts.onCartAdd;
+      if (opts.onSave) CTX.onSave = opts.onSave;
+      if (opts.saveLabel) CTX.saveLabel = opts.saveLabel;
+      if (opts.onChange) CTX.onChange = opts.onChange;
     },
     priceCard:   function (d) { token = CTX.getToken(); return buildPriceCard(d); },
     jobCard:     function (d) { token = CTX.getToken(); return buildJobCard(d); },

@@ -128,9 +128,15 @@ No framework. Global functions, `innerHTML` string templates, `esc()` for escapi
 - `admin.html` — members, agent training, knowledge docs, connection status
 - `chatbot.html` + `chatbot.js` — the ChatBot page: chat on the left; client, cart, calculator and saved
   items in the right-hand pane
+  The cart is switched off (`CART_ON = false` in chatbot.js): the price card's third button is **Save**,
+  which files the product with every quantity quoted for it under **Saved**, at the top of the pane.
+  Connecting a client re-prices every quote in the conversation — on screen, saved, and behind chat
+  markers — via `repriceForClient()`; cards report new figures back through `AxiomCards` `onChange`, which
+  keeps Saved, the markers and the draft in step. A card re-price sends only the specs the person asked
+  for (`source` requested), so defaults and auto-linked fields resolve as they did the first time.
 - `widget.html` + `widget.js` — the CRM widget (framed by `embed.js`). It is the ChatBot page inside a
   compact header: `widget.html` repeats chatbot.html's split markup with the **same element ids** and loads
-  `chatbot.js` with `window.NOVA_EMBED = true`, so the cart, Save / Draft and checkout are the same code.
+  `chatbot.js` with `window.NOVA_EMBED = true`, so Save, Saved, Draft and the client bar are the same code.
   `widget.js` is only the shell — CRM single sign-on, login form, recent chats, appearance settings,
   reopening the chat after a CRM page change (`NovaEmbedHooks.chat`), talking to the host page. The two
   scripts share one global scope: never declare a name in `widget.js` that `chatbot.js` already declares.

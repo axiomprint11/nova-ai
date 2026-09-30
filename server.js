@@ -23,8 +23,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.4.0';
-const NOVA_BUILT = '09-29-2026 9:30am';
+const NOVA_VERSION = '1.4.1';
+const NOVA_BUILT = '09-29-2026 10:15pm';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -6206,11 +6206,11 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     '    3. Price item 1. Several quantities of that ONE product is fine — that is a price ladder. ' +
     'A DIFFERENT product is not: it is item 2, and it is not your turn yet.\n' +
     '    4. Stop again. Say one short line naming what is next: "Next up: the vinyl banners." ' +
-    'Then WAIT. They will cart item 1, or ask you to carry on.\n' +
+    'Then WAIT. They will Save item 1, or ask you to carry on.\n' +
     '    5. Only then, search for item 2.\n' +
     '    Never compress these. Pricing NCR forms and vinyl banners in one answer looks efficient and is ' +
     'the single most common way a multi-item quote goes wrong — specs cross over between items and ' +
-    'neither can be carted cleanly.\n' +
+    'neither can be saved cleanly.\n' +
     '    WRITE THE LIST FIRST. Before touching item one, put the whole job in one compact list so no spec ' +
     'is lost between items:\n' +
     '      1) exhibition booklets - 5x7, 500\n' +
@@ -6219,13 +6219,13 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     'size and quantity come from THAT LINE, not from whatever the last card happened to use. Carrying the ' +
     'wrong size into the next item is the most common way a multi-item quote goes wrong.\n' +
     '    Say which you are starting with: "Let\'s start with the business cards — I\'ll do the banners ' +
-    'next." Then search, let them pick, price it, and let them Add to cart.\n' +
-    '    Only AFTER that item is in the cart do you search for the next one. Never call find_products or ' +
+    'next." Then search, let them pick, price it, and let them press Save.\n' +
+    '    Only AFTER that item is saved do you search for the next one. Never call find_products or ' +
     'find_client_products twice in one answer. Never offer a mixed list of "pick the card and the banner".\n' +
-    '    Remember the other items. The moment an item is added to the cart you will be told — that is ' +
+    '    Remember the other items. The moment an item is saved you will be told — that is ' +
     'your cue to start the NEXT item immediately: search for it, show the matches, and keep going. Do not ' +
     'wait to be asked, and do not summarise what you have done so far.\n' +
-    '    When every item in the request is carted, say so in one line with the number of items.\n' +
+    '    When every item in the request is saved, say so in one line with the number of items.\n' +
     '- SHOW A LIST **OR** PRICE — never both in one answer. A list of matches IS the question "which one?", ' +
     'so pricing one of them yourself makes the list decoration. If a product is the obvious match (their ' +
     'usual, or an exact name), skip the list and price it. If it is genuinely ambiguous, show the list, say ' +
@@ -6576,8 +6576,8 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
             toolResult = JSON.stringify({
               refused: 'You already searched for "' + searchedThisTurn + '" in this answer.',
               why: 'The chat handles ONE product at a time — there is no way to pick two.',
-              do: 'Finish "' + searchedThisTurn + '" first: let them choose it, price it, and use Add to ' +
-                  'cart. Only then search for "' + q + '". Say something like "Let\'s start with the ' +
+              do: 'Finish "' + searchedThisTurn + '" first: let them choose it, price it, and press ' +
+                  'Save. Only then search for "' + q + '". Say something like "Let\'s start with the ' +
                   searchedThisTurn + ' — I\'ll do the ' + q + ' next." and stop.'
             });
           } else {
@@ -7479,7 +7479,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
                        'answerable from their own history.';
         } else if (searchedThisTurn) {
           toolResult = 'You already searched for "' + searchedThisTurn + '" in this answer. Finish that ' +
-                       'item — price it and add it to the cart — before looking up the next one.';
+                       'item — price it and let them Save it — before looking up the next one.';
         } else {
           searchedThisTurn = String(toolUse.input.query || 'their history');
           send({ type: 'query', description: 'Checking what they order' });
@@ -7853,7 +7853,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
         // rather than the search step.
         if (pricedProduct && Number(pid) !== pricedProduct) {
           toolResult = 'You have already priced a different product in this answer. ONE ITEM AT A TIME: ' +
-                       'finish this one — let them cart it — and the next item comes after. ' +
+                       'finish this one — let them Save it — and the next item comes after. ' +
                        'Say one short line naming what is next and STOP. Do not price it now.';
           awaitingClick = true;
         } else if (picksShown > 0 && !pricedThisTurn.size) {

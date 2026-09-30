@@ -479,11 +479,10 @@ async function setChatClient(id, name) {
         // reprice and reopen so the form shows discounted figures.
         repriceCart(j.client_id).then(() => openCartOrder());
       }
-      // Any quote already on screen was priced at list. Update it to this
-      // client's pricing rather than leaving a number that is now wrong.
-      if (j.client_id && window.AxiomCards && AxiomCards.repriceAllForClient) {
-        AxiomCards.repriceAllForClient(j.client_id, chatClientName);
-      }
+      // Every quote so far was priced at list — on screen, saved, or behind a
+      // marker in the chat. Update them all to this client's pricing rather
+      // than leaving numbers that are now wrong.
+      if (j.client_id) repriceForClient(j.client_id, chatClientName);
       // The cart holds its own copies of those prices, so it needs the same
       // treatment — a cart total that disagrees with the cards is worse than none.
       repriceCart(j.client_id);
@@ -518,6 +517,11 @@ document.addEventListener('click', (e) => {
 // Priced items parked at the top of the conversation. A multi-product request
 // builds a visible list instead of a chat you have to scroll back through.
 let cartItems = [];
+// The cart is switched off for now: the team read "Add to cart" and "Save" as
+// the same thing. Save (on the price card) files a quote under Saved, which is
+// what goes in the reply. Flip this back on to bring the cart pill and
+// "Add to cart" back — the code behind them is unchanged.
+const CART_ON = false;
 
 async function addToCart(item) {
   if (!currentChatId) return false;
@@ -572,6 +576,7 @@ async function loadCart() {
 function renderCart() {
   const pill = document.getElementById('cartPill');
   if (!pill) return;
+  if (!CART_ON) { pill.style.display = 'none'; hideCart(); return; }
   // Always on show. A cart that appears only once it has something in it gives
   // no hint that carting is possible at all.
   pill.style.display = 'inline-flex';
@@ -847,43 +852,117 @@ function noteJobSize(text) {
   if (m && m.length > 1) jobItemCount = m.length;
 }
 
-function saveToShelf(moveOn) {
-  const latest = paneQuotes[paneQuotes.length - 1];
-  if (!latest) return;
-  const d = latest.data;
+// More items in the job still to price? Read from the recap ("1) … 2) …").
+function moreItemsToCome() {
+  return jobItemCount > 0 && quoteShelf.length < jobItemCount - 1;
+}
 
-  // Every quantity quoted for THIS product. quantityLadder() returns whichever
-  // product has the most quantities, so asking it here saved the wrong item's
-  // ladder — or none at all when another product had more rows.
+// A card's live figures. paneQuotes keeps what the card first showed; the card
+// itself knows what it says now (after an edit, a clarify or a client price).
+function liveOf(q) {
+  return (q.card && typeof q.card.__getState === 'function') ? q.card.__getState() : q.data;
+}
+
+function sortRows(entry) {
+  entry.cards.sort((a, b) => Number(a.data.quantity) - Number(b.data.quantity));
+  entry.rows = entry.cards.map(c => ({
+    quantity: Number(c.data.quantity), price: c.data.price, each: c.data.each,
+    list_price: c.data.list_price, discount: c.data.discount || null
+  }));
+}
+
+// "Save" on a price card. Files that product under Saved, with every quantity
+// quoted for it — a ladder (250/500/1,000) is one item with three prices.
+function saveToShelf(card, st) {
+  let d = st, own = card;
+  if (!d) {
+    const latest = paneQuotes[paneQuotes.length - 1];
+    if (!latest) return;
+    own = latest.card; d = liveOf(latest);
+  }
+  const moveOn = moreItemsToCome();          // decided before the shelf grows
+  const at = quoteShelf.findIndex(x => Number(x.product_id) === Number(d.product_id));
+
+  // Every quantity quoted for THIS product, at its current price.
   const mine = {};
   paneQuotes.forEach(q => {
-    if (Number(q.data.product_id) !== Number(d.product_id)) return;
-    const n = Number(q.data.quantity);
-    if (n > 0) mine[n] = q;
+    const qd = liveOf(q);
+    if (Number(qd.product_id) !== Number(d.product_id)) return;
+    const n = Number(qd.quantity);
+    if (n > 0) mine[n] = { card: q.card, data: qd };
   });
-  const qtys = Object.keys(mine).map(Number).sort((a, b) => a - b);
-  const rows = qtys.length
-    ? qtys.map(n => ({ quantity: n, price: mine[n].data.price, each: mine[n].data.each }))
-    : [{ quantity: d.quantity, price: d.price, each: d.each }];
+  // The card that was clicked wins its own quantity (and counts even when it
+  // is not in the pane, e.g. on a narrow screen).
+  mine[Number(d.quantity) || 0] = { card: own, data: d };
 
-  const at = quoteShelf.findIndex(x => x.product_id === d.product_id);
   const entry = {
     product_id: d.product_id, product: d.product, image: d.product_image || null,
     specs: (d.specs || []).filter(sp => !sp.isVersionRow),
-    rows: rows,
-    // The actual cards, so View reopens what was saved rather than re-pricing it.
-    cards: qtys.length ? qtys.map(n => ({ quantity: n, card: mine[n].card, data: mine[n].data }))
-                       : [{ quantity: d.quantity, card: latest.card, data: d }]
+    cards: Object.keys(mine).map(n => ({ quantity: Number(n), card: mine[n].card, data: mine[n].data }))
   };
-  if (at > -1) quoteShelf[at] = entry; else quoteShelf.push(entry);
+  sortRows(entry);
+  if (at > -1) {
+    (quoteShelf[at].cards || []).forEach(c => c.card && c.card.__setSaved && c.card.__setSaved(false));
+    quoteShelf[at] = entry;
+  } else quoteShelf.push(entry);
+  entry.cards.forEach(c => c.card && c.card.__setSaved && c.card.__setSaved(true));
 
+  shelfOpen = -1;
   renderShelf();
   renderPaneActions();
-  // Only nudge the conversation on when there is genuinely something next.
-  if (moveOn) {
+  // Only nudge the conversation on for a new item when there is genuinely a next one.
+  if (at === -1 && moveOn) {
     ask('Saved the ' + (d.product || 'quote') + ' pricing. Move on to the next item from my original ' +
         'message — state its own specs, then search for it.');
   }
+}
+
+// A card re-priced itself (edit, clarify, client connected). Keep every copy of
+// its figure in step: the chat marker, the draft, and Saved.
+function onCardRepriced(card, st) {
+  const pq = paneQuotes.find(q => q.card === card);
+  if (pq) {
+    pq.data = st;
+    if (pq.marker) {
+      const p = pq.marker.querySelector('.pq-moved-p');
+      if (p && st.price != null) p.textContent = '$' + Number(st.price).toFixed(2);
+      const q = pq.marker.querySelector('.pq-moved-q');
+      if (q && st.quantity) q.textContent = 'Qty ' + Number(st.quantity).toLocaleString();
+    }
+  }
+  let touched = false;
+  quoteShelf.forEach(entry => {
+    const c = (entry.cards || []).find(x => x.card === card);
+    if (!c) return;
+    c.data = st; c.quantity = Number(st.quantity);
+    entry.specs = (st.specs || []).filter(sp => !sp.isVersionRow);
+    sortRows(entry);
+    touched = true;
+  });
+  if (touched) {
+    renderShelf();
+    if (paneMode === 'draft') drawDraft();
+  }
+}
+
+// A client was connected: re-price every quote in this conversation for them —
+// the cards on screen, the saved items, and the quantities behind chat markers.
+// Each card keeps its own specs; only the client (and so the discount) changes.
+let shelfBusy = null;
+async function repriceForClient(clientId, clientName) {
+  if (!clientId) return;
+  const cards = new Set();
+  document.querySelectorAll('.pq-card').forEach(c => cards.add(c));
+  paneQuotes.forEach(q => q.card && cards.add(q.card));
+  quoteShelf.forEach(e => (e.cards || []).forEach(c => c.card && cards.add(c.card)));
+  const jobs = [];
+  cards.forEach(c => {
+    if (typeof c.__repriceForClient === 'function') jobs.push(c.__repriceForClient(clientId, clientName));
+  });
+  if (!jobs.length) return;
+  if (quoteShelf.length) { shelfBusy = clientName || 'this client'; renderShelf(); }
+  await Promise.allSettled(jobs);
+  if (shelfBusy) { shelfBusy = null; renderShelf(); }
 }
 
 // Saved items stack above the live one as accordion tabs, so an earlier quote
@@ -903,14 +982,19 @@ function renderShelf() {
     bar = document.createElement('div');
     bar.id = 'shelfBar';
     bar.className = 'shelf-bar';
+    // Top of the pane, straight under the client — what is saved is the first
+    // thing you see, above the calculator.
     const hd = document.querySelector('.calc-pane-hd');
-    if (hd && hd.parentNode) hd.parentNode.insertBefore(bar, hd.nextSibling);
+    if (hd && hd.parentNode) hd.parentNode.insertBefore(bar, hd);
   }
 
   const sent = quoteShelf.filter(q => q.quote_id).length;
   bar.innerHTML =
     '<div class="shelf-head" onclick="toggleShelfSection()">' +
       '<span>Saved</span><em>' + quoteShelf.length + '</em>' +
+      (shelfBusy ? '<span class="shelf-busy">Updating prices for ' + esc(shelfBusy) + '\u2026</span>'
+        : (chatClientId && quoteShelf.some(q => q.rows.some(r => r.discount))
+            ? '<span class="shelf-client">' + esc(chatClientName || 'Client') + ' pricing</span>' : '')) +
       (sent ? '<span class="shelf-sent">' + sent + ' in CRM</span>' : '') +
       '<span class="shelf-fold">' + (shelfCollapsed ? '\u2304' : '\u2303') + '</span>' +
     '</div>' +
@@ -919,10 +1003,12 @@ function renderShelf() {
     const total = q.rows.length === 1
       ? '$' + Number(q.rows[0].price).toFixed(2)
       : q.rows.length + ' quantities';
+    const disc = (q.rows.find(r => r.discount) || {}).discount;
     return '<div class="shelf-item' + (open ? ' open' : '') + '">' +
       '<button type="button" class="shelf-tab" data-i="' + i + '">' +
         (q.image ? '<img src="' + esc(q.image) + '" alt="" onerror="this.remove()">' : '<span class="shelf-ph"></span>') +
         '<span class="shelf-name">' + esc(q.product) + '</span>' +
+        (disc ? '<span class="shelf-disc">\u2212' + Number(disc.percent) + '%</span>' : '') +
         '<span class="shelf-sum">' + total + '</span>' +
         '<span class="shelf-caret">' + (open ? '\u2303' : '\u2304') + '</span>' +
       '</button>' +
@@ -930,7 +1016,9 @@ function renderShelf() {
         ? '<div class="shelf-body">' +
             '<table class="shelf-rows">' + q.rows.map((r, ri) =>
               '<tr data-open="' + i + '-' + ri + '"><td>' +
-              Number(r.quantity).toLocaleString() + '</td><td>$' +
+              Number(r.quantity).toLocaleString() + '</td><td>' +
+              (r.discount && r.list_price > r.price
+                ? '<s>$' + Number(r.list_price).toFixed(2) + '</s> ' : '') + '$' +
               Number(r.price).toFixed(2) + '</td></tr>').join('') + '</table>' +
             '<div class="shelf-acts">' +
               '<button type="button" class="sa-view" data-view="' + i + '">View</button>' +
@@ -961,7 +1049,8 @@ function renderShelf() {
   bar.querySelectorAll('[data-rm]').forEach(x => {
     x.onclick = (e) => {
       e.stopPropagation();
-      quoteShelf.splice(Number(x.getAttribute('data-rm')), 1);
+      const gone = quoteShelf.splice(Number(x.getAttribute('data-rm')), 1)[0];
+      if (gone) (gone.cards || []).forEach(c => c.card && c.card.__setSaved && c.card.__setSaved(false));
       shelfOpen = -1;
       renderShelf(); renderPaneActions();
     };
@@ -1128,20 +1217,14 @@ function renderPaneActions() {
   const old = document.getElementById('paneActions');
   if (old) old.remove();
 
-  const n = cartItems.length;
   const bar = document.createElement('div');
   bar.id = 'paneActions';
   bar.className = 'pane-actions';
   const shelved = quoteShelf.length;
-  // On the last item there is nothing to go on to, so the label would lie.
-  const moreToCome = jobItemCount > 0 && shelved < jobItemCount - 1;
-  // Two buttons, not four. Ordering belongs to the cart and sending to the CRM
-  // belongs to Saved — putting every route here made the pane a wall of choices.
+  // Save lives on the price card now, where Add to cart was — one button that
+  // keeps the quote. The email draft stays here, under it.
   bar.innerHTML =
     '<div class="pa-row">' +
-      '<button type="button" class="pa-save">' +
-        (moreToCome ? 'Save &amp; next item' : 'Save') +
-      '</button>' +
       '<button type="button" class="pa-draft">' +
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
         'stroke-linecap="round" stroke-linejoin="round">' +
@@ -1149,7 +1232,6 @@ function renderPaneActions() {
         (shelved > 1 ? 'Draft email — ' + shelved + ' items' : 'Draft an email') +
       '</button>' +
     '</div>';
-  bar.querySelector('.pa-save').onclick = () => saveToShelf(moreToCome);
   bar.querySelector('.pa-draft').onclick = () => startDraft();
   body.appendChild(bar);
 }
@@ -1603,7 +1685,7 @@ const paneQuotes = [];
 function paneMarker(data, card) {
   const d = document.createElement('div');
   const idx = paneQuotes.length;
-  paneQuotes.push({ data: data || {}, card: card });
+  paneQuotes.push({ data: data || {}, card: card, marker: d });
 
   const qty = Number(data && data.quantity);
   d.className = 'pq-moved';
@@ -1904,9 +1986,7 @@ async function sendMessage() {
           chatClientId = j.client_id;
           chatClientName = j.client_name || chatClientName;
           renderClientBar();
-          if (window.AxiomCards && AxiomCards.repriceAllForClient) {
-            AxiomCards.repriceAllForClient(j.client_id, chatClientName);
-          }
+          repriceForClient(j.client_id, chatClientName);
           repriceCart(j.client_id);
         } else if (j.type === 'query_done') {
           // keep spinner until next action / answer
@@ -2167,6 +2247,10 @@ AxiomCards.init({
   scroll: () => scrollDown(),
   pinClient: (id, name) => setChatClient(id, name),
   addToCart: (item) => addToCart(item),
+  // With the cart off, the card's third button is Save.
+  onSave: CART_ON ? null : (card, st) => saveToShelf(card, st),
+  saveLabel: () => moreItemsToCome() ? 'Save & next item' : 'Save',
+  onChange: (card, st) => onCardRepriced(card, st),
   onCartAdd: () => {
     renderPaneActions();
     // Carting item 1 is the cue to start item 2 — the person has finished with
