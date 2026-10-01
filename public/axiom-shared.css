@@ -2153,3 +2153,10 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .cc-price tr.cc-q td:first-child { color: #92400e; }
 .cc-unsure-note { color: #92400e; background: #fffbeb; border-color: #fde68a; }
 .cc-t-q { background: #fef3c7; color: #92400e; }
+
+/* ---- product list: name with a one-line description under it ---- */
+.cc-prod > span.cc-prod-txt { display: flex; flex-direction: column; gap: 1px; white-space: normal; padding: 3px 0; }
+.cc-prod-txt b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cc-prod-txt small { font-size: 12px; font-weight: 400; color: var(--muted); line-height: 1.3; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.cc-prod:has(.cc-prod-txt small) img, .cc-prod:has(.cc-prod-txt small) .cc-ph { width: 42px; height: 42px; }

@@ -55,7 +55,7 @@
       return '<div class="cc-prods">' + list.map((p, i) =>
         '<div class="cc-prod' + (i >= 4 ? ' cc-later' : '') + '" role="button" tabindex="0" data-pick="' + esc(p.id) + '" data-name="' + esc(p.name) + '" title="Price this product">' +
           (p.image ? '<img src="' + esc(p.image) + '" alt="" loading="lazy" onerror="this.remove()">' : '<span class="cc-ph"></span>') +
-          '<span>' + esc(p.name) + '</span>' +
+          '<span class="cc-prod-txt"><b>' + esc(p.name) + '</b>' + ((p.desc || p.about) ? '<small>' + esc(p.desc || p.about) + '</small>' : '') + '</span>' +
           (p.url ? '<a class="cc-prod-link" href="' + esc(p.url) + '" target="_blank" rel="noopener" title="Open the product page">\u2197</a>' : '') +
         '</div>').join('') +
         (more ? '<button type="button" class="cc-prods-more">Show more products (' + more + ')</button>' : '') + '</div>';
@@ -432,12 +432,18 @@
         paintProjects(list); showTab('projects');
         projNote = '<div class="cc-moved"><b>' + list.length + ' project' + (list.length === 1 ? '' : 's') + '</b> \u2014 on the right, under My projects.</div>';
       }
+      // A product list goes where the answer marks it (intro above, question below).
+      const parts = String(reply || '').split('[[products]]');
+      const pIdx = parts.length > 1 ? cardsNow.map(c => c.type).lastIndexOf('products') : -1;
+      const listHtml = pIdx > -1 ? card(cardsNow[pIdx]) : '';
+      if (pIdx > -1) cardsNow = cardsNow.filter((c, i) => i !== pIdx);
+      const text = pIdx > -1 ? md(parts[0]) + listHtml + md(parts.slice(1).join('')) : md(parts.join(''));
       if (wide() && merged.length) {
         if (live) paintPane();
         // The quote is on the right; no "on the quote at the right" lines in the chat.
-        b.innerHTML = md(reply) + cardsNow.filter(c => c.type !== 'price').map(card).join('') + projNote;
+        b.innerHTML = text + cardsNow.filter(c => c.type !== 'price').map(card).join('') + projNote;
       } else {
-        b.innerHTML = md(reply) + cardsNow.map(c => c.type === 'price' ? quote(c, R(c)) : card(c)).join('') + projNote;
+        b.innerHTML = text + cardsNow.map(c => c.type === 'price' ? quote(c, R(c)) : card(c)).join('') + projNote;
         if (live && merged.length) paintPane();
       }
     }

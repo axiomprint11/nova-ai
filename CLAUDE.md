@@ -196,7 +196,9 @@ and the answer is retried text-only. Admins get files at `/api/admin/client-bot/
 `followLogin()` (storage event + 2.5 s poll; `NovaClientChatAPI.loginChanged()`) signs the chat in when `axiom-print-app`
 changes; if the site defines `NovaClientChat.login(email, password) → token`, an in-chat form is shown instead and the
 credentials go only to the parent page (`nova-client:login` / `login-result`), never to Nova or the model. `resume()`
-keeps the conversation on screen across a sign-in. Customers see the assistant as **NovaAI** (sparkle mark, "AI" badge;
+keeps the conversation on screen across a sign-in. Product lists are shown once: `mergeProductList()` moves the model's
+"- **Name** — desc" lines into the products card (desc under the name; else `oneLine(short_description)`) and leaves a
+`[[products]]` marker where the list goes; past answers give the model the listed names and ids in its place. Customers see the assistant as **NovaAI** (sparkle mark, "AI" badge;
 saved greetings saying "Nova" are shown as "NovaAI"). **History** (signed-in only): `GET /api/client-bot/history{/:id}`;
 `ownsChat()` lets the same verified customer continue a chat from any device; `ClientChat.load(id)`. Voice typing: `public/axiom-voice.js` shows a recording bar (waveform, timer, Cancel/Done), records 16 kHz WAV and
 posts it to `POST /api/client-bot/transcribe` → `speech-to-text.js` (OpenAI with `OPENAI_API_KEY`, or

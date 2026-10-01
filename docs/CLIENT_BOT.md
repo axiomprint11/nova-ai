@@ -211,6 +211,16 @@ Pass it as `window.NovaClientChat.signin = { payload: '…', sig: '…' }`.
 Only `https://axiomprint.com` and `https://www.axiomprint.com` may send a sign-in to the chat page, and only those
 sites may frame it.
 
+## Product lists: one list, not two
+
+When NovaAI suggests products, the customer sees ONE list: photo, name and a one-line description under it (tap to
+price, ↗ for the page). The model is told not to list the products again in its text. If it does anyway
+(`- **Vinyl Banner** — durable vinyl`), `mergeProductList()` moves each line that names a product on the card into
+the card as that product's description, keeps the model's order, and leaves a `[[products]]` marker so the list is
+drawn where the lines were — intro above, question below. Products without a description from the model show the
+first sentence of their website short description. The model later reads the marker as the products shown, in order,
+with their ids, so "the second one" still works.
+
 ## The name: NovaAI
 
 Customers always see the assistant as **NovaAI** with an AI sparkle and an "AI" badge in the header, so it is clear they
