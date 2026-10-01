@@ -289,6 +289,12 @@ and the quantities into a field. **Update price** prices it again on the server 
 replaces the old one. What changed is noted in the conversation (shown in Conversations), so Nova knows about it in
 its next answer. Options the customer touched, or that were Specified or Questionable, become Specified.
 
+**Short answers.** When the quote goes to the right-hand pane, the chat shows only Nova's words — no "on the quote at
+the right" lines. After pricing, Nova answers in one line per product (name — price — ready date) and at most one
+question; it does not describe the card or its buttons. It does not add "prices exclude shipping and tax" unless the
+customer asked about shipping, tax or the total; `trimBoilerplate()` in client-bot.js takes that sentence out of a
+reply if the model adds it anyway (never a sentence with a $ amount in it).
+
 ## Add to Cart — straight into the website cart
 
 Signed-in customers only. The item goes into the customer's **real axiomprint.com cart** through the website's cart API

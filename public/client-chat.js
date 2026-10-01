@@ -466,9 +466,8 @@
           }
           if (wide() && merged.length) {
             paintPane();
-            b.innerHTML = md(j.reply) + cardsNow.filter(c => c.type !== 'price').map(card).join('') +
-              merged.filter((g, i, a) => a.indexOf(g) === i).map(g => '<div class="cc-moved"><b>' + esc(g.product) + '</b> — ' +
-                g.rows.length + ' quantit' + (g.rows.length === 1 ? 'y' : 'ies') + ' on the quote at the right.</div>').join('') + projNote;
+            // The quote is on the right; no "on the quote at the right" lines in the chat.
+            b.innerHTML = md(j.reply) + cardsNow.filter(c => c.type !== 'price').map(card).join('') + projNote;
           } else {
             b.innerHTML = md(j.reply) + cardsNow.map(c => c.type === 'price' ? quote(c, R(c)) : card(c)).join('') + projNote;
             if (merged.length) paintPane();
