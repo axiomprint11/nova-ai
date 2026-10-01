@@ -10,7 +10,7 @@
 <style>
   /* The customer-facing chat, for the axiomprint.com website (in an iframe). */
   html, body { height: 100%; }
-  body { background: #fff; }
+  body { background: #fff; position: relative; }
   .pc-head { flex: none; display: flex; align-items: center; gap: 10px; padding: 11px 14px;
     background: linear-gradient(120deg, var(--indigo), var(--violet)); color: #fff; }
   .pc-mark { width: 28px; height: 28px; border-radius: 8px; background: rgba(255,255,255,.18); display: flex;
@@ -32,7 +32,25 @@
   <div><div class="pc-title">Nova</div><div class="pc-sub" id="pcSub">AxiomPrint assistant</div></div>
   <button type="button" class="pc-x" title="Close" onclick="parentSay({ type: 'nova-client:close' })">✕</button>
 </div>
+<div class="pc-signin" id="pcSignin" hidden>
+  <span id="pcSigninText">Sign in to see your projects, get your account pricing and add to your cart.</span>
+  <button type="button" id="pcSigninBtn">Sign in</button>
+</div>
 <div id="pcBody" class="cc"></div>
+<div class="pc-login" id="pcLogin" hidden>
+  <form id="pcLoginForm" autocomplete="on">
+    <button type="button" class="pc-login-x" id="pcLoginX" aria-label="Close">&#x2715;</button>
+    <h3>Sign in to Axiom Print</h3>
+    <p>Same account as axiomprint.com — you'll be signed in on the website too.</p>
+    <input type="email" id="pcEmail" name="email" autocomplete="username" placeholder="Email" required>
+    <input type="password" id="pcPass" name="password" autocomplete="current-password" placeholder="Password" required>
+    <div class="pc-login-err" id="pcLoginErr"></div>
+    <button type="submit" class="pc-login-go" id="pcLoginGo">Sign in</button>
+    <div class="pc-login-links"><a href="https://axiomprint.com/forgot-password" target="_blank" rel="noopener">Forgot password?</a>
+      <a href="https://axiomprint.com/register" target="_blank" rel="noopener">Create an account</a></div>
+  </form>
+</div>
+<script src="/axiom-speech.js"></script>
 <script src="/client-chat.js"></script>
 <script>
   // Sign-in comes from the website page that embeds this (see docs/CLIENT_BOT.md).
@@ -80,7 +98,8 @@
         : [['Business card prices', 'How much are 500 business cards?'], ['Banner options', 'What banner materials do you have?']]
     };
     if (!chat) chat = ClientChat.mount(document.getElementById('pcBody'), opts);
-    else chat.reset(j.greeting);
+    else chat.resume(j.greeting);              // signed in or out mid-chat: keep the conversation on screen
+    paintSignin();
   }
 
   // ---- Add to Cart ----
@@ -92,14 +111,63 @@
     parentSay({ type: 'nova-client:add-to-cart', id: Math.random().toString(36).slice(2), item: { alreadyAdded: true } });
   }
 
+  // ---- Sign in from the chat ----
+  // Guests see a Sign in bar. If the website can sign a customer in for us
+  // (it answered nova-client:login-ready), the chat shows an email / password
+  // form and hands the details to the PAGE — never to Nova's server or the AI.
+  // Otherwise Sign in opens the website's own login, and the header script
+  // notices the new login and signs the chat in.
+  let loginReady = false, loginWait = null, waitingPopup = false;
+  const embedded = window.parent !== window;
+  function paintSignin() {
+    const bar = document.getElementById('pcSignin');
+    bar.hidden = signedIn || !embedded;
+    if (!signedIn && !waitingPopup) document.getElementById('pcSigninText').textContent =
+      'Sign in to see your projects, get your account pricing and add to your cart.';
+  }
+  document.getElementById('pcSigninBtn').onclick = () => {
+    if (loginReady) {
+      document.getElementById('pcLogin').hidden = false;
+      document.getElementById('pcLoginErr').textContent = '';
+      setTimeout(() => document.getElementById('pcEmail').focus(), 30);
+      return;
+    }
+    waitingPopup = true;
+    parentSay({ type: 'nova-client:open-login' });
+    document.getElementById('pcSigninText').textContent = 'Sign in in the window that opened — the chat picks it up by itself.';
+  };
+  document.getElementById('pcLoginX').onclick = () => { document.getElementById('pcLogin').hidden = true; };
+  document.getElementById('pcLoginForm').onsubmit = (e) => {
+    e.preventDefault();
+    const go = document.getElementById('pcLoginGo'), err = document.getElementById('pcLoginErr');
+    const pass = document.getElementById('pcPass');
+    const id = Math.random().toString(36).slice(2);
+    go.disabled = true; go.textContent = 'Signing in…'; err.textContent = '';
+    loginWait = { id: id, done: (ok, msg) => {
+      loginWait = null; go.disabled = false; go.textContent = 'Sign in'; pass.value = '';
+      if (ok) document.getElementById('pcLogin').hidden = true;
+      else err.textContent = msg || 'That email and password did not match.';
+    } };
+    parentSay({ type: 'nova-client:login', id: id, email: document.getElementById('pcEmail').value.trim(), password: pass.value });
+    setTimeout(() => { if (loginWait && loginWait.id === id) loginWait.done(false, 'The website did not answer — please try again.'); }, 20000);
+  };
+
   window.addEventListener('message', async (ev) => {
     if (PARENTS.indexOf(ev.origin) === -1 || !ev.data) return;
+    if (ev.data.type === 'nova-client:login-ready') { loginReady = true; return; }
+    if (ev.data.type === 'nova-client:login-result' && loginWait && ev.data.id === loginWait.id) {
+      loginWait.done(!!ev.data.ok, ev.data.error); return;
+    }
     // Signed out on the website: back to products only.
-    if (ev.data.type === 'nova-client:signout') { token = null; if (await session({})) hello(); return; }
+    if (ev.data.type === 'nova-client:signout') {
+      if (!signedIn && chat) return;                // already a guest
+      token = null; if (await session({})) hello(); return;
+    }
     if (ev.data.type !== 'nova-client:signin') return;
     const body = ev.data.payload && ev.data.sig ? { payload: ev.data.payload, sig: ev.data.sig }
                : ev.data.customer_token ? { customer_token: ev.data.customer_token } : null;
     if (!body) return;
+    waitingPopup = false;
     if (await session(body)) hello();
   });
 

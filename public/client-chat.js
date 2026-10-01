@@ -227,7 +227,10 @@
           '<button type="button" class="cc-attach" title="Attach files \u2014 images, screenshots, PDF, AI, PSD, Excel, CSV, MD" aria-label="Attach files">' +
             '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg></button>' +
           '<input type="file" class="cc-file-in" multiple hidden accept="' + ACCEPT + '">' +
-          '<textarea rows="1" placeholder="Ask about products, prices or your order…"></textarea>' +
+          '<textarea rows="1" placeholder="Ask about products, prices, orders…"></textarea>' +
+          '<button type="button" class="cc-mic" title="Dictate a message" aria-label="Dictate a message">' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"></rect>' +
+            '<path d="M5 10a7 7 0 0 0 14 0"></path><line x1="12" y1="17" x2="12" y2="22"></line></svg></button>' +
           '<button type="button" class="cc-send" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" ' +
           'stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button></div>' +
         '<div class="cc-hint">' + esc(opts.hint || 'Nova can make mistakes. Prices are confirmed at checkout.') + '</div>' +
@@ -432,7 +435,7 @@
       if (!text && !sending.length) { busy = false; send.disabled = false; return; }
       pending = pending.filter(f => f.state === 'err');
       paintFiles();
-      ta.value = ''; ta.style.height = '';
+      ta.value = ''; grow();
       const ub = add('user', text);
       if (sending.length) {
         ub.insertAdjacentHTML(text ? 'afterbegin' : 'beforeend', '<div class="cc-sent-files">' + sending.map(f =>
@@ -648,9 +651,30 @@
 
     send.onclick = () => ask(ta.value);
     ta.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(ta.value); } };
-    ta.oninput = () => { ta.style.height = ''; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; };
+    // One line until the text needs more; no scroll bar on an empty box.
+    function grow() {
+      ta.style.height = '';
+      const edge = ta.offsetHeight - ta.clientHeight;          // borders (box-sizing: border-box)
+      const h = Math.min(ta.scrollHeight + edge, 120);
+      ta.style.height = h + 'px';
+      ta.style.overflowY = ta.scrollHeight > 120 ? 'auto' : 'hidden';
+    }
+    ta.oninput = grow;
+    // A placeholder that fits the box on one line.
+    const fitHint = () => { ta.placeholder = ta.clientWidth && ta.clientWidth < 290 ? 'Ask Nova anything\u2026' : 'Ask about products, prices, orders\u2026'; };
+    fitHint(); grow();
+    if (window.ResizeObserver) new ResizeObserver(() => { fitHint(); if (!ta.value) grow(); }).observe(ta);
+    // Speech to text (the shared module hides the button where the browser cannot).
+    const mic = root.querySelector('.cc-mic');
+    if (window.AxiomSpeech) {
+      window.AxiomSpeech.attach({ button: mic, input: ta, onInput: grow,
+        onError: (m) => { ta.placeholder = m; setTimeout(fitHint, 6000); } });
+    } else mic.style.display = 'none';
     greet(opts.greeting);
     return {
+      // Signed in (or out) mid-conversation: keep what is on screen, start a fresh
+      // conversation on the server for the new account, and say hello.
+      resume: (g) => { chatId = null; projLoaded = false; projBody.innerHTML = ''; refreshTabs(); add('ai', md(g || opts.greeting || '')); box.scrollTop = box.scrollHeight; },
       reset: (g) => { chatId = null; groups = []; pending = []; paintFiles(); paintPane(); greet(g || opts.greeting); },
       setGreeting: (g) => { opts.greeting = g; if (!chatId) greet(g); },
       ask: ask

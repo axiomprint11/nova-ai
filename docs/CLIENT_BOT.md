@@ -90,6 +90,9 @@ Optional settings in `window.NovaClientChat`:
 |---|---|
 | `signin: { payload, sig }` (or a function returning it) | Signed-in customer, option A below. |
 | `customerToken: 'token'` (or a function) | Signed-in customer, option B below. If neither is given, the script looks for a customer token in the site's `localStorage` (`customer_token`, `access_token`, `token`, `auth_token`, or `tokenKey`). `customerToken: false` turns that off. |
+| `login: async (email, password) => token` | Optional: turns on the email/password form inside the chat (see *Signing in from the chat*). |
+| `onSignedIn: () => {}` | Optional: called after the customer signed in through the chat's login window. |
+| `loginUrl` | Login page the chat's Sign in opens (default https://axiomprint.com/login). |
 | `onCartChanged: () => {}` | Optional: called after Nova added something to the cart (the site's own listener already refreshes the count). |
 | `position: 'left'` | Desktop button on the left. |
 | `lift: false` | Phone: don't move the site's sticky bars up (then place them yourself). |
@@ -98,7 +101,11 @@ Optional settings in `window.NovaClientChat`:
 | `zIndex: 999` | Stacking of the launcher (default 999 — under the site's own pop-ups). |
 
 `NovaClientChatAPI.open()` opens the chat from any link or button on the site; `NovaClientChatAPI.refresh()` re-checks
-the sticky bars after the page rearranges them.
+the sticky bars after the page rearranges them; `NovaClientChatAPI.loginChanged()` re-reads the website login now.
+
+The chat has a **microphone** button (speech to text, the shared `axiom-speech.js`): the frame is loaded with
+`allow="microphone"`, and the browser asks the customer once. Browsers without speech recognition simply don't show
+the button. The message box stays one line (shorter hint on narrow screens) and grows as the customer types.
 
 ## Recognising a signed-in customer
 
@@ -109,8 +116,9 @@ Nothing the visitor types is ever taken as proof of identity.
 
 The header script sets `tokenKey: 'axiom-print-app'` — where the website keeps the customer's login. That entry is the
 site's saved state (JSON); the script finds the token inside it (`token`, `access_token`, `accessToken`, …) and posts
-`{ type: 'nova-client:signin', customer_token }` to the chat when it opens, or `nova-client:signout` for a guest. It is
-sent once, when the chat loads: log in or out, then refresh the page.
+`{ type: 'nova-client:signin', customer_token }` to the chat when it opens, or `nova-client:signout` for a guest. It then
+keeps watching that entry (the browser's `storage` event, and a check every 2.5 s while the chat is open), so logging in
+or out on the website — in this tab or another — signs the chat in or out without a page refresh.
 
 Nova checks the token on its server — never trusting it by itself:
 
@@ -132,6 +140,43 @@ Signed-in customers see their **account discount** on every quote — the same r
 via quoteProduct's `client_id`): the regular price struck through and their price beside it. Nova never quotes the
 percentage. The cart is sent the price before the discount (as the website's cart API expects); the website applies
 the account pricing there.
+
+### Signing in from the chat
+
+A guest sees a bar under the chat header: "Sign in to see your projects, get your account pricing and add to your cart"
+with a **Sign in** button. It works in one of two ways; the conversation on screen is kept either way, and the greeting
+switches to "Hi <first name>!".
+
+1. **Login window (works today, nothing to build).** Sign in opens the website's own login page
+   (`loginUrl`, default https://axiomprint.com/login) in a small window. When the website saves the login in
+   `axiom-print-app`, the header script sees it, signs the chat in, closes that window and calls `onSignedIn()` if the
+   site gave one. Because it is the website's own login, the customer is signed in on the website too.
+2. **Email and password inside the chat (needs one function from the website).** If the website sets
+   `window.NovaClientChat.login = async (email, password) => token`, the button opens a small form in the chat instead.
+   The form sends the email and password **only to the website page** (postMessage, locked to the website's origin) —
+   never to Nova's server and never to the AI. The website's function logs in exactly as its own login form does
+   (saves the token, updates its header/cart), and returns the token (a string, or `{ token }` / `{ access_token }`); it
+   throws or rejects with a readable message on a wrong password, which the form shows.
+
+What to give the website developers:
+
+```js
+window.NovaClientChat = Object.assign(window.NovaClientChat || {}, {
+  tokenKey: 'axiom-print-app',
+  // Optional — in-chat email/password form. Use the site's normal login code so the header updates too.
+  login: async (email, password) => {
+    const r = await siteLogin(email, password);      // the website's own login call + store update
+    return r.token;                                  // throw new Error('Wrong email or password') on failure
+  },
+  // Optional — after a sign-in done from the chat's login window, refresh the site's header / cart count.
+  onSignedIn: () => { /* e.g. reload the user store, or location.reload() */ },
+  loginUrl: 'https://axiomprint.com/login',          // optional, this is the default
+});
+// Optional — after the site's own login or logout, tell the chat straight away (it also notices within 2.5 s).
+window.NovaClientChatAPI && NovaClientChatAPI.loginChanged();
+```
+
+Nova never asks for a password in the conversation; the AI cannot see the form.
 
 ### Option A — signed handoff (alternative)
 

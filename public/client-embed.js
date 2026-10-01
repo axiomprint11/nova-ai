@@ -97,7 +97,7 @@
     }
     var frame = document.createElement('iframe');
     frame.title = 'Nova — AxiomPrint assistant';
-    frame.setAttribute('allow', 'clipboard-write');
+    frame.setAttribute('allow', 'clipboard-write; microphone');   // microphone: speech to text
     frame.style.cssText = 'width:100%;height:100%;border:0;display:block;';
     var loaded = false;
 
@@ -269,9 +269,37 @@
         if (s && s.payload && s.sig) say({ type: 'nova-client:signin', payload: s.payload, sig: s.sig });
         else if (tok) say({ type: 'nova-client:signin', customer_token: tok });
         else say({ type: 'nova-client:signout' });
+        lastTok = tok || null;
+        // The website can sign a customer in from the chat's own form.
+        if (typeof CFG.login === 'function') say({ type: 'nova-client:login-ready' });
         if (typeof CFG.addToCart === 'function') say({ type: 'nova-client:cart-ready' });
       }
       if (d.type === 'nova-client:close') close();
+      // Sign in from the chat, form version: the site's own login function does it
+      // (and signs the website in too). The password goes from the chat to this
+      // page only, then to the site's login — never to Nova.
+      if (d.type === 'nova-client:login' && typeof CFG.login === 'function') {
+        Promise.resolve().then(function () { return CFG.login(String(d.email || ''), String(d.password || '')); })
+          .then(function (r) {
+            var t = (r && typeof r === 'object' ? (r.token || r.access_token || r.customer_token) : (typeof r === 'string' ? r : null)) || findToken();
+            if (!t) throw new Error('Sign-in did not complete.');
+            lastTok = t;
+            say({ type: 'nova-client:signin', customer_token: t });
+            say({ type: 'nova-client:login-result', id: d.id, ok: true });
+          }, function (e) { throw e; })
+          .catch(function (e) {
+            say({ type: 'nova-client:login-result', id: d.id, ok: false,
+                  error: (e && e.message && e.message.length < 160) ? e.message : 'That email and password did not match.' });
+          });
+        return;
+      }
+      // Sign in from the chat, website version: open the site's login; once the
+      // site has a login token, the chat is signed in by itself.
+      if (d.type === 'nova-client:open-login') {
+        try { loginWin = window.open(CFG.loginUrl || 'https://axiomprint.com/login', 'novaLogin', 'width=480,height=720'); } catch (e) {}
+        watchUntil = Date.now() + 10 * 60 * 1000;
+        return;
+      }
       // Nova already put it in the cart: the site refreshes its cart count
       // (its own listener does that; onCartChanged is an optional extra hook).
       if (d.type === 'nova-client:add-to-cart' && d.item && d.item.alreadyAdded) {
@@ -285,9 +313,31 @@
       }
     });
 
+    // ---- following the website's login ----
+    // A sign-in (or sign-out) in another tab, the login window, or the page itself
+    // reaches the chat without a page refresh.
+    var lastTok = null, loginWin = null, watchUntil = 0;
+    function followLogin() {
+      if (!loaded) return;
+      var t = findToken();
+      if (t && t !== lastTok) {
+        lastTok = t;
+        say({ type: 'nova-client:signin', customer_token: t });
+        try { if (loginWin && !loginWin.closed) loginWin.close(); } catch (e) {}
+        if (typeof CFG.onSignedIn === 'function') { try { CFG.onSignedIn(); } catch (e) {} }
+      } else if (!t && lastTok) {
+        lastTok = null;
+        say({ type: 'nova-client:signout' });
+      }
+    }
+    window.addEventListener('storage', followLogin);
+    setInterval(function () { if (isOpen || Date.now() < watchUntil) followLogin(); }, 2500);
+
     // For the site: NovaClientChatAPI.open() from a "Chat with us" link;
     // refresh() after the page moves its own sticky bar around.
-    window.NovaClientChatAPI = { open: open, close: close, refresh: function () { unlift(); launcher(); } };
+    window.NovaClientChatAPI = { open: open, close: close, refresh: function () { unlift(); launcher(); },
+      // After the website signs a customer in or out, so the chat follows at once.
+      loginChanged: followLogin };
   }
 
   function start() {

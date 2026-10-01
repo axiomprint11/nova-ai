@@ -191,6 +191,11 @@ never public). The chat sends `files: [ref]`; only the uploader's unsent files a
 for the latest two file messages within a byte/page budget; if the API refuses one, the files are marked `blocked`
 and the answer is retried text-only. Admins get files at `/api/admin/client-bot/files/:ref{/preview}`. After an add the chat posts
 `nova-client:add-to-cart {item:{alreadyAdded:true}}` so the website refreshes its cart count.
+**Sign in from the chat**: a guest bar's Sign in opens the website login in a window (`loginUrl`), and the loader's
+`followLogin()` (storage event + 2.5 s poll; `NovaClientChatAPI.loginChanged()`) signs the chat in when `axiom-print-app`
+changes; if the site defines `NovaClientChat.login(email, password) → token`, an in-chat form is shown instead and the
+credentials go only to the parent page (`nova-client:login` / `login-result`), never to Nova or the model. `resume()`
+keeps the conversation on screen across a sign-in. The composer has dictation (`axiom-speech.js`; iframe `allow="microphone"`).
 It also has `get_template` (die lines of visible options; customer-specific dies only for that customer; PDFs streamed
 by Nova through a signed `/api/client-bot/template/...` link) and `estimate_installation` / `estimate_delivery` (the
 shared `InstallPricing` engine and live admin config via `getInstallPricing()`; customers see totals and line names,

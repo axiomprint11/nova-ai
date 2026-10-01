@@ -2064,3 +2064,38 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .cc-proj-foot { padding: 4px 11px 9px; text-align: right; }
 .cc-proj-foot a { font-size: 11px; font-weight: 600; color: var(--indigo-dark) !important; text-decoration: none; }
 .cc-proj-foot a:hover { text-decoration: underline; }
+
+/* ---- client chat: dictation and a one-line composer ---- */
+.cc-mic { flex: none; width: 40px; height: 40px; border: 1.5px solid var(--line); border-radius: 11px; background: #fff; color: var(--muted);
+  cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.cc-mic:hover { border-color: var(--indigo); color: var(--indigo-dark); }
+.cc-mic svg { width: 18px; height: 18px; }
+.cc-mic.rec { background: #fee2e2; border-color: #f87171; color: #b91c1c; animation: ccPulse 1.2s ease-in-out infinite; }
+@keyframes ccPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.35); } 50% { box-shadow: 0 0 0 6px rgba(239,68,68,0); } }
+.cc-shell textarea { overflow-y: hidden; line-height: 1.35; min-height: 40px; box-sizing: border-box; margin: 0; }
+.cc-shell textarea::placeholder { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cc-shell { gap: 6px; }
+@media (max-width: 700px) {
+  .cc-shell textarea::placeholder { font-size: 15px; }
+  .cc-attach, .cc-mic, .cc-send { width: 38px; height: 38px; }
+}
+
+/* ---- client chat: sign-in bar and form ---- */
+.pc-signin { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: #f5f3ff; border-bottom: 1px solid #e4e0fb;
+  font-size: 12.5px; color: #4c1d95; }
+.pc-signin[hidden] { display: none; }
+.pc-signin span { flex: 1; min-width: 0; }
+.pc-signin button { flex: none; padding: 6px 12px; border: none; border-radius: 8px; background: var(--indigo); color: #fff; font: 600 12.5px/1 inherit; cursor: pointer; }
+.pc-login { position: absolute; inset: 0; z-index: 20; background: rgba(20,16,40,.35); display: flex; align-items: flex-start; justify-content: center; padding: 60px 14px 14px; }
+.pc-login[hidden] { display: none; }
+.pc-login form { width: 100%; max-width: 360px; background: #fff; border-radius: 14px; padding: 18px; box-shadow: 0 18px 50px rgba(30,20,70,.3); display: flex; flex-direction: column; gap: 10px; }
+.pc-login h3 { margin: 0; font-size: 16px; }
+.pc-login p { margin: 0; font-size: 12.5px; color: var(--muted); }
+.pc-login input { margin: 0; padding: 10px 12px; font-size: 15px; border-radius: 9px; }
+.pc-login .pc-login-go { padding: 11px; border: none; border-radius: 9px; background: var(--indigo); color: #fff; font: 600 14px/1 inherit; cursor: pointer; }
+.pc-login .pc-login-go:disabled { opacity: .7; }
+.pc-login .pc-login-x { align-self: flex-end; margin: -6px -6px -4px 0; border: none; background: none; font-size: 18px; color: var(--muted); cursor: pointer; }
+.pc-login .pc-login-err { color: #b91c1c; font-size: 12.5px; }
+.pc-login .pc-login-err:empty { display: none; }
+.pc-login .pc-login-links { display: flex; justify-content: space-between; font-size: 12px; }
+.pc-login .pc-login-links a { color: var(--indigo-dark); font-weight: 600; text-decoration: none; }
