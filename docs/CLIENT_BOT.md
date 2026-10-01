@@ -148,7 +148,8 @@ with a **Sign in** button. It works in one of two ways; the conversation on scre
 switches to "Hi <first name>!".
 
 1. **Login window (works today, nothing to build).** Sign in opens the website's own login page
-   (`loginUrl`, default https://axiomprint.com/login) in a small window. When the website saves the login in
+   (`loginUrl`, default https://axiomprint.com/login) in a small window — opened by the chat inside the click, so
+   pop-up blockers allow it (if the browser still refuses, the page opens it, or goes to the login page). When the website saves the login in
    `axiom-print-app`, the header script sees it, signs the chat in, closes that window and calls `onSignedIn()` if the
    site gave one. Because it is the website's own login, the customer is signed in on the website too.
 2. **Email and password inside the chat (needs one function from the website).** If the website sets

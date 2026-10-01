@@ -271,6 +271,7 @@
         else say({ type: 'nova-client:signout' });
         lastTok = tok || null;
         // The website can sign a customer in from the chat's own form.
+        if (CFG.loginUrl) say({ type: 'nova-client:login-url', url: String(CFG.loginUrl) });
         if (typeof CFG.login === 'function') say({ type: 'nova-client:login-ready' });
         if (typeof CFG.addToCart === 'function') say({ type: 'nova-client:cart-ready' });
       }
@@ -296,7 +297,13 @@
       // Sign in from the chat, website version: open the site's login; once the
       // site has a login token, the chat is signed in by itself.
       if (d.type === 'nova-client:open-login') {
-        try { loginWin = window.open(CFG.loginUrl || 'https://axiomprint.com/login', 'novaLogin', 'width=480,height=720'); } catch (e) {}
+        // The chat opens the login window itself, inside the click. Only if the
+        // browser refused that do we try here — and failing that, go to the login page.
+        var url = CFG.loginUrl || 'https://axiomprint.com/login';
+        if (!d.opened) {
+          try { loginWin = window.open(url, 'novaLogin', 'width=480,height=720'); } catch (e) { loginWin = null; }
+          if (!loginWin) { location.href = url; return; }
+        }
         watchUntil = Date.now() + 10 * 60 * 1000;
         return;
       }

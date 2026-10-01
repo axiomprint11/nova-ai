@@ -118,6 +118,7 @@
   // Otherwise Sign in opens the website's own login, and the header script
   // notices the new login and signs the chat in.
   let loginReady = false, loginWait = null, waitingPopup = false;
+  let loginUrl = 'https://axiomprint.com/login', loginPopup = null;
   const embedded = window.parent !== window;
   function paintSignin() {
     const bar = document.getElementById('pcSignin');
@@ -133,7 +134,10 @@
       return;
     }
     waitingPopup = true;
-    parentSay({ type: 'nova-client:open-login' });
+    // Opened here, inside the click, so pop-up blockers (Safari) allow it; the
+    // page opens it instead (or goes to the login page) if this was refused.
+    try { loginPopup = window.open(loginUrl, 'novaLogin', 'width=480,height=720'); } catch (e) { loginPopup = null; }
+    parentSay({ type: 'nova-client:open-login', opened: !!loginPopup });
     document.getElementById('pcSigninText').textContent = 'Sign in in the window that opened — the chat picks it up by itself.';
   };
   document.getElementById('pcLoginX').onclick = () => { document.getElementById('pcLogin').hidden = true; };
@@ -155,6 +159,10 @@
   window.addEventListener('message', async (ev) => {
     if (PARENTS.indexOf(ev.origin) === -1 || !ev.data) return;
     if (ev.data.type === 'nova-client:login-ready') { loginReady = true; return; }
+    if (ev.data.type === 'nova-client:login-url') {     // only a page on the website itself
+      try { const u = new URL(String(ev.data.url || '')); if (PARENTS.indexOf(u.origin) !== -1) loginUrl = u.href; } catch (e) {}
+      return;
+    }
     if (ev.data.type === 'nova-client:login-result' && loginWait && ev.data.id === loginWait.id) {
       loginWait.done(!!ev.data.ok, ev.data.error); return;
     }
@@ -168,6 +176,8 @@
                : ev.data.customer_token ? { customer_token: ev.data.customer_token } : null;
     if (!body) return;
     waitingPopup = false;
+    try { if (loginPopup && !loginPopup.closed) loginPopup.close(); } catch (e) {}
+    loginPopup = null;
     if (await session(body)) hello();
   });
 
