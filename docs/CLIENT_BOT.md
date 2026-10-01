@@ -103,9 +103,23 @@ Optional settings in `window.NovaClientChat`:
 `NovaClientChatAPI.open()` opens the chat from any link or button on the site; `NovaClientChatAPI.refresh()` re-checks
 the sticky bars after the page rearranges them; `NovaClientChatAPI.loginChanged()` re-reads the website login now.
 
-The chat has a **microphone** button (speech to text, the shared `axiom-speech.js`): the frame is loaded with
-`allow="microphone"`, and the browser asks the customer once. Browsers without speech recognition simply don't show
-the button. The message box stays one line (shorter hint on narrow screens) and grows as the customer types.
+The chat has a **microphone** button for voice typing (`public/axiom-voice.js`). Tapping it turns the message box
+into a **recording bar** — Cancel, a red dot and timer, a live waveform, Done (✓). Nothing is typed while the customer
+talks; on Done the words go into the box to check and send. Two minutes at most (it finishes by itself).
+
+- **Server transcription (recommended):** the browser records the microphone itself (16 kHz mono WAV) and posts it to
+  `POST /api/client-bot/transcribe` (visitor token; 4 MB; 30 per 10 min per visitor, 60 per address, daily cap).
+  `speech-to-text.js` sends it to the service set in `.env` and returns the text. **Recordings are never stored.**
+  - `OPENAI_API_KEY=…` → OpenAI `gpt-4o-mini-transcribe` (`STT_MODEL` to change; about $0.003 a minute). A print-shop
+    word list (coroplast, Gatorboard, 16pt, saddle stitch…) is sent as a hint.
+  - `STT_PROVIDER=google` → Google Cloud Speech-to-Text with the existing service account (`gmail-key.json`); the
+    Speech-to-Text API must be enabled, with billing, on that account's Google Cloud project.
+- **Without either:** `GET /api/client-bot/voice` says `server:false` and the chat uses the browser's own speech
+  recognition behind the same bar (Chrome, Edge, Safari): it restarts when the browser stops on a pause, and Android's
+  repeated growing phrases ("looking", "looking for"…) are merged. Firefox then has no mic button.
+
+The frame is loaded with `allow="microphone"`; the browser asks the customer once. The message box stays one line
+(shorter hint on narrow screens) and grows as the customer types.
 
 ## Recognising a signed-in customer
 

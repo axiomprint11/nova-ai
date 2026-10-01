@@ -665,10 +665,29 @@
     fitHint(); grow();
     if (window.ResizeObserver) new ResizeObserver(() => { fitHint(); if (!ta.value) grow(); }).observe(ta);
     // Speech to text (the shared module hides the button where the browser cannot).
+    // Voice typing: a recording bar while the customer talks (waveform, timer,
+    // Cancel / Done), then the words go into the box to check and send.
     const mic = root.querySelector('.cc-mic');
-    if (window.AxiomSpeech) {
-      window.AxiomSpeech.attach({ button: mic, input: ta, onInput: grow,
-        onError: (m) => { ta.placeholder = m; setTimeout(fitHint, 6000); } });
+    const hintEl = root.querySelector('.cc-hint'), hintText = hintEl.textContent;
+    let hintTimer = null;
+    const sayHint = (m) => { clearTimeout(hintTimer); hintEl.textContent = m; hintEl.classList.add('cc-hint-err');
+      hintTimer = setTimeout(() => { hintEl.textContent = hintText; hintEl.classList.remove('cc-hint-err'); }, 7000); };
+    if (window.AxiomVoice) {
+      window.AxiomVoice.attach({ button: mic, input: ta, host: root.querySelector('.cc-shell'),
+        useServer: () => fetch('/api/client-bot/voice').then(r => r.json()).then(j => !!(j && j.server)).catch(() => false),
+        transcribe: async (blob) => {
+          const r = await fetch('/api/client-bot/transcribe', { method: 'POST', body: blob,
+            headers: { 'Content-Type': 'audio/wav', 'Authorization': 'Bearer ' + (opts.getToken ? opts.getToken() : '') } });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok || !j.ok) throw new Error(j.error || 'Could not turn that into text. Please try again, or type it.');
+          return j.text;
+        },
+        onText: (t) => {
+          ta.value = (ta.value.trim() ? ta.value.replace(/\s*$/, ' ') : '') + t;
+          grow();
+          if (!window.matchMedia || !window.matchMedia('(pointer: coarse)').matches) { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; }
+        },
+        onError: sayHint });
     } else mic.style.display = 'none';
     greet(opts.greeting);
     return {

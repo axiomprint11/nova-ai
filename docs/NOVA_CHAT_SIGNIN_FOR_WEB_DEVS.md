@@ -99,9 +99,9 @@ If you don't call it, the chat still notices within about 2.5 seconds.
 
 ## Dictation (speech to text)
 
-- The chat has a microphone button next to Send. The first time it is used, the browser asks the customer for
+- The chat has a microphone button next to Send. Tapping it shows a recording bar (timer, live waveform, Cancel,
+  Done); on Done the words appear in the message box. The first time it is used, the browser asks the customer for
   microphone permission.
-- Browsers without speech recognition, such as Firefox, simply don't show the button.
 - The header script already loads the chat frame with `allow="microphone"`.
 - **Check:** if the website sends a `Permissions-Policy` HTTP header, it must allow the microphone for Nova:
 

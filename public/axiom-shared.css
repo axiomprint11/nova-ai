@@ -2099,3 +2099,31 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .pc-login .pc-login-err:empty { display: none; }
 .pc-login .pc-login-links { display: flex; justify-content: space-between; font-size: 12px; }
 .pc-login .pc-login-links a { color: var(--indigo-dark); font-weight: 600; text-decoration: none; }
+
+/* ---- voice typing: the recording bar (axiom-voice.js) ---- */
+.av-on > :not(.av-bar) { display: none !important; }
+.av-bar { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 4px 0 4px;
+  border: 1.5px solid #c7d2fe; border-radius: 12px; background: #f5f7ff; box-sizing: border-box; }
+.av-bar[hidden] { display: none; }
+.av-bar button { flex: none; width: 34px; height: 34px; border-radius: 10px; border: none; display: flex; align-items: center;
+  justify-content: center; cursor: pointer; padding: 0; margin: 0; }
+.av-bar button svg { width: 17px; height: 17px; }
+.av-cancel { background: transparent; color: var(--muted); }
+.av-cancel:hover { background: #eef0f7; color: #b91c1c; }
+.av-done { background: var(--indigo); color: #fff; }
+.av-done:disabled { opacity: .55; cursor: default; }
+.av-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: #ef4444; animation: avBlink 1.1s ease-in-out infinite; }
+@keyframes avBlink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+.av-time { flex: none; font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: #3730a3; min-width: 32px; }
+.av-wave { flex: 1; min-width: 0; height: 26px; color: #6366f1; }
+.av-msg { display: none; flex: 1; min-width: 0; font-size: 13px; color: #3730a3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.av-busy .av-dot, .av-busy .av-time, .av-busy .av-wave { display: none; }
+.av-busy .av-msg { display: block; }
+.av-busy .av-msg::before { content: ''; display: inline-block; width: 13px; height: 13px; margin: 0 8px -2px 2px; border-radius: 50%;
+  border: 2px solid #c7d2fe; border-top-color: #6366f1; animation: avSpin .8s linear infinite; }
+@keyframes avSpin { to { transform: rotate(360deg); } }
+.cc-hint.cc-hint-err { display: block !important; color: #b91c1c; font-size: 12px; }
+@media (max-width: 700px) {
+  .av-bar { height: 46px; }
+  .av-bar button { width: 36px; height: 36px; }
+}

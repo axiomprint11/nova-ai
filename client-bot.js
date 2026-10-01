@@ -1224,6 +1224,43 @@ module.exports = function mountClientBot(app, deps) {
     ].join('\n');
   }
 
+  // ---------------------------------------------------------------- voice
+  // The chat records the customer (a 16 kHz mono WAV, at most two minutes) and
+  // sends it here once they tap Done; the words go back into the message box.
+  // Recordings are never stored. Without a speech service in .env the chat falls
+  // back to the browser's own speech recognition (GET .../voice says which).
+  const Stt = require('./speech-to-text')();
+  const STT_MAX_BYTES = 4 * 1024 * 1024 + 1024;           // ~2 min at 16 kHz
+  app.get('/api/client-bot/voice', (req, res) => { res.json({ ok: true, server: !!Stt.provider() }); });
+  async function voiceGate(req, res, next) {
+    const who = await identify(req);
+    if (!who) return res.status(401).json({ ok: false, error: 'Please reload the page.' });
+    if (who.error) return res.status(who.status || 403).json({ ok: false, error: who.error });
+    if (!Stt.provider()) return res.status(503).json({ ok: false, off: true, error: 'Voice typing is not available right now.' });
+    if (parseInt(req.headers['content-length']) > STT_MAX_BYTES) return res.status(413).json({ ok: false, error: 'That recording is too long — two minutes at most.' });
+    const pre = who.source === 'preview';
+    if (overLimit('stt:' + who.vid, pre ? 120 : 30, 10 * 60 * 1000) ||
+        (who.source === 'website' && (overLimit('sttip:' + clientIp(req), 60, 10 * 60 * 1000) ||
+                                      overLimit('sttday', DAILY_CAP, 24 * 60 * 60 * 1000)))) {
+      return res.status(429).json({ ok: false, error: 'That is a lot of recordings — please type, or wait a few minutes.' });
+    }
+    next();
+  }
+  app.post('/api/client-bot/transcribe', voiceGate, require('express').raw({ type: () => true, limit: STT_MAX_BYTES }), async (req, res) => {
+    try {
+      const text = await Stt.transcribe(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0));
+      res.json({ ok: true, text: text });
+    } catch (e) {
+      if (/recording|format/.test(e.message)) return res.status(400).json({ ok: false, error: 'That recording could not be read. Please try again.' });
+      console.error('CLIENT_BOT transcribe', e.message);
+      res.status(502).json({ ok: false, error: 'Could not turn that into text. Please try again, or type it.' });
+    }
+  });
+  app.use('/api/client-bot/transcribe', (err, req, res, next) => {
+    if (err && (err.type === 'entity.too.large' || err.status === 413)) return res.status(413).json({ ok: false, error: 'That recording is too long — two minutes at most.' });
+    next(err);
+  });
+
   // ---------------------------------------------------------------- chat
   const hits = new Map();                 // visitor -> recent message times
   function rateLimited(vid, isPreview) {
