@@ -93,7 +93,8 @@
       cartWaits[id] = resolve;
       parentSay({ type: 'nova-client:add-to-cart', id: id, item: {
         product_id: item.product_id, product: item.product, quantity: item.quantity, price: item.price,
-        share_id: item.share_id || null, config: item.config || null, url: item.url || null } });
+        share_id: item.share_id || null, config: item.config || null, url: item.url || null,
+        versions: item.versions || null } });
       setTimeout(() => { if (cartWaits[id]) { delete cartWaits[id]; resolve(false); } }, 6000);
     });
   }

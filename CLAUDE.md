@@ -172,7 +172,8 @@ session: `my_orders` / `order_status` filter on `estimate_clientid` themselves; 
 customer, Conversations, Training, Setup); public page `/client-chat` for the website iframe. Admins only until
 `CLIENT_BOT_PUBLIC=1`. Website sign-in: signed handoff (`CLIENT_SSO_SECRET`) or customer token
 (`CUSTOMER_VERIFY_URL`). Full write-up: `docs/CLIENT_BOT.md`. Never give it a tool that takes a customer id or SQL.
-`price_product` takes `quantities` and returns one card (`rows` of qty/price/cart data); `client-chat.js` merges cards
+`price_product` takes `quantities` — or `versions: [{name, quantity}]` for several designs of one size, priced as ONE
+order through quoteProduct's `version_list` — and returns one card (`rows` of qty/price/cart data); `client-chat.js` merges cards
 with the same product+options into a "Your quote" pane (≥800px) with Qty · Price · Add to Cart. Spec rows carry `tag`
 (`specified` / `default` / `questionable` — questionable = a `clarify_for_ai` field left on its default, or no quantity
 given). Cards have **Edit**: `POST /api/client-bot/reprice` re-runs `priceCard()` (the same function the tool uses,

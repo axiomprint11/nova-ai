@@ -188,6 +188,15 @@ messages that had them; older ones are described. If the model refuses a file, i
 retried without it, so one bad file can't break the conversation. The team sees every attachment under
 **Conversations** — Nova's preview and a **Download** of the original.
 
+## Several designs: versions
+
+Designs that share a size and options are priced as **one order with versions**, the way the website calculator does
+it (Design 1: 100 + Design 2: 150 = one estimate of 250 with 2 versions) — `price_product` takes
+`versions: [{name, quantity}]`. Designs in different sizes get one quote per size, each with its own versions. The
+card lists the versions under the options; Edit changes each version's quantity. A product without versions is priced
+as one run of the total, and Nova says so. Add to Cart passes the list as `item.versions` (the share link itself
+carries the total quantity only).
+
 ## Quote cards: Specified / Default / Questionable, and Edit
 
 Every option on a quote is tagged: **Specified** (the customer chose it), **Default** (the website default) or
@@ -218,7 +227,8 @@ website cart itself.
     price: 122.00,                                   // for display only — the website prices it itself
     share_id: '66f8a1c2e4b0a91d2c3f4e5a',            // the saved selection (product-shares API)
     config: { selections: { Shape: 10, Raised_Spot_UV: 21, Quantity: 93 }, selectedMetric: 'inch' },
-    url: 'https://axiomprint.com/product/raised-spot-uv-cards-184?shareId=66f8…' } }
+    url: 'https://axiomprint.com/product/raised-spot-uv-cards-184?shareId=66f8…',
+    versions: [{ name: 'Design 1', quantity: 200 }, { name: 'Design 2', quantity: 300 }] } }   // only for a versions quote
 ```
 
 4. The page adds it with its own cart code (the same `selections` the product page applies from a share link) and

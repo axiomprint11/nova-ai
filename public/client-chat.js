@@ -134,19 +134,23 @@
       '</div>' +
       '<table class="cc-specs">' + (c.specs || []).filter(s => !/^quantity$/i.test(s.field)).slice(0, 16).map(s =>
         '<tr class="' + (s.tag === 'questionable' ? 'cc-q' : '') + '"><td>' + esc(s.field) + '</td><td>' + esc(s.value) + tag(s.tag) + '</td></tr>').join('') + '</table>' +
+      // Designs priced together as one order.
+      (c.versions && c.versions.length ? '<div class="cc-vers"><div class="cc-vers-hd">' + c.versions.length + ' versions \u00b7 one order</div>' +
+        c.versions.map(v => '<div class="cc-ver"><span>' + esc(v.name) + '</span><b>' + Number(v.quantity || 0).toLocaleString() + '</b></div>').join('') + '</div>' : '') +
       (unsure ? '<div class="cc-unsure-note">Please check the options marked <b>Questionable</b> \u2014 they change the price.' +
         (canEdit ? ' Tap <b>Edit</b> to change them.' : '') + '</div>' : '') +
       '<table class="cc-ladder"><thead><tr><th>Qty' + (c.qty_unsure ? tag('questionable') : '') + '</th><th>Price</th><th></th></tr></thead><tbody>' +
       rows.map(r => {
         const item = { product_id: c.product_id || null, product: c.product, quantity: r.quantity, price: r.price,
-          url: r.cart && r.cart.url, share_id: r.cart && r.cart.share_id, config: r.cart && r.cart.config };
-        return '<tr><td>' + Number(r.quantity || 0).toLocaleString() + '</td>' +
+          url: r.cart && r.cart.url, share_id: r.cart && r.cart.share_id, config: r.cart && r.cart.config,
+          versions: r.versions || undefined };
+        return '<tr><td>' + Number(r.quantity || 0).toLocaleString() +
+            (r.versions && r.versions.length ? '<small>' + r.versions.length + ' versions</small>' : '') + '</td>' +
           '<td>' + (r.discount && r.list_price > r.price ? '<s>' + money(r.list_price) + '</s> ' : '') + '<b>' + money(r.price) + '</b>' +
             '<small>' + money(r.each) + ' each' + (!sameReady && r.ready ? ' · ready ' + esc(r.ready) : '') + '</small></td>' +
           '<td>' + (item.url ? '<a class="cc-cart" href="' + esc(item.url) + '" target="_blank" rel="noopener" data-item="' +
             esc(JSON.stringify(item)) + '">Add to Cart</a>' : '') + '</td></tr>';
       }).join('') + '</tbody></table>' +
-      '<div class="cc-note">Excludes shipping and tax.</div>' +
     '</div>';
   }
 
@@ -424,8 +428,12 @@
         (e.custom_size ? '<div class="cc-wh"' + (showWH ? '' : ' style="display:none"') + '><span>Size (inches)</span>' +
           '<input type="number" inputmode="decimal" step="any" min="0" class="cc-w" placeholder="W" value="' + esc(e.width || '') + '"> × ' +
           '<input type="number" inputmode="decimal" step="any" min="0" class="cc-h" placeholder="H" value="' + esc(e.height || '') + '"></div>' : '') +
-        '<label class="' + (c.qty_unsure ? 'cc-q' : '') + '"><span>Quantities' + (c.qty_unsure ? tag('questionable') : '') + '</span>' +
-          '<input type="text" inputmode="numeric" class="cc-eq" value="' + esc(rowsOf(c).map(r => r.quantity).join(', ')) + '" placeholder="e.g. 250, 500, 1000"></label>' +
+        (c.versions && c.versions.length
+          ? '<div class="cc-ev"><span>Versions (one order)</span>' + c.versions.map(v =>
+              '<div class="cc-ev-row"><span>' + esc(v.name) + '</span><input type="text" inputmode="numeric" class="cc-evq" aria-label="' + esc(v.name) + ' quantity" data-name="' + esc(v.name) +
+              '" value="' + esc(v.quantity) + '"></div>').join('') + '</div>'
+          : '<label class="' + (c.qty_unsure ? 'cc-q' : '') + '"><span>Quantities' + (c.qty_unsure ? tag('questionable') : '') + '</span>' +
+            '<input type="text" inputmode="numeric" class="cc-eq" value="' + esc(rowsOf(c).map(r => r.quantity).join(', ')) + '" placeholder="e.g. 250, 500, 1000"></label>') +
         '<div class="cc-edit-err"></div>' +
         '<div class="cc-edit-btns"><button type="button" class="cc-upd">Update price</button><button type="button" class="cc-cancel">Cancel</button></div>' +
       '</div>';
@@ -456,12 +464,22 @@
       form.querySelectorAll('select[data-f]').forEach(s => {
         if (s.value !== s.getAttribute('data-was') || /^(specified|questionable)$/.test(s.getAttribute('data-tag'))) options[s.getAttribute('data-f')] = s.value;
       });
-      const qtys = form.querySelector('.cc-eq').value.split(/[\s,;]+/).map(x => parseInt(x.replace(/[^0-9]/g, ''))).filter(n => n > 0)
-        .filter((n, i, a) => a.indexOf(n) === i).slice(0, 6);
       const err = form.querySelector('.cc-edit-err');
-      if (!qtys.length) { err.textContent = 'Enter at least one quantity.'; return; }
+      const body = { chat_id: chatId, product_id: c.product_id, options: options };
+      const vq = form.querySelectorAll('.cc-evq');
+      if (vq.length) {
+        // Versions stay one order: each design keeps its name, with its own quantity.
+        body.versions = Array.from(vq).map(i => ({ name: i.getAttribute('data-name'), quantity: parseInt(i.value.replace(/[^0-9]/g, '')) || 0 }))
+          .filter(v => v.quantity > 0);
+        if (!body.versions.length) { err.textContent = 'Enter a quantity for at least one version.'; return; }
+        if (body.versions.length === 1) { body.quantities = [body.versions[0].quantity]; delete body.versions; }
+      } else {
+        const qtys = form.querySelector('.cc-eq').value.split(/[\s,;]+/).map(x => parseInt(x.replace(/[^0-9]/g, ''))).filter(n => n > 0)
+          .filter((n, i, a) => a.indexOf(n) === i).slice(0, 6);
+        if (!qtys.length) { err.textContent = 'Enter at least one quantity.'; return; }
+        body.quantities = qtys;
+      }
       const wh = form.querySelector('.cc-wh');
-      const body = { chat_id: chatId, product_id: c.product_id, options: options, quantities: qtys };
       if (wh && wh.style.display !== 'none') {
         body.width = parseFloat(form.querySelector('.cc-w').value) || undefined;
         body.height = parseFloat(form.querySelector('.cc-h').value) || undefined;
