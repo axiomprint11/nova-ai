@@ -182,7 +182,8 @@ returns the would-be payload. Full write-up: `docs/CLIENT_BOT.md`. Never give it
 order through quoteProduct's `version_list` — and returns one card (`rows` of qty/price/cart data); `client-chat.js` merges cards
 with the same product+options into a "Your quote" pane (≥800px) with Qty · Price · Add to Cart. Spec rows carry `tag`
 (`specified` / `default` / `questionable` — questionable = a `clarify_for_ai` field left on its default, or no quantity
-given). Cards have **Edit**: `POST /api/client-bot/reprice` re-runs `priceCard()` (the same function the tool uses,
+given). The bot prices first and never asks (prompt rule 9a); questionable fields are yellow dropdowns on the card (an
+unstated quantity a yellow box) that re-price on change via `/api/client-bot/reprice`. Cards have **Edit**: `POST /api/client-bot/reprice` re-runs `priceCard()` (the same function the tool uses,
 public options only, no model call) and saves a `role='note'` row that is folded into the model's next user turn.
 **Attachments**: `POST /api/client-bot/upload` (raw body, token + limits checked before the body is read) →
 `client-files.js` (type by magic bytes; sharp previews; a hand-written PSD decoder; PDFs and spreadsheets read in
@@ -191,7 +192,7 @@ never public). The chat sends `files: [ref]`; only the uploader's unsent files a
 for the latest two file messages within a byte/page budget; if the API refuses one, the files are marked `blocked`
 and the answer is retried text-only. Admins get files at `/api/admin/client-bot/files/:ref{/preview}`. After an add the chat posts
 `nova-client:add-to-cart {item:{alreadyAdded:true}}` so the website refreshes its cart count.
-**Sign in from the chat**: a guest bar's Sign in opens the website login in a window (`loginUrl`), and the loader's
+**Sign in from the chat**: the header's Sign in button (guests) opens the website login in a window (`loginUrl`), and the loader's
 `followLogin()` (storage event + 2.5 s poll; `NovaClientChatAPI.loginChanged()`) signs the chat in when `axiom-print-app`
 changes; if the site defines `NovaClientChat.login(email, password) → token`, an in-chat form is shown instead and the
 credentials go only to the parent page (`nova-client:login` / `login-result`), never to Nova or the model. `resume()`

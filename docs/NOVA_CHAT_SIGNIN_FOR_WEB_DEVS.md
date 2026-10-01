@@ -13,9 +13,8 @@ except possibly one header (see "Dictation").
 
 ## What the customer sees
 
-A guest sees a bar under the chat header:
-
-> Sign in to see your projects, get your account pricing and add to your cart. **[Sign in]**
+A guest sees a **Sign in** button in the chat's top bar, next to the close button. (Signed-in customers see
+**History** there instead.)
 
 After signing in, the chat greets them by first name ("Hi Gus!"), shows "Signed in as Gus Kim", and keeps the
 conversation that was on screen. Account pricing, **My projects** and **Add to Cart** switch on straight away.

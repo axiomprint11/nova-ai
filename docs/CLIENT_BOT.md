@@ -157,8 +157,8 @@ the account pricing there.
 
 ### Signing in from the chat
 
-A guest sees a bar under the chat header: "Sign in to see your projects, get your account pricing and add to your cart"
-with a **Sign in** button. It works in one of two ways; the conversation on screen is kept either way, and the greeting
+A guest sees a **Sign in** button in the chat's top bar (beside the close button; it reads "Signing in…" while the
+website's login window is open). Signed in, it gives way to **History**. It works in one of two ways; the conversation on screen is kept either way, and the greeting
 switches to "Hi <first name>!".
 
 1. **Login window (works today, nothing to build).** Sign in opens the website's own login page
@@ -302,8 +302,14 @@ carries the total quantity only).
 
 Every option on a quote is tagged: **Specified** (the customer chose it), **Default** (the website default) or
 **Questionable** (left on the default although it changes the price — the fields ticked "clarify for AI" on the
-product, and the quantity when none was given). Questionable rows are highlighted, and Nova asks the customer to
-confirm them in one short question.
+product, and the quantity when none was given).
+
+**Price first, no questions.** NovaAI never asks a clarifying question before pricing: it prices straight away with
+everything the customer said (Specified) and the website defaults for the rest (Default); with no quantity, the
+default quantity. Questionable fields are **yellow dropdowns** right on the card (and an unstated quantity a yellow
+box): picking one prices the card again at once (`/api/client-bot/reprice`, no model call) and that field becomes
+Specified; the other yellow fields stay as they are. NovaAI asks only when it cannot tell which product is meant.
+Rule 9a in the prompt overrides any house rule that says to confirm details first.
 
 **Edit** on the card turns the options into dropdowns (public options only, choices that fit the current selection)
 and the quantities into a field. **Update price** prices it again on the server — no model call — and the new quote

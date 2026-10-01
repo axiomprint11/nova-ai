@@ -155,7 +155,7 @@
   const TAGS = {
     specified:    ['Specified', 'cc-t-spec', 'You chose this'],
     'default':    ['Default', 'cc-t-def', 'The website default \u2014 change it with Edit'],
-    questionable: ['Questionable', 'cc-t-q', 'Left on the default, but it changes the price \u2014 please check it']
+    questionable: ['Questionable', 'cc-t-q', 'Left on the default, but it changes the price \u2014 pick the right one']
   };
   function tag(t) {
     const d = TAGS[t];
@@ -174,14 +174,20 @@
         '<div><b>' + esc(c.product) + '</b>' + (sameReady ? '<small>Ready ' + esc(sameReady) + '</small>' : '') + '</div>' +
         (canEdit ? '<button type="button" class="cc-edit-btn" title="Change options or quantities">\u270e Edit</button>' : '') +
       '</div>' +
-      '<table class="cc-specs">' + (c.specs || []).filter(s => !/^quantity$/i.test(s.field)).slice(0, 16).map(s =>
-        '<tr class="' + (s.tag === 'questionable' ? 'cc-q' : '') + '"><td>' + esc(s.field) + '</td><td>' + esc(s.value) + tag(s.tag) + '</td></tr>').join('') + '</table>' +
+      '<table class="cc-specs">' + (c.specs || []).filter(s => !/^quantity$/i.test(s.field)).slice(0, 16).map(s => {
+        // "Clarify" fields left on the default: a yellow dropdown to pick right here.
+        const f = canEdit && s.tag === 'questionable' ? ((c.edit && c.edit.fields) || []).find(x => x.field === s.field && x.choices && x.choices.length > 1) : null;
+        return '<tr class="' + (s.tag === 'questionable' ? 'cc-q' : '') + '"><td>' + esc(s.field) + '</td><td>' + (f
+          ? '<select class="cc-qsel" data-qf="' + esc(s.field) + '" title="' + esc(TAGS.questionable[2]) + '">' +
+              f.choices.map(ch => '<option' + (ch === s.value ? ' selected' : '') + '>' + esc(ch) + '</option>').join('') + '</select>'
+          : esc(s.value) + tag(s.tag)) + '</td></tr>';
+      }).join('') + '</table>' +
       // Designs priced together as one order.
       (c.versions && c.versions.length ? '<div class="cc-vers"><div class="cc-vers-hd">' + c.versions.length + ' versions \u00b7 one order</div>' +
         c.versions.map(v => '<div class="cc-ver"><span>' + esc(v.name) + '</span><b>' + Number(v.quantity || 0).toLocaleString() + '</b></div>').join('') + '</div>' : '') +
-      (unsure ? '<div class="cc-unsure-note">Please check the options marked <b>Questionable</b> \u2014 they change the price.' +
-        (canEdit ? ' Tap <b>Edit</b> to change them.' : '') + '</div>' : '') +
-      '<table class="cc-ladder"><thead><tr><th>Qty' + (c.qty_unsure ? tag('questionable') : '') + '</th><th>Price</th><th></th></tr></thead><tbody>' +
+      (unsure ? '<div class="cc-unsure-note">' + (canEdit ? 'Please check the <b>yellow</b> choices \u2014 they change the price.'
+        : 'Please check the options marked <b>Questionable</b> \u2014 they change the price.') + '</div>' : '') +
+      '<table class="cc-ladder"><thead><tr><th>Qty' + (c.qty_unsure && !canEdit ? tag('questionable') : '') + '</th><th>Price</th><th></th></tr></thead><tbody>' +
       rows.map(r => {
         // Everything the server needs to price this exact item again and add it.
         const custom = (c.specs || []).some(s => /\(custom\)/i.test(String(s.value || '')));
@@ -191,7 +197,9 @@
           url: r.cart && r.cart.url, share_id: r.cart && r.cart.share_id, config: r.cart && r.cart.config,
           versions: r.versions || undefined, options: options,
           width: custom && c.edit ? c.edit.width : undefined, height: custom && c.edit ? c.edit.height : undefined };
-        return '<tr><td>' + Number(r.quantity || 0).toLocaleString() +
+        const qtyBox = canEdit && c.qty_unsure && rows.length === 1 && !(c.versions && c.versions.length);
+        return '<tr><td>' + (qtyBox ? '<input type="text" inputmode="numeric" class="cc-qsel cc-qqty" aria-label="Quantity" title="No quantity was given \u2014 type the one you need" value="' +
+            esc(r.quantity) + '">' : Number(r.quantity || 0).toLocaleString()) +
             (r.versions && r.versions.length ? '<small>' + r.versions.length + ' versions</small>' : '') + '</td>' +
           '<td>' + (r.discount && r.list_price > r.price ? '<s>' + money(r.list_price) + '</s> ' : '') + '<b>' + money(r.price) + '</b>' +
             '<small>' + money(r.each) + ' each' + (!sameReady && r.ready ? ' · ready ' + esc(r.ready) : '') + '</small></td>' +
@@ -598,7 +606,7 @@
       const sizeF = (e.fields || []).find(f => f.size);
       const showWH = e.custom_size && (e.width || (sizeF && /custom/i.test(sizeF.value || '')));
       return '<div class="cc-edit">' +
-        (e.fields || []).map(f => {
+        (e.fields || []).filter(f => !/^quantity$/i.test(f.field)).map(f => {
           const sp = byField[f.field] || {};
           return '<label class="' + (sp.tag === 'questionable' ? 'cc-q' : '') + '"><span>' + esc(f.field) + tag(sp.tag) + '</span>' +
             '<select data-f="' + esc(f.field) + '" data-was="' + esc(f.value || '') + '" data-tag="' + esc(sp.tag || '') + '"' + (f.size ? ' data-size="1"' : '') + '>' +
@@ -664,6 +672,12 @@
         body.height = parseFloat(form.querySelector('.cc-h').value) || undefined;
       }
       btn.disabled = true; btn.textContent = 'Pricing…'; err.textContent = '';
+      const j = await repriceCard(el, c, body);
+      if (!j.ok) { btn.disabled = false; btn.textContent = 'Update price'; err.textContent = j.error || 'That could not be priced.'; }
+    });
+    // Price a card again on the server; the new quote replaces the old one (rows
+    // included: removed quantities go).
+    async function repriceCard(el, c, body) {
       let j = {};
       try {
         const r = await fetch('/api/client-bot/reprice', { method: 'POST',
@@ -671,8 +685,7 @@
           body: JSON.stringify(Object.assign(body, opts.extraBody ? opts.extraBody() : {})) });
         j = await r.json().catch(() => ({}));
       } catch (x) { j = { error: 'Could not reach NovaAI.' }; }
-      if (!j.ok) { btn.disabled = false; btn.textContent = 'Update price'; err.textContent = j.error || 'That could not be priced.'; return; }
-      // The new quote replaces the old one (rows included: removed quantities go).
+      if (!j.ok) return j;
       groups = groups.filter(g => g.key !== c.key);
       remember(j.card);
       if (el.closest('.cc-pane')) paintPane();
@@ -680,6 +693,43 @@
         el.outerHTML = quote(j.card, R(j.card));
         if (wide()) paintPane();
       }
+      return j;
+    }
+    // A yellow choice on the card (a "clarify" field, or the quantity when none was
+    // given): picking one prices the card again straight away. What the customer
+    // specified stays; the other yellow fields stay on their default.
+    root.addEventListener('change', async (e) => {
+      const sel = e.target.closest && e.target.closest('.cc-qsel');
+      if (!sel) return;
+      const el = sel.closest('.cc-price');
+      const c = reg.get(Number(el && el.getAttribute('data-ref')));
+      if (!c) return;
+      const options = {};
+      (c.specs || []).forEach(sp => { if (sp.tag === 'specified') options[sp.field] = sp.value; });
+      const body = { chat_id: chatId, product_id: c.product_id, options: options };
+      if (sel.classList.contains('cc-qqty')) {
+        const n = parseInt(String(sel.value).replace(/[^0-9]/g, ''));
+        if (!(n > 0)) { sel.value = rowsOf(c)[0].quantity; return; }
+        body.quantities = [n];
+      } else {
+        options[sel.getAttribute('data-qf')] = sel.value;
+        if (c.versions && c.versions.length) body.versions = c.versions.map(v => ({ name: v.name, quantity: v.quantity }));
+        else body.quantities = rowsOf(c).map(r => r.quantity);
+        // Unspecified quantity stays the default one, still to be checked.
+        if (c.qty_unsure && !body.versions) delete body.quantities;
+      }
+      const custom = (c.specs || []).some(sp => /\(custom\)/i.test(String(sp.value || '')));
+      if (custom && c.edit) { body.width = c.edit.width || undefined; body.height = c.edit.height || undefined; }
+      el.classList.add('cc-busy'); sel.disabled = true;
+      const j = await repriceCard(el, c, body);
+      if (!j.ok) {
+        el.classList.remove('cc-busy'); sel.disabled = false;
+        const n = el.querySelector('.cc-unsure-note');
+        if (n) n.textContent = j.error || 'That could not be priced.';
+      }
+    });
+    root.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target.classList && e.target.classList.contains('cc-qqty')) { e.preventDefault(); e.target.blur(); }
     });
 
     send.onclick = () => ask(ta.value);

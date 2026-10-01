@@ -2135,3 +2135,21 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .cc-ai-av svg { width: 16px; height: 16px; }
 .cc-hist-note { margin: 4px auto 14px; max-width: 520px; text-align: center; font-size: 12px; color: var(--muted);
   background: #f6f6fb; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; line-height: 1.45; }
+
+/* ---- quote cards: "clarify" fields as yellow choices to pick right on the card ---- */
+.cc-price select.cc-qsel, .cc-price input.cc-qsel { margin: 0; max-width: 100%; box-sizing: border-box; font: 600 12.5px/1.2 inherit;
+  color: #78350f; background-color: #fef3c7; border: 1.5px solid #f59e0b; border-radius: 7px; padding: 4px 24px 4px 8px; cursor: pointer;
+  box-shadow: 0 0 0 3px rgba(245,158,11,.14); }
+.cc-price select.cc-qsel { appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2392400e' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 8px center; }
+.cc-price input.cc-qsel { width: 62px; padding: 4px 7px; cursor: text; }
+.cc-price .cc-qsel:hover { border-color: #d97706; }
+.cc-price .cc-qsel:focus { outline: none; border-color: #d97706; box-shadow: 0 0 0 3px rgba(245,158,11,.3); }
+.cc-price .cc-qsel:disabled { opacity: .6; }
+.cc-price.cc-busy { opacity: .7; pointer-events: none; }
+@media (max-width: 700px) { .cc-price select.cc-qsel, .cc-price input.cc-qsel { font-size: 16px; } }
+.cc-price tr.cc-q td { background: #fffbeb; }
+.cc-price tr.cc-q td:first-child { color: #92400e; }
+.cc-unsure-note { color: #92400e; background: #fffbeb; border-color: #fde68a; }
+.cc-t-q { background: #fef3c7; color: #92400e; }
