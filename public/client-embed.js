@@ -46,8 +46,8 @@
   function txt(v) { return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function el(tag, css) { var n = document.createElement(tag); n.style.cssText = css; return n; }
   function small() { return window.innerWidth < 700; }
-  var CHAT_ICON = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
-    'stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>';
+  // The AI sparkle: NovaAI is an AI assistant, and the button says so.
+  var CHAT_ICON = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M10 2Q10.9 8.1 17 9Q10.9 9.9 10 16Q9.1 9.9 3 9Q9.1 8.1 10 2Z"/><path d="M18 13Q18.4 15.6 21 16Q18.4 16.4 18 19Q17.6 16.4 15 16Q17.6 15.6 18 13Z"/><circle cx="5" cy="19" r="1.4"/></svg>';
   // Below the site's own pop-ups (menus, cart drawers), above the page.
   var Z = parseInt(CFG.zIndex) || 999;
 
@@ -58,8 +58,8 @@
       'border-radius:26px;cursor:pointer;display:none;align-items:center;gap:8px;color:#fff;font:600 15px/1 Inter,system-ui,sans-serif;' +
       'background:linear-gradient(135deg,#6366f1,#8b5cf6);box-shadow:0 8px 24px rgba(79,70,229,.35);');
     bubble.type = 'button';
-    bubble.setAttribute('aria-label', 'Chat with Nova');
-    bubble.innerHTML = CHAT_ICON + '<span>Ask Nova</span>';
+    bubble.setAttribute('aria-label', 'Chat with NovaAI');
+    bubble.innerHTML = CHAT_ICON + '<span>Ask NovaAI</span>';
 
     // Phone: a full-width bar fixed to the bottom of the screen — tap to chat.
     // The site's own sticky bars (Add to Cart, Order now) are moved up above it.
@@ -69,10 +69,10 @@
       'color:#fff;font:500 13px/1.25 Inter,system-ui,-apple-system,sans-serif;-webkit-tap-highlight-color:transparent;' +
       'background:linear-gradient(110deg,#4f46e5,#7c3aed);box-shadow:0 -4px 18px rgba(30,20,70,.18);');
     bar.type = 'button';
-    bar.setAttribute('aria-label', 'Chat with Nova');
+    bar.setAttribute('aria-label', 'Chat with NovaAI');
     bar.innerHTML =
       '<span style="flex:none;width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center">' + CHAT_ICON + '</span>' +
-      '<span style="flex:1;min-width:0"><b style="display:block;font-size:15px;font-weight:700">' + txt(CFG.barTitle || 'Ask Nova') + '</b>' +
+      '<span style="flex:1;min-width:0"><b style="display:block;font-size:15px;font-weight:700">' + txt(CFG.barTitle || 'Ask NovaAI') + '</b>' +
       '<span style="display:block;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + txt(CFG.barText || 'Prices, options, files & your orders') + '</span></span>' +
       '<span style="flex:none;padding:8px 14px;border-radius:999px;background:#fff;color:#4f46e5;font-weight:700;font-size:13px">Chat ›</span>';
 
@@ -96,7 +96,7 @@
       }
     }
     var frame = document.createElement('iframe');
-    frame.title = 'Nova — AxiomPrint assistant';
+    frame.title = 'NovaAI — AxiomPrint AI assistant';
     frame.setAttribute('allow', 'clipboard-write; microphone');   // microphone: speech to text
     frame.style.cssText = 'width:100%;height:100%;border:0;display:block;';
     var loaded = false;

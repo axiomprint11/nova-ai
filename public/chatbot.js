@@ -132,14 +132,32 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }
-// Dictation. The module hides the button on browsers that can't do it.
+// Voice typing: the mic turns the composer into a recording bar (waveform, timer,
+// Cancel / Done); on Done the server turns the recording into text and it lands in
+// the box to check and send. Same module as the customer chat (axiom-voice.js).
 document.addEventListener('DOMContentLoaded', () => {
-  if (!window.AxiomSpeech) return;
-  window.AxiomSpeech.attach({
-    button: document.getElementById('micBtn'),
-    input: document.getElementById('input'),
-    onInput: () => { const i = document.getElementById('input'); if (i) autoResize(i); },
-    onError: (m) => { const i = document.getElementById('input'); if (i) i.placeholder = m; }
+  const mic = document.getElementById('micBtn'), inp = document.getElementById('input');
+  if (!mic || !inp) return;
+  if (!window.AxiomVoice) { mic.style.display = 'none'; return; }
+  const tok = () => (typeof token !== 'undefined' && token) || localStorage.getItem('axiom_token') || '';
+  const hint = inp.placeholder;
+  let hintTimer = null;
+  window.AxiomVoice.attach({
+    button: mic, input: inp, host: mic.closest('.input-shell'),
+    useServer: () => fetch('/api/voice', { headers: { 'Authorization': 'Bearer ' + tok() } })
+      .then(r => r.json()).then(j => !!(j && j.server)).catch(() => false),
+    transcribe: async (blob) => {
+      const r = await fetch('/api/transcribe', { method: 'POST', body: blob,
+        headers: { 'Content-Type': 'audio/wav', 'Authorization': 'Bearer ' + tok() } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) throw new Error(j.error || 'Could not turn that into text. Please try again.');
+      return j.text;
+    },
+    onText: (t) => {
+      inp.value = (inp.value.trim() ? inp.value.replace(/\s*$/, ' ') : '') + t;
+      autoResize(inp); inp.focus(); inp.selectionStart = inp.selectionEnd = inp.value.length;
+    },
+    onError: (m) => { clearTimeout(hintTimer); inp.placeholder = m; hintTimer = setTimeout(() => { inp.placeholder = hint; }, 7000); }
   });
 });
 

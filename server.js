@@ -23,8 +23,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.6.6';
-const NOVA_BUILT = '10-01-2026 2:40pm';
+const NOVA_VERSION = '1.6.7';
+const NOVA_BUILT = '10-01-2026 3:10pm';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -5946,6 +5946,30 @@ app.post('/api/login', (req, res) => {
 // ====== STEPPED FLOW (debug/optimize mode) ======
 // Each step is a discrete call. Steps 2,3,4 are pure data (no model) for speed.
 // The frontend drives the sequence and gates each step behind a Next click.
+// ---- Voice typing for the staff chats (ChatBot page and CRM widget) ----
+// Same recording bar and speech service as the customer chat (public/axiom-voice.js,
+// speech-to-text.js). Recordings are never stored.
+const SttStaff = require('./speech-to-text')();
+const sttStaffHits = new Map();
+app.get('/api/voice', auth, (req, res) => res.json({ ok: true, server: !!SttStaff.provider() }));
+app.post('/api/transcribe', auth, (req, res, next) => {
+  if (!SttStaff.provider()) return res.status(503).json({ ok: false, error: 'Voice typing is not set up on the server.' });
+  if (parseInt(req.headers['content-length']) > 4 * 1024 * 1024 + 1024) return res.status(413).json({ ok: false, error: 'That recording is too long — two minutes at most.' });
+  const who = String(req.user && req.user.key || 'x'), now = Date.now();
+  const arr = (sttStaffHits.get(who) || []).filter(t => now - t < 10 * 60 * 1000);
+  if (arr.length >= 120) return res.status(429).json({ ok: false, error: 'Too many recordings — please wait a few minutes.' });
+  arr.push(now); sttStaffHits.set(who, arr);
+  next();
+}, express.raw({ type: () => true, limit: 4 * 1024 * 1024 + 1024 }), async (req, res) => {
+  try {
+    res.json({ ok: true, text: await SttStaff.transcribe(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)) });
+  } catch (e) {
+    if (/recording|format/.test(e.message)) return res.status(400).json({ ok: false, error: 'That recording could not be read. Please try again.' });
+    console.error('STAFF transcribe', e.message);
+    res.status(502).json({ ok: false, error: 'Could not turn that into text. Please try again.' });
+  }
+});
+
 app.post('/api/chatbot/chat', auth, async (req, res) => {
   const { messages } = req.body;
 

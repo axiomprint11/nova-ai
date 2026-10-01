@@ -233,7 +233,7 @@
             '<path d="M5 10a7 7 0 0 0 14 0"></path><line x1="12" y1="17" x2="12" y2="22"></line></svg></button>' +
           '<button type="button" class="cc-send" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" ' +
           'stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button></div>' +
-        '<div class="cc-hint">' + esc(opts.hint || 'Nova can make mistakes. Prices are confirmed at checkout.') + '</div>' +
+        '<div class="cc-hint">' + esc(opts.hint || 'NovaAI is an AI assistant and can make mistakes. Prices are confirmed at checkout.') + '</div>' +
       '</div>' +
       '<div class="cc-drop">Drop files to attach</div>' +
       '</div>' +
@@ -373,7 +373,7 @@
             body: JSON.stringify(Object.assign({ chat_id: chatId, product_id: item.product_id, options: item.options, quantity: item.quantity,
               versions: item.versions, width: item.width, height: item.height, job_name: job.value }, opts.extraBody ? opts.extraBody() : {})) });
           j = await r.json().catch(() => ({}));
-        } catch (err) { j = { error: 'Could not reach Nova.' }; }
+        } catch (err) { j = { error: 'Could not reach NovaAI.' }; }
         a.classList.remove('busy');
         if (j.needs_signin) { msg.innerHTML = 'Please <a href="' + LOGIN + '" target="_blank" rel="noopener">sign in</a> again, then refresh the page.'; go.disabled = false; go.textContent = 'Try again'; return; }
         if (!j.ok) {
@@ -404,13 +404,65 @@
       row.className = 'msg-row' + (role === 'user' ? ' user' : '');
       row.innerHTML = role === 'user'
         ? '<div class="msg-col"><div class="bubble user"></div></div>'
-        : '<div class="msg-avatar ai">N</div><div class="msg-col"><div class="msg-meta">Nova</div><div class="bubble ai"></div></div>';
+        : '<div class="msg-avatar ai cc-ai-av"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M10 2Q10.9 8.1 17 9Q10.9 9.9 10 16Q9.1 9.9 3 9Q9.1 8.1 10 2Z"/><path d="M18 13Q18.4 15.6 21 16Q18.4 16.4 18 19Q17.6 16.4 15 16Q17.6 15.6 18 13Z"/><circle cx="5" cy="19" r="1.4"/></svg></div><div class="msg-col"><div class="msg-meta">NovaAI</div><div class="bubble ai"></div></div>';
       const b = row.querySelector('.bubble');
       if (role === 'user') { if (html) { const t = document.createElement('div'); t.textContent = html; b.appendChild(t); } }
       else b.innerHTML = html;
       inner.appendChild(row);
       box.scrollTop = box.scrollHeight;
       return b;
+    }
+    // An answer and its cards. Quotes join the pane on the right when there is room;
+    // live answers also move project lists to My projects.
+    function showAnswer(b, reply, cards, live) {
+      let cardsNow = cards || [], projNote = '';
+      const merged = cardsNow.filter(c => c.type === 'price').map(remember);
+      const projs = cardsNow.filter(c => c.type === 'projects');
+      if (live && wide() && projs.length && !projTab.hidden) {
+        const list = [].concat.apply([], projs.map(c => c.projects || []));
+        cardsNow = cardsNow.filter(c => c.type !== 'projects');
+        paintProjects(list); showTab('projects');
+        projNote = '<div class="cc-moved"><b>' + list.length + ' project' + (list.length === 1 ? '' : 's') + '</b> \u2014 on the right, under My projects.</div>';
+      }
+      if (wide() && merged.length) {
+        if (live) paintPane();
+        // The quote is on the right; no "on the quote at the right" lines in the chat.
+        b.innerHTML = md(reply) + cardsNow.filter(c => c.type !== 'price').map(card).join('') + projNote;
+      } else {
+        b.innerHTML = md(reply) + cardsNow.map(c => c.type === 'price' ? quote(c, R(c)) : card(c)).join('') + projNote;
+        if (live && merged.length) paintPane();
+      }
+    }
+    // History: show an earlier conversation and carry on from it. Prices in it are
+    // from that day; Edit -> Update price (or asking again) gives today's.
+    async function load(id) {
+      if (busy) return false;
+      let j = {};
+      try {
+        const r = await fetch('/api/client-bot/history/' + encodeURIComponent(id),
+          { headers: { 'Authorization': 'Bearer ' + (opts.getToken ? opts.getToken() : '') } });
+        j = await r.json().catch(() => ({}));
+      } catch (e) { j = {}; }
+      if (!j.ok) return j.error || 'That conversation could not be opened.';
+      chatId = j.chat.id; groups = []; pending = []; paintFiles();
+      refreshTabs(); inner.innerHTML = ''; sugg.style.display = 'none';
+      inner.insertAdjacentHTML('beforeend', '<div class="cc-hist-note">Conversation from ' + esc(when(j.chat.started)) +
+        '. Prices are from then \u2014 tap <b>Edit</b> \u2192 <b>Update price</b> on a quote, or just ask, for today\u2019s price.</div>');
+      (j.messages || []).forEach(m => {
+        if (m.role === 'user') {
+          const ub = add('user', m.content);
+          if (m.files && m.files.length) ub.insertAdjacentHTML('afterbegin', '<div class="cc-sent-files">' + m.files.map(f =>
+            '<span class="cc-sent-file"><i>' + fileIcon(f.kind) + '</i>' + esc(f.name) + '</span>').join('') + '</div>');
+        } else showAnswer(add('ai', ''), m.content, m.cards, false);
+      });
+      paintPane();
+      box.scrollTop = box.scrollHeight;
+      return true;
+    }
+    function when(t) {
+      const d = new Date(String(t || '').replace(' ', 'T') + (/[zZ]|[+-]\d\d:?\d\d$/.test(String(t || '')) ? '' : 'Z'));
+      return isNaN(d) ? 'earlier' : d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) +
+        ' at ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
     }
     function greet(text) {
       refreshTabs();
@@ -453,29 +505,11 @@
         if (!j.ok) { b.innerHTML = '<p class="cc-err">' + esc(j.error || 'Something went wrong. Please try again.') + '</p>'; }
         else {
           chatId = j.chat_id;
-          let cardsNow = j.cards || [], projNote = '';
-          const prices = cardsNow.filter(c => c.type === 'price');
-          const merged = prices.map(remember);
-          // Projects go to the My projects tab when there is room.
-          const projs = cardsNow.filter(c => c.type === 'projects');
-          if (wide() && projs.length && !projTab.hidden) {
-            const list = [].concat.apply([], projs.map(c => c.projects || []));
-            cardsNow = cardsNow.filter(c => c.type !== 'projects');
-            paintProjects(list); showTab('projects');
-            projNote = '<div class="cc-moved"><b>' + list.length + ' project' + (list.length === 1 ? '' : 's') + '</b> \u2014 on the right, under My projects.</div>';
-          }
-          if (wide() && merged.length) {
-            paintPane();
-            // The quote is on the right; no "on the quote at the right" lines in the chat.
-            b.innerHTML = md(j.reply) + cardsNow.filter(c => c.type !== 'price').map(card).join('') + projNote;
-          } else {
-            b.innerHTML = md(j.reply) + cardsNow.map(c => c.type === 'price' ? quote(c, R(c)) : card(c)).join('') + projNote;
-            if (merged.length) paintPane();
-          }
-          if (opts.onCartAdded && cardsNow.some(c => c.type === 'cart_added' && !c.preview)) opts.onCartAdded();
+          showAnswer(b, j.reply, j.cards || [], true);
+          if (opts.onCartAdded && (j.cards || []).some(c => c.type === 'cart_added' && !c.preview)) opts.onCartAdded();
           if (opts.onAnswer) opts.onAnswer(j, b);
         }
-      } catch (e) { b.innerHTML = '<p class="cc-err">Could not reach Nova. Please try again.</p>'; }
+      } catch (e) { if (window.console) console.error('NovaAI', e); b.innerHTML = '<p class="cc-err">Could not reach NovaAI. Please try again.</p>'; }
       busy = false; send.disabled = false;
       box.scrollTop = box.scrollHeight;
       ta.focus();
@@ -636,7 +670,7 @@
           headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (opts.getToken ? opts.getToken() : '') },
           body: JSON.stringify(Object.assign(body, opts.extraBody ? opts.extraBody() : {})) });
         j = await r.json().catch(() => ({}));
-      } catch (x) { j = { error: 'Could not reach Nova.' }; }
+      } catch (x) { j = { error: 'Could not reach NovaAI.' }; }
       if (!j.ok) { btn.disabled = false; btn.textContent = 'Update price'; err.textContent = j.error || 'That could not be priced.'; return; }
       // The new quote replaces the old one (rows included: removed quantities go).
       groups = groups.filter(g => g.key !== c.key);
@@ -660,7 +694,7 @@
     }
     ta.oninput = grow;
     // A placeholder that fits the box on one line.
-    const fitHint = () => { ta.placeholder = ta.clientWidth && ta.clientWidth < 290 ? 'Ask Nova anything\u2026' : 'Ask about products, prices, orders\u2026'; };
+    const fitHint = () => { ta.placeholder = ta.clientWidth && ta.clientWidth < 290 ? 'Ask NovaAI anything\u2026' : 'Ask about products, prices, orders\u2026'; };
     fitHint(); grow();
     if (window.ResizeObserver) new ResizeObserver(() => { fitHint(); if (!ta.value) grow(); }).observe(ta);
     // Speech to text (the shared module hides the button where the browser cannot).
@@ -695,6 +729,8 @@
       resume: (g) => { chatId = null; projLoaded = false; projBody.innerHTML = ''; refreshTabs(); add('ai', md(g || opts.greeting || '')); box.scrollTop = box.scrollHeight; },
       reset: (g) => { chatId = null; groups = []; pending = []; paintFiles(); paintPane(); greet(g || opts.greeting); },
       setGreeting: (g) => { opts.greeting = g; if (!chatId) greet(g); },
+      load: load,
+      chatId: () => chatId,
       ask: ask
     };
   }

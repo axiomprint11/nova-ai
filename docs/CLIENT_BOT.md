@@ -67,10 +67,10 @@ Paste into the `<head>` of axiomprint.com (every page):
 
 It adds the chat launcher:
 
-- **Desktop** — an **Ask Nova** button in the bottom-right corner; the chat opens as an 876 × 620 panel (chat on the
+- **Desktop** — an **Ask NovaAI** button (with the AI sparkle) in the bottom-right corner; the chat opens as an 876 × 620 panel (chat on the
   left, "Your quote" on the right). Product suggestions list one per line: the best four, then **Show more products**
   (up to 12).
-- **Phone** (under 700px) — a **full-width bar fixed to the bottom** of the screen ("Ask Nova · Chat ›"). Tap it and
+- **Phone** (under 700px) — a **full-width bar fixed to the bottom** of the screen ("Ask NovaAI · Chat ›"). Tap it and
   the chat opens full screen, sized to the visible area so the keyboard never covers the message box. Anything the
   site pins to the bottom of the screen (the sticky **Order Now / Add to Cart** bar, a cookie notice) is moved up above
   the bar automatically, and the page gets matching space at the end, so nothing is covered. Big overlays (menus,
@@ -97,7 +97,7 @@ Optional settings in `window.NovaClientChat`:
 | `position: 'left'` | Desktop button on the left. |
 | `lift: false` | Phone: don't move the site's sticky bars up (then place them yourself). |
 | `liftSelector: '.sticky-cart'` | Phone: also move these elements up, if the automatic check misses one. |
-| `barTitle`, `barText` | Phone bar wording (default "Ask Nova" / "Prices, options, files & your orders"). |
+| `barTitle`, `barText` | Phone bar wording (default "Ask NovaAI" / "Prices, options, files & your orders"). |
 | `zIndex: 999` | Stacking of the launcher (default 999 — under the site's own pop-ups). |
 
 `NovaClientChatAPI.open()` opens the chat from any link or button on the site; `NovaClientChatAPI.refresh()` re-checks
@@ -210,6 +210,27 @@ Pass it as `window.NovaClientChat.signin = { payload: '…', sig: '…' }`.
 
 Only `https://axiomprint.com` and `https://www.axiomprint.com` may send a sign-in to the chat page, and only those
 sites may frame it.
+
+## The name: NovaAI
+
+Customers always see the assistant as **NovaAI** with an AI sparkle and an "AI" badge in the header, so it is clear they
+are talking to an AI: the launcher ("Ask NovaAI"), the header ("NovaAI · AxiomPrint's AI assistant"), each answer
+("NovaAI" with the sparkle avatar) and the hint under the box ("NovaAI is an AI assistant and can make mistakes…").
+The model calls itself NovaAI. A greeting saved in Setup that still says "Nova" is shown as "NovaAI" (and
+"AxiomPrint's assistant" as "AxiomPrint's AI assistant").
+
+## History (signed-in customers)
+
+A **History** button in the header (signed-in customers only) lists their earlier chats, newest first, grouped Today /
+Yesterday / This week / This month / Earlier, each with its first message and when it was last used. Tapping one shows
+that conversation again — quotes back in the Quote pane — with a note that its prices are from that day (Edit → Update
+price, or asking again, gives today's). Writing on carries on that same conversation; Nova reads it as before.
+**New chat** starts a fresh one.
+
+Who may open or continue a conversation (`ownsChat()` in client-bot.js): the visitor who had it, or — for a signed-in
+website customer — that same customer on any device or visit. Guests' chats are never listed. Admin previews stay
+with the admin. `GET /api/client-bot/history` lists, `GET /api/client-bot/history/:id` opens one (messages, quote cards
+and attached file names; no internal notes).
 
 ## My projects (signed-in customers)
 

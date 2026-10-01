@@ -195,10 +195,13 @@ and the answer is retried text-only. Admins get files at `/api/admin/client-bot/
 `followLogin()` (storage event + 2.5 s poll; `NovaClientChatAPI.loginChanged()`) signs the chat in when `axiom-print-app`
 changes; if the site defines `NovaClientChat.login(email, password) → token`, an in-chat form is shown instead and the
 credentials go only to the parent page (`nova-client:login` / `login-result`), never to Nova or the model. `resume()`
-keeps the conversation on screen across a sign-in. Voice typing: `public/axiom-voice.js` shows a recording bar (waveform, timer, Cancel/Done), records 16 kHz WAV and
+keeps the conversation on screen across a sign-in. Customers see the assistant as **NovaAI** (sparkle mark, "AI" badge;
+saved greetings saying "Nova" are shown as "NovaAI"). **History** (signed-in only): `GET /api/client-bot/history{/:id}`;
+`ownsChat()` lets the same verified customer continue a chat from any device; `ClientChat.load(id)`. Voice typing: `public/axiom-voice.js` shows a recording bar (waveform, timer, Cancel/Done), records 16 kHz WAV and
 posts it to `POST /api/client-bot/transcribe` → `speech-to-text.js` (OpenAI with `OPENAI_API_KEY`, or
 `STT_PROVIDER=google`; never stored); with no service it falls back to browser SpeechRecognition behind the same bar
-(`GET /api/client-bot/voice`). Staff ChatBot still uses the older `axiom-speech.js`. Iframe `allow="microphone"`.
+(`GET /api/client-bot/voice`). The staff ChatBot page and CRM widget use the same recording bar (`GET /api/voice`,
+`POST /api/transcribe`, staff `auth`); `axiom-speech.js` is no longer loaded anywhere. Iframe `allow="microphone"`.
 It also has `get_template` (die lines of visible options; customer-specific dies only for that customer; PDFs streamed
 by Nova through a signed `/api/client-bot/template/...` link) and `estimate_installation` / `estimate_delivery` (the
 shared `InstallPricing` engine and live admin config via `getInstallPricing()`; customers see totals and line names,
