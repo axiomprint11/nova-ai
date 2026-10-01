@@ -1991,3 +1991,27 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .cc-ev-row input { padding: 6px 9px !important; }
 .cc-ev-row span { font-weight: 500; color: var(--ink); }
 .cc-edit input, .cc-edit select { margin: 0; }
+
+/* ---- client chat: Add to Cart (job name step, added card) ---- */
+.cc-addrow td { padding: 0 0 10px !important; border-top: 0 !important; width: auto !important; white-space: normal !important;
+  text-align: left !important; font-weight: 400 !important; }
+.cc-pane, .cc-main { min-width: 0; }
+.cc-price { min-width: 0; overflow-wrap: anywhere; }
+.cc-add { border: 1px solid #c7d2fe; background: #f5f7ff; border-radius: 9px; padding: 9px 10px; display: flex; flex-direction: column; gap: 7px; font-size: 12.5px; }
+.cc-add label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.cc-add input { margin: 0; padding: 7px 9px; font-size: 14px; border-radius: 8px; }
+.cc-add-btns { display: flex; gap: 6px; }
+.cc-add-go { flex: 1; padding: 8px 10px; border: none; border-radius: 8px; background: var(--indigo); color: #fff; font: 600 12.5px/1.2 inherit; cursor: pointer; }
+.cc-add-go:disabled { opacity: .7; }
+.cc-add-x { padding: 8px 12px; border: 1.5px solid var(--line); border-radius: 8px; background: #fff; color: var(--muted); font: 600 12.5px/1 inherit; cursor: pointer; }
+.cc-add-msg { color: var(--ink); line-height: 1.45; }
+.cc-add-msg:empty { display: none; }
+.cc-add-msg a { color: var(--indigo-dark); font-weight: 600; }
+.cc-added { margin-top: 8px; border: 1px solid #bbf7d0; background: #f0fdf4; border-radius: 11px; padding: 10px 12px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+.cc-added.preview { border-color: #fde68a; background: #fffbeb; }
+.cc-added-hd { font-weight: 700; color: #166534; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+.cc-added.preview .cc-added-hd { color: #92400e; }
+.cc-added small { color: var(--muted); }
+.cc-added .cc-cart { align-self: flex-start; margin-top: 4px; }
+.cc-would { margin-top: 6px; font-size: 11.5px; }
+.cc-would pre { max-height: 220px; overflow: auto; background: #f8f8fc; border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 11px; white-space: pre-wrap; }

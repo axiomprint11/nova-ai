@@ -219,15 +219,41 @@
 
     function say(msg) { try { frame.contentWindow.postMessage(msg, HOST); } catch (e) {} }
     function val(v) { try { return typeof v === 'function' ? v() : v; } catch (e) { return null; } }
+    // The customer's login token. The website keeps it under tokenKey
+    // ('axiom-print-app'), usually as saved app state (JSON) with the token inside.
+    function dig(o, depth) {
+      if (!o || typeof o !== 'object' || depth > 5) return null;
+      var names = ['access_token', 'accessToken', 'token', 'authToken', 'auth_token', 'bearer', 'jwt'];
+      for (var i = 0; i < names.length; i++) {
+        var x = o[names[i]];
+        if (typeof x === 'string' && x.length > 15) return x;
+      }
+      for (var k in o) {
+        if (Object.prototype.hasOwnProperty.call(o, k)) { var r = dig(o[k], depth + 1); if (r) return r; }
+      }
+      return null;
+    }
+    function tokenFrom(v) {
+      if (!v) return null;
+      v = String(v).trim();
+      if (/^[\[{"]/.test(v)) {
+        try {
+          var j = JSON.parse(v);
+          if (typeof j === 'string') return j.length > 15 ? j : null;
+          return dig(j, 0);
+        } catch (e) { return null; }
+      }
+      return v.length > 15 ? v : null;
+    }
     function findToken() {
       var t = val(CFG.customerToken);
-      if (t) return String(t);
+      if (t) return tokenFrom(t);
       if (CFG.customerToken === false) return null;
-      var keys = [CFG.tokenKey, 'customer_token', 'access_token', 'token', 'auth_token'].filter(Boolean);
+      var keys = [CFG.tokenKey, 'axiom-print-app', 'customer_token', 'access_token', 'token', 'auth_token'].filter(Boolean);
       for (var i = 0; i < keys.length; i++) {
         try {
-          var v = localStorage.getItem(keys[i]);
-          if (v && v.length > 15) return v.replace(/^"|"$/g, '');
+          var found = tokenFrom(localStorage.getItem(keys[i])) || tokenFrom(sessionStorage.getItem(keys[i]));
+          if (found) return found;
         } catch (e) {}
       }
       return null;
@@ -247,6 +273,12 @@
         if (typeof CFG.addToCart === 'function') say({ type: 'nova-client:cart-ready' });
       }
       if (d.type === 'nova-client:close') close();
+      // Nova already put it in the cart: the site refreshes its cart count
+      // (its own listener does that; onCartChanged is an optional extra hook).
+      if (d.type === 'nova-client:add-to-cart' && d.item && d.item.alreadyAdded) {
+        if (typeof CFG.onCartChanged === 'function') { try { CFG.onCartChanged(); } catch (e) {} }
+        return;
+      }
       if (d.type === 'nova-client:add-to-cart' && typeof CFG.addToCart === 'function') {
         Promise.resolve().then(function () { return CFG.addToCart(d.item); })
           .then(function (r) { say({ type: 'nova-client:cart-result', id: d.id, ok: r !== false }); },

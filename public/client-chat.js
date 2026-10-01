@@ -83,6 +83,15 @@
           : 'Estimate only' + (c.confirm ? ' — our team will confirm it with you.' : ' — final price confirmed by our team.')) + '</div>' +
       '</div>';
     }
+    if (c.type === 'cart_added') {
+      return '<div class="cc-added' + (c.preview ? ' preview' : '') + '"><div class="cc-added-hd">' +
+        (c.preview ? 'Admin preview \u2014 not added to the real cart' : '\u2713 Added to your cart') + '</div>' +
+        '<div>' + Number(c.quantity || 0).toLocaleString() + ' ' + esc(c.product) +
+          (c.versions && c.versions.length ? ' (' + c.versions.length + ' versions)' : '') + ' \u00b7 <b>' + money(c.price) + '</b></div>' +
+        (c.job_name ? '<small>Job: ' + esc(c.job_name) + '</small>' : '') +
+        (c.checkout && !c.preview ? '<a class="cc-cart" href="' + esc(c.checkout) + '" target="_blank" rel="noopener">Upload artwork &amp; check out</a>' : '') +
+      '</div>';
+    }
     if (c.type === 'orders') {
       return '<div class="cc-orders">' + (c.orders || []).map(o =>
         '<div class="cc-ord">' +
@@ -141,16 +150,22 @@
         (canEdit ? ' Tap <b>Edit</b> to change them.' : '') + '</div>' : '') +
       '<table class="cc-ladder"><thead><tr><th>Qty' + (c.qty_unsure ? tag('questionable') : '') + '</th><th>Price</th><th></th></tr></thead><tbody>' +
       rows.map(r => {
+        // Everything the server needs to price this exact item again and add it.
+        const custom = (c.specs || []).some(s => /\(custom\)/i.test(String(s.value || '')));
+        const options = {};
+        (c.specs || []).forEach(s => { if (!/\(custom\)/i.test(String(s.value || ''))) options[s.field] = s.value; });
         const item = { product_id: c.product_id || null, product: c.product, quantity: r.quantity, price: r.price,
           url: r.cart && r.cart.url, share_id: r.cart && r.cart.share_id, config: r.cart && r.cart.config,
-          versions: r.versions || undefined };
+          versions: r.versions || undefined, options: options,
+          width: custom && c.edit ? c.edit.width : undefined, height: custom && c.edit ? c.edit.height : undefined };
         return '<tr><td>' + Number(r.quantity || 0).toLocaleString() +
             (r.versions && r.versions.length ? '<small>' + r.versions.length + ' versions</small>' : '') + '</td>' +
           '<td>' + (r.discount && r.list_price > r.price ? '<s>' + money(r.list_price) + '</s> ' : '') + '<b>' + money(r.price) + '</b>' +
             '<small>' + money(r.each) + ' each' + (!sameReady && r.ready ? ' · ready ' + esc(r.ready) : '') + '</small></td>' +
-          '<td>' + (item.url ? '<a class="cc-cart" href="' + esc(item.url) + '" target="_blank" rel="noopener" data-item="' +
+          '<td>' + (item.product_id ? '<a class="cc-cart" href="' + esc(item.url || '#') + '" target="_blank" rel="noopener" data-item="' +
             esc(JSON.stringify(item)) + '">Add to Cart</a>' : '') + '</td></tr>';
       }).join('') + '</tbody></table>' +
+      (c.account_pricing ? '<div class="cc-note">Your account pricing is applied in the cart.</div>' : '') +
     '</div>';
   }
 
@@ -243,19 +258,65 @@
       if (el) pick(el);
     });
 
+    // Add to Cart on a quote row. Signed in: name the job, then the server puts it
+    // in the customer's real axiomprint.com cart (the click is their yes). Guest:
+    // a sign-in link, or the product page with everything selected.
+    const LOGIN = 'https://axiomprint.com/login';
+    function closeAdd(tr) { const x = tr && tr.nextElementSibling; if (x && x.classList.contains('cc-addrow')) x.remove(); }
     root.addEventListener('click', async (e) => {
-      const a = e.target.closest && e.target.closest('a.cc-cart');
-      if (!a || !opts.addToCart) return;
+      const a = e.target.closest && e.target.closest('a.cc-cart[data-item]');
+      if (!a) return;
       e.preventDefault();
+      if (a.classList.contains('done') || a.classList.contains('busy')) return;
       let item = {};
       try { item = JSON.parse(a.getAttribute('data-item') || '{}'); } catch (x) {}
-      const label = a.textContent;
-      a.classList.add('busy'); a.textContent = 'Adding…';
-      let ok = false;
-      try { ok = await opts.addToCart(item); } catch (x) { ok = false; }
-      a.classList.remove('busy');
-      if (ok) { a.classList.add('done'); a.textContent = '✓ In cart'; }
-      else { a.textContent = label; window.open(item.url || a.href, '_blank', 'noopener'); }
+      const tr = a.closest('tr');
+      if (tr.nextElementSibling && tr.nextElementSibling.classList.contains('cc-addrow')) { closeAdd(tr); return; }
+      root.querySelectorAll('.cc-addrow').forEach(x => x.remove());
+      const signedIn = opts.signedIn ? !!opts.signedIn() : false;
+      tr.insertAdjacentHTML('afterend', '<tr class="cc-addrow"><td colspan="3"><div class="cc-add">' + (signedIn
+        ? '<label><span>Job name</span><input type="text" class="cc-job" maxlength="120" value="' + esc(item.product || '') + '"></label>' +
+          '<div class="cc-add-btns"><button type="button" class="cc-add-go">Add ' + Number(item.quantity || 0).toLocaleString() + ' to cart \u00b7 ' + money(item.price) + '</button>' +
+          '<button type="button" class="cc-add-x">Cancel</button></div><div class="cc-add-msg"></div>'
+        : '<div class="cc-add-msg">Sign in to add this to your cart: <a href="' + LOGIN + '" target="_blank" rel="noopener">Sign in</a>, then refresh the page.' +
+          (item.url && item.url !== '#' ? ' Or <a href="' + esc(item.url) + '" target="_blank" rel="noopener">open it on the product page</a> with these options selected.' : '') + '</div>') +
+        '</div></td></tr>');
+      const row = tr.nextElementSibling;
+      const job = row.querySelector('.cc-job');
+      if (job) { job.focus(); job.select(); }
+      const x = row.querySelector('.cc-add-x');
+      if (x) x.onclick = () => row.remove();
+      const go = row.querySelector('.cc-add-go');
+      if (!go) return;
+      const doAdd = async () => {
+        const msg = row.querySelector('.cc-add-msg');
+        go.disabled = true; go.textContent = 'Adding\u2026'; a.classList.add('busy');
+        let j = {};
+        try {
+          const r = await fetch('/api/client-bot/cart', { method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (opts.getToken ? opts.getToken() : '') },
+            body: JSON.stringify(Object.assign({ chat_id: chatId, product_id: item.product_id, options: item.options, quantity: item.quantity,
+              versions: item.versions, width: item.width, height: item.height, job_name: job.value }, opts.extraBody ? opts.extraBody() : {})) });
+          j = await r.json().catch(() => ({}));
+        } catch (err) { j = { error: 'Could not reach Nova.' }; }
+        a.classList.remove('busy');
+        if (j.needs_signin) { msg.innerHTML = 'Please <a href="' + LOGIN + '" target="_blank" rel="noopener">sign in</a> again, then refresh the page.'; go.disabled = false; go.textContent = 'Try again'; return; }
+        if (!j.ok) {
+          msg.innerHTML = esc(j.error || 'That could not be added.') + (item.url && item.url !== '#'
+            ? ' You can <a href="' + esc(item.url) + '" target="_blank" rel="noopener">add it on the product page</a>.' : '');
+          go.disabled = false; go.textContent = 'Try again'; return;
+        }
+        row.remove();
+        a.classList.add('done'); a.textContent = j.preview ? 'Preview \u2713' : '\u2713 In cart';
+        const b = add('ai', card({ type: 'cart_added', preview: j.preview, product: j.added.product, quantity: j.added.quantity,
+          price: j.added.price, job_name: j.added.job_name, versions: j.added.versions, checkout: j.checkout }) +
+          (j.preview ? '<details class="cc-would"><summary>What would be sent to the cart</summary><pre>' + esc(JSON.stringify(j.would_send, null, 2)) + '</pre></details>' : '') +
+          (j.job_name_saved === false ? '<p class="cc-err">The job name could not be saved \u2014 please add it in your cart before checkout.</p>' : ''));
+        void b;
+        if (!j.preview && opts.onCartAdded) opts.onCartAdded(j.added);
+      };
+      go.onclick = doAdd;
+      job.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); doAdd(); } };
     });
     const inner = root.querySelector('.cc-inner');
     const box = root.querySelector('.cc-msgs');
@@ -328,6 +389,7 @@
             b.innerHTML = md(j.reply) + cardsNow.map(c => c.type === 'price' ? quote(c, R(c)) : card(c)).join('');
             if (merged.length) paintPane();
           }
+          if (opts.onCartAdded && cardsNow.some(c => c.type === 'cart_added' && !c.preview)) opts.onCartAdded();
           if (opts.onAnswer) opts.onAnswer(j, b);
         }
       } catch (e) { b.innerHTML = '<p class="cc-err">Could not reach Nova. Please try again.</p>'; }

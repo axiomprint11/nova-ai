@@ -42,7 +42,8 @@ cannot switch them off.
 |---|---|
 | `CLIENT_BOT_PUBLIC=1` | Open it to website visitors. Leave unset while testing — admins only. |
 | `CLIENT_SSO_SECRET` | Shared secret for the signed sign-in handoff (option A). |
-| `CUSTOMER_VERIFY_URL` | The website API's "who am I" endpoint for a customer token (option B). |
+| `CUSTOMER_VERIFY_URL` | The website API's "who am I" for a customer token. Default `https://laravelapi.axiomprint.com/api/v1/customers/me`. |
+| `CLIENT_CART_API` | The website cart API. Default `https://website.workroomapp.com/api/v1`. |
 | `CLIENT_BOT_MODEL` | Optional model override (default: the light model used elsewhere). |
 | `CLIENT_BOT_DAILY_CAP` | Most public messages per 24 hours (default 3000). |
 | `CLIENT_BOT_REPRICE_DAILY_CAP` | Most quote edits per 24 hours (default 5000). |
@@ -56,9 +57,10 @@ Paste into the `<head>` of axiomprint.com (every page):
 
 ```html
 <script>
-  window.NovaClientChat = {
-    testKey: 'PASTE_CLIENT_BOT_TEST_KEY'   // test mode — remove this line when going live
-  };
+  window.NovaClientChat = Object.assign(window.NovaClientChat || {}, {
+    testKey: 'PASTE_CLIENT_BOT_TEST_KEY',   // test mode — remove this line when going live
+    tokenKey: 'axiom-print-app'             // where the website keeps the customer's login
+  });
 </script>
 <script src="https://nova.axiomprint.com/client-embed.js" defer></script>
 ```
@@ -88,7 +90,7 @@ Optional settings in `window.NovaClientChat`:
 |---|---|
 | `signin: { payload, sig }` (or a function returning it) | Signed-in customer, option A below. |
 | `customerToken: 'token'` (or a function) | Signed-in customer, option B below. If neither is given, the script looks for a customer token in the site's `localStorage` (`customer_token`, `access_token`, `token`, `auth_token`, or `tokenKey`). `customerToken: false` turns that off. |
-| `addToCart: (item) => Promise` | Makes Add to Cart put the item in the site's own cart (see Add to Cart). |
+| `onCartChanged: () => {}` | Optional: called after Nova added something to the cart (the site's own listener already refreshes the count). |
 | `position: 'left'` | Desktop button on the left. |
 | `lift: false` | Phone: don't move the site's sticky bars up (then place them yourself). |
 | `liftSelector: '.sticky-cart'` | Phone: also move these elements up, if the automatic check misses one. |
@@ -101,55 +103,48 @@ the sticky bars after the page rearranges them.
 ## Recognising a signed-in customer
 
 The website tells the chat who is signed in; Nova verifies it and loads the customer from `axiomprint_new.customer`.
-Nothing the visitor types is ever taken as proof of identity. **One of the two options is enough.**
+Nothing the visitor types is ever taken as proof of identity.
 
-### Option A — signed handoff (recommended)
+### How it works on axiomprint.com (live)
+
+The header script sets `tokenKey: 'axiom-print-app'` — where the website keeps the customer's login. That entry is the
+site's saved state (JSON); the script finds the token inside it (`token`, `access_token`, `accessToken`, …) and posts
+`{ type: 'nova-client:signin', customer_token }` to the chat when it opens, or `nova-client:signout` for a guest. It is
+sent once, when the chat loads: log in or out, then refresh the page.
+
+Nova checks the token on its server — never trusting it by itself:
+
+```http
+GET https://laravelapi.axiomprint.com/api/v1/customers/me      (CUSTOMER_VERIFY_URL; this is the default)
+Authorization: Bearer <customer_token>
+```
+
+200 → signed in (`data.customer`); 401 → a guest. The email must match that customer in our database. The customer id
+comes only from this answer. The token itself is never stored, logged or shown.
+
+What a signed-in customer gets: greeted by first name ("Hi Gus! …", header "Signed in as …"); their own jobs
+(`my_orders`, `order_status`: status from the latest production scan, shipped / pickup, options, quantity); their
+contact person (`get_customer` → `manager` from the website account, else `customer.manager_id` in our database);
+Add to Cart straight into their website cart. Guests get products, options and prices; anything that needs an account
+gets the sign-in message (https://axiomprint.com/login, then refresh).
+
+Prices on quotes are the website (list) prices — the same as the product page. The customer's own account pricing is
+applied by the website in the cart, and the quote says so; Nova never quotes a discount percentage.
+
+### Option A — signed handoff (alternative)
 
 The website's **server** signs the logged-in customer with the shared secret. Nothing secret reaches the browser.
 The email must match that customer's email in our database, and each signed payload works once.
 
 ```php
-// Laravel, in the layout, when a customer is logged in
 $p = base64_encode(json_encode([
-    'customer_id' => $customer->id,      // must be customer.id in axiomprint_new
-    'email'       => $customer->email,   // checked against that customer's email
-    'name'        => $customer->name,
-    'ts'          => time(),             // accepted for 10 minutes
-    'nonce'       => bin2hex(random_bytes(16)),   // single use: a captured sign-in cannot be replayed
+    'customer_id' => $customer->id, 'email' => $customer->email, 'name' => $customer->name,
+    'ts' => time(), 'nonce' => bin2hex(random_bytes(16)),
 ]));
 $sig = hash_hmac('sha256', $p, env('NOVA_CLIENT_SSO_SECRET'));   // same value as CLIENT_SSO_SECRET
 ```
 
-```html
-<iframe id="novaClient" src="https://nova.axiomprint.com/client-chat"
-        style="width:400px;height:600px;border:0" allow="clipboard-write"></iframe>
-<script>
-  window.addEventListener('message', function (ev) {
-    if (ev.origin !== 'https://nova.axiomprint.com' || !ev.data) return;
-    var frame = document.getElementById('novaClient').contentWindow;
-    if (ev.data.type === 'nova-client:ready') {
-      @if(auth('customer')->check())
-        frame.postMessage({ type: 'nova-client:signin', payload: '{{ $p }}', sig: '{{ $sig }}' }, 'https://nova.axiomprint.com');
-      @else
-        frame.postMessage({ type: 'nova-client:signout' }, 'https://nova.axiomprint.com');
-      @endif
-    }
-    if (ev.data.type === 'nova-client:close') { /* hide the chat panel */ }
-  });
-</script>
-```
-
-### Option B — customer API token
-
-If the website keeps the customer's API token in the browser, post it instead:
-
-```js
-frame.postMessage({ type: 'nova-client:signin', customer_token: token }, 'https://nova.axiomprint.com');
-```
-
-Nova calls `CUSTOMER_VERIFY_URL` with `Authorization: Bearer <token>` and reads `email` (required) and
-`customer_id` / `id` from the JSON (`data.customer`, `data.user`, `data`, `customer` or `user`). The email must
-match the customer exactly; an id is only used together with a matching email.
+Pass it as `window.NovaClientChat.signin = { payload: '…', sig: '…' }`.
 
 Only `https://axiomprint.com` and `https://www.axiomprint.com` may send a sign-in to the chat page, and only those
 sites may frame it.
@@ -209,49 +204,45 @@ and the quantities into a field. **Update price** prices it again on the server 
 replaces the old one. What changed is noted in the conversation (shown in Conversations), so Nova knows about it in
 its next answer. Options the customer touched, or that were Specified or Questionable, become Specified.
 
-## Add to Cart
+## Add to Cart — straight into the website cart
 
-Prices show as one quote per product and options — the options once, then **Qty · Price · Add to Cart** for each
-quantity — in a "Your quote" pane on the right (from 800px wide; narrower, in the conversation).
+Signed-in customers only. The item goes into the customer's **real axiomprint.com cart** through the website's cart API
+(`CLIENT_CART_API`, default `https://website.workroomapp.com/api/v1`); the chat never leaves the page.
 
-The website owns its cart, so the chat asks the page that hosts it to add the item. Nova has no access to the
-website cart itself.
+**From a quote:** Add to Cart on a quantity row → a **Job name** box (pre-filled with the product name; checkout needs
+one) → **Add … to cart**. The click is the customer's yes. The row turns into "✓ In cart" and Nova shows "Added to your
+cart" with **Upload artwork & check out**. A guest gets "Sign in to add this to your cart" (login link), or the product
+page with everything selected.
 
-1. When the chat loads it posts `{ type: 'nova-client:ready' }` to the page.
-2. A page that can add to its cart answers `{ type: 'nova-client:cart-ready' }` (alongside the sign-in message).
-3. On Add to Cart the chat posts:
+**From the conversation:** the `add_to_cart` tool, only after Nova has read the order back with the price and the
+customer said yes.
 
-```js
-{ type: 'nova-client:add-to-cart', id: 'k3j9…', item: {
-    product_id: 184, product: 'Raised Spot UV Business Cards', quantity: 500,
-    price: 122.00,                                   // for display only — the website prices it itself
-    share_id: '66f8a1c2e4b0a91d2c3f4e5a',            // the saved selection (product-shares API)
-    config: { selections: { Shape: 10, Raised_Spot_UV: 21, Quantity: 93 }, selectedMetric: 'inch' },
-    url: 'https://axiomprint.com/product/raised-spot-uv-cards-184?shareId=66f8…',
-    versions: [{ name: 'Design 1', quantity: 200 }, { name: 'Design 2', quantity: 300 }] } }   // only for a versions quote
-```
+What Nova's server does (it never takes a price, customer id or option from the browser or the model as given):
 
-4. The page adds it with its own cart code (the same `selections` the product page applies from a share link) and
-   answers `{ type: 'nova-client:cart-result', id: 'k3j9…', ok: true }`. The button turns into "✓ In cart".
+1. Prices the item again (`priceCard`, public options only) — list price, as the product page.
+2. `POST /cart/add-item` with `userId` (the verified customer), `productId`, `price`, `selectedOption` (variable title,
+   underscores kept → chosen option title; `Quantity` as a string — the same names orders are saved with),
+   `availableKeys`, `parentCategoryId` (`product.product_category_id`), `designType` / `proofOptions` ("Send the Files
+   Later" / "YES (online PDF proof)", or "No File" / "No Proof" when `product.need_design = 0`), `customSize` +
+   `selectedMetric: "Inch"` for custom sizes only, `customQuantity` for a quantity that is not a listed tier, and for
+   versions `totalQuantity` + `versionObject: [{name, quantity}]`.
+3. `404 "User does not exist"` → `POST /axiom-user` (email, names, `userId`, the account record), then add once more.
+4. The newest item in the returned cart → `PUT /cart/update-item/<id>` `{ jobName, notes }` (add-item does not keep them).
+5. The chat posts `{ type: 'nova-client:add-to-cart', id, item: { alreadyAdded: true } }` to the page; the website
+   refreshes its cart count and answers `nova-client:cart-result`. (`window.NovaClientChat.onCartChanged` is an
+   optional extra hook.)
 
-If the page never said `cart-ready`, or does not answer within 6 seconds, the button opens the product page with
-every option preselected (the share link), where the customer adds it to the cart themselves. The admin preview
-always does this.
+The admin preview (**Try it** as a customer) never touches a real cart: it shows **what would be sent**.
 
-```js
-// on the website page, next to the sign-in code
-if (ev.data.type === 'nova-client:ready') frame.postMessage({ type: 'nova-client:cart-ready' }, 'https://nova.axiomprint.com');
-if (ev.data.type === 'nova-client:add-to-cart') {
-  addToCartFromSelections(ev.data.item)            // the website's own cart logic
-    .then(() => frame.postMessage({ type: 'nova-client:cart-result', id: ev.data.id, ok: true }, 'https://nova.axiomprint.com'))
-    .catch(() => frame.postMessage({ type: 'nova-client:cart-result', id: ev.data.id, ok: false }, 'https://nova.axiomprint.com'));
-}
-```
+**To confirm with the web team:** the `versionObject` entries for a versions item (sent as `{ name, quantity }`), and
+`customQuantity` with versions. One real versions item from `GET /cart/my-cart?userId=<id>` settles it.
+
+Not yet: editing or removing cart items (→ https://axiomprint.com/my-cart).
 
 ## Going live — checklist
 
 1. Fill in **Training → What Nova knows** (hours, phone, shipping, pickup, artwork rules) and review the house rules.
 2. Test in **Try it** as a few real customers, including asking for someone else's order.
-3. Pick option A or B with the web team; set `CLIENT_SSO_SECRET` (A) or `CUSTOMER_VERIFY_URL` (B).
+3. Sign-in uses the website login (`tokenKey: 'axiom-print-app'` + `customers/me`); test it signed in and as a guest.
 4. Add the header script to the website (and the sign-in / Add to Cart hooks).
 5. Set `CLIENT_BOT_PUBLIC=1`, restart, and watch **Conversations**.

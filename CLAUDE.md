@@ -170,8 +170,14 @@ to `/api/chat` for debugging.
 session: `my_orders` / `order_status` filter on `estimate_clientid` themselves; products are limited to active
 `axiom_print` products and `available_for_customers` is honoured. Admin console at `/client-bot` (Try it as any
 customer, Conversations, Training, Setup); public page `/client-chat` for the website iframe. Admins only until
-`CLIENT_BOT_PUBLIC=1`. Website sign-in: signed handoff (`CLIENT_SSO_SECRET`) or customer token
-(`CUSTOMER_VERIFY_URL`). Full write-up: `docs/CLIENT_BOT.md`. Never give it a tool that takes a customer id or SQL.
+`CLIENT_BOT_PUBLIC=1`. Website sign-in: the header script reads the customer token from the site's saved
+state (`tokenKey: 'axiom-print-app'`, JSON) and Nova verifies it with `CUSTOMER_VERIFY_URL` (default laravelapi
+`/api/v1/customers/me`); a signed handoff (`CLIENT_SSO_SECRET`) also works. First name and the contact person (`manager`)
+ride in the visitor token; the account record stays in memory only. Quotes are list prices (account pricing is applied
+by the website in the cart). **Add to Cart** puts the item in the real website cart: `addToCart()` re-prices, builds the
+`cart/add-item` payload (`selectedOption` keyed by exact variable titles), creates the cart user on a 404, names the job
+with `update-item`; `POST /api/client-bot/cart` (button) and the `add_to_cart` tool both use it; the admin preview only
+returns the would-be payload. Full write-up: `docs/CLIENT_BOT.md`. Never give it a tool that takes a customer id or SQL.
 `price_product` takes `quantities` — or `versions: [{name, quantity}]` for several designs of one size, priced as ONE
 order through quoteProduct's `version_list` — and returns one card (`rows` of qty/price/cart data); `client-chat.js` merges cards
 with the same product+options into a "Your quote" pane (≥800px) with Qty · Price · Add to Cart. Spec rows carry `tag`
@@ -183,9 +189,8 @@ public options only, no model call) and saves a `role='note'` row that is folded
 `client-files-worker.js` with memory/time limits) → `client_files` rows + files in `client-uploads/` (gitignored,
 never public). The chat sends `files: [ref]`; only the uploader's unsent files attach. History re-sends pictures/PDFs
 for the latest two file messages within a byte/page budget; if the API refuses one, the files are marked `blocked`
-and the answer is retried text-only. Admins get files at `/api/admin/client-bot/files/:ref{/preview}`. Add to Cart is a
-postMessage hand-off to the hosting website (`nova-client:add-to-cart` → `cart-result`); without a host that
-declared `cart-ready`, it opens the share link.
+and the answer is retried text-only. Admins get files at `/api/admin/client-bot/files/:ref{/preview}`. After an add the chat posts
+`nova-client:add-to-cart {item:{alreadyAdded:true}}` so the website refreshes its cart count.
 It also has `get_template` (die lines of visible options; customer-specific dies only for that customer; PDFs streamed
 by Nova through a signed `/api/client-bot/template/...` link) and `estimate_installation` / `estimate_delivery` (the
 shared `InstallPricing` engine and live admin config via `getInstallPricing()`; customers see totals and line names,

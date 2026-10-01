@@ -69,8 +69,12 @@
     if (r.status === 403) { closed(); return; }
     const j = await r.json().catch(() => ({}));
     document.getElementById('pcSub').textContent = j.customer && j.customer.name ? 'Signed in as ' + j.customer.name : 'AxiomPrint assistant';
+    signedIn = !!j.customer;
     const opts = {
-      getToken: () => token, greeting: j.greeting, addToCart: addToCart,
+      getToken: () => token, greeting: j.greeting,
+      // Signed in: Add to Cart goes straight into the website cart (Nova's server
+      // does it); the page is told so it can refresh its cart count.
+      signedIn: () => signedIn, onCartAdded: cartChanged,
       suggestions: j.customer
         ? [['Where is my order?', 'Where is my latest order?'], ['Business card prices', 'How much are 500 business cards?']]
         : [['Business card prices', 'How much are 500 business cards?'], ['Banner options', 'What banner materials do you have?']]
@@ -80,31 +84,13 @@
   }
 
   // ---- Add to Cart ----
-  // The website owns its cart, so the chat asks the page that hosts it to add the
-  // item (see docs/CLIENT_BOT.md). A page that can do this says so with
-  // nova-client:cart-ready; otherwise the button opens the product with every
-  // option already selected.
-  let cartHost = false;
-  const cartWaits = {};
-  function addToCart(item) {
-    if (!cartHost) return Promise.resolve(false);
-    return new Promise((resolve) => {
-      const id = Math.random().toString(36).slice(2);
-      cartWaits[id] = resolve;
-      parentSay({ type: 'nova-client:add-to-cart', id: id, item: {
-        product_id: item.product_id, product: item.product, quantity: item.quantity, price: item.price,
-        share_id: item.share_id || null, config: item.config || null, url: item.url || null,
-        versions: item.versions || null } });
-      setTimeout(() => { if (cartWaits[id]) { delete cartWaits[id]; resolve(false); } }, 6000);
-    });
+  // Nova's server adds the item to the customer's cart (docs/CLIENT_BOT.md); this
+  // only tells the website, so it refreshes its cart count straight away. The
+  // site answers nova-client:cart-result, which needs nothing from us.
+  let signedIn = false;
+  function cartChanged() {
+    parentSay({ type: 'nova-client:add-to-cart', id: Math.random().toString(36).slice(2), item: { alreadyAdded: true } });
   }
-  window.addEventListener('message', (ev) => {
-    if (PARENTS.indexOf(ev.origin) === -1 || !ev.data) return;
-    if (ev.data.type === 'nova-client:cart-ready') cartHost = true;
-    if (ev.data.type === 'nova-client:cart-result' && cartWaits[ev.data.id]) {
-      const done = cartWaits[ev.data.id]; delete cartWaits[ev.data.id]; done(!!ev.data.ok);
-    }
-  });
 
   window.addEventListener('message', async (ev) => {
     if (PARENTS.indexOf(ev.origin) === -1 || !ev.data) return;
