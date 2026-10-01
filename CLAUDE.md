@@ -173,8 +173,8 @@ customer, Conversations, Training, Setup); public page `/client-chat` for the we
 `CLIENT_BOT_PUBLIC=1`. Website sign-in: the header script reads the customer token from the site's saved
 state (`tokenKey: 'axiom-print-app'`, JSON) and Nova verifies it with `CUSTOMER_VERIFY_URL` (default laravelapi
 `/api/v1/customers/me`); a signed handoff (`CLIENT_SSO_SECRET`) also works. First name and the contact person (`manager`)
-ride in the visitor token; the account record stays in memory only. Quotes are list prices (account pricing is applied
-by the website in the cart). **Add to Cart** puts the item in the real website cart: `addToCart()` re-prices, builds the
+ride in the visitor token; the account record stays in memory only. Signed-in customers get their account discount on quotes
+(quoteProduct `client_id`, as the staff chats); the cart is sent the pre-discount price. **Add to Cart** puts the item in the real website cart: `addToCart()` re-prices, builds the
 `cart/add-item` payload (`selectedOption` keyed by exact variable titles), creates the cart user on a 404, names the job
 with `update-item`; `POST /api/client-bot/cart` (button) and the `add_to_cart` tool both use it; the admin preview only
 returns the would-be payload. Full write-up: `docs/CLIENT_BOT.md`. Never give it a tool that takes a customer id or SQL.

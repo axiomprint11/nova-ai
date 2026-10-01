@@ -165,7 +165,6 @@
           '<td>' + (item.product_id ? '<a class="cc-cart" href="' + esc(item.url || '#') + '" target="_blank" rel="noopener" data-item="' +
             esc(JSON.stringify(item)) + '">Add to Cart</a>' : '') + '</td></tr>';
       }).join('') + '</tbody></table>' +
-      (c.account_pricing ? '<div class="cc-note">Your account pricing is applied in the cart.</div>' : '') +
     '</div>';
   }
 

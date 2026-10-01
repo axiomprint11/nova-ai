@@ -128,8 +128,10 @@ contact person (`get_customer` → `manager` from the website account, else `cus
 Add to Cart straight into their website cart. Guests get products, options and prices; anything that needs an account
 gets the sign-in message (https://axiomprint.com/login, then refresh).
 
-Prices on quotes are the website (list) prices — the same as the product page. The customer's own account pricing is
-applied by the website in the cart, and the quote says so; Nova never quotes a discount percentage.
+Signed-in customers see their **account discount** on every quote — the same rule the staff chats use (`discountFor`,
+via quoteProduct's `client_id`): the regular price struck through and their price beside it. Nova never quotes the
+percentage. The cart is sent the price before the discount (as the website's cart API expects); the website applies
+the account pricing there.
 
 ### Option A — signed handoff (alternative)
 
