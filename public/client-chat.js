@@ -92,6 +92,7 @@
         (c.checkout && !c.preview ? '<a class="cc-cart" href="' + esc(c.checkout) + '" target="_blank" rel="noopener">Upload artwork &amp; check out</a>' : '') +
       '</div>';
     }
+    if (c.type === 'projects') return '<div class="cc-projs">' + (c.projects || []).map(project).join('') + '</div>';
     if (c.type === 'orders') {
       return '<div class="cc-orders">' + (c.orders || []).map(o =>
         '<div class="cc-ord">' +
@@ -108,6 +109,38 @@
           '<span class="cc-st">' + esc(o.status || '') + '</span></div>').join('') + '</div>';
     }
     return '';
+  }
+
+  // One project, laid out like the order history on axiomprint.com: the invoice
+  // line, the job (picture, name, E-number, size, quantity) and its three steps.
+  const HISTORY = 'https://axiomprint.com/account/order-history';
+  function project(p) {
+    const steps = p.steps || [];
+    const needs = steps.some(s => s.state === 'action' || s.state === 'problem');
+    const unpaid = p.paid && p.paid !== 'paid' && !p.quote;
+    return '<div class="cc-proj">' +
+      '<div class="cc-proj-top"><span>' + esc(p.placed || '') + '</span>' +
+        (p.invoice ? '<span>INVOICE: <b>' + esc(p.invoice) + '</b></span>' : '<span>QUOTE</span>') +
+        (p.total != null ? '<span>TOTAL: <b>' + money(p.total) + '</b></span>' : '') +
+        (p.paid && p.invoice ? '<span class="cc-pay ' + (p.paid === 'paid' ? 'paid' : 'unpaid') + '">' + esc(String(p.paid).toUpperCase()) + '</span>' : '') +
+      '</div>' +
+      '<div class="cc-proj-main">' +
+        (p.image && /^https:\/\//.test(p.image)
+          ? '<a class="cc-proj-img" href="' + esc(p.image) + '" target="_blank" rel="noopener" title="Open the picture"><img src="' + esc(p.image) +
+            '" alt="" loading="lazy" onerror="this.parentNode.classList.add(\'none\');this.remove()"></a>'
+          : '<span class="cc-proj-img none"></span>') +
+        '<div class="cc-proj-txt">' + (p.name ? '<b>' + esc(p.name) + '</b>' : '') +
+          '<span class="cc-proj-e">' + esc(p.order) + '</span>' +
+          (p.product ? '<small>' + esc(p.product) + '</small>' : '') +
+          '<small>' + [p.size ? 'Size: ' + esc(p.size) : null, p.quantity ? 'Qty: ' + esc(p.quantity) : null].filter(Boolean).join(' \u00b7 ') + '</small>' +
+        '</div>' +
+      '</div>' +
+      '<div class="cc-steps">' + steps.map(s =>
+        '<div class="cc-step ' + esc(s.state) + '"><i></i><b>' + esc(s.label) + '</b><span>' + esc(s.status) + '</span>' +
+          (s.note ? '<small>' + esc(s.note) + '</small>' : '') + '</div>').join('') + '</div>' +
+      '<div class="cc-proj-foot"><a href="' + HISTORY + '" target="_blank" rel="noopener">' +
+        (needs ? 'Upload files / review proof' : unpaid ? 'Pay online' : 'Order history') + ' \u2197</a></div>' +
+    '</div>';
   }
 
   // One quote: the options once, then Qty · Price · Add to Cart for each quantity.
@@ -201,9 +234,48 @@
       '</div>' +
       '<div class="cc-drop">Drop files to attach</div>' +
       '</div>' +
-      '<aside class="cc-pane"><div class="cc-pane-hd">Your quote</div>' +
-        '<div class="cc-pane-body"><div class="cc-pane-empty">Prices you ask about appear here, with Add to Cart for each quantity.</div></div></aside>';
-    const paneBody = root.querySelector('.cc-pane-body');
+      '<aside class="cc-pane"><div class="cc-pane-tabs"><button type="button" class="on" data-tab="quote">Quote</button>' +
+        '<button type="button" data-tab="projects" hidden>My projects</button></div>' +
+        '<div class="cc-pane-body" data-pane="quote"><div class="cc-pane-empty">Prices you ask about appear here, with Add to Cart for each quantity.</div></div>' +
+        '<div class="cc-pane-body" data-pane="projects" hidden></div></aside>';
+    const paneBody = root.querySelector('.cc-pane-body[data-pane="quote"]');
+    const projBody = root.querySelector('.cc-pane-body[data-pane="projects"]');
+    const projTab = root.querySelector('.cc-pane-tabs [data-tab="projects"]');
+    let projLoaded = false;
+    function showTab(name) {
+      root.querySelectorAll('.cc-pane-tabs button').forEach(b => b.classList.toggle('on', b.getAttribute('data-tab') === name));
+      paneBody.hidden = name !== 'quote';
+      projBody.hidden = name !== 'projects';
+      if (name === 'projects' && !projLoaded) loadProjects();
+    }
+    // The projects tab is for signed-in customers: it loads their latest jobs straight away.
+    function refreshTabs() {
+      const on = !!(opts.signedIn && opts.signedIn());
+      projTab.hidden = !on;
+      if (!on) { projLoaded = false; projBody.innerHTML = ''; showTab('quote'); }
+    }
+    async function loadProjects() {
+      projLoaded = true;
+      projBody.innerHTML = '<div class="cc-pane-empty">Loading your projects\u2026</div>';
+      let j = {};
+      try {
+        const ex = opts.extraBody ? opts.extraBody() : {};
+        const r = await fetch('/api/client-bot/projects' + (ex.as_customer_id ? '?as_customer_id=' + encodeURIComponent(ex.as_customer_id) : ''),
+          { headers: { 'Authorization': 'Bearer ' + (opts.getToken ? opts.getToken() : '') } });
+        j = await r.json().catch(() => ({}));
+      } catch (e) { j = {}; }
+      if (!j.ok) { projLoaded = false; projBody.innerHTML = '<div class="cc-pane-empty">' + esc(j.error || (j.needs_signin ? 'Sign in to see your projects.' : 'Your projects could not be loaded.')) + '</div>'; return; }
+      paintProjects(j.projects || []);
+    }
+    function paintProjects(list) {
+      projLoaded = true;
+      projBody.innerHTML = list.length ? '<div class="cc-projs">' + list.map(project).join('') + '</div>'
+        : '<div class="cc-pane-empty">No projects on your account yet.</div>';
+    }
+    root.querySelector('.cc-pane-tabs').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-tab]');
+      if (b) showTab(b.getAttribute('data-tab'));
+    });
     const wide = () => root.classList.contains('cc-wide');
     const fit = () => root.classList.toggle('cc-wide', root.clientWidth >= 800);
     fit();
@@ -229,6 +301,7 @@
     let regN = 0, paneRefs = [];
     const R = (c) => { reg.set(++regN, c); return regN; };
     function paintPane() {
+      if (groups.length) showTab('quote');
       paneRefs.forEach(n => reg.delete(n));            // the pane is redrawn whole each time
       paneRefs = [];
       paneBody.innerHTML = groups.length ? groups.map(g => { const n = R(g); paneRefs.push(n); return quote(g, n); }).join('')
@@ -337,6 +410,7 @@
       return b;
     }
     function greet(text) {
+      refreshTabs();
       inner.innerHTML = '';
       add('ai', md(text || 'Hi! Ask me about our products, prices and options.'));
       sugg.innerHTML = (opts.suggestions || []).map(s =>
@@ -376,16 +450,24 @@
         if (!j.ok) { b.innerHTML = '<p class="cc-err">' + esc(j.error || 'Something went wrong. Please try again.') + '</p>'; }
         else {
           chatId = j.chat_id;
-          const cardsNow = j.cards || [];
+          let cardsNow = j.cards || [], projNote = '';
           const prices = cardsNow.filter(c => c.type === 'price');
           const merged = prices.map(remember);
+          // Projects go to the My projects tab when there is room.
+          const projs = cardsNow.filter(c => c.type === 'projects');
+          if (wide() && projs.length && !projTab.hidden) {
+            const list = [].concat.apply([], projs.map(c => c.projects || []));
+            cardsNow = cardsNow.filter(c => c.type !== 'projects');
+            paintProjects(list); showTab('projects');
+            projNote = '<div class="cc-moved"><b>' + list.length + ' project' + (list.length === 1 ? '' : 's') + '</b> \u2014 on the right, under My projects.</div>';
+          }
           if (wide() && merged.length) {
             paintPane();
             b.innerHTML = md(j.reply) + cardsNow.filter(c => c.type !== 'price').map(card).join('') +
               merged.filter((g, i, a) => a.indexOf(g) === i).map(g => '<div class="cc-moved"><b>' + esc(g.product) + '</b> — ' +
-                g.rows.length + ' quantit' + (g.rows.length === 1 ? 'y' : 'ies') + ' on the quote at the right.</div>').join('');
+                g.rows.length + ' quantit' + (g.rows.length === 1 ? 'y' : 'ies') + ' on the quote at the right.</div>').join('') + projNote;
           } else {
-            b.innerHTML = md(j.reply) + cardsNow.map(c => c.type === 'price' ? quote(c, R(c)) : card(c)).join('');
+            b.innerHTML = md(j.reply) + cardsNow.map(c => c.type === 'price' ? quote(c, R(c)) : card(c)).join('') + projNote;
             if (merged.length) paintPane();
           }
           if (opts.onCartAdded && cardsNow.some(c => c.type === 'cart_added' && !c.preview)) opts.onCartAdded();

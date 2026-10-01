@@ -3,12 +3,9 @@
  *
  *   <script>
  *     window.NovaClientChat = {
- *       testKey: 'the CLIENT_BOT_TEST_KEY value',  // test mode only — remove when going live
- *       // Optional — who is signed in (see docs/CLIENT_BOT.md):
- *       // signin: { payload: '…', sig: '…' },    // signed by the website server
- *       // customerToken: () => localStorage.getItem('token'),
- *       // Optional — let Add to Cart put the item in the real cart:
- *       // addToCart: (item) => Promise that resolves when it is in the cart
+ *       testKey: 'the CLIENT_BOT_TEST_KEY value',  // lets ?nova=test sessions in while Nova is in Test
+ *       tokenKey: 'axiom-print-app',               // where the site keeps the customer's login
+ *       // Optional: onCartChanged: () => {}       // after Nova added something to the cart
  *       // Optional — phones: the chat bar sits at the very bottom and moves the
  *       // site's own sticky bars (Add to Cart) up above it. lift: false turns that
  *       // off; liftSelector: '.sticky-cart' adds elements it misses.
@@ -19,10 +16,11 @@
  * Desktop: an "Ask Nova" button in the corner. Phone (under 700px): a full-width
  * bar fixed to the bottom — tap to chat, and the chat opens full screen.
  *
- * Test mode (testKey set): the button only appears after opening any page with
- * ?nova=test once (remembered in this browser; ?nova=off hides it again).
- * Without testKey the bubble shows for everyone — only do that once
- * CLIENT_BOT_PUBLIC=1 is set on the Nova server.
+ * Test / Live is switched in Nova (Client ChatBot -> Setup), not here:
+ *   Live — everyone sees the chat.
+ *   Test — only browsers that opened any page with ?nova=test once (remembered;
+ *          ?nova=off forgets it). Keep testKey in the snippet; it is what lets
+ *          those test sessions in, and it does no harm when live.
  */
 (function () {
   if (window.__novaClientLoaded) return;
@@ -34,15 +32,16 @@
   var SIDE = CFG.position === 'left' ? 'left' : 'right';
   var TEST_FLAG = 'novaClientTest';
 
-  // ---- test mode: show only for people who opened ?nova=test ----
-  if (CFG.testKey) {
-    try {
-      var q = new URLSearchParams(location.search).get('nova');
-      if (q === 'test') localStorage.setItem(TEST_FLAG, '1');
-      if (q === 'off') localStorage.removeItem(TEST_FLAG);
-      if (localStorage.getItem(TEST_FLAG) !== '1') return;
-    } catch (e) { return; }
-  }
+  // ---- Test / Live (set in Nova: Client ChatBot -> Setup) ----
+  // Live: everyone sees the chat. Test: only browsers that opened a page with
+  // ?nova=test once (remembered; ?nova=off forgets it).
+  var tester = false;
+  try {
+    var q = new URLSearchParams(location.search).get('nova');
+    if (q === 'test') localStorage.setItem(TEST_FLAG, '1');
+    if (q === 'off') localStorage.removeItem(TEST_FLAG);
+    tester = localStorage.getItem(TEST_FLAG) === '1';
+  } catch (e) {}
 
   function txt(v) { return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function el(tag, css) { var n = document.createElement(tag); n.style.cssText = css; return n; }
@@ -291,6 +290,12 @@
     window.NovaClientChatAPI = { open: open, close: close, refresh: function () { unlift(); launcher(); } };
   }
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-  else boot();
+  function start() {
+    fetch(HOST + '/api/client-bot/mode', { credentials: 'omit' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (j.mode === 'live' || (j.mode === 'test' && tester)) boot(); })
+      .catch(function () { if (tester) boot(); });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
 })();

@@ -34,7 +34,11 @@ module.exports = function mountClientBot(app, deps) {
   // CLIENT_BOT_PUBLIC: '1' = open to every visitor; 'test' = only visitors whose
   // chat was opened with CLIENT_BOT_TEST_KEY (the header script's test mode);
   // anything else = admins only.
+  // The admin's Test / Live switch (Setup tab) wins over the .env setting.
+  let savedMode = null;                               // 'live' | 'test' | null
   const mode = () => {
+    if (savedMode === 'live') return 'open';
+    if (savedMode === 'test') return process.env.CLIENT_BOT_TEST_KEY ? 'test' : 'off';
     const v = String(process.env.CLIENT_BOT_PUBLIC || '').trim().toLowerCase();
     return v === '1' || v === 'true' ? 'open' : (v === 'test' && process.env.CLIENT_BOT_TEST_KEY ? 'test' : 'off');
   };
@@ -107,6 +111,9 @@ module.exports = function mountClientBot(app, deps) {
     db.run('UPDATE client_bot_rules SET rules = REPLACE(rules, ?, ?) WHERE id = 1',
       ['- When you give a price, offer the Order now link so they can check out with everything preselected.',
        '- When you give a price, keep it short and point to the Add to Cart button on the quote. For several quantities, compare them in one line.']);
+    db.run('ALTER TABLE client_bot_rules ADD COLUMN mode TEXT', () => {
+      db.get('SELECT mode FROM client_bot_rules WHERE id = 1', (e, r) => { if (!e && r && (r.mode === 'live' || r.mode === 'test')) savedMode = r.mode; });
+    });
     db.get('SELECT id FROM client_bot_rules WHERE id = 1', (e, row) => {
       if (!e && !row) {
         db.run('INSERT INTO client_bot_rules (id, rules, knowledge, greeting, contact, updated_at, updated_by) ' +
@@ -681,7 +688,9 @@ module.exports = function mountClientBot(app, deps) {
   const ownOrdersSql = (cid) =>
     'SELECT e.id, COALESCE(NULLIF(e.estimate_name,\'\'), p.title) AS name, p.title AS product, e.estimate_type, e.created, ' +
     'COALESCE(e.new_total, e.estimate_price) AS total, i.id AS invoice_id, i.invoice_type, i.payment_status, ' +
-    'e.estimate_proofimage AS proof, p.image AS product_image ' +
+    'e.estimate_proofimage AS proof, p.image AS product_image, e.estimate_name AS job_name, ' +
+    'e.prepress_status, e.production_status, i.invoice_total_payment AS invoice_total, ' +
+    "DATE_FORMAT(e.created, '%b %e, %Y %l:%i %p') AS placed_label, DATE_FORMAT(e.complete_by, '%b %e, %Y %l:%i %p') AS due_label " +
     'FROM estimate e LEFT JOIN product p ON p.id = e.estimate_productid ' +
     'LEFT JOIN invoice i ON i.id = e.estimate_invoiceid ' +
     'WHERE e.estimate_clientid = ' + parseInt(cid) + ' AND (i.id IS NULL OR (i.invoice_clientid = ' + parseInt(cid) +
@@ -934,6 +943,80 @@ module.exports = function mountClientBot(app, deps) {
     return { ok: true, item_id: itemId || null, job_name_saved: named, summary: summary, cart_count: items.length };
   }
 
+  // ---------------------------------------------------------------- projects
+  // A snapshot of each of the customer's jobs, laid out like the order history on
+  // axiomprint.com so it is recognisable: picture, E-number, size and quantity, the
+  // invoice (number, total, paid / unpaid) and three steps — Preflight check,
+  // Production, then Pick up / Shipping / Delivery / Installation.
+  const PREFLIGHT = {
+    approved: ['done', 'Approved'], hard_copy_approved: ['done', 'Approved'], insta_proofed: ['done', 'Approved'],
+    proof_checking: ['current', 'Proof Checking'], insta_proof_manual: ['current', 'Proof Checking'],
+    proof_sent: ['action', 'Proof sent — please review'],
+    upload_files: ['action', 'Upload Files'], waiting_files: ['action', 'Upload Files'], waiting_files_followup: ['action', 'Upload Files'],
+    rejected_reupload: ['problem', 'Re-upload files'], rejected_edits: ['problem', 'Edits needed']
+  };
+  const METHOD = { pick_up: 'Pick up', shipping: 'Shipping', blind_drop_ship: 'Shipping', usps_mail_drop_off: 'Shipping',
+    delivery: 'Delivery', installation: 'Installation', service: 'Service' };
+  async function projectCards(rows) {
+    if (!rows.length) return [];
+    const list = rows.map(r => parseInt(r.id)).filter(Boolean).join(',');
+    const [st, handles, stages, opts] = await Promise.all([
+      statusFor(rows.map(r => r.id)),
+      runQuery("SELECT estimate_id, shipping_method, handle_status, shipping_company, shipping_tracking_number FROM estimate_handle " +
+        "WHERE estimate_id IN (" + list + ") AND (parent_id IS NULL OR parent_id = 0) ORDER BY id ASC").catch(() => []),
+      runQuery('SELECT estimate_id, estimate_stage, estimate_substage FROM estimate_stage WHERE estimate_id IN (' + list + ') ORDER BY id ASC').catch(() => []),
+      runQuery("SELECT estimate_id, estimate_option_name AS f, COALESCE(NULLIF(selected,''), estimate_option_value) AS v FROM estimateoption " +
+        "WHERE estimate_id IN (" + list + ") AND estimate_option_name IN ('Size','Quantity')").catch(() => [])
+    ]);
+    return rows.map(r => {
+      const s = st[r.id] || {};
+      const h = handles.find(x => x.estimate_id === r.id) || {};
+      const stg = stages.filter(x => x.estimate_id === r.id).pop() || {};
+      const opt = (f) => { const o = opts.find(x => x.estimate_id === r.id && x.f === f); return o ? String(o.v).trim() : null; };
+      // 1. Preflight check (files and proof)
+      const pf = PREFLIGHT[r.prepress_status] || ['todo', 'Not started'];
+      // 3. Pick up / Shipping / Delivery / Installation
+      const method = METHOD[h.shipping_method] || 'Pick up / Shipping';
+      let dv = ['todo', 'Not Ready'];
+      if (h.handle_status === 'Picked_up' || h.handle_status === 'delivered') dv = ['done', 'Complete'];
+      else if (h.handle_status === 'in_transit') dv = ['current', 'In transit'];
+      else if (h.handle_status === 'Ready') dv = ['current', h.shipping_method === 'pick_up' ? 'Ready for pickup' : 'Ready'];
+      else if (h.handle_status === 'ready_for_shipping') dv = ['current', 'Ready to ship'];
+      else if (h.handle_status === 'ready_for_delivery') dv = ['current', 'Ready for delivery'];
+      else if (s.shipped) dv = ['done', 'Shipped'];
+      else if (s.pickup) dv = ['current', 'Ready for pickup'];
+      // 2. Production: done once the job is complete or on its way; otherwise the
+      // latest scan on the floor (the estimate's own status can lag).
+      let pr = ['todo', 'Not Started'];
+      if (stg.estimate_stage === 'complete' || r.production_status === 'complete' || dv[0] === 'done' || dv[0] === 'current' || s.shipped || s.pickup) pr = ['done', 'Complete'];
+      else if (s.last_scan) pr = ['current', s.last_scan.step];
+      else if (r.production_status === 'in_production' || r.production_status === 'reprint' || r.production_status === 'hard_copy') pr = ['current', 'In production'];
+      const tracking = h.shipping_tracking_number ? ((h.shipping_company ? String(h.shipping_company).toUpperCase() + ' ' : '') + h.shipping_tracking_number) : null;
+      return Object.assign({
+        order: 'E' + r.id, name: r.job_name || null, product: r.product || null,
+        size: opt('Size'), quantity: opt('Quantity') || s.quantity || null,
+        placed: r.placed_label || day(r.created), due: r.due_label || null,
+        invoice: r.invoice_id ? 'INV' + r.invoice_id : null,
+        total: r.invoice_total != null ? Number(r.invoice_total) : (r.total != null ? Number(r.total) : null),
+        paid: r.payment_status || null, quote: !r.invoice_id || r.invoice_type === 'estimate',
+        steps: [
+          { label: 'Preflight check', state: pf[0], status: pf[1] },
+          { label: 'Production', state: pr[0], status: pr[1], note: pr[0] !== 'done' && r.due_label ? 'Due ' + r.due_label : null },
+          { label: method, state: dv[0], status: dv[1], note: tracking ? 'Tracking ' + tracking : (s.shipped ? 'on ' + s.shipped : null) }
+        ]
+      }, orderImage(r));
+    });
+  }
+  // What the model reads about the same projects (short).
+  const projectsForModel = (list) => list.map(p => ({ order: p.order, job_name: p.name, product: p.product, size: p.size, quantity: p.quantity,
+    placed: p.placed, invoice: p.invoice, total: p.total, payment: p.paid,
+    preflight: p.steps[0].status, production: p.steps[1].status, [p.steps[2].label.toLowerCase()]: p.steps[2].status,
+    due: p.due, tracking: p.steps[2].note || undefined }));
+  const PROJECTS_SHOWN = 'The customer sees each project as a card (picture, E-number, size, quantity, invoice and paid status, and the ' +
+    'Preflight / Production / Pick up-Shipping steps). Do NOT list the projects again. Answer in one or two sentences: what needs their ' +
+    'action (files to upload, a proof to review, an unpaid invoice) and anything they asked about. Files are uploaded and invoices paid in ' +
+    'their order history: ' + 'https://axiomprint.com/account/order-history';
+
   async function runTool(name, input, who, cards) {
     input = input || {};
     const cid = who.customer ? parseInt(who.customer.id) : null;
@@ -1073,11 +1156,9 @@ module.exports = function mountClientBot(app, deps) {
       if (name === 'my_orders') {
         const n = Math.min(Math.max(parseInt(input.limit) || 6, 1), 10);
         const rows = await runQuery(ownOrdersSql(cid) + ' ORDER BY e.id DESC LIMIT ' + n);
-        const st = await statusFor(rows.map(r => r.id));
-        const list = rows.map(r => ({ order: 'E' + r.id, name: r.name, product: r.product, placed: day(r.created),
-          quantity: st[r.id].quantity || null, status: statusLine(r, st[r.id]), payment: r.payment_status || null }));
-        if (list.length) cards.push({ type: 'orders', orders: list.map((o, i) => Object.assign({}, o, orderImage(rows[i]))) });
-        return { orders: list };
+        const projects = await projectCards(rows);
+        if (projects.length) cards.push({ type: 'projects', projects: projects });
+        return { orders: projectsForModel(projects), shown: projects.length ? PROJECTS_SHOWN : undefined };
       }
       const raw = String(input.order_number || '').trim();
       const n = parseInt(raw.replace(/[^0-9]/g, ''));
@@ -1086,19 +1167,16 @@ module.exports = function mountClientBot(app, deps) {
       const rows = await runQuery(ownOrdersSql(cid) + ' AND ' + (byInvoice ? 'e.estimate_invoiceid = ' + n : 'e.id = ' + n) +
         ' ORDER BY e.id ASC LIMIT 10');
       if (!rows.length) return { not_found: 'No order ' + raw + ' on this customer\'s account.' };
-      const st = await statusFor(rows.map(r => r.id));
+      const projects = await projectCards(rows);
       const specs = await runQuery("SELECT estimate_id, estimate_option_name AS f, COALESCE(NULLIF(selected,''), estimate_option_value) AS v " +
         'FROM estimateoption WHERE estimate_id IN (' + rows.map(r => parseInt(r.id)).join(',') + ') AND hidden = 0 ORDER BY `order` ASC').catch(() => []);
-      const out = rows.map(r => ({
-        order: 'E' + r.id, name: r.name, product: r.product, placed: day(r.created), quantity: st[r.id].quantity || null,
-        status: statusLine(r, st[r.id]), steps: st[r.id].timeline, payment: r.payment_status || null,
-        total: r.total != null ? Number(r.total) : null,
-        options: specs.filter(s => s.estimate_id === r.id && s.v != null && String(s.v).trim() !== '').slice(0, 14)
-          .map(s => ({ field: s.f, value: String(s.v).slice(0, 80) }))
-      }));
-      cards.push({ type: 'orders', orders: out.map((o, i) => Object.assign({ order: o.order, name: o.name, product: o.product,
-        placed: o.placed, quantity: o.quantity, status: o.status, payment: o.payment }, orderImage(rows[i]))) });
-      return { orders: out };
+      const st = await statusFor(rows.map(r => r.id));
+      const out = projectsForModel(projects).map((o, i) => Object.assign(o, {
+        production_log: (st[rows[i].id] || {}).timeline,
+        options: specs.filter(s => s.estimate_id === rows[i].id && s.v != null && String(s.v).trim() !== '').slice(0, 14)
+          .map(s => ({ field: s.f, value: String(s.v).slice(0, 80) })) }));
+      cards.push({ type: 'projects', projects: projects });
+      return { orders: out, shown: PROJECTS_SHOWN };
     }
     return { error: 'Unknown tool.' };
   }
@@ -1367,6 +1445,40 @@ module.exports = function mountClientBot(app, deps) {
     }
   });
 
+  // The signed-in customer's recent projects, for the Projects tab (no model call).
+  app.get('/api/client-bot/projects', async (req, res) => {
+    const who = await identify(req);
+    if (!who) return res.status(401).json({ ok: false });
+    if (who.error) return res.status(who.status || 403).json({ ok: false, error: who.error });
+    if (!who.customer) return res.json({ ok: false, needs_signin: true, login: SITE_URLS.login });
+    if (overLimit('proj:' + who.vid, 60, 10 * 60 * 1000)) return res.status(429).json({ ok: false, error: 'Please wait a minute.' });
+    try {
+      const rows = await runQuery(ownOrdersSql(parseInt(who.customer.id)) + ' ORDER BY e.id DESC LIMIT 10');
+      res.json({ ok: true, projects: await projectCards(rows), history: SITE_URLS.orders });
+    } catch (e) {
+      console.error('CLIENT_BOT projects', e.message);
+      res.json({ ok: false, error: 'Your projects could not be loaded right now.' });
+    }
+  });
+
+  // Test / Live, for the website loader: live shows the chat to everyone, test
+  // only in browsers that opened a page with ?nova=test. Nothing secret here.
+  app.get('/api/client-bot/mode', (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    const m = mode();
+    res.json({ mode: m === 'open' ? 'live' : m });
+  });
+  app.post('/api/admin/client-bot/mode', auth, adminOnly, async (req, res) => {
+    const want = String((req.body && req.body.mode) || '');
+    if (want !== 'live' && want !== 'test') return res.status(400).json({ ok: false, error: 'Mode must be live or test.' });
+    if (want === 'test' && !process.env.CLIENT_BOT_TEST_KEY) return res.json({ ok: false, error: 'Test mode needs CLIENT_BOT_TEST_KEY in .env.' });
+    await dbRun('UPDATE client_bot_rules SET mode = ? WHERE id = 1', [want]);
+    savedMode = want;
+    console.log('CLIENT_BOT mode set to ' + want + ' by ' + String((req.user && (req.user.username || req.user.key)) || 'admin'));
+    res.json({ ok: true, mode: want });
+  });
+
   // Greeting and whether the visitor is signed in, for the chat header.
   app.get('/api/client-bot/hello', async (req, res) => {
     const who = await identify(req);
@@ -1391,8 +1503,9 @@ module.exports = function mountClientBot(app, deps) {
   app.get('/api/admin/client-bot/overview', auth, adminOnly, async (req, res) => {
     const c = await dbGet("SELECT COUNT(*) AS chats, SUM(CASE WHEN source='website' THEN 1 ELSE 0 END) AS website, " +
       "SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END) AS signed_in FROM client_chats");
-    res.json({ ok: true, public_on: publicOn(), mode: mode(), sso_secret: !!process.env.CLIENT_SSO_SECRET,
-      verify_url: !!process.env.CUSTOMER_VERIFY_URL, model: MODEL, counts: c || {} });
+    res.json({ ok: true, public_on: publicOn(), mode: mode(), switch: savedMode || (publicOn() ? 'live' : 'test'),
+      test_key: !!process.env.CLIENT_BOT_TEST_KEY, sso_secret: !!process.env.CLIENT_SSO_SECRET,
+      verify_url: true, model: MODEL, counts: c || {} });
   });
 
   app.get('/api/admin/client-bot/chats', auth, adminOnly, async (req, res) => {

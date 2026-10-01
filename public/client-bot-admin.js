@@ -219,18 +219,36 @@
   function paintSetup() {
     const o = overview || {};
     const chk = (ok, t) => '<div class="cb-check"><i class="' + (ok ? 'y' : 'n') + '">' + (ok ? '✓' : '•') + '</i>' + t + '</div>';
+    const sw = o.switch || 'test';
     $('setupBox').innerHTML =
-      '<h2 style="margin-top:0">Status</h2>' +
+      '<h2 style="margin-top:0">Chat mode</h2>' +
+      '<div class="cb-mode">' +
+        '<button type="button" data-mode="test" class="' + (sw === 'test' ? 'on' : '') + '"><b>Test</b><small>Only browsers that opened axiomprint.com with <code>?nova=test</code></small></button>' +
+        '<button type="button" data-mode="live" class="' + (sw === 'live' ? 'on live' : '') + '"><b>Live</b><small>Every visitor on axiomprint.com sees Nova</small></button>' +
+      '</div>' +
+      '<p class="cb-mode-now">' + (o.mode === 'open' ? '● Live — customers can use Nova now.' : o.mode === 'test' ? '● Test — hidden from customers.' :
+        '● Off — ' + (o.test_key ? '' : 'test mode needs <code>CLIENT_BOT_TEST_KEY</code> in .env. ') + 'Admins only.') +
+        ' Changes apply within a minute; the website snippet stays the same.</p>' +
+      '<div class="cb-mode-err" id="modeErr"></div>' +
+      '<h2>Status</h2>' +
       chk(true, 'Separate bot, rules, conversations and sign-in from the staff ChatBot.') +
-      chk(o.public_on, o.public_on ? 'Open to website visitors (<code>CLIENT_BOT_PUBLIC=1</code>).' : 'Admins only. Visitors cannot use it until <code>CLIENT_BOT_PUBLIC=1</code> is set.') +
-      chk(o.sso_secret, 'Website sign-in, signed handoff: ' + (o.sso_secret ? 'configured' : 'needs <code>CLIENT_SSO_SECRET</code>') + '.') +
-      chk(o.verify_url, 'Website sign-in, customer token: ' + (o.verify_url ? 'configured' : 'needs <code>CUSTOMER_VERIFY_URL</code>') + ' (only one of the two is needed).') +
+      chk(true, 'Website sign-in: the customer\'s axiomprint.com login (<code>tokenKey: \'axiom-print-app\'</code>), checked with <code>customers/me</code>.') +
+      chk(true, 'Add to Cart puts the item in the customer\'s real website cart (signed-in customers).') +
       '<p style="color:var(--muted)">Model: ' + esc(o.model || '') + ' · Conversations so far: ' + ((o.counts && o.counts.chats) || 0) + '</p>' +
-      '<h2>How a customer is recognised</h2>' +
-      '<p>The website tells Nova who is signed in; Nova checks it and looks the customer up in our database. The chat never takes a name, email or order number typed by the visitor as proof of who they are.</p>' +
-      '<p><b>Option A — signed handoff (recommended).</b> The website’s server signs who is logged in with a shared secret, and the page passes it to the chat:</p>' +
-      '<pre>// Laravel (website layout, when a customer is logged in)\n$p = base64_encode(json_encode([\n  \'customer_id\' => $customer->id,   // customer.id in axiomprint_new\n  \'email\'       => $customer->email,\n  \'name\'        => $customer->name,\n  \'ts\'          => time(),\n  \'nonce\'       => bin2hex(random_bytes(16)),   // single use\n]));\n$sig = hash_hmac(\'sha256\', $p, env(\'NOVA_CLIENT_SSO_SECRET\'));\n\n// page script, after the chat iframe loads\niframe.contentWindow.postMessage(\n  { type: \'nova-client:signin\', payload: \'{{ $p }}\', sig: \'{{ $sig }}\' },\n  \'https://nova.axiomprint.com\');</pre>' +
-      '<p><b>Option B — customer token.</b> If the website keeps a customer API token in the browser, the page posts <code>{ type: \'nova-client:signin\', customer_token }</code> instead, and Nova asks <code>CUSTOMER_VERIFY_URL</code> (the website API’s "who am I" endpoint for customers) who it belongs to.</p>' +
-      '<p>The chat page to embed is <code>https://nova.axiomprint.com/client-chat</code>. The full write-up is in <code>docs/CLIENT_BOT.md</code>.</p>';
+      '<h2>Website snippet</h2>' +
+      '<pre>&lt;script&gt;\n  window.NovaClientChat = Object.assign(window.NovaClientChat || {}, {\n    testKey: \'…your CLIENT_BOT_TEST_KEY…\',\n    tokenKey: \'axiom-print-app\'\n  });\n&lt;/script&gt;\n&lt;script src="https://nova.axiomprint.com/client-embed.js" defer&gt;&lt;/script&gt;</pre>' +
+      '<p>The full write-up is in <code>docs/CLIENT_BOT.md</code>.</p>';
+    $('setupBox').querySelectorAll('[data-mode]').forEach(btn => {
+      btn.onclick = async () => {
+        const m = btn.getAttribute('data-mode');
+        if (m === sw) return;
+        if (m === 'live' && !confirm('Go live? Every visitor on axiomprint.com will see Nova.')) return;
+        const j = await fetch('/api/admin/client-bot/mode', { method: 'POST', headers: H(), body: JSON.stringify({ mode: m }) })
+          .then(r => r.json()).catch(() => ({}));
+        if (!j.ok) { $('modeErr').textContent = j.error || 'Could not change the mode.'; return; }
+        overview = await fetch('/api/admin/client-bot/overview', { headers: H() }).then(r => r.json()).catch(() => overview);
+        paintOverview(); paintSetup();
+      };
+    });
   }
 })();

@@ -197,9 +197,13 @@ shared `InstallPricing` engine and live admin config via `getInstallPricing()`; 
 not rates). Website loader: `public/client-embed.js` (header script; `window.NovaClientChat` config; handles
 sign-in, cart-ready / add-to-cart and close over postMessage). Phones (<700px) get a full-width bar fixed to the bottom;
 it moves the site's own bottom-pinned bars up by its height (`lift()`), and the open chat follows `visualViewport` so
-the keyboard never covers it. `CLIENT_BOT_PUBLIC=test` + `CLIENT_BOT_TEST_KEY` = test
-mode: sessions need the key (the script passes it as `?k=`), tokens carry `t:1`, and the button only shows after
-`?nova=test`. Express 5 route syntax: optional segments are `{/:name}`, not `:name?` — the latter crashes at boot.
+the keyboard never covers it. Test / Live is an admin switch (Setup tab →
+`POST /api/admin/client-bot/mode`, stored in `client_bot_rules.mode`, overrides `CLIENT_BOT_PUBLIC`); the loader reads
+`GET /api/client-bot/mode` and in Test shows the chat only after `?nova=test`; test sessions need `CLIENT_BOT_TEST_KEY`
+(passed as `?k=`) and carry `t:1`. The pane has **Quote** and **My projects** tabs: `projectCards()` builds website-style
+job snapshots (invoice line, picture, E-number, size, qty, Preflight / Production / Pick up-Shipping-Installation steps
+from `prepress_status`, `estimate_stage`, scans, `estimate_handle`), served by `GET /api/client-bot/projects` and the
+order tools. Express 5 route syntax: optional segments are `{/:name}`, not `:name?` — the latter crashes at boot.
 
 ## Installation & local delivery pricing
 

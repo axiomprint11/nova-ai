@@ -151,6 +151,29 @@ Pass it as `window.NovaClientChat.signin = { payload: '…', sig: '…' }`.
 Only `https://axiomprint.com` and `https://www.axiomprint.com` may send a sign-in to the chat page, and only those
 sites may frame it.
 
+## My projects (signed-in customers)
+
+The right-hand pane has two tabs: **Quote** and **My projects**. My projects loads the customer's latest 10 jobs straight
+away (`GET /api/client-bot/projects`, no model call); asking "where is my order?" fills it too (on a phone the cards
+appear in the conversation). Each card is laid out like the order history on axiomprint.com:
+
+- the invoice line: date placed, **INVOICE INV…**, **TOTAL** (`invoice_total_payment`), **PAID / UNPAID**;
+- the job: picture (their artwork preview, else the product photo), job name, E-number, product, size, quantity;
+- three steps: **Preflight check** (`prepress_status`: Approved / Proof Checking / Upload Files / Proof sent / Re-upload),
+  **Production** (Complete once `estimate_stage` is complete or the job is ready / on its way, else the latest production
+  scan, else Not Started; due date), and **Pick up / Shipping / Delivery / Installation** (`estimate_handle.shipping_method`
+  and `handle_status`; tracking number when shipped);
+- a link to the order history (to upload files, review a proof or pay).
+
+Nova does not list the projects again in text; it says what needs the customer's attention.
+
+## Test / Live
+
+**Client ChatBot → Setup → Chat mode**: **Test** (only browsers that opened axiomprint.com with `?nova=test`) or **Live**
+(every visitor). It is stored in Nova and overrides `CLIENT_BOT_PUBLIC`; the website snippet never changes — the loader
+asks `GET /api/client-bot/mode` on each page (cached for a minute). Test mode needs `CLIENT_BOT_TEST_KEY` in `.env`
+(the snippet's `testKey`).
+
 ## Templates, installation and delivery
 
 - **Templates** — `get_template` finds a product's template / die line files (the same `die_line` records the
