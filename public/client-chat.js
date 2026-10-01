@@ -49,12 +49,16 @@
     if (c.type === 'products') {
       // Clicking a product picks it: the chat is told to price that one. The small
       // arrow still opens its page on the website.
-      return '<div class="cc-prods">' + (c.products || []).map(p =>
-        '<div class="cc-prod" role="button" tabindex="0" data-pick="' + esc(p.id) + '" data-name="' + esc(p.name) + '" title="Price this product">' +
+      // The best four show; "Show more" reveals the rest, four at a time.
+      const list = c.products || [];
+      const more = Math.max(0, list.length - 4);
+      return '<div class="cc-prods">' + list.map((p, i) =>
+        '<div class="cc-prod' + (i >= 4 ? ' cc-later' : '') + '" role="button" tabindex="0" data-pick="' + esc(p.id) + '" data-name="' + esc(p.name) + '" title="Price this product">' +
           (p.image ? '<img src="' + esc(p.image) + '" alt="" loading="lazy" onerror="this.remove()">' : '<span class="cc-ph"></span>') +
           '<span>' + esc(p.name) + '</span>' +
           (p.url ? '<a class="cc-prod-link" href="' + esc(p.url) + '" target="_blank" rel="noopener" title="Open the product page">\u2197</a>' : '') +
-        '</div>').join('') + '</div>';
+        '</div>').join('') +
+        (more ? '<button type="button" class="cc-prods-more">Show more products (' + more + ')</button>' : '') + '</div>';
     }
     if (c.type === 'price') return quote(c);
     if (c.type === 'templates') {
@@ -145,6 +149,16 @@
       '<div class="cc-note">Excludes shipping and tax.</div>' +
     '</div>';
   }
+
+  // "Show more products": works in the chat and in the admin transcripts alike.
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('.cc-prods-more');
+    if (!b) return;
+    const hidden = Array.from(b.parentNode.querySelectorAll('.cc-prod.cc-later'));
+    hidden.slice(0, 4).forEach(x => x.classList.remove('cc-later'));
+    const left = hidden.length - 4;
+    if (left > 0) b.textContent = 'Show more products (' + left + ')'; else b.remove();
+  });
 
   function mount(root, opts) {
     opts = opts || {};

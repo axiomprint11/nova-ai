@@ -65,7 +65,9 @@ Paste into the `<head>` of axiomprint.com (every page):
 
 It adds the chat launcher:
 
-- **Desktop** — an **Ask Nova** button in the bottom-right corner; the chat opens as a panel.
+- **Desktop** — an **Ask Nova** button in the bottom-right corner; the chat opens as an 876 × 620 panel (chat on the
+  left, "Your quote" on the right). Product suggestions list one per line: the best four, then **Show more products**
+  (up to 12).
 - **Phone** (under 700px) — a **full-width bar fixed to the bottom** of the screen ("Ask Nova · Chat ›"). Tap it and
   the chat opens full screen, sized to the visible area so the keyboard never covers the message box. Anything the
   site pins to the bottom of the screen (the sticky **Order Now / Add to Cart** bar, a cookie notice) is moved up above

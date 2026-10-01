@@ -752,7 +752,9 @@ module.exports = function mountClientBot(app, deps) {
       const top = rows.sort((a, b) => score(b) - score(a)).slice(0, 6).map(r => ({
         id: r.id, name: r.public_title || r.title, link: productLink(r), about: clip(r.short_description, 160)
       }));
-      if (top.length) cards.push({ type: 'products', products: rows.filter(r => top.some(t => t.id === r.id)).slice(0, 6)
+      // The customer sees up to 12 (four at first, "Show more" for the rest), best match first.
+      const ranked = rows.slice().sort((a, b) => score(b) - score(a)).slice(0, 12);
+      if (top.length) cards.push({ type: 'products', products: ranked
         .map(r => ({ id: r.id, name: r.public_title || r.title, url: productLink(r), image: r.image || null })) });
       return { results: top };
     }

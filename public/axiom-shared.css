@@ -1807,6 +1807,10 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .cc-prod { display: flex; align-items: center; gap: 9px; width: 100%; box-sizing: border-box; padding: 4px 8px 4px 4px; border: 1px solid var(--line);
   border-radius: 10px; text-decoration: none; color: var(--ink) !important; font-weight: 600 !important; font-size: 12.5px; background: #fff; }
 .cc-prod:hover { border-color: var(--indigo); background: #f8f7ff; }
+.cc-prod.cc-later { display: none; }
+.cc-prods-more { align-self: flex-start; margin-top: 2px; padding: 6px 12px; border: 1.5px dashed #c7d2fe; border-radius: 8px; background: #fff;
+  color: var(--indigo-dark); font: 600 12px/1 inherit; cursor: pointer; }
+.cc-prods-more:hover { border-style: solid; background: var(--indigo-light); }
 .cc-prod > span:not(.cc-ph) { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cc-prod img, .cc-ph { width: 36px; height: 36px; border-radius: 7px; object-fit: cover; flex: none; border: 1px solid var(--line); background: #f4f4f9; }
 .cc-price { margin-top: 8px; border: 1px solid #e0dbf7; border-radius: 12px; padding: 11px 13px; background: linear-gradient(160deg,#fbfaff,#f5f3ff); }
