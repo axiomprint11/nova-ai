@@ -2160,3 +2160,7 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .cc-prod-txt small { font-size: 12px; font-weight: 400; color: var(--muted); line-height: 1.3; overflow: hidden;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .cc-prod:has(.cc-prod-txt small) img, .cc-prod:has(.cc-prod-txt small) .cc-ph { width: 42px; height: 42px; }
+/* hover / picked outline as a ring outside the border: a 1px border alone can lose
+   its top row at fractional zoom (125%, 150% Windows scaling) */
+.cc-prod:hover, .cc-prod:focus-visible { z-index: 1; border-color: var(--indigo); box-shadow: 0 0 0 1px var(--indigo); outline: none; }
+.cc-prod.chosen { z-index: 1; box-shadow: 0 0 0 1px var(--indigo); }
