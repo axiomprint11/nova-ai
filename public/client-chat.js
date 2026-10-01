@@ -151,7 +151,7 @@
     let chatId = null, busy = false;
     root.classList.add('cc');
     // Chat on the left, quotes on the right when there is room (the pane shows
-    // from 860px wide); narrower, quotes stay in the conversation.
+    // from 800px wide); narrower, quotes stay in the conversation.
     root.innerHTML =
       '<div class="cc-main">' +
       '<div class="cc-msgs"><div class="cc-inner"></div></div>' +
@@ -173,7 +173,7 @@
         '<div class="cc-pane-body"><div class="cc-pane-empty">Prices you ask about appear here, with Add to Cart for each quantity.</div></div></aside>';
     const paneBody = root.querySelector('.cc-pane-body');
     const wide = () => root.classList.contains('cc-wide');
-    const fit = () => root.classList.toggle('cc-wide', root.clientWidth >= 860);
+    const fit = () => root.classList.toggle('cc-wide', root.clientWidth >= 800);
     fit();
     if (window.ResizeObserver) new ResizeObserver(fit).observe(root); else window.addEventListener('resize', fit);
 

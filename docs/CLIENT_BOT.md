@@ -201,7 +201,7 @@ its next answer. Options the customer touched, or that were Specified or Questio
 ## Add to Cart
 
 Prices show as one quote per product and options — the options once, then **Qty · Price · Add to Cart** for each
-quantity — in a "Your quote" pane on the right (from 860px wide; narrower, in the conversation).
+quantity — in a "Your quote" pane on the right (from 800px wide; narrower, in the conversation).
 
 The website owns its cart, so the chat asks the page that hosts it to add the item. Nova has no access to the
 website cart itself.

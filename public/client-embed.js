@@ -91,7 +91,7 @@
       } else {
         panel.style.top = 'auto'; panel.style.left = SIDE === 'left' ? '20px' : 'auto';
         panel.style.right = SIDE === 'right' ? '20px' : 'auto'; panel.style.bottom = '20px';
-        panel.style.width = Math.min(1040, window.innerWidth - 40) + 'px';
+        panel.style.width = Math.min(876, window.innerWidth - 40) + 'px';
         panel.style.height = Math.min(720, window.innerHeight - 40) + 'px';
         panel.style.borderRadius = '16px'; panel.style.border = '1px solid #e4e4ef';
       }
