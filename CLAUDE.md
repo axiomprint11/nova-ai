@@ -239,6 +239,12 @@ pattern for any new report over a large log table. To add a report, add an entry
 
 - **`estimate.production_status` is stale.** True production state is the newest `qr_scan_history` row
   for that `estimate_id`. This is stated in DATA_DICTIONARY and enforced in the `get_job` MCP tool.
+- **"Related to" rules** (`product_variable_filters`) decide when a field or option exists at all — Scoring on Book
+  Dust Jackets only with 100# Gloss Cover. `relatedRules(pids)` (server.js) turns them into sentences; the staff
+  `get_product_options` / `find_option` return them as `only_when` / `related_to_rules`, `calculate_price` reports
+  requested options a rule dropped as `not_applied`, and the client bot's `product_details` gives the public ones as
+  `conditions`. Answers about an option must state its condition. `get_product_options` also flags fields the
+  product formula never mentions (`not_in_price_formula`) — those cost nothing on the site whatever their values say.
 - **Order quantity lives in `estimateoption`** (`estimate_option_name='Quantity'`), not
   `invoiceestimate.invoice_estcount`, which is often 0. Sizes are often internal numeric codes.
 - Job number `E1169106` = `estimate.id` 1169106. Strip the `E`.

@@ -709,6 +709,13 @@ module.exports = function mountClientBot(app, deps) {
         discount: q.discount ? { percent: q.discount.percent } : null, ready: ready,
         // What the website needs to put this exact item in the cart.
         cart: link && link.ok ? { url: link.url, share_id: link.share_id || null, config: link.config || null } : null });
+      if (q.not_applied && rows.length === 1) {
+        // Asked for, but left out by a "Related to" rule (it needs another choice).
+        // The rule itself may name a field customers never see, so only say that
+        // it needs a different choice; product_details gives the public conditions.
+        q.not_applied.filter(x => pub2.byName[norm(x.field)]).forEach(x =>
+          ignored.push(x.field + ' "' + x.asked + '" is not available with the other options chosen \u2014 not included in this price (see conditions in product_details)'));
+      }
       forModel.push({ quantity: q.quantity, price: q.price, each: q.each, ready: ready,
         your_discount: q.discount ? q.discount.percent + '%' : undefined });
     }
@@ -753,8 +760,17 @@ module.exports = function mountClientBot(app, deps) {
       const p = await publicProduct(input.product_id, cid);
       if (!p) return { error: 'No such product on axiomprint.com.' };
       const pub = await publicOptions(p.id);
+      // "Related to" rules between options the customer can see (never ones that
+      // name a hidden or internal field).
+      let conditions = [];
+      try {
+        const rel = await deps.relatedRules([p.id]);
+        conditions = rel.raw.filter(x => pub.ids.has(x.var_id) && pub.ids.has(x.related_var_id)).map(x => x.text);
+      } catch (e) {}
       return {
         id: p.id, name: p.public_title || p.title, link: productLink(p),
+        conditions: conditions.length ? conditions : undefined,
+        conditions_note: conditions.length ? 'Some options only exist with another choice. When you talk about one of these options, say its condition.' : undefined,
         about: clip(p.short_description, 300), details: clip(p.information, 1200),
         finishing: clip(p.finishing, 600), file_preparation: clip(p.file_prep, 600), turnaround_and_shipping: clip(p.turnaround_and_shipping, 600),
         options: pub.vars.filter(v => v.type !== 'upload_file').map(v => ({

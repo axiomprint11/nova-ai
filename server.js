@@ -24,7 +24,7 @@ const app = express();
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
 const NOVA_VERSION = '1.5.8';
-const NOVA_BUILT = '09-30-2026 10:55pm';
+const NOVA_BUILT = '09-30-2026 11:20pm';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -1176,6 +1176,73 @@ async function discountFor(clientId, productId) {
 // exactly the same answer and the dependency rules only exist in one place.
 //   opts.options  { "Field Name": "Option Title" }  - loose match, used by the AI
 //   opts.itemIds  { variableId: itemId }            - exact, used by the editor
+// "Related to" rules (product_variable_filters) for one or more products, as
+// plain sentences the models can repeat. Two kinds:
+//   field-level (product_variable_id)      -> the WHOLE field only shows when …
+//   item-level  (product_variable_item_id) -> this ONE option only shows when …
+// e.g. Book Dust Jackets: Scoring only appears when Paper Stock is 100# Gloss
+// Cover — never with 100# Gloss Text. Answering "do we charge for scoring?"
+// without that condition is a wrong answer.
+// Returns { field: {varId: [text]}, item: {itemId: [text]}, unlocks: {itemId: [name]},
+//           list: {pid: [text]} }.
+async function relatedRules(pids) {
+  const out = { field: {}, item: {}, unlocks: {}, list: {}, raw: [] };
+  pids = (Array.isArray(pids) ? pids : [pids]).map(n => parseInt(n)).filter(Boolean);
+  if (!pids.length) return out;
+  const inP = pids.join(',');
+  const [fieldRows, itemRows, vars] = await Promise.all([
+    runQueryRaw('SELECT pvf.product_variable_id AS var_id, pvf.relatedTo, pvf.relatedItems FROM product_variable_filters pvf ' +
+      'JOIN product_variables pv ON pv.id = pvf.product_variable_id WHERE pv.product_id IN (' + inP + ') AND pvf.product_variable_item_id IS NULL'),
+    runQueryRaw('SELECT pvf.product_variable_item_id AS item_id, pvf.relatedTo, pvf.relatedItems FROM product_variable_filters pvf ' +
+      'JOIN product_variable_item pvi ON pvi.id = pvf.product_variable_item_id ' +
+      'JOIN product_variables pv ON pv.id = pvi.variable_id WHERE pv.product_id IN (' + inP + ')'),
+    runQueryRaw('SELECT id, product_id, title FROM product_variables WHERE product_id IN (' + inP + ')')
+  ]);
+  if (!fieldRows.length && !itemRows.length) return out;
+  const items = vars.length ? await runQueryRaw('SELECT id, variable_id, title, isHidden FROM product_variable_item WHERE variable_id IN (' +
+    vars.map(v => parseInt(v.id)).join(',') + ')') : [];
+  const varById = {}, itemById = {};
+  vars.forEach(v => { varById[Number(v.id)] = v; });
+  items.forEach(i => { itemById[Number(i.id)] = i; });
+  const nice = (t) => String(t || '').replace(/_/g, ' ');
+  const ids = (rel) => {
+    try { if (typeof rel === 'string') rel = JSON.parse(rel); } catch (e) { rel = []; }
+    return Array.isArray(rel) ? rel.map(Number).filter(Boolean) : [];
+  };
+  // "Paper Stock is 100# Gloss Cover (not 100# Gloss Text)"
+  const cond = (relatedTo, list) => {
+    const rv = varById[Number(relatedTo)];
+    const ok = list.map(i => itemById[i]).filter(Boolean);
+    if (!rv || !ok.length) return null;
+    const others = items.filter(i => Number(i.variable_id) === Number(rv.id) && list.indexOf(Number(i.id)) === -1 && Number(i.isHidden) !== 1);
+    return nice(rv.title) + ' is ' + ok.map(i => i.title).join(' or ') +
+      (others.length && others.length <= 6 ? ' (not ' + others.map(i => i.title).join(', ') + ')' : '');
+  };
+  const add = (map, k, v) => { (map[k] = map[k] || []).push(v); };
+  fieldRows.forEach(r => {
+    const v = varById[Number(r.var_id)];
+    const list = ids(r.relatedItems), c = cond(r.relatedTo, list);
+    if (!v || !c) return;
+    const text = nice(v.title) + ' is only offered when ' + c + '.';
+    add(out.field, Number(v.id), text);
+    add(out.list, Number(v.product_id), text);
+    out.raw.push({ pid: Number(v.product_id), var_id: Number(v.id), item_id: null, related_var_id: Number(r.relatedTo), text: text });
+    list.forEach(i => add(out.unlocks, i, nice(v.title)));
+  });
+  itemRows.forEach(r => {
+    const it = itemById[Number(r.item_id)];
+    const list = ids(r.relatedItems), c = cond(r.relatedTo, list);
+    if (!it || !c || Number(it.isHidden) === 1) return;
+    const v = varById[Number(it.variable_id)];
+    const text = nice(v && v.title) + ' "' + it.title + '" is only available when ' + c + '.';
+    add(out.item, Number(it.id), text);
+    if (v) add(out.list, Number(v.product_id), text);
+    if (v) out.raw.push({ pid: Number(v.product_id), var_id: Number(v.id), item_id: Number(it.id), related_var_id: Number(r.relatedTo), text: text });
+    list.forEach(i => add(out.unlocks, i, nice(v && v.title) + ': ' + it.title));
+  });
+  return out;
+}
+
 async function quoteProduct(pid, opts) {
   opts = opts || {};
   const calc = await loadCalc(pid);
@@ -1537,6 +1604,30 @@ async function quoteProduct(pid, opts) {
     };
   }).filter(Boolean);
 
+  // Asked for, but a "Related to" rule kept it out: the field only shows with
+  // another selection (Scoring needs a Cover paper), or the option needs a
+  // different choice elsewhere. Reported so nobody quotes a job believing it
+  // includes something the calculator dropped.
+  const notApplied = [];
+  {
+    const nice = t => String(t || '').replace(/_/g, ' ');
+    const varTitle = id => nice((calc.variables.find(x => Number(x.id) === Number(id)) || {}).title);
+    const itemTitle = id => {
+      for (const x of calc.variables) { const i = (x.items || []).find(y => Number(y.id) === Number(id)); if (i) return i.title; }
+      return null;
+    };
+    optionVars.forEach(v => {
+      const req = requestedFor[v.id];
+      if (!req) return;
+      let rules = null;
+      if (!fieldActive(v.id)) rules = depByVar[Number(v.id)];
+      else if (chosen[v.id] && Number(chosen[v.id].id) !== Number(req.id)) rules = rulesByItem[Number(req.id)];
+      else return;
+      notApplied.push({ field: nice(v.title), asked: req.title,
+        needs: (rules || []).map(r => varTitle(r.relatedTo) + ' = ' + r.items.map(itemTitle).filter(Boolean).join(' or ')).join('; ') || 'a different selection' });
+    });
+  }
+
   // Only ACTIVE fields go into pricing. Dropping an inactive field from `chosen`
   // makes its formula tokens evaluate to 0 — matching the website, where a hidden
   // field costs nothing.
@@ -1752,6 +1843,7 @@ async function quoteProduct(pid, opts) {
     size: cWH ? (cWH.w + '" × ' + cWH.h + '"') : null,
     width: cWH ? cWH.w : null, height: cWH ? cWH.h : null,
     specs: used, unmatched: unmatched,
+    not_applied: notApplied.length ? notApplied : undefined,
     fields: fields,
     quantities: qtyVar ? qtyVar.items.map(i => ({ id: i.id, title: i.title, value: Number(i.value) })) : [],
     // A size_new / size_3D field always accepts a typed W x H, so the editor
@@ -6279,6 +6371,13 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     '- REORDERS: use the `reorder` object get_job gives you verbatim (product_id, client_id, quantity, ' +
     'versions, options, width/height). If the new total is far from the original, say so plainly and ask ' +
     'what changed - do not present a different number as if it were the same job.\n' +
+    '- RELATED-TO RULES: many options only exist with another selection (Scoring on Book Dust Jackets only ' +
+    'with 100# Gloss Cover, a 4/4 print colour only with Both Sides, Foil Color only when Foil is on, some ' +
+    'turnarounds only at larger quantities). get_product_options and find_option return these as only_when / ' +
+    'related_to_rules. Whenever you answer about a field or option — what it costs, whether we offer it, how it ' +
+    'works — check for a condition and STATE IT in the same answer, including which choices it does NOT work ' +
+    'with. If a price card reports not_applied, the option was left out of that price: say why and offer to ' +
+    'reprice with the selection that allows it.\n' +
     '- Call get_product_options FIRST so you have the EXACT option titles, then pass those to ' +
     'calculate_price. Guessing a value ("Yes" for round corners when the real options are 1/8" Round and ' +
     '1/4" Round) means the request is silently ignored.\n' +
@@ -6700,7 +6799,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
         try {
           const pid = parseInt(toolUse.input.product_id);
           const want = String(toolUse.input.field || '').trim().toLowerCase();
-          const prod = await runQueryRaw('SELECT id, title, public_title, image, url FROM product WHERE id = ' + pid);
+          const prod = await runQueryRaw('SELECT id, title, public_title, image, url, formula FROM product WHERE id = ' + pid);
           if (!prod.length) {
             toolResult = 'No product with id ' + pid + '. Search by name first: SELECT id, title FROM product WHERE title LIKE \'%keyword%\'';
           } else {
@@ -6713,8 +6812,12 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
                 'SELECT id, variable_id, title, value, base, isHidden, `default`, custom ' +
                 'FROM product_variable_item WHERE variable_id IN (' + ids.join(',') + ') ORDER BY variable_id, `order`');
             }
-            const shaped = vars
-              .filter(v => !want || String(v.title).toLowerCase().replace(/_/g, ' ').includes(want.replace(/_/g, ' ')))
+            // "Related to" rules: which fields / options only show with another selection.
+            let rel = { field: {}, item: {}, unlocks: {}, list: {} };
+            try { rel = await relatedRules([pid]); } catch (e) {}
+            const shownVars = vars
+              .filter(v => !want || String(v.title).toLowerCase().replace(/_/g, ' ').includes(want.replace(/_/g, ' ')));
+            const shaped = shownVars
               .map(v => {
                 let cfg = {};
                 try { if (v.configs) cfg = JSON.parse(v.configs); } catch (e) {}
@@ -6724,6 +6827,11 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
                 return {
                   field: String(v.title).replace(/_/g, ' '),
                   type: v.type,
+                  only_when: rel.field[Number(v.id)] || undefined,
+                  // A field the price formula never mentions costs nothing on the
+                  // website, whatever values its options carry.
+                  not_in_price_formula: (prod[0].formula && !new RegExp('(^|[^A-Za-z0-9_])' +
+                    String(v.title).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^A-Za-z0-9_]|$)').test(String(prod[0].formula))) || undefined,
                   supports_versions: v.hasVersions == 1 || undefined,
                   size_config: (v.type === 'size_new' || v.type === 'size_3D') ? cfg : undefined,
                   options: own.map(i => ({
@@ -6731,7 +6839,9 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
                     is_default: i.default == 1 || undefined,
                     hidden: i.isHidden == 1 || undefined,
                     custom: i.custom == 1 || undefined,
-                    value: i.value, base: i.base
+                    value: i.value, base: i.base,
+                    only_when: rel.item[Number(i.id)] || undefined,
+                    unlocks: rel.unlocks[Number(i.id)] || undefined
                   }))
                 };
               });
@@ -6743,6 +6853,23 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
                 page_url: prod[0].url ? ('https://axiomprint.com/product/' + prod[0].url) : null
               },
               note: 'hidden:true options exist in the database but are NOT selectable on the site - say so if you list them.',
+              // Every condition that touches the fields shown, in plain words.
+              related_to_rules: (function () {
+                const names = shownVars.map(v => String(v.title).replace(/_/g, ' '));
+                const all = rel.list[pid] || [];
+                const mine = want ? all.filter(t => names.some(n => t.indexOf(n) > -1)) : all;
+                return mine.length ? mine : undefined;
+              })(),
+              formula_note: shaped.some(f => f.not_in_price_formula)
+                ? 'Fields marked not_in_price_formula are NOT used by this product\'s price formula, so choosing them adds ' +
+                  'nothing to the website / calculator price even though their options show value/base numbers. If asked ' +
+                  'what one costs, say that plainly (the team may want to fix the product setup) — do not quote the value/base as a charge.'
+                : undefined,
+              related_to_note: (rel.list[pid] || []).length
+                ? 'RELATED-TO RULES apply (only_when / related_to_rules). Whenever you answer about a field or option ' +
+                  'that has one, STATE THE CONDITION in the same answer — e.g. "Yes, we offer scoring on Book Dust Jackets, but ' +
+                  'only on 100# Gloss Cover — not on 100# Gloss Text." Leaving the condition out is a wrong answer.'
+                : undefined,
               next: 'DO NOT print these options as a table or a list — that is what the calculator is for. ' +
                 'Call calculate_price NOW with whatever the person already specified (size, material, ' +
                 'quantity, features). The card that appears shows every field with its value, marks what ' +
@@ -7808,7 +7935,11 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
         try {
           // Match on every word so "linen lamination" finds "Linen Lamination, 2 Sides"
           // and "Linen Texture Lamination, Outside Only".
+          // The words as typed count too: jargon turns "scoring" into "score",
+          // which does not match a field called "Scoring".
           const terms = searchTerms(opt);
+          String(opt).toLowerCase().replace(/[^a-z0-9. ]+/g, ' ').split(/\s+/)
+            .filter(w => w.length > 3 && !SEARCH_STOPWORDS.has(w)).forEach(w => { if (terms.indexOf(w) === -1) terms.push(w); });
           // ANY term. "hemp paper" must find "Clean White Hemp (140# Cover)" —
           // requiring both words found nothing, because no option title says
           // "paper". Results are ranked by how many terms actually hit.
@@ -7817,7 +7948,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
             return '(pvi.title LIKE ' + like + ' OR pv.title LIKE ' + like + ')';
           }).join(' OR ');
           const rows = await runQueryRaw(
-            'SELECT p.id AS product_id, p.title AS product, pv.title AS field, pvi.title AS option_name, ' +
+            'SELECT p.id AS product_id, p.title AS product, pv.id AS var_id, pv.title AS field, pvi.id AS item_id, pvi.title AS option_name, ' +
             'pvi.isHidden, pvi.value, pvi.base, ' +
             '(SELECT COUNT(*) FROM estimate e WHERE e.estimate_productid = p.id) AS orders ' +
             'FROM product p JOIN product_variables pv ON pv.product_id = p.id ' +
@@ -7855,6 +7986,9 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
             const seenP = [];
             use.forEach(r => { if (seenP.indexOf(r.product_id) === -1) seenP.push(r.product_id); });
             await sendProductCards(seenP.slice(0, 6));
+            // When each hit is actually selectable ("Related to" rules).
+            let rel = { field: {}, item: {} };
+            try { rel = await relatedRules([...new Set(use.slice(0, 25).map(r => r.product_id))]); } catch (e) {}
             toolResult = JSON.stringify({
               found: use.length,
               fields_it_lives_under: Object.keys(byField).map(f => f.replace(/_/g, ' ') + ' (' + byField[f] + ')'),
@@ -7864,10 +7998,15 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
                 field: String(r.field).replace(/_/g, ' '),
                 option: r.option_name,
                 hidden: r.isHidden == 1 || undefined,
+                only_when: (function () {
+                  const c = (rel.field[Number(r.var_id)] || []).concat(rel.item[Number(r.item_id)] || []);
+                  return c.length ? c : undefined;
+                })(),
                 orders: r.orders
               })),
               note: 'Sorted by how much each product is actually ordered. "field" is where the option lives on ' +
-                    'that product - name it in your answer so the team knows where to look.'
+                    'that product - name it in your answer so the team knows where to look. When a result has ' +
+                    'only_when, it is only selectable with that other selection — say the condition in your answer.'
             });
           }
         } catch (e) {
@@ -8159,6 +8298,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
               custom_size: q.size,
               auto_adjusted: adjusted.length ? adjusted : undefined,
               could_not_match: q.unmatched.length ? q.unmatched : undefined,
+              not_applied: q.not_applied,
               // Too many designs for versions to make sense. Say which route to
               // take before quoting 28 separate setups.
               too_many_versions: (Number(q.versions) > 25 || Number(toolUse.input.versions) > 25)
@@ -8180,7 +8320,13 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
                     ? 'IMPORTANT: some requested options did not match a real option (see could_not_match). ' +
                       'Say which, list the real choices, and offer to reprice.'
                     : '') +
-                  (adjusted.length ? ' Mention the auto-adjusted fields in one short line.' : '')
+                  (adjusted.length ? ' Mention the auto-adjusted fields in one short line.' : '') +
+                  (q.not_applied
+                    ? ' IMPORTANT: some requested options are NOT in this price because of a "Related to" rule ' +
+                      '(see not_applied: what was asked, and the selection it needs). Say so plainly — e.g. ' +
+                      '"Scoring is only available on 100# Gloss Cover, so it is not included on Gloss Text" — ' +
+                      'and offer to reprice with the selection that allows it.'
+                    : '')
             });
           }
         } catch (e) {
@@ -8566,7 +8712,7 @@ mountMcp(app, { runQuery, dataDictionary: DATA_DICTIONARY });
 require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly,
   quoteProduct, buildOrderLink, stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming,
   InstallPricing, getInstallPricing: () => installPricing, routeLookup, toTime24, driveFileBytes,
-  extractAttachmentText, dataDir: __dirname });
+  extractAttachmentText, relatedRules, dataDir: __dirname });
 
 app.get(/^(?!\/api).*/, serveVersionedHtml('index.html'));
 
