@@ -23,8 +23,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.6.2';
-const NOVA_BUILT = '10-01-2026 11:55am';
+const NOVA_VERSION = '1.6.3';
+const NOVA_BUILT = '10-01-2026 12:20pm';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -3976,6 +3976,35 @@ const SEARCH_SYNONYMS = {
   lb: []
 };
 
+// Materials people ask for by what they DO rather than what the option is called.
+// "Synthetic paper" is never an option title — the stock is "15Mil White PVC" or
+// "Yupo". A spec word listed here matches ANY of its alternatives, in the options
+// or in the product name, so "synthetic menus" finds Plastic Menus.
+const MATERIAL_ALTS = (function () {
+  const synthetic = ['synthetic', 'pvc', 'plastic', 'polypropylene', 'yupo', 'polyester', 'styrene', 'tyvek'];
+  return {
+    synthetic: synthetic, plastic: synthetic, pvc: synthetic, polypropylene: synthetic, yupo: synthetic, tyvek: synthetic,
+    waterproof: synthetic.concat(['vinyl']), 'water-proof': synthetic.concat(['vinyl']),
+    tearproof: synthetic, 'tear-proof': synthetic, untearable: synthetic,
+    acrylic: ['acrylic', 'plexi'], plexiglass: ['acrylic', 'plexi'], plexi: ['acrylic', 'plexi'],
+    aluminum: ['aluminum', 'aluminium', 'dibond', 'acm'], metal: ['aluminum', 'aluminium', 'dibond', 'acm', 'metal'],
+    magnetic: ['magnet'], magnet: ['magnet'],
+    wood: ['wood', 'birch', 'bamboo'], wooden: ['wood', 'birch', 'bamboo']
+  };
+})();
+
+// Spec words in the person's own question that the model left out of `specs`.
+// Only material / jargon words count — "what", "use" and "menus" never do.
+function specWordsFrom(text, already) {
+  const have = new Set((already || []).map(x => String(x).toLowerCase()));
+  const out = [];
+  String(text || '').toLowerCase().replace(/[^a-z0-9\- ]+/g, ' ').split(/\s+/).forEach(w => {
+    if (!w || have.has(w) || out.indexOf(w) > -1) return;
+    if (MATERIAL_ALTS[w] || (JARGON[w] && JARGON[w].length) || SEARCH_SYNONYMS[w] && SEARCH_SYNONYMS[w].length) out.push(w);
+  });
+  return out.slice(0, 4);
+}
+
 // Live jargon map, loaded from the table and refreshed on save. Falls back to
 // SEARCH_SYNONYMS if the table is empty for any reason.
 let JARGON = {};
@@ -6378,6 +6407,10 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     'works — check for a condition and STATE IT in the same answer, including which choices it does NOT work ' +
     'with. If a price card reports not_applied, the option was left out of that price: say why and offer to ' +
     'reprice with the selection that allows it.\n' +
+    '- MATERIAL QUESTIONS ("what synthetic paper do we use for menus", "do we have waterproof posters"): the answer is ' +
+    'often a different product of the same type (Plastic Menus, not Laminated Menus). Pass the material word in ' +
+    'find_products specs, and before saying we do not offer a material, check with find_option across products — ' +
+    'materials are named by what they are (15Mil White PVC, Yupo, polypropylene), not "synthetic".\n' +
     '- Call get_product_options FIRST so you have the EXACT option titles, then pass those to ' +
     'calculate_price. Guessing a value ("Yes" for round corners when the real options are 1/8" Round and ' +
     '1/4" Round) means the request is silently ignored.\n' +
@@ -6934,6 +6967,20 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
           // again — that is how a request became "0 of the 1 specs" while the
           // same card said it offered the size and handled the quantity.
           const qWant = parseInt(toolUse.input.quantity) || 0;
+          // The question as the person typed it. Material words the model did not
+          // pass ("synthetic paper ... menus" searched as just "menus") are added
+          // as specs, so the product that actually has that material ranks first.
+          const askedText = (function () {
+            const m = [].concat(req.body.messages || []).reverse().find(x => x && x.role === 'user' &&
+              !(Array.isArray(x.content) && x.content[0] && x.content[0].type === 'tool_result'));
+            if (!m) return '';
+            return typeof m.content === 'string' ? m.content
+              : (Array.isArray(m.content) ? m.content.filter(c => c && c.type === 'text').map(c => c.text).join(' ') : '');
+          })();
+          const givenSpecs = [].concat(toolUse.input.specs || []).map(String);
+          const givenWords = givenSpecs.join(' ').toLowerCase().split(/\s+/).concat(String(q).toLowerCase().split(/\s+/));
+          specWordsFrom(askedText, givenWords).forEach(w => givenSpecs.push(w));
+          toolUse.input.specs = givenSpecs;
           const specGroups = (toolUse.input.specs || [])
             .filter(sp => {
               const t = String(sp || '').trim();
@@ -6943,7 +6990,13 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
               if (qWant && Number(t.replace(/[^\d]/g, '')) === qWant) return false;
               return true;
             })
-            .map(sp => searchTerms(sp))
+            .map(sp => {
+              // A material asked for by what it does matches any of its forms.
+              const words = String(sp).toLowerCase().split(/\s+/);
+              const alt = words.map(w => MATERIAL_ALTS[w]).find(Boolean);
+              if (alt) { const g = alt.slice(); g.alt = true; g.label = String(sp).trim(); return g; }
+              return searchTerms(sp);
+            })
             .filter(g => g.length);
           const specTerms = [];
           specGroups.forEach(g => g.forEach(t => { if (specTerms.indexOf(t) === -1) specTerms.push(t); }));
@@ -7382,7 +7435,8 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
               specGroups.forEach(g => {
                 const phrase = g.join(' ');
                 const asPhrase = titleText.indexOf(phrase) > -1;
-                const allWords = g.every(w => titleText.indexOf(likeStem(w)) > -1);
+                const allWords = g.alt ? g.some(w => titleText.indexOf(likeStem(w)) > -1)
+                  : g.every(w => titleText.indexOf(likeStem(w)) > -1);
                 if (asPhrase || allWords) specInName++;
               });
               const nameSpecBonus = specGroups.length ? (specInName / specGroups.length) : 0;
@@ -7463,7 +7517,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
                   : 'offers ' + specHits + ' of ' + specGroups.length + ' specs');
               } else if (specGroups.length && specHits === 0) {
                 // Say what is missing rather than reporting a bare zero.
-                why.push('no ' + specGroups.map(g => g.join(' ')).join(' or '));
+                why.push('no ' + specGroups.map(g => g.label || g.join(' ')).join(' or '));
               } else if (feats) {
                 why.push('offers ' + feats + ' of your specs');
               }
@@ -7508,7 +7562,10 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
                 send({ type: 'text', text: 'Looking for: ' + bits.join(' \u00b7 ') + '\n\n' });
                 saidAnything = true;
               }
-              send({ type: 'product_picks', products: scored, intent: pickIntent, ask_about: q,
+              // Picking a product answers the question as they asked it, not just
+              // the product word ("what synthetic paper…", not "menus").
+              send({ type: 'product_picks', products: scored, intent: pickIntent,
+                     ask_about: (pickIntent === 'info' && askedText && askedText.length <= 300) ? askedText.trim() : q,
                      replace: picksShown > 1 });
               // The picker already shows these with images, so don't also emit
               // standalone cards for them later in the same answer.
@@ -7939,7 +7996,11 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
           // which does not match a field called "Scoring".
           const terms = searchTerms(opt);
           String(opt).toLowerCase().replace(/[^a-z0-9. ]+/g, ' ').split(/\s+/)
-            .filter(w => w.length > 3 && !SEARCH_STOPWORDS.has(w)).forEach(w => { if (terms.indexOf(w) === -1) terms.push(w); });
+            .filter(w => w.length > 3 && !SEARCH_STOPWORDS.has(w)).forEach(w => {
+              if (terms.indexOf(w) === -1) terms.push(w);
+              // "synthetic" is never an option title — "15Mil White PVC" is.
+              (MATERIAL_ALTS[w] || []).forEach(a => { if (terms.indexOf(a) === -1) terms.push(a); });
+            });
           // ANY term. "hemp paper" must find "Clean White Hemp (140# Cover)" —
           // requiring both words found nothing, because no option title says
           // "paper". Results are ranked by how many terms actually hit.
@@ -7955,6 +8016,23 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
             'JOIN product_variable_item pvi ON pvi.variable_id = pv.id ' +
             'WHERE ' + cond + (onlyProduct ? ' AND p.id = ' + onlyProduct : '') + ' ' +
             'ORDER BY orders DESC LIMIT 40');
+          // Material alternatives ("synthetic" -> PVC, Yupo …) get their own pass, so
+          // a rarely ordered PVC menu is not cut off by forty popular "paper" stocks.
+          const altTerms = [];
+          String(opt).toLowerCase().split(/\s+/).forEach(w => (MATERIAL_ALTS[w] || []).forEach(a => { if (altTerms.indexOf(a) === -1) altTerms.push(a); }));
+          if (altTerms.length) {
+            const altCond = altTerms.map(w => '(pvi.title LIKE ' + mysql.escape('%' + likeStem(w) + '%') + ')').join(' OR ');
+            const extra = await runQueryRaw(
+              'SELECT p.id AS product_id, p.title AS product, pv.id AS var_id, pv.title AS field, pvi.id AS item_id, pvi.title AS option_name, ' +
+              'pvi.isHidden, pvi.value, pvi.base, ' +
+              '(SELECT COUNT(*) FROM estimate e WHERE e.estimate_productid = p.id) AS orders ' +
+              'FROM product p JOIN product_variables pv ON pv.product_id = p.id ' +
+              'JOIN product_variable_item pvi ON pvi.variable_id = pv.id ' +
+              'WHERE p.active = 1 AND (' + altCond + ')' + (onlyProduct ? ' AND p.id = ' + onlyProduct : '') + ' ' +
+              'ORDER BY orders DESC LIMIT 40');
+            const seen = new Set(rows.map(r => r.item_id));
+            (extra || []).forEach(r => { if (!seen.has(r.item_id)) rows.push(r); });
+          }
 
           if (!rows.length) {
             toolResult = 'Nothing called "' + opt + '" exists on any product. Say so plainly - do not substitute ' +

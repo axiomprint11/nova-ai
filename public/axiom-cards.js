@@ -220,7 +220,7 @@ function buildPicks(products, opts) {
       } else {
         // They asked a question. Answer it for this product — do not price it.
         ask('For ' + p.name + ' (#' + p.id + '): ' +
-            (askedAbout ? 'answer my question — ' + askedAbout : 'tell me about this product') +
+            (askedAbout ? 'answer my question — ' + askedAbout.replace(/[\s.?!]+$/, '') : 'tell me about this product') +
             '. Just answer, do not price it.');
       }
     };
