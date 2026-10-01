@@ -173,14 +173,25 @@ customer, Conversations, Training, Setup); public page `/client-chat` for the we
 `CLIENT_BOT_PUBLIC=1`. Website sign-in: signed handoff (`CLIENT_SSO_SECRET`) or customer token
 (`CUSTOMER_VERIFY_URL`). Full write-up: `docs/CLIENT_BOT.md`. Never give it a tool that takes a customer id or SQL.
 `price_product` takes `quantities` and returns one card (`rows` of qty/price/cart data); `client-chat.js` merges cards
-with the same product+options into a "Your quote" pane (≥860px) with Qty · Price · Add to Cart. Add to Cart is a
+with the same product+options into a "Your quote" pane (≥860px) with Qty · Price · Add to Cart. Spec rows carry `tag`
+(`specified` / `default` / `questionable` — questionable = a `clarify_for_ai` field left on its default, or no quantity
+given). Cards have **Edit**: `POST /api/client-bot/reprice` re-runs `priceCard()` (the same function the tool uses,
+public options only, no model call) and saves a `role='note'` row that is folded into the model's next user turn.
+**Attachments**: `POST /api/client-bot/upload` (raw body, token + limits checked before the body is read) →
+`client-files.js` (type by magic bytes; sharp previews; a hand-written PSD decoder; PDFs and spreadsheets read in
+`client-files-worker.js` with memory/time limits) → `client_files` rows + files in `client-uploads/` (gitignored,
+never public). The chat sends `files: [ref]`; only the uploader's unsent files attach. History re-sends pictures/PDFs
+for the latest two file messages within a byte/page budget; if the API refuses one, the files are marked `blocked`
+and the answer is retried text-only. Admins get files at `/api/admin/client-bot/files/:ref{/preview}`. Add to Cart is a
 postMessage hand-off to the hosting website (`nova-client:add-to-cart` → `cart-result`); without a host that
 declared `cart-ready`, it opens the share link.
 It also has `get_template` (die lines of visible options; customer-specific dies only for that customer; PDFs streamed
 by Nova through a signed `/api/client-bot/template/...` link) and `estimate_installation` / `estimate_delivery` (the
 shared `InstallPricing` engine and live admin config via `getInstallPricing()`; customers see totals and line names,
 not rates). Website loader: `public/client-embed.js` (header script; `window.NovaClientChat` config; handles
-sign-in, cart-ready / add-to-cart and close over postMessage). `CLIENT_BOT_PUBLIC=test` + `CLIENT_BOT_TEST_KEY` = test
+sign-in, cart-ready / add-to-cart and close over postMessage). Phones (<700px) get a full-width bar fixed to the bottom;
+it moves the site's own bottom-pinned bars up by its height (`lift()`), and the open chat follows `visualViewport` so
+the keyboard never covers it. `CLIENT_BOT_PUBLIC=test` + `CLIENT_BOT_TEST_KEY` = test
 mode: sessions need the key (the script passes it as `?k=`), tokens carry `t:1`, and the button only shows after
 `?nova=test`. Express 5 route syntax: optional segments are `{/:name}`, not `:name?` — the latter crashes at boot.
 

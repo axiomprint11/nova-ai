@@ -23,8 +23,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.5.6';
-const NOVA_BUILT = '09-30-2026 11:15am';
+const NOVA_VERSION = '1.5.7';
+const NOVA_BUILT = '09-30-2026 10:27pm';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -863,8 +863,14 @@ async function fetchAttachment(messageId, attachmentId) {
 async function extractPdfText(buffer) {
   let pdfParse = require('pdf-parse');
   if (typeof pdfParse !== 'function' && pdfParse.default) pdfParse = pdfParse.default;
+  // pdf-parse 2.x exports a PDFParse class instead of a function.
+  const run = typeof pdfParse === 'function' ? pdfParse(buffer)
+    : (async () => {
+        const p = new pdfParse.PDFParse({ data: new Uint8Array(buffer) });
+        try { return await p.getText({ first: 40 }); } finally { try { await p.destroy(); } catch (e) {} }
+      })();
   const data = await Promise.race([
-    pdfParse(buffer),
+    run,
     new Promise((_, rej) => setTimeout(() => rej(new Error('PDF parse timed out')), 15000))
   ]);
   return (data.text || '').slice(0, 6000);
@@ -5546,7 +5552,17 @@ app.post('/api/chatbot/extract', auth, async (req, res) => {
   try {
     const { data, mime, filename } = req.body || {};
     if (!data) return res.json({ ok: false, error: 'No file data' });
-    const buf = Buffer.from(data, 'base64');
+    res.json(await extractAttachmentText(Buffer.from(data, 'base64'), mime, filename));
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+// Text out of an attached file: PDF text, spreadsheets (every Excel format),
+// CSV / TSV, Word, plain text and markdown. Shared by the staff chat and the
+// client chat (client-bot.js).
+async function extractAttachmentText(buf, mime, filename) {
+  {
     const name = String(filename || '').toLowerCase();
     const mt = String(mime || '').toLowerCase();
     // Tabular data earns more room: a 200-version list is exactly the kind of
@@ -5586,7 +5602,7 @@ app.post('/api/chatbot/extract', auth, async (req, res) => {
     } else if (/\.(json|js|ts|py|sh|exe|dll|zip|rar|7z|dmg|app|bat|ps1)$/.test(name)) {
       // Not useful in a printing conversation, and code or archives pasted into
       // a chat are more likely a mistake than an intention.
-      return res.json({ ok: false, error: 'That file type isn\'t supported here.' });
+      return { ok: false, error: 'That file type isn\'t supported here.' };
     } else {
       // csv, tsv, txt, md, xml — anything that is really just text.
       kind = /\.(csv|tsv|tab)$/.test(name) ? 'table' : 'text';
@@ -5612,7 +5628,7 @@ app.post('/api/chatbot/extract', auth, async (req, res) => {
       // Guard against binary files pretending to be text
       const printable = (text.slice(0, 400).match(/[\x09\x0a\x0d\x20-\x7e]/g) || []).length;
       if (text.length && printable / Math.min(400, text.length) < 0.85) {
-        return res.json({ ok: false, error: 'That file type cannot be read as text.' });
+        return { ok: false, error: 'That file type cannot be read as text.' };
       }
     }
 
@@ -5635,14 +5651,12 @@ app.post('/api/chatbot/extract', auth, async (req, res) => {
       text = kept.join('\n') +
         '\n…(' + lost + ' more row' + (lost === 1 ? '' : 's') + ' not shown — ask for them if needed)';
     }
-    res.json({
+    return {
       ok: true, kind: kind, filename: filename || 'file',
       truncated: truncated, text: text
-    });
-  } catch (e) {
-    res.json({ ok: false, error: e.message });
+    };
   }
-});
+}
 
 // Extract text from an uploaded file (PDF text or image OCR)
 app.post('/api/extract', auth, async (req, res) => {
@@ -8551,7 +8565,8 @@ mountMcp(app, { runQuery, dataDictionary: DATA_DICTIONARY });
 // The customer-facing bot — separate tables, rules, tools and tokens (client-bot.js).
 require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly,
   quoteProduct, buildOrderLink, stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming,
-  InstallPricing, getInstallPricing: () => installPricing, routeLookup, toTime24, driveFileBytes });
+  InstallPricing, getInstallPricing: () => installPricing, routeLookup, toTime24, driveFileBytes,
+  extractAttachmentText, dataDir: __dirname });
 
 app.get(/^(?!\/api).*/, serveVersionedHtml('index.html'));
 

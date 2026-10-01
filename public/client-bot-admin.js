@@ -136,15 +136,44 @@
         '<small>' + [c.customer_email, c.customer_id ? 'customer #' + c.customer_id : null,
           c.source === 'website' ? 'on the website' : 'admin preview' + (c.preview_by ? ' by ' + String(c.preview_by).replace(/^(member|user):/, '') : ''),
           'started ' + when(c.created_at), c.ip ? 'IP ' + c.ip : null].filter(Boolean).map(esc).join(' · ') + '</small></div>' +
-      j.messages.map(m =>
-        '<div class="cb-msg ' + (m.role === 'user' ? 'user' : 'ai') + '">' +
+      j.messages.map(m => m.role === 'note'
+        ? '<div class="cb-msg note"><div class="cb-note">\u270e ' + esc(m.content) + '</div>' + (m.cards || []).map(ClientChat.card).join('') +
+            '<div class="when">' + esc(when(m.created_at)) + '</div></div>'
+        : '<div class="cb-msg ' + (m.role === 'user' ? 'user' : 'ai') + '">' +
           '<div class="bubble ' + (m.role === 'user' ? 'user' : 'ai') + '">' +
             (m.role === 'user' ? esc(m.content) : ClientChat.md(m.content || '') + (m.cards || []).map(ClientChat.card).join('')) + '</div>' +
+          // What they attached: the preview Nova saw, and the original to download.
+          (m.files && m.files.length ? '<div class="cb-files">' + m.files.map(f =>
+            '<div class="cb-file">' + (f.preview ? '<img data-prev="' + esc(f.id) + '" alt="">' : '<i>' + ClientChat.fileIcon(f.kind) + '</i>') +
+              '<div><b>' + esc(f.name) + '</b><small>' + esc(f.info || '') + '</small></div>' +
+              '<button type="button" data-dl="' + esc(f.id) + '" data-name="' + esc(f.name) + '">Download</button></div>').join('') + '</div>' : '') +
           (m.tools && m.tools.length ? '<div class="cb-used">' + m.tools.map(t => '<span>' + esc(t.tool) + ' → ' + esc(t.found) + '</span>').join('') + '</div>' : '') +
           '<div class="when">' + esc(when(m.created_at)) + '</div>' +
         '</div>').join('');
+    $('convView').querySelectorAll('img[data-prev]').forEach(async (img) => {
+      try {
+        const r = await fetch('/api/admin/client-bot/files/' + img.getAttribute('data-prev') + '/preview', { headers: H() });
+        if (r.ok) img.src = URL.createObjectURL(await r.blob());
+      } catch (e) {}
+    });
     loadConvos();
   }
+  // Attachments are behind admin sign-in, so they are fetched with the token.
+  $('convView').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-dl]');
+    const img = e.target.closest('img[data-prev]');
+    if (img && img.src) { window.open(img.src, '_blank'); return; }
+    if (!b) return;
+    b.disabled = true;
+    try {
+      const r = await fetch('/api/admin/client-bot/files/' + b.getAttribute('data-dl'), { headers: H() });
+      if (!r.ok) throw new Error('gone');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(await r.blob()); a.download = b.getAttribute('data-name') || 'file';
+      document.body.appendChild(a); a.click(); a.remove();
+    } catch (x) { b.textContent = 'Not available'; }
+    b.disabled = false;
+  });
 
   // ---- Training ----
   async function loadTraining() {

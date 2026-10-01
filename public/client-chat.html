@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Nova · AxiomPrint</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -19,6 +19,10 @@
   .pc-sub { font-size: 11.5px; opacity: .85; }
   .pc-x { margin-left: auto; background: rgba(255,255,255,.16); border: none; color: #fff; width: 26px; height: 26px;
     border-radius: 7px; cursor: pointer; }
+  @media (max-width: 700px) {
+    .pc-head { padding: calc(9px + env(safe-area-inset-top, 0px)) 12px 9px; }
+    .pc-x { width: 36px; height: 36px; border-radius: 10px; font-size: 16px; }
+  }
   .pc-off { flex: 1; display: flex; align-items: center; justify-content: center; padding: 30px; text-align: center; color: var(--muted); font-size: 14px; }
 </style>
 </head>

@@ -9,11 +9,17 @@
  *       // customerToken: () => localStorage.getItem('token'),
  *       // Optional — let Add to Cart put the item in the real cart:
  *       // addToCart: (item) => Promise that resolves when it is in the cart
+ *       // Optional — phones: the chat bar sits at the very bottom and moves the
+ *       // site's own sticky bars (Add to Cart) up above it. lift: false turns that
+ *       // off; liftSelector: '.sticky-cart' adds elements it misses.
  *     };
  *   </script>
  *   <script src="https://nova.axiomprint.com/client-embed.js" defer></script>
  *
- * Test mode (testKey set): the bubble only appears after opening any page with
+ * Desktop: an "Ask Nova" button in the corner. Phone (under 700px): a full-width
+ * bar fixed to the bottom — tap to chat, and the chat opens full screen.
+ *
+ * Test mode (testKey set): the button only appears after opening any page with
  * ?nova=test once (remembered in this browser; ?nova=off hides it again).
  * Without testKey the bubble shows for everyone — only do that once
  * CLIENT_BOT_PUBLIC=1 is set on the Nova server.
@@ -38,31 +44,56 @@
     } catch (e) { return; }
   }
 
+  function txt(v) { return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function el(tag, css) { var n = document.createElement(tag); n.style.cssText = css; return n; }
   function small() { return window.innerWidth < 700; }
+  var CHAT_ICON = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>';
+  // Below the site's own pop-ups (menus, cart drawers), above the page.
+  var Z = parseInt(CFG.zIndex) || 999;
 
   function boot() {
+    // Desktop: a pill in the corner.
     var bubble = el('button',
-      'position:fixed;' + SIDE + ':20px;bottom:20px;z-index:2147483000;height:52px;padding:0 18px 0 14px;border:none;' +
-      'border-radius:26px;cursor:pointer;display:flex;align-items:center;gap:8px;color:#fff;font:600 15px/1 Inter,system-ui,sans-serif;' +
+      'position:fixed;' + SIDE + ':20px;bottom:20px;z-index:' + Z + ';height:52px;padding:0 18px 0 14px;border:none;' +
+      'border-radius:26px;cursor:pointer;display:none;align-items:center;gap:8px;color:#fff;font:600 15px/1 Inter,system-ui,sans-serif;' +
       'background:linear-gradient(135deg,#6366f1,#8b5cf6);box-shadow:0 8px 24px rgba(79,70,229,.35);');
     bubble.type = 'button';
     bubble.setAttribute('aria-label', 'Chat with Nova');
-    bubble.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
-      'stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>' +
-      '<span>Ask Nova</span>';
+    bubble.innerHTML = CHAT_ICON + '<span>Ask Nova</span>';
+
+    // Phone: a full-width bar fixed to the bottom of the screen — tap to chat.
+    // The site's own sticky bars (Add to Cart, Order now) are moved up above it.
+    var bar = el('button',
+      'position:fixed;left:0;right:0;bottom:0;z-index:' + Z + ';display:none;width:100%;margin:0;border:none;border-radius:0;cursor:pointer;' +
+      'box-sizing:border-box;min-height:56px;padding:8px 14px calc(8px + env(safe-area-inset-bottom, 0px));align-items:center;gap:11px;text-align:left;' +
+      'color:#fff;font:500 13px/1.25 Inter,system-ui,-apple-system,sans-serif;-webkit-tap-highlight-color:transparent;' +
+      'background:linear-gradient(110deg,#4f46e5,#7c3aed);box-shadow:0 -4px 18px rgba(30,20,70,.18);');
+    bar.type = 'button';
+    bar.setAttribute('aria-label', 'Chat with Nova');
+    bar.innerHTML =
+      '<span style="flex:none;width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center">' + CHAT_ICON + '</span>' +
+      '<span style="flex:1;min-width:0"><b style="display:block;font-size:15px;font-weight:700">' + txt(CFG.barTitle || 'Ask Nova') + '</b>' +
+      '<span style="display:block;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + txt(CFG.barText || 'Prices, options, files & your orders') + '</span></span>' +
+      '<span style="flex:none;padding:8px 14px;border-radius:999px;background:#fff;color:#4f46e5;font-weight:700;font-size:13px">Chat ›</span>';
 
     var panel = el('div', 'position:fixed;z-index:2147483001;display:none;background:#fff;overflow:hidden;' +
       'box-shadow:0 18px 50px rgba(30,20,70,.28);border:1px solid #e4e4ef;');
+    var isOpen = false;
     function place() {
       if (small()) {
-        panel.style.cssText += ';top:0;left:0;right:0;bottom:0;width:auto;height:auto;border-radius:0;';
+        // Fit the visible area, so the phone keyboard never covers the message box.
+        var vv = window.visualViewport;
+        panel.style.left = '0'; panel.style.right = '0'; panel.style.width = '100%'; panel.style.bottom = 'auto';
+        panel.style.top = (vv ? vv.offsetTop : 0) + 'px';
+        panel.style.height = (vv ? vv.height : window.innerHeight) + 'px';
+        panel.style.borderRadius = '0'; panel.style.border = '0';
       } else {
         panel.style.top = 'auto'; panel.style.left = SIDE === 'left' ? '20px' : 'auto';
         panel.style.right = SIDE === 'right' ? '20px' : 'auto'; panel.style.bottom = '20px';
         panel.style.width = Math.min(1040, window.innerWidth - 40) + 'px';
         panel.style.height = Math.min(720, window.innerHeight - 40) + 'px';
-        panel.style.borderRadius = '16px';
+        panel.style.borderRadius = '16px'; panel.style.border = '1px solid #e4e4ef';
       }
     }
     var frame = document.createElement('iframe');
@@ -70,20 +101,121 @@
     frame.setAttribute('allow', 'clipboard-write');
     frame.style.cssText = 'width:100%;height:100%;border:0;display:block;';
     var loaded = false;
+
+    // ---- the page behind the chat on a phone: no scrolling while it is open ----
+    var saved = null;
+    function lockPage(on) {
+      var h = document.documentElement, b = document.body;
+      if (on && !saved) { saved = [h.style.overflow, b.style.overflow]; h.style.overflow = 'hidden'; b.style.overflow = 'hidden'; }
+      if (!on && saved) { h.style.overflow = saved[0]; b.style.overflow = saved[1]; saved = null; }
+    }
+
     function open() {
       if (!loaded) {
         frame.src = HOST + '/client-chat' + (CFG.testKey ? '?k=' + encodeURIComponent(CFG.testKey) : '');
         loaded = true;
       }
-      place(); panel.style.display = 'block'; bubble.style.display = 'none';
+      isOpen = true;
+      place(); panel.style.display = 'block';
+      launcher();
+      lockPage(small());
     }
-    function close() { panel.style.display = 'none'; bubble.style.display = 'flex'; }
+    function close() { isOpen = false; panel.style.display = 'none'; lockPage(false); launcher(); }
+
+    // ---- which launcher shows ----
+    function launcher() {
+      var phone = small();
+      bubble.style.display = !isOpen && !phone ? 'flex' : 'none';
+      bar.style.display = !isOpen && phone ? 'flex' : 'none';
+      if (phone && !isOpen) lift(); else unlift();
+    }
+
+    // ---- making room for the bar ----
+    // Anything the site pins to the bottom of the screen (a sticky "Add to Cart"
+    // bar, a cookie notice) is moved up by the bar's height, and the page gets
+    // that much extra space at the end. Big overlays (menus, drawers) are left
+    // alone — they open above the bar. Turn off with lift: false; add elements the
+    // check misses with liftSelector: '.my-sticky-bar'.
+    var lifted = [];                     // [element, original inline bottom, original priority]
+    var bodyPad = null;
+    function isPinned(n) {
+      var cs = getComputedStyle(n);
+      if (cs.position !== 'fixed' && cs.position !== 'sticky') return false;
+      if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+      var r = n.getBoundingClientRect();
+      return r.height > 0 && r.height < window.innerHeight * 0.5 && r.bottom >= window.innerHeight - 3 && r.top > window.innerHeight * 0.4;
+    }
+    function raise(n, by) {
+      if (n === bar || n === panel || n === bubble || lifted.some(function (x) { return x[0] === n; })) return;
+      var cs = getComputedStyle(n);
+      var cur = parseFloat(cs.bottom); if (!isFinite(cur)) cur = 0;
+      var want = (cur + by) + 'px';
+      lifted.push([n, n.style.getPropertyValue('bottom'), n.style.getPropertyPriority('bottom'), want]);
+      n.style.setProperty('bottom', want, 'important');
+      n.setAttribute('data-nova-lifted', '1');
+    }
+    function lift() {
+      if (CFG.lift === false || bar.style.display === 'none') return;
+      var H = bar.getBoundingClientRect().height || 56;
+      // The site may redraw a bar we moved (resetting its style) or remove it.
+      lifted = lifted.filter(function (x) { return document.documentElement.contains(x[0]); });
+      lifted.forEach(function (x) { if (x[0].style.getPropertyValue('bottom') !== x[3]) x[0].style.setProperty('bottom', x[3], 'important'); });
+      var y = window.innerHeight - Math.max(4, Math.min(20, H / 3));
+      [0.08, 0.3, 0.5, 0.7, 0.92].forEach(function (f) {
+        var list = document.elementsFromPoint ? document.elementsFromPoint(window.innerWidth * f, y) : [];
+        list.forEach(function (n) {
+          for (var p = n; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+            if (p === bar) return;
+            if (isPinned(p)) { raise(p, H); return; }
+          }
+        });
+      });
+      if (CFG.liftSelector) {
+        try { document.querySelectorAll(CFG.liftSelector).forEach(function (n) { raise(n, H); }); } catch (e) {}
+      }
+      if (bodyPad === null) {
+        bodyPad = document.body.style.paddingBottom || '';
+        var base = parseFloat(getComputedStyle(document.body).paddingBottom) || 0;
+        document.body.style.paddingBottom = (base + H) + 'px';
+      }
+    }
+    function unlift() {
+      lifted.forEach(function (x) {
+        if (x[1]) x[0].style.setProperty('bottom', x[1], x[2]); else x[0].style.removeProperty('bottom');
+        x[0].removeAttribute('data-nova-lifted');
+      });
+      lifted = [];
+      if (bodyPad !== null) { document.body.style.paddingBottom = bodyPad; bodyPad = null; }
+    }
+    // Sticky bars often appear only after scrolling or once the page app has drawn.
+    var lt = null;
+    function later() { clearTimeout(lt); lt = setTimeout(function () { if (small() && !isOpen) lift(); }, 250); }
+    window.addEventListener('scroll', later, { passive: true });
+    if (window.MutationObserver) new MutationObserver(later).observe(document.body, { childList: true, subtree: true });
+    [600, 1500, 3500].forEach(function (t) { setTimeout(later, t); });
+
     panel.appendChild(frame);
     bubble.onclick = open;
+    bar.onclick = open;
     document.body.appendChild(bubble);
+    document.body.appendChild(bar);
     document.body.appendChild(panel);
-    window.addEventListener('resize', function () { if (panel.style.display === 'block') place(); });
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && panel.style.display === 'block') close(); });
+    launcher();
+    // Lifting is measured for one layout: redo it when the width changes (rotation,
+    // desktop resize). A phone's address bar showing / hiding changes only the
+    // height — then the bars just get re-checked, so nothing jumps.
+    var lastW = window.innerWidth;
+    window.addEventListener('resize', function () {
+      if (window.innerWidth !== lastW) { lastW = window.innerWidth; unlift(); launcher(); }
+      else later();
+      if (isOpen) { place(); lockPage(small()); }
+    });
+    if (window.visualViewport) {
+      var fit = function () { if (isOpen && small()) place(); };
+      window.visualViewport.addEventListener('resize', fit);
+      window.visualViewport.addEventListener('scroll', fit);
+    }
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && isOpen) close(); });
 
     function say(msg) { try { frame.contentWindow.postMessage(msg, HOST); } catch (e) {} }
     function val(v) { try { return typeof v === 'function' ? v() : v; } catch (e) { return null; } }
@@ -122,8 +254,9 @@
       }
     });
 
-    // For the site: NovaClientChatAPI.open() from a "Chat with us" link.
-    window.NovaClientChatAPI = { open: open, close: close };
+    // For the site: NovaClientChatAPI.open() from a "Chat with us" link;
+    // refresh() after the page moves its own sticky bar around.
+    window.NovaClientChatAPI = { open: open, close: close, refresh: function () { unlift(); launcher(); } };
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

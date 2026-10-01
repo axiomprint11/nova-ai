@@ -11,6 +11,7 @@ ca-certificate.crt
 users.db
 users.db-journal
 knowledge_files/
+client-uploads/
 
 # Dependencies
 node_modules/

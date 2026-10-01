@@ -20,7 +20,7 @@ This is enforced in code; the prompt rules are a second layer.
 
 | Guard | Where |
 |---|---|
-| No SQL / database tool. Five fixed tools only: `search_products`, `product_details`, `price_product`, `my_orders`, `order_status`. | `TOOLS` in client-bot.js |
+| No SQL / database tool. Fixed tools only: `search_products`, `product_details`, `price_product`, `get_template`, `estimate_installation`, `estimate_delivery`, `my_orders`, `order_status`. | `TOOLS` in client-bot.js |
 | The customer id comes from the verified session. The order tools add `estimate_clientid = <session customer>` (and the linked invoice must be theirs and not void). The model cannot pass a customer id. | `ownOrdersSql()` |
 | An order number that is not theirs returns "not on your account" — the same answer as one that does not exist. | `order_status` |
 | Products: only active products listed for the `axiom_print` site; products reserved for specific customers (`available_for_customers`) only show to those customers. | `publicProductWhere()` |
@@ -28,6 +28,8 @@ This is enforced in code; the prompt rules are a second layer.
 | The conversation history the model sees is loaded from the server. A chat id only continues a conversation that belongs to the same visitor and the same customer. | `/api/client-bot/chat` |
 | Limits: 25 messages / 10 min per visitor, 60 per address, 30 new sessions / 10 min per address, a daily cap on public messages (`CLIENT_BOT_DAILY_CAP`, default 3,000); messages capped at 2,000 characters. | `rateLimited()`, `overLimit()` |
 | Prices use only the options customers can see on the website: hidden / internal fields and hidden choices are neither selectable nor shown; a choice that redirects to another product is re-checked. | `publicOptions()` |
+| Attachments: checked by their first bytes (not the name), 25 MB each, 5 per message, 20 uploads / 10 min per visitor and 40 per address, 300 MB a day per sender and 2 GB in total. A file can only be attached by the visitor who uploaded it; visitors can never download files — only admins, from Conversations. Spreadsheets and PDFs are read in a separate worker with a memory and time limit. | `/api/client-bot/upload`, client-files.js |
+| Edit on a quote reprices through the same public-options filter as the tool (30 / 10 min per visitor). | `/api/client-bot/reprice`, `priceCard()` |
 | Every page load starts signed out; only a fresh sign-in from the website upgrades it, and visitor tokens last 2 hours. | client-chat.html |
 | Until `CLIENT_BOT_PUBLIC=1`, only Nova admins can use it (preview). | `identify()` |
 
@@ -43,6 +45,10 @@ cannot switch them off.
 | `CUSTOMER_VERIFY_URL` | The website API's "who am I" endpoint for a customer token (option B). |
 | `CLIENT_BOT_MODEL` | Optional model override (default: the light model used elsewhere). |
 | `CLIENT_BOT_DAILY_CAP` | Most public messages per 24 hours (default 3000). |
+| `CLIENT_BOT_REPRICE_DAILY_CAP` | Most quote edits per 24 hours (default 5000). |
+| `CLIENT_BOT_UPLOAD_DIR` | Where attachments are kept (default `client-uploads/` next to server.js — not public). |
+| `CLIENT_BOT_UPLOAD_MB_DAY` | Total attachment megabytes accepted per 24 hours (default 2048). |
+| `CLIENT_BOT_UPLOAD_DAYS` | Days attachments are kept (default 90). Files never sent with a message go after a day. |
 
 ## Putting it on the website — the header script
 
@@ -57,7 +63,14 @@ Paste into the `<head>` of axiomprint.com (every page):
 <script src="https://nova.axiomprint.com/client-embed.js" defer></script>
 ```
 
-It adds an **Ask Nova** button (bottom right) that opens the chat — a panel on desktop, full screen on a phone.
+It adds the chat launcher:
+
+- **Desktop** — an **Ask Nova** button in the bottom-right corner; the chat opens as a panel.
+- **Phone** (under 700px) — a **full-width bar fixed to the bottom** of the screen ("Ask Nova · Chat ›"). Tap it and
+  the chat opens full screen, sized to the visible area so the keyboard never covers the message box. Anything the
+  site pins to the bottom of the screen (the sticky **Order Now / Add to Cart** bar, a cookie notice) is moved up above
+  the bar automatically, and the page gets matching space at the end, so nothing is covered. Big overlays (menus,
+  cart drawers) are left alone and open above the bar.
 
 **Test mode** — with `CLIENT_BOT_PUBLIC=test` and `CLIENT_BOT_TEST_KEY=…` in Nova's `.env`, and the same key as
 `testKey`: the button only appears in a browser that opened any page with **`?nova=test`** once (remembered;
@@ -74,9 +87,14 @@ Optional settings in `window.NovaClientChat`:
 | `signin: { payload, sig }` (or a function returning it) | Signed-in customer, option A below. |
 | `customerToken: 'token'` (or a function) | Signed-in customer, option B below. If neither is given, the script looks for a customer token in the site's `localStorage` (`customer_token`, `access_token`, `token`, `auth_token`, or `tokenKey`). `customerToken: false` turns that off. |
 | `addToCart: (item) => Promise` | Makes Add to Cart put the item in the site's own cart (see Add to Cart). |
-| `position: 'left'` | Button on the left. |
+| `position: 'left'` | Desktop button on the left. |
+| `lift: false` | Phone: don't move the site's sticky bars up (then place them yourself). |
+| `liftSelector: '.sticky-cart'` | Phone: also move these elements up, if the automatic check misses one. |
+| `barTitle`, `barText` | Phone bar wording (default "Ask Nova" / "Prices, options, files & your orders"). |
+| `zIndex: 999` | Stacking of the launcher (default 999 — under the site's own pop-ups). |
 
-`NovaClientChatAPI.open()` opens the chat from any link or button on the site.
+`NovaClientChatAPI.open()` opens the chat from any link or button on the site; `NovaClientChatAPI.refresh()` re-checks
+the sticky bars after the page rearranges them.
 
 ## Recognising a signed-in customer
 
@@ -147,6 +165,39 @@ sites may frame it.
   insurance, travel) — not our hourly or per-mile rates. Jobs the engine flags (too high, too far, crane) say our
   team will confirm or quote it.
 
+## Attachments
+
+The 📎 button, pasting (a screenshot straight from the clipboard) and drag & drop all attach files — up to 5 per
+message: **JPG, PNG, GIF, WebP, TIFF, PDF, AI, EPS, PSD, Excel (xlsx / xls), CSV, TXT, MD**. Each file uploads as soon
+as it is added; Send waits for any still uploading.
+
+| File | What Nova gets |
+|---|---|
+| Images, screenshots | The picture (1568px), plus pixel size, dpi and print size |
+| PDF | The PDF itself (up to 20 pages / 12 MB), otherwise its text; page count and page size |
+| Illustrator (.ai) | Modern .ai files are PDF-compatible, so Nova reads them like a PDF; older ones are only noted |
+| Photoshop (.psd) | The flattened image, decoded by Nova, plus size, dpi and colour mode (RGB / CMYK) |
+| EPS | Noted only |
+| Excel / CSV / TXT / MD | The text (first 2,000 rows of each sheet) |
+
+Nova uses them to understand the request (sizes, quantities, a list of items to price) and may point out obvious
+things (low resolution, RGB), but never approves artwork. Pictures and PDFs are re-shown to Nova for the latest two
+messages that had them; older ones are described. If the model refuses a file, it is marked and the answer is
+retried without it, so one bad file can't break the conversation. The team sees every attachment under
+**Conversations** — Nova's preview and a **Download** of the original.
+
+## Quote cards: Specified / Default / Questionable, and Edit
+
+Every option on a quote is tagged: **Specified** (the customer chose it), **Default** (the website default) or
+**Questionable** (left on the default although it changes the price — the fields ticked "clarify for AI" on the
+product, and the quantity when none was given). Questionable rows are highlighted, and Nova asks the customer to
+confirm them in one short question.
+
+**Edit** on the card turns the options into dropdowns (public options only, choices that fit the current selection)
+and the quantities into a field. **Update price** prices it again on the server — no model call — and the new quote
+replaces the old one. What changed is noted in the conversation (shown in Conversations), so Nova knows about it in
+its next answer. Options the customer touched, or that were Specified or Questionable, become Specified.
+
 ## Add to Cart
 
 Prices show as one quote per product and options — the options once, then **Qty · Price · Add to Cart** for each
@@ -190,5 +241,5 @@ if (ev.data.type === 'nova-client:add-to-cart') {
 1. Fill in **Training → What Nova knows** (hours, phone, shipping, pickup, artwork rules) and review the house rules.
 2. Test in **Try it** as a few real customers, including asking for someone else's order.
 3. Pick option A or B with the web team; set `CLIENT_SSO_SECRET` (A) or `CUSTOMER_VERIFY_URL` (B).
-4. Add the iframe to the website.
+4. Add the header script to the website (and the sign-in / Add to Cart hooks).
 5. Set `CLIENT_BOT_PUBLIC=1`, restart, and watch **Conversations**.
