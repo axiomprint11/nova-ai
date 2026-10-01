@@ -6,6 +6,29 @@
   const H = () => ({ 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' });
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const $ = (id) => document.getElementById(id);
+  // "Today, 3 hours ago" · "Yesterday at 4:55 PM" · "Monday at 9:10 AM" · "Sep 12 at 2:05 PM".
+  const toDate = (ts) => new Date(String(ts).replace(' ', 'T') + (/Z$|[+-]\d\d:?\d\d$/.test(String(ts)) ? '' : 'Z'));
+  const rel = (ts) => {
+    if (!ts) return '';
+    const d = toDate(ts);
+    if (isNaN(d)) return String(ts);
+    const now = new Date();
+    const mins = Math.round((now - d) / 60000);
+    const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const day0 = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const days = Math.round((day0(now) - day0(d)) / 86400000);
+    if (days === 0) {
+      if (mins < 1) return 'Today, just now';
+      if (mins < 60) return 'Today, ' + mins + ' min ago';
+      const h = Math.floor(mins / 60);
+      return 'Today, ' + h + ' hour' + (h === 1 ? '' : 's') + ' ago';
+    }
+    if (days === 1) return 'Yesterday at ' + time;
+    if (days > 1 && days < 7) return d.toLocaleDateString([], { weekday: 'long' }) + ' at ' + time;
+    return d.toLocaleDateString([], d.getFullYear() === now.getFullYear() ? { month: 'short', day: 'numeric' }
+      : { month: 'short', day: 'numeric', year: 'numeric' }) + ' at ' + time;
+  };
+  const full = (ts) => { const d = toDate(ts); return isNaN(d) ? '' : d.toLocaleString([], { dateStyle: 'full', timeStyle: 'short' }); };
   const when = (ts) => {
     if (!ts) return '';
     const d = new Date(String(ts).replace(' ', 'T') + (/Z$/.test(ts) ? '' : 'Z'));
@@ -114,11 +137,12 @@
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'cb-row' + (c.id === openId ? ' on' : '');
-      b.innerHTML = '<div class="t">' + esc(c.customer_name || (c.customer_id ? 'Customer #' + c.customer_id : 'Visitor (not signed in)')) +
+      b.innerHTML = '<div class="cb-when" title="' + esc(full(c.updated_at)) + '" data-ts="' + esc(c.updated_at || '') + '">' + esc(rel(c.updated_at)) +
+          '<span>' + (c.message_count || 0) + ' messages</span></div>' +
+        '<div class="t">' + esc(c.customer_name || (c.customer_id ? 'Customer #' + c.customer_id : 'Visitor (not signed in)')) +
         '<span class="cb-tag ' + (c.source === 'website' ? 'web' : 'pre') + '">' + (c.source === 'website' ? 'Website' : 'Preview') + '</span></div>' +
         '<small>' + esc([c.company, c.customer_email].filter(Boolean).join(' · ')) + '</small>' +
-        '<small>' + esc(c.last_message || c.title || '') + '</small>' +
-        '<small>' + esc(when(c.updated_at)) + ' · ' + (c.message_count || 0) + ' messages</small>';
+        '<small>' + esc(c.last_message || c.title || '') + '</small>';
       b.onclick = () => openConvo(c.id);
       box.appendChild(b);
     });
@@ -135,10 +159,10 @@
         (c.company ? ' · ' + esc(c.company) : '') +
         '<small>' + [c.customer_email, c.customer_id ? 'customer #' + c.customer_id : null,
           c.source === 'website' ? 'on the website' : 'admin preview' + (c.preview_by ? ' by ' + String(c.preview_by).replace(/^(member|user):/, '') : ''),
-          'started ' + when(c.created_at), c.ip ? 'IP ' + c.ip : null].filter(Boolean).map(esc).join(' · ') + '</small></div>' +
+          'started ' + rel(c.created_at), c.ip ? 'IP ' + c.ip : null].filter(Boolean).map(esc).join(' · ') + '</small></div>' +
       j.messages.map(m => m.role === 'note'
         ? '<div class="cb-msg note"><div class="cb-note">\u270e ' + esc(m.content) + '</div>' + (m.cards || []).map(ClientChat.card).join('') +
-            '<div class="when">' + esc(when(m.created_at)) + '</div></div>'
+            '<div class="when" title="' + esc(full(m.created_at)) + '" data-ts="' + esc(m.created_at || '') + '">' + esc(rel(m.created_at)) + '</div></div>'
         : '<div class="cb-msg ' + (m.role === 'user' ? 'user' : 'ai') + '">' +
           '<div class="bubble ' + (m.role === 'user' ? 'user' : 'ai') + '">' +
             (m.role === 'user' ? esc(m.content) : ClientChat.md(m.content || '') + (m.cards || []).map(ClientChat.card).join('')) + '</div>' +
@@ -148,7 +172,7 @@
               '<div><b>' + esc(f.name) + '</b><small>' + esc(f.info || '') + '</small></div>' +
               '<button type="button" data-dl="' + esc(f.id) + '" data-name="' + esc(f.name) + '">Download</button></div>').join('') + '</div>' : '') +
           (m.tools && m.tools.length ? '<div class="cb-used">' + m.tools.map(t => '<span>' + esc(t.tool) + ' → ' + esc(t.found) + '</span>').join('') + '</div>' : '') +
-          '<div class="when">' + esc(when(m.created_at)) + '</div>' +
+          '<div class="when" title="' + esc(full(m.created_at)) + '" data-ts="' + esc(m.created_at || '') + '">' + esc(rel(m.created_at)) + '</div>' +
         '</div>').join('');
     $('convView').querySelectorAll('img[data-prev]').forEach(async (img) => {
       try {
@@ -174,6 +198,16 @@
     } catch (x) { b.textContent = 'Not available'; }
     b.disabled = false;
   });
+
+  // Relative times move on by themselves ("5 min ago" -> "6 min ago").
+  setInterval(() => {
+    document.querySelectorAll('.cb-when[data-ts]').forEach(el => {
+      const span = el.querySelector('span');
+      el.firstChild.nodeValue = rel(el.getAttribute('data-ts'));
+      if (span) el.appendChild(span);
+    });
+    document.querySelectorAll('.cb-msg .when[data-ts]').forEach(el => { el.textContent = rel(el.getAttribute('data-ts')); });
+  }, 60000);
 
   // ---- Training ----
   async function loadTraining() {
