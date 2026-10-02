@@ -169,7 +169,7 @@ to `/api/chat` for debugging.
 `client_messages`, `client_bot_rules` + `_history`), its own tokens (signed with a key derived from `JWT_SECRET`,
 `kind:'client'` — staff `auth` rejects them), its own five tools (no SQL). The customer id always comes from the
 session: `my_orders` / `order_status` filter on `estimate_clientid` themselves; products are limited to active
-`axiom_print` products and `available_for_customers` is honoured. Admin console at `/client-bot` (Try it as any
+`axiom_print` products and `available_for_customers` is honoured. Admin console at `/client-bot` (Conversations is the first tab; Try it as any
 customer, Conversations — read/unread per admin in SQLite `client_chat_reads`, Refresh, Unread filter, Mark as unread /
 Mark all read — Training, Setup); public page `/client-chat` for the website iframe. Admins only until
 `CLIENT_BOT_PUBLIC=1`. Website sign-in: the header script reads the customer token from the site's saved
@@ -209,6 +209,8 @@ posts it to `POST /api/client-bot/transcribe` → `speech-to-text.js` (OpenAI wi
 `STT_PROVIDER=google`; never stored); with no service it falls back to browser SpeechRecognition behind the same bar
 (`GET /api/client-bot/voice`). The staff ChatBot page and CRM widget use the same recording bar (`GET /api/voice`,
 `POST /api/transcribe`, staff `auth`); `axiom-speech.js` is no longer loaded anywhere. Iframe `allow="microphone"`.
+First-order coupon: prompt rule 18 from `couponRule()` — WELCOME10 (`CLIENT_BOT_WELCOME_CODE`), terms read live
+from `promo_code`, offered to guests and signed-in customers with no invoiced estimate (`hasOrdered()`).
 It also has `get_template` (die lines of visible options; customer-specific dies only for that customer; PDFs streamed
 by Nova through a signed `/api/client-bot/template/...` link) and `estimate_installation` / `estimate_delivery` (the
 shared `InstallPricing` engine and live admin config via `getInstallPricing()`; customers see totals and line names,

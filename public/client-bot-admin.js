@@ -53,6 +53,8 @@
       if (b.dataset.v === 'setup') paintSetup();
     };
   });
+  // Conversations is the main tab: it opens first (after the rest of the page is set up).
+  setTimeout(() => { const c = document.querySelector('.cb-tabs button[data-v="convos"]'); if (c) c.click(); }, 0);
 
   // ---- Try it ----
   let asCustomer = null;

@@ -1199,7 +1199,59 @@ module.exports = function mountClientBot(app, deps) {
   }
 
   // ---------------------------------------------------------------- prompt
-  function systemPrompt(rules, who) {
+  // ---------------------------------------------------------------- first-order coupon
+  // The website's welcome code (promo_code table; WELCOME10 unless CLIENT_BOT_WELCOME_CODE
+  // says otherwise). Terms are read live, so a change on the website reaches NovaAI within
+  // the hour; an expired or deleted code is simply never offered.
+  const WELCOME_CODE = String(process.env.CLIENT_BOT_WELCOME_CODE || 'WELCOME10').trim();
+  let welcomeCache = { at: 0, offer: null };
+  async function welcomeOffer() {
+    if (!WELCOME_CODE) return null;
+    if (Date.now() - welcomeCache.at < 60 * 60 * 1000) return welcomeCache.offer;
+    let offer = null;
+    try {
+      const r = await runQuery('SELECT promo_code, type, value, min_order_price, max_order_price, valid_to FROM promo_code WHERE promo_code = ' +
+        deps.mysql.escape(WELCOME_CODE) + ' AND (valid_from IS NULL OR valid_from <= CURDATE()) AND (valid_to IS NULL OR valid_to >= CURDATE()) LIMIT 1');
+      const c = r && r[0];
+      if (c && Number(c.value) > 0) {
+        const amount = c.type === 'percent' ? Number(c.value) + '% off' : '$' + Number(c.value).toLocaleString('en-US') + ' off';
+        offer = { code: c.promo_code, amount: amount, min: Number(c.min_order_price) > 0 ? Number(c.min_order_price) : 0,
+          terms: amount + (Number(c.min_order_price) > 0 ? ' an order of $' + Number(c.min_order_price) + ' or more' : ' an order') +
+            (Number(c.max_order_price) > 0 ? ' up to $' + Number(c.max_order_price) : '') +
+            (c.valid_to ? ', until ' + new Date(c.valid_to).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '') };
+      }
+    } catch (e) { console.error('CLIENT_BOT welcome offer', e.message); }
+    welcomeCache = { at: Date.now(), offer: offer };
+    return offer;
+  }
+  // Has this customer ordered before (an estimate that became an invoice)? Cached a while.
+  const orderedCache = new Map();
+  async function hasOrdered(cid) {
+    cid = parseInt(cid); if (!cid) return false;
+    const hit = orderedCache.get(cid);
+    if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.yes;
+    let yes = true;                                  // unsure = treat as a returning customer
+    try {
+      const r = await runQuery('SELECT 1 AS x FROM estimate WHERE estimate_clientid = ' + cid + ' AND estimate_invoiceid > 0 LIMIT 1');
+      yes = !!(r && r.length);
+    } catch (e) { console.error('CLIENT_BOT hasOrdered', e.message); }
+    orderedCache.set(cid, { at: Date.now(), yes: yes });
+    if (orderedCache.size > 5000) orderedCache.delete(orderedCache.keys().next().value);
+    return yes;
+  }
+  async function couponRule(who) {
+    const o = await welcomeOffer();
+    if (!o) return '';
+    const first = !who.customer ? 'They are a guest, so this may be their first order: offer it.'
+      : (await hasOrdered(who.customer.id)) ? 'This signed-in customer HAS ordered before, so the code is not for them: do not offer it; if they ask about coupons, say ' + o.code + ' is for first orders only and offer to help with anything else.'
+      : 'This signed-in customer has NOT ordered yet: offer it.';
+    return '18. FIRST-ORDER COUPON: code ' + o.code + ' \u2014 ' + o.terms + ', for a customer\u2019s first order, one use, entered at checkout. ' + first +
+      ' When: once per conversation, as one short friendly line after their first quote (e.g. "First order with us? Use code ' + o.code + ' at checkout for ' +
+      o.amount + (o.min ? ' orders of $' + o.min + '+' : ' your order') + '.") \u2014 and whenever they ask about coupons, promo codes, discounts or deals. It cannot be applied in this chat; quotes show prices before the code. ' +
+      'Never invent or share any other code, and never say it combines with other discounts.';
+  }
+
+  function systemPrompt(rules, who, extra) {
     const signIn = who.customer
       ? 'SIGN-IN: The visitor is signed in on axiomprint.com as ' + (who.customer.name || 'a customer') +
         (who.customer.company ? ' (' + who.customer.company + ')' : '') + '. Call them by their FIRST name: ' +
@@ -1231,6 +1283,7 @@ module.exports = function mountClientBot(app, deps) {
       '15. LOGIN. Guests asking for something that needs a sign-in get: "Please sign in to your Axiom Print account first: https://axiomprint.com/login. After signing in, refresh the page and I\'ll pick up from there." New customers: https://axiomprint.com/register — forgot password: https://axiomprint.com/forgot-password. Do not push guests to sign in for anything else. Never ask for or accept a password, one-time code or card number in the chat — if someone types one, tell them not to share it here and to use the login page. Never say you can log anyone in, never confirm whether an email has an account.',
       '16. SIGNED-IN customers: first name only; repeat their email, phone, company or address only if they ask. Their contact person comes from get_customer. Their account discount is already in the quoted prices (the regular price shows struck through); never quote the percentage. Account settings: https://axiomprint.com/account — order history: https://axiomprint.com/account/order-history.',
       '17. ADD TO CART puts the product, with the chosen options and quantity, into their axiomprint.com cart so they can upload artwork and check out. Signed-in customers only. Before adding: know the product, every option that matters, the quantity (or versions) and the turnaround; ask for a job name and suggest one (e.g. "Business Cards - Spring Promo"; if they do not care, the product name); read the order back with the price ("500 Business Cards, 16pt Matte, 2-sided, Standard turnaround, job \'Spring Promo\', $89.50. Add to your cart?") and wait for a clear yes. Then call add_to_cart with exactly what you priced. After: "Added \u2713 …, you can upload your artwork and check out here: https://axiomprint.com/checkout". If it fails: apologise, point to the product page, retry at most once. You cannot edit or remove cart items yet — send them to https://axiomprint.com/my-cart. A customer who used the Add to Cart button on a quote has already added it; do not add it again.',
+      extra || '',
       '',
       signIn,
       '',
@@ -1510,7 +1563,7 @@ module.exports = function mountClientBot(app, deps) {
     let built = build(false);
     let messages = built.messages;
     try {
-      const sys = systemPrompt(rules, who);
+      const sys = systemPrompt(rules, who, await couponRule(who));
       for (let i = 0; i < 6; i++) {
         let r;
         try {

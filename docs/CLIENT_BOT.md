@@ -211,6 +211,18 @@ Pass it as `window.NovaClientChat.signin = { payload: '…', sig: '…' }`.
 Only `https://axiomprint.com` and `https://www.axiomprint.com` may send a sign-in to the chat page, and only those
 sites may frame it.
 
+## First-order coupon (WELCOME10)
+
+NovaAI offers the website's welcome code to new customers: **WELCOME10 — $10 off a first order of $50 or more** (one
+use, entered at checkout). The terms are read live from `promo_code` (cached an hour), so changing the amount, minimum
+or end date on the website changes what NovaAI says; an expired or deleted code is never offered. Another code can be
+used with `CLIENT_BOT_WELCOME_CODE=…` in `.env`.
+
+Who hears it: guests, and signed-in customers with no invoiced order yet. Customers who have ordered before are not
+offered it (if they ask, it is for first orders only). When: once per conversation, as one short line after the first
+quote, and whenever someone asks about coupons, promo codes or deals. NovaAI never invents or shares other codes and
+never says it combines with other discounts. Quotes show prices before the code.
+
 ## Ready date: the "?"
 
 Next to "Ready Thursday, October 8" on a quote is a small **?**. It opens how the date was worked out: the turnaround
