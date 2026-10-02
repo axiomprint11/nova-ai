@@ -229,6 +229,16 @@ drawn where the lines were — intro above, question below. Products without a d
 first sentence of their website short description. The model later reads the marker as the products shown, in order,
 with their ids, so "the second one" still works.
 
+## Conversations: read / unread, Refresh
+
+The Conversations list works like a phone's messages. An unread conversation has a **blue dot** and a bold name;
+opening it marks it read, and it turns unread again when the customer writes something new. Read state is per admin
+(SQLite `client_chat_reads`: chat, admin, read time) — what you have read does not hide anything from a colleague. On
+an admin's first visit everything older than 12 hours counts as read. **Unread (n)** filters to unread only; **Mark all
+read** clears the dots; **Mark as unread** (top of an open conversation) puts the dot back. **Refresh** loads the
+newest chats and the open conversation's newest messages; the list also refreshes itself every minute while the tab
+is open ("Updated … ago" under the filters).
+
 ## The name: NovaAI
 
 Customers always see the assistant as **NovaAI** with an AI sparkle and an "AI" badge in the header, so it is clear they

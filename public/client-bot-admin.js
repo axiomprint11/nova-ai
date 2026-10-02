@@ -123,20 +123,26 @@
   let qt = null;
   $('convQ').oninput = () => { clearTimeout(qt); qt = setTimeout(loadConvos, 300); };
 
+  let loadedAt = 0;
   async function loadConvos() {
     const p = new URLSearchParams();
     if (src === 'website' || src === 'preview') p.set('source', src);
     if (src === 'signed') p.set('signed', '1');
+    if (src === 'unread') p.set('unread', '1');
     if ($('convQ').value.trim()) p.set('q', $('convQ').value.trim());
     const j = await fetch('/api/admin/client-bot/chats?' + p, { headers: H() }).then(r => r.json()).catch(() => ({}));
     const rows = (j && j.chats) || [];
     const box = $('convRows');
-    if (!rows.length) { box.innerHTML = '<div class="cb-empty">No conversations yet.</div>'; return; }
+    $('convUnread').textContent = j && j.unread ? j.unread : '';
+    loadedAt = Date.now(); stamp();
+    const keep = box.scrollTop;                       // a refresh keeps your place in the list
+    if (!rows.length) { box.innerHTML = '<div class="cb-empty">' + (src === 'unread' ? 'All caught up \u2014 nothing unread.' : 'No conversations yet.') + '</div>'; return; }
     box.innerHTML = '';
     rows.forEach(c => {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'cb-row' + (c.id === openId ? ' on' : '');
+      b.className = 'cb-row' + (c.id === openId ? ' on' : '') + (c.unread && c.id !== openId ? ' unread' : '');
+      b.title = c.unread ? 'Unread' : '';
       b.innerHTML = '<div class="cb-when" title="' + esc(full(c.updated_at)) + '" data-ts="' + esc(c.updated_at || '') + '">' + esc(rel(c.updated_at)) +
           '<span>' + (c.message_count || 0) + ' messages</span></div>' +
         '<div class="t">' + esc(c.customer_name || (c.customer_id ? 'Customer #' + c.customer_id : 'Visitor (not signed in)')) +
@@ -146,16 +152,46 @@
       b.onclick = () => openConvo(c.id);
       box.appendChild(b);
     });
+    box.scrollTop = keep;
   }
+  function stamp() {
+    if (!loadedAt) return;
+    const s = Math.round((Date.now() - loadedAt) / 1000);
+    $('convStamp').textContent = 'Updated ' + (s < 10 ? 'just now' : s < 60 ? s + ' sec ago' : Math.round(s / 60) + ' min ago');
+  }
+  setInterval(stamp, 15000);
+  // Refresh: the newest chats, and the open conversation's newest messages.
+  async function refreshConvos() {
+    const btn = $('convRefresh');
+    btn.classList.add('spin'); btn.disabled = true;
+    try { if (openId) await openConvo(openId, true); else await loadConvos(); }
+    finally { btn.classList.remove('spin'); btn.disabled = false; }
+  }
+  $('convRefresh').onclick = refreshConvos;
+  // Also by itself every minute while the Conversations tab is on screen.
+  setInterval(() => { if (!document.hidden && $('vConvos') && $('vConvos').offsetParent) loadConvos(); }, 60000);
+  $('convReadAll').onclick = async () => {
+    await fetch('/api/admin/client-bot/chats/read-all', { method: 'POST', headers: H() }).catch(() => {});
+    loadConvos();
+  };
+  $('convView').addEventListener('click', async (e) => {
+    const b = e.target.closest('.cb-tr-unread');
+    if (!b || !openId) return;
+    await fetch('/api/admin/client-bot/chats/' + openId + '/unread', { method: 'POST', headers: H() }).catch(() => {});
+    openId = null;
+    $('convView').innerHTML = '<div class="cb-empty">Marked as unread.</div>';
+    loadConvos();
+  });
 
-  async function openConvo(id) {
+  async function openConvo(id, keepScroll) {
     openId = id;
+    const view = $('convView'), was = view.scrollTop, atEnd = view.scrollTop + view.clientHeight >= view.scrollHeight - 30;
     document.querySelectorAll('#convRows .cb-row').forEach(x => x.classList.remove('on'));
     const j = await fetch('/api/admin/client-bot/chats/' + id, { headers: H() }).then(r => r.json()).catch(() => ({}));
     if (!j || !j.ok) return;
     const c = j.chat;
     $('convView').innerHTML =
-      '<div class="cb-tr-hd"><b>' + esc(c.customer_name || (c.customer_id ? 'Customer #' + c.customer_id : 'Visitor (not signed in)')) + '</b>' +
+      '<div class="cb-tr-hd"><button type="button" class="cb-tr-unread" title="Show it as unread in the list">Mark as unread</button><b>' + esc(c.customer_name || (c.customer_id ? 'Customer #' + c.customer_id : 'Visitor (not signed in)')) + '</b>' +
         (c.company ? ' · ' + esc(c.company) : '') +
         '<small>' + [c.customer_email, c.customer_id ? 'customer #' + c.customer_id : null,
           c.source === 'website' ? 'on the website' : 'admin preview' + (c.preview_by ? ' by ' + String(c.preview_by).replace(/^(member|user):/, '') : ''),
@@ -180,7 +216,8 @@
         if (r.ok) img.src = URL.createObjectURL(await r.blob());
       } catch (e) {}
     });
-    loadConvos();
+    if (keepScroll) view.scrollTop = atEnd ? view.scrollHeight : was;
+    await loadConvos();
   }
   // Attachments are behind admin sign-in, so they are fetched with the token.
   $('convView').addEventListener('click', async (e) => {
