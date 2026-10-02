@@ -779,6 +779,10 @@ module.exports = function mountClientBot(app, deps) {
       }
       rows.push({ quantity: q.quantity, price: q.price, each: q.each, list_price: q.list_price,
         discount: q.discount ? { percent: q.discount.percent } : null, ready: ready,
+        // How the ready date was counted, for the "?" next to it on the card.
+        turn: q.schedule ? { label: q.schedule.label || null, days: q.schedule.days, same_day: !!q.schedule.sameDay,
+          before_cutoff: q.schedule.beforeCutoff, timeline: (q.schedule.timeline || []).slice(0, 40)
+            .map(t => ({ date: t.date, type: t.type, label: t.label })) } : null,
         versions: useVersions && versionsOk ? versions : undefined,
         // What the website needs to put this exact item in the cart.
         cart: link && link.ok ? { url: link.url, share_id: link.share_id || null, config: link.config || null } : null });

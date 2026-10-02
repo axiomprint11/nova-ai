@@ -51,7 +51,8 @@ It is **out of date** — check the live DB (MCP `describe_schema`) before trust
 there is **no `invoiceestimate` table** (estimates link to invoices only by `estimate.estimate_invoiceid`,
 and to projects by `estimate.estimate_projectid`); the `calls` table stopped in May 2024 — phone calls are
 in `dialpad_calls` (count `DISTINCT conversation_key`, skip `call_type='internal'`); `email_from_system`
-has `customer_id` and `sent_at`, and newer rows leave `created_at` NULL. A client's "last order" in the
+has `customer_id` and `sent_at`, and newer rows leave `created_at` NULL; `customer` has `discount_option_id` but **no
+`discount_options`** column (selecting it made `discountFor()` fail silently — account discounts were off until 1.6.10). A client's "last order" in the
 reports is their newest `project.created_at`.
 
 ## Authentication
@@ -183,7 +184,8 @@ order through quoteProduct's `version_list` — and returns one card (`rows` of 
 with the same product+options into a "Your quote" pane (≥800px) with Qty · Price · Add to Cart. Spec rows carry `tag`
 (`specified` / `default` / `questionable` — questionable = a `clarify_for_ai` field left on its default, or no quantity
 given). The bot prices first and never asks (prompt rule 9a); questionable fields are yellow dropdowns on the card (an
-unstated quantity a yellow box) that re-price on change via `/api/client-bot/reprice`. Cards have **Edit**: `POST /api/client-bot/reprice` re-runs `priceCard()` (the same function the tool uses,
+unstated quantity a yellow box) that re-price on change via `/api/client-bot/reprice`. Rows carry `turn` (the
+schedule timeline); the "?" by "Ready …" opens how the date was counted (start day, business days, weekends skipped). Cards have **Edit**: `POST /api/client-bot/reprice` re-runs `priceCard()` (the same function the tool uses,
 public options only, no model call) and saves a `role='note'` row that is folded into the model's next user turn.
 **Attachments**: `POST /api/client-bot/upload` (raw body, token + limits checked before the body is read) →
 `client-files.js` (type by magic bytes; sharp previews; a hand-written PSD decoder; PDFs and spreadsheets read in

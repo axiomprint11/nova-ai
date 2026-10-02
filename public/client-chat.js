@@ -161,6 +161,23 @@
     const d = TAGS[t];
     return d ? '<span class="cc-tag ' + d[1] + '" title="' + esc(d[2]) + '">' + d[0] + '</span>' : '';
   }
+  // "?" next to the ready date: how it was counted, day by day (from the server's
+  // timeline for the chosen turnaround, assuming artwork is approved today).
+  function whyPanel(turn) {
+    if (!turn) return '';
+    const day = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    const tl = (turn.timeline || []).map(t =>
+      '<li class="cc-why-' + esc(t.type) + '"><span>' + esc(day(t.date)) + '</span><b>' + esc(
+        t.type === 'approved' ? 'Approved' + (turn.before_cutoff === false ? ' (after 5 PM)' : '') :
+        t.type === 'start' ? 'Start day' + (t.approvedToo ? '' : '') :
+        t.type === 'skipped' ? t.label + ' \u2014 not counted' : t.label) + '</b></li>').join('');
+    return '<div class="cc-why-pop" hidden><div class="cc-why-hd">How the ready date is worked out</div>' +
+      (turn.label ? '<p><b>' + esc(turn.label) + '</b>' + (turn.days && !/business\s*day/i.test(turn.label) ? ' = ' + turn.days + ' business day' + (turn.days === 1 ? '' : 's') : '') + ' of production.</p>' : '') +
+      (turn.same_day ? '<p>Same-day jobs depend on when your artwork is approved \u2014 the team confirms the time.</p>' :
+      '<p>The clock starts once your artwork is approved and the order is paid. Approved before 5 PM (Pacific) on a business day: that day is the <b>start day</b>; otherwise the next business day is. Counting begins the day after the start day, and weekends and holidays don\u2019t count.</p>' +
+      (tl ? '<ul class="cc-why-tl">' + tl + '</ul>' : '') +
+      '<p class="cc-why-note">Dates assume approval today. Shipping time comes after the ready date.</p>') + '</div>';
+  }
   // `ref` (inside the chat) adds the Edit button; the admin transcript has none.
   function quote(c, ref) {
     const rows = rowsOf(c);
@@ -168,12 +185,14 @@
     const sameReady = ready.length && ready.every(x => x === ready[0]) ? ready[0] : null;
     const canEdit = ref != null && c.edit && c.product_id;
     const unsure = (c.specs || []).some(s => s.tag === 'questionable') || c.qty_unsure;
+    const turn = (rows.find(r => r.turn && r.ready === (sameReady || r.ready)) || {}).turn || null;
     return '<div class="cc-price' + (unsure ? ' cc-unsure' : '') + '" data-key="' + esc(c.key || '') + '"' + (ref != null ? ' data-ref="' + ref + '"' : '') + '>' +
       '<div class="cc-price-hd">' +
         (c.image ? '<img src="' + esc(c.image) + '" alt="" onerror="this.remove()">' : '') +
-        '<div><b>' + esc(c.product) + '</b>' + (sameReady ? '<small>Ready ' + esc(sameReady) + '</small>' : '') + '</div>' +
+        '<div><b>' + esc(c.product) + '</b>' + (sameReady ? '<small>Ready ' + esc(sameReady) +
+          (turn ? ' <button type="button" class="cc-why" title="How is this date worked out?" aria-label="How is the ready date worked out?">?</button>' : '') + '</small>' : '') + '</div>' +
         (canEdit ? '<button type="button" class="cc-edit-btn" title="Change options or quantities">\u270e Edit</button>' : '') +
-      '</div>' +
+      '</div>' + whyPanel(turn) +
       '<table class="cc-specs">' + (c.specs || []).filter(s => !/^quantity$/i.test(s.field)).slice(0, 16).map(s => {
         // "Clarify" fields left on the default: a yellow dropdown to pick right here.
         const f = canEdit && s.tag === 'questionable' ? ((c.edit && c.edit.fields) || []).find(x => x.field === s.field && x.choices && x.choices.length > 1) : null;
@@ -202,7 +221,7 @@
             esc(r.quantity) + '">' : Number(r.quantity || 0).toLocaleString()) +
             (r.versions && r.versions.length ? '<small>' + r.versions.length + ' versions</small>' : '') + '</td>' +
           '<td>' + (r.discount && r.list_price > r.price ? '<s>' + money(r.list_price) + '</s> ' : '') + '<b>' + money(r.price) + '</b>' +
-            '<small>' + money(r.each) + ' each' + (!sameReady && r.ready ? ' · ready ' + esc(r.ready) : '') + '</small></td>' +
+            '<small>' + money(r.each) + ' each' + (!sameReady && r.ready ? ' · ready ' + esc(r.ready) + (turn ? ' <button type="button" class="cc-why" aria-label="How is the ready date worked out?">?</button>' : '') : '') + '</small></td>' +
           '<td>' + (item.product_id ? '<a class="cc-cart" href="' + esc(item.url || '#') + '" target="_blank" rel="noopener" data-item="' +
             esc(JSON.stringify(item)) + '">Add to Cart</a>' : '') + '</td></tr>';
       }).join('') + '</tbody></table>' +
@@ -217,6 +236,16 @@
     hidden.slice(0, 4).forEach(x => x.classList.remove('cc-later'));
     const left = hidden.length - 4;
     if (left > 0) b.textContent = 'Show more products (' + left + ')'; else b.remove();
+  });
+  // "?" by the ready date opens (and closes) how it was worked out.
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('.cc-why');
+    if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    const pop = b.closest('.cc-price') && b.closest('.cc-price').querySelector('.cc-why-pop');
+    if (!pop) return;
+    pop.hidden = !pop.hidden;
+    b.classList.toggle('on', !pop.hidden);
   });
 
   function mount(root, opts) {

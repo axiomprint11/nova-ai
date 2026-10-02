@@ -211,6 +211,14 @@ Pass it as `window.NovaClientChat.signin = { payload: '…', sig: '…' }`.
 Only `https://axiomprint.com` and `https://www.axiomprint.com` may send a sign-in to the chat page, and only those
 sites may frame it.
 
+## Ready date: the "?"
+
+Next to "Ready Thursday, October 8" on a quote is a small **?**. It opens how the date was worked out: the turnaround
+chosen (e.g. 4 Business Days), the rule (the clock starts when artwork is approved and the order is paid; approved
+before 5 PM Pacific on a business day makes that day the start day, otherwise the next business day; counting starts
+the day after; weekends and holidays don't count) and the day-by-day timeline from today — the same `buildTimeline()`
+the staff calculator uses, sent with each quote row as `turn`.
+
 ## Product lists: one list, not two
 
 When NovaAI suggests products, the customer sees ONE list: photo, name and a one-line description under it (tap to

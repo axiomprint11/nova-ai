@@ -23,8 +23,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.6.9';
-const NOVA_BUILT = '10-01-2026 4:05pm';
+const NOVA_VERSION = '1.6.10';
+const NOVA_BUILT = '10-01-2026 5:40pm';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -1124,8 +1124,10 @@ async function discountFor(clientId, productId) {
   const cid = parseInt(clientId), pid = parseInt(productId);
   if (!cid || !pid) return null;
   try {
-    const cust = await runQueryRaw(
-      'SELECT discount_option_id, discount_options FROM customer WHERE id = ' + cid + ' LIMIT 1');
+    // SELECT * on purpose: the live customer table has discount_option_id but NOT
+    // discount_options. Naming a missing column made this query fail, and the
+    // catch below turned that into "no discount" for every account.
+    const cust = await runQueryRaw('SELECT * FROM customer WHERE id = ' + cid + ' LIMIT 1');
     if (!cust.length) return null;
 
     // Usually a single model id; some accounts carry a JSON list.
@@ -1168,7 +1170,7 @@ async function discountFor(clientId, productId) {
       }
     });
     return best;
-  } catch (e) { return null; }
+  } catch (e) { console.error('DISCOUNT lookup failed', cid, pid, e.message); return null; }
 }
 
 // Resolve a product's options (respecting related-to rules) and price it.
