@@ -555,7 +555,10 @@
       } catch (e) { if (window.console) console.error('NovaAI', e); b.innerHTML = '<p class="cc-err">Could not reach NovaAI. Please try again.</p>'; }
       busy = false; send.disabled = false;
       box.scrollTop = box.scrollHeight;
-      ta.focus();
+      // Back to the box on a computer only: on a phone that would pop the keyboard
+      // over half the answer. The customer taps a product or the box when ready.
+      if (!window.matchMedia || !window.matchMedia('(pointer: coarse)').matches) ta.focus();
+      else if (document.activeElement === ta) ta.blur();
     }
     // ---- attachments: the clip button, paste (screenshots) and drag & drop ----
     // Each file uploads as soon as it is added; Send waits for any still going.

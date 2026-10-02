@@ -327,7 +327,13 @@ everything the customer said (Specified) and the website defaults for the rest (
 default quantity. Questionable fields are **yellow dropdowns** right on the card (and an unstated quantity a yellow
 box): picking one prices the card again at once (`/api/client-bot/reprice`, no model call) and that field becomes
 Specified; the other yellow fields stay as they are. NovaAI asks only when it cannot tell which product is meant.
-Rule 9a in the prompt overrides any house rule that says to confirm details first.
+Rule 9a in the prompt overrides any house rule that says to confirm details first, and the server enforces it: when the
+customer taps a product in a list ("… (product #163)"), or when NovaAI's last two answers were questions without a
+price about a product already in the conversation, the next model call is made with
+`tool_choice: price_product` — it has to price, with what it knows plus defaults.
+
+On phones the message box is not focused after an answer (that opened the keyboard over half the reply); the customer
+taps a product or the box when ready. On a computer the cursor goes back to the box as before.
 
 **Edit** on the card turns the options into dropdowns (public options only, choices that fit the current selection)
 and the quantities into a field. **Update price** prices it again on the server — no model call — and the new quote

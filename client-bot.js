@@ -1428,7 +1428,7 @@ module.exports = function mountClientBot(app, deps) {
     // History from the server. Attachments come back with their message: pictures and
     // PDFs for the latest two messages that had them, a description for older ones.
     // Changes made on a quote card (Edit) are told to the model before the next message.
-    const past = (await dbAll('SELECT id, role, content, cards FROM client_messages WHERE chat_id = ? AND role IN (\'user\',\'assistant\',\'note\') ' +
+    const past = (await dbAll('SELECT id, role, content, cards, tools FROM client_messages WHERE chat_id = ? AND role IN (\'user\',\'assistant\',\'note\') ' +
       'ORDER BY id DESC LIMIT 40', [chat.id])).reverse();
     // Where an answer showed a product list, the model reads which products (in order).
     past.forEach(m => {
@@ -1480,6 +1480,27 @@ module.exports = function mountClientBot(app, deps) {
       [chat.id, ins.lastID]);
 
     const rules = await loadRules();
+    // Price, don't interrogate. The model's first step must be price_product when the
+    // customer just picked a product from a list, or when its last two answers were
+    // questions without a price about a product it already has — then defaults and
+    // yellow choices on the card do the asking.
+    const forcePrice = (function () {
+      if (/\(product #\d+\)\.?\s*$/i.test(text)) return true;
+      let questions = 0, product = false;
+      for (let k = past.length - 1; k >= 0; k--) {
+        const m = past[k];
+        let mc = [], mt = [];
+        try { mc = JSON.parse(m.cards || '[]') || []; } catch (e) {}
+        try { mt = JSON.parse(m.tools || '[]') || []; } catch (e) {}
+        if (m.role === 'assistant' && mc.some(c => c && c.type === 'price')) break;      // priced since: start over
+        if (m.role === 'user' && /\(product #\d+\)/i.test(m.content || '')) product = true;
+        if (m.role === 'assistant') {
+          if (mt.some(t => t && (t.tool === 'product_details' || t.tool === 'search_products'))) product = true;
+          if (/\?\s*$/.test(String(m.content || '').trim())) questions++; else break;
+        }
+      }
+      return product && questions >= 2;
+    })();
     let cards = [], used = [];
     let reply = '';
     let built = build(false);
@@ -1489,7 +1510,8 @@ module.exports = function mountClientBot(app, deps) {
       for (let i = 0; i < 6; i++) {
         let r;
         try {
-          r = await anthropic.messages.create({ model: MODEL, max_tokens: 900, system: sys, tools: TOOLS, messages: messages });
+          r = await anthropic.messages.create(Object.assign({ model: MODEL, max_tokens: 900, system: sys, tools: TOOLS, messages: messages },
+            forcePrice && i === 0 ? { tool_choice: { type: 'tool', name: 'price_product' } } : {}));
         } catch (e) {
           // Refused because of an attachment: mark those files and start this answer again without them.
           if (e && e.status === 400 && built.sent.length && i === 0) {
@@ -1497,7 +1519,8 @@ module.exports = function mountClientBot(app, deps) {
             await dbRun('UPDATE client_files SET blocked = 1 WHERE id IN (' + built.sent.map(x => parseInt(x)).join(',') + ')');
             files.concat(pastFiles).forEach(f => { if (built.sent.indexOf(f.id) > -1) f.blocked = 1; });
             built = build(true); messages = built.messages; cards = []; used = [];
-            r = await anthropic.messages.create({ model: MODEL, max_tokens: 900, system: sys, tools: TOOLS, messages: messages });
+            r = await anthropic.messages.create(Object.assign({ model: MODEL, max_tokens: 900, system: sys, tools: TOOLS, messages: messages },
+              forcePrice ? { tool_choice: { type: 'tool', name: 'price_product' } } : {}));
           } else throw e;
         }
         const toolUses = (r.content || []).filter(b => b.type === 'tool_use');

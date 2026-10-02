@@ -183,7 +183,8 @@ returns the would-be payload. Full write-up: `docs/CLIENT_BOT.md`. Never give it
 order through quoteProduct's `version_list` — and returns one card (`rows` of qty/price/cart data); `client-chat.js` merges cards
 with the same product+options into a "Your quote" pane (≥800px) with Qty · Price · Add to Cart. Spec rows carry `tag`
 (`specified` / `default` / `questionable` — questionable = a `clarify_for_ai` field left on its default, or no quantity
-given). The bot prices first and never asks (prompt rule 9a); questionable fields are yellow dropdowns on the card (an
+given). The bot prices first and never asks (prompt rule 9a, enforced with `tool_choice: price_product` after a product pick or
+two unanswered questions — `forcePrice` in the chat handler); questionable fields are yellow dropdowns on the card (an
 unstated quantity a yellow box) that re-price on change via `/api/client-bot/reprice`. Rows carry `turn` (the
 schedule timeline); the "?" by "Ready …" opens how the date was counted (start day, business days, weekends skipped). Cards have **Edit**: `POST /api/client-bot/reprice` re-runs `priceCard()` (the same function the tool uses,
 public options only, no model call) and saves a `role='note'` row that is folded into the model's next user turn.
