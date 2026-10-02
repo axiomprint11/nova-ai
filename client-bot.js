@@ -1705,26 +1705,29 @@ module.exports = function mountClientBot(app, deps) {
   // again whenever something new is said in it (updated_at after their read_at).
   const readerOf = (req) => String(req.user && (req.user.key || req.user.username) || 'admin').slice(0, 120);
   async function markRead(chatId, reader) {
-    await dbRun("INSERT INTO client_chat_reads (chat_id, reader, read_at) VALUES (?, ?, datetime('now')) " +
-      "ON CONFLICT(chat_id, reader) DO UPDATE SET read_at = excluded.read_at", [chatId, reader]);
+    try { await dbRun("INSERT OR REPLACE INTO client_chat_reads (chat_id, reader, read_at) VALUES (?, ?, datetime('now'))", [chatId, reader]); }
+    catch (e) { console.error('CLIENT_BOT markRead', e.message); }
   }
   app.post('/api/admin/client-bot/chats/:id/unread', auth, adminOnly, async (req, res) => {
-    await dbRun('DELETE FROM client_chat_reads WHERE chat_id = ? AND reader = ?', [parseInt(req.params.id) || 0, readerOf(req)]);
+    try { await dbRun('DELETE FROM client_chat_reads WHERE chat_id = ? AND reader = ?', [parseInt(req.params.id) || 0, readerOf(req)]); }
+    catch (e) { console.error('CLIENT_BOT unread', e.message); return res.status(500).json({ ok: false }); }
     res.json({ ok: true });
   });
   app.post('/api/admin/client-bot/chats/read-all', auth, adminOnly, async (req, res) => {
     const reader = readerOf(req);
-    await dbRun("INSERT INTO client_chat_reads (chat_id, reader, read_at) SELECT id, ?, datetime('now') FROM client_chats WHERE true " +
-      "ON CONFLICT(chat_id, reader) DO UPDATE SET read_at = excluded.read_at", [reader]);
+    try { await dbRun("INSERT OR REPLACE INTO client_chat_reads (chat_id, reader, read_at) SELECT id, ?, datetime('now') FROM client_chats", [reader]); }
+    catch (e) { console.error('CLIENT_BOT read-all', e.message); return res.status(500).json({ ok: false }); }
     res.json({ ok: true });
   });
   app.get('/api/admin/client-bot/chats', auth, adminOnly, async (req, res) => {
     const reader = readerOf(req);
     // First visit for this admin: everything before today counts as read, so the
     // list starts with what is new instead of a wall of dots.
-    const seen = await dbGet('SELECT 1 AS x FROM client_chat_reads WHERE reader = ? LIMIT 1', [reader]);
-    if (!seen) await dbRun("INSERT OR IGNORE INTO client_chat_reads (chat_id, reader, read_at) SELECT id, ?, updated_at FROM client_chats " +
-      "WHERE updated_at < datetime('now', '-12 hours')", [reader]);
+    try {
+      const seen = await dbGet('SELECT 1 AS x FROM client_chat_reads WHERE reader = ? LIMIT 1', [reader]);
+      if (!seen) await dbRun("INSERT OR IGNORE INTO client_chat_reads (chat_id, reader, read_at) SELECT id, ?, updated_at FROM client_chats " +
+        "WHERE updated_at < datetime('now', '-12 hours')", [reader]);
+    } catch (e) { console.error('CLIENT_BOT reads init', e.message); }
     const where = [], p = [];
     const UNREAD = '(r.read_at IS NULL OR r.read_at < c.updated_at)';
     if (req.query.unread === '1') where.push(UNREAD);
@@ -1736,10 +1739,19 @@ module.exports = function mountClientBot(app, deps) {
         'OR EXISTS (SELECT 1 FROM client_messages m WHERE m.chat_id = c.id AND m.content LIKE ?))');
       p.push(like, like, like, like, String(req.query.q).trim(), like);
     }
-    const rows = await dbAll('SELECT c.*, ' + UNREAD + ' AS unread, (SELECT content FROM client_messages m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) AS last_message ' +
+    let rows, count;
+    try {
+    rows = await dbAll('SELECT c.*, ' + UNREAD + ' AS unread, (SELECT content FROM client_messages m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) AS last_message ' +
       'FROM client_chats c LEFT JOIN client_chat_reads r ON r.chat_id = c.id AND r.reader = ?' +
       (where.length ? ' WHERE ' + where.join(' AND ') : '') + ' ORDER BY c.updated_at DESC, c.id DESC LIMIT 200', [reader].concat(p));
-    const count = await dbGet('SELECT COUNT(*) AS n FROM client_chats c LEFT JOIN client_chat_reads r ON r.chat_id = c.id AND r.reader = ? WHERE ' + UNREAD, [reader]);
+    count = await dbGet('SELECT COUNT(*) AS n FROM client_chats c LEFT JOIN client_chat_reads r ON r.chat_id = c.id AND r.reader = ? WHERE ' + UNREAD, [reader]);
+    } catch (e) {
+      // Read/unread must never cost the list: without it, every chat simply shows as read.
+      console.error('CLIENT_BOT chats list', e.message);
+      rows = await dbAll('SELECT c.*, 0 AS unread, (SELECT content FROM client_messages m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) AS last_message ' +
+        'FROM client_chats c ORDER BY c.updated_at DESC, c.id DESC LIMIT 200');
+      count = { n: 0 };
+    }
     res.json({ ok: true, unread: count ? count.n : 0,
       chats: rows.map(r => Object.assign(r, { unread: !!r.unread, last_message: String(r.last_message || '').slice(0, 160) })) });
   });
