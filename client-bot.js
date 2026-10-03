@@ -1203,10 +1203,10 @@ module.exports = function mountClientBot(app, deps) {
 
   // ---------------------------------------------------------------- prompt
   // ---------------------------------------------------------------- first-order coupon
-  // The website's welcome code (promo_code table; WELCOME10 unless CLIENT_BOT_WELCOME_CODE
-  // says otherwise). Terms are read live, so a change on the website reaches NovaAI within
+  // The website's first-order code for the chat (promo_code table; SavewithNova10 —
+  // "Nova Chat Coupon", 10% off — unless CLIENT_BOT_WELCOME_CODE says otherwise). Terms are read live, so a change on the website reaches NovaAI within
   // the hour; an expired or deleted code is simply never offered.
-  const WELCOME_CODE = String(process.env.CLIENT_BOT_WELCOME_CODE || 'WELCOME10').trim();
+  const WELCOME_CODE = String(process.env.CLIENT_BOT_WELCOME_CODE || 'SavewithNova10').trim();
   let welcomeCache = { at: 0, offer: null };
   async function welcomeOffer() {
     if (!WELCOME_CODE) return null;
@@ -1219,9 +1219,10 @@ module.exports = function mountClientBot(app, deps) {
       if (c && Number(c.value) > 0) {
         const amount = c.type === 'percent' ? Number(c.value) + '% off' : '$' + Number(c.value).toLocaleString('en-US') + ' off';
         offer = { code: c.promo_code, amount: amount, min: Number(c.min_order_price) > 0 ? Number(c.min_order_price) : 0,
-          terms: amount + (Number(c.min_order_price) > 0 ? ' an order of $' + Number(c.min_order_price) + ' or more' : ' an order') +
+          terms: amount + (Number(c.min_order_price) > 0 ? ' orders of $' + Number(c.min_order_price) + ' or more' : '') +
             (Number(c.max_order_price) > 0 ? ' up to $' + Number(c.max_order_price) : '') +
-            (c.valid_to ? ', until ' + new Date(c.valid_to).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '') };
+            (c.valid_to ? ' (valid until ' + (function (v) { const d = v instanceof Date ? v : new Date(String(v).slice(0, 10) + 'T12:00:00');
+              return ['January','February','March','April','May','June','July','August','September','October','November','December'][d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear(); })(c.valid_to) + ')' : '') };
       }
     } catch (e) { console.error('CLIENT_BOT welcome offer', e.message); }
     welcomeCache = { at: Date.now(), offer: offer };
@@ -1245,13 +1246,16 @@ module.exports = function mountClientBot(app, deps) {
   async function couponRule(who) {
     const o = await welcomeOffer();
     if (!o) return '';
-    const first = !who.customer ? 'They are a guest, so this may be their first order: offer it.'
-      : (await hasOrdered(who.customer.id)) ? 'This signed-in customer HAS ordered before, so the code is not for them: do not offer it; if they ask about coupons, say ' + o.code + ' is for first orders only and offer to help with anything else.'
-      : 'This signed-in customer has NOT ordered yet: offer it.';
-    return '18. FIRST-ORDER COUPON: code ' + o.code + ' \u2014 ' + o.terms + ', for a customer\u2019s first order, one use, entered at checkout. ' + first +
-      ' When: once per conversation, as one short friendly line after their first quote (e.g. "First order with us? Use code ' + o.code + ' at checkout for ' +
-      o.amount + (o.min ? ' orders of $' + o.min + '+' : ' your order') + '.") \u2014 and whenever they ask about coupons, promo codes, discounts or deals. It cannot be applied in this chat; quotes show prices before the code. ' +
-      'Never invent or share any other code, and never say it combines with other discounts.';
+    const isNew = !who.customer || !(await hasOrdered(who.customer.id));
+    const example = 'First order with us? Use code ' + o.code + ' at checkout for ' + o.amount + (o.min ? ' orders of $' + o.min + '+' : ' your order') + '.';
+    return '18. FIRST-ORDER COUPON: code ' + o.code + ' — ' + o.terms + ', on a customer’s first order, one use, entered at checkout. ' +
+      'Whenever anyone asks about coupons, promo codes, discounts or deals, share it (as ' + o.amount + ' their first order). ' +
+      (isNew
+        ? 'This visitor ' + (who.customer ? 'has an account but has NOT ordered yet' : 'is a guest, likely new to us') + ', so use the code to win their first order: ' +
+          'mention it in one short, friendly line after their first quote (e.g. "' + example + '"), again if they hesitate about price or say they will think about it, ' +
+          'and when they are ready to order (point them to Add to Cart and checkout). At most twice in a conversation unless they ask; never pushy. '
+        : 'This signed-in customer has ordered before: do not bring it up yourself; if they ask, share it and say it is for a first order. ') +
+      'It cannot be applied in this chat; quotes show prices before the code. Never invent or share any other code, and never say it combines with other discounts.';
   }
 
   function systemPrompt(rules, who, extra) {

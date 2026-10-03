@@ -211,17 +211,20 @@ Pass it as `window.NovaClientChat.signin = { payload: '…', sig: '…' }`.
 Only `https://axiomprint.com` and `https://www.axiomprint.com` may send a sign-in to the chat page, and only those
 sites may frame it.
 
-## First-order coupon (WELCOME10)
+## First-order coupon (SavewithNova10)
 
-NovaAI offers the website's welcome code to new customers: **WELCOME10 — $10 off a first order of $50 or more** (one
-use, entered at checkout). The terms are read live from `promo_code` (cached an hour), so changing the amount, minimum
-or end date on the website changes what NovaAI says; an expired or deleted code is never offered. Another code can be
-used with `CLIENT_BOT_WELCOME_CODE=…` in `.env`.
+NovaAI's coupon is **SavewithNova10 — "Nova Chat Coupon", 10% off a first order** (no minimum, one use, valid until
+October 2, 2027, entered at checkout). The terms are read live from `promo_code` (cached an hour), so a change on the
+website changes what NovaAI says; an expired or deleted code is never offered. Another code: `CLIENT_BOT_WELCOME_CODE=…`.
 
-Who hears it: guests, and signed-in customers with no invoiced order yet. Customers who have ordered before are not
-offered it (if they ask, it is for first orders only). When: once per conversation, as one short line after the first
-quote, and whenever someone asks about coupons, promo codes or deals. NovaAI never invents or shares other codes and
-never says it combines with other discounts. Quotes show prices before the code.
+- **Anyone who asks** about coupons, promo codes, discounts or deals is given it (as 10% off their first order).
+- **First-time customers** (guests, and signed-in customers with no invoiced order) also hear it as a sales nudge: one
+  short line after their first quote, again if they hesitate about price or say they will think about it, and when they
+  are ready to order (Add to Cart → checkout). At most twice per conversation unless they ask; never pushy.
+- **Returning customers** are not pitched it; if they ask, they get it with "for a first order".
+
+NovaAI never invents or shares other codes and never says it combines with other discounts. Quotes show prices before
+the code.
 
 ## Estimated due date and its popup
 
