@@ -151,7 +151,8 @@
         '<span class="cb-tag ' + (c.source === 'website' ? 'web' : 'pre') + '">' + (c.source === 'website' ? 'Website' : 'Preview') + '</span>' +
         (c.rating ? '<span class="cb-rt ' + c.rating + '" title="Rated ' + (c.rating === 'up' ? 'good' : 'not good') + '">' + (c.rating === 'up' ? '\ud83d\udc4d' : '\ud83d\udc4e') + '</span>' : '') + '</div>' +
         '<small>' + esc([c.company, c.customer_email].filter(Boolean).join(' · ')) + '</small>' +
-        '<small>' + esc(c.last_message || c.title || '') + '</small>';
+        '<small>' + esc(c.last_message || c.title || '') + '</small>' +
+        (c.last_page ? '<small class="cb-row-page" title="' + esc(c.last_page) + '">\ud83d\udd17 ' + esc(String(c.last_page).replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')) + '</small>' : '');
       b.onclick = () => openConvo(c.id);
       box.appendChild(b);
     });
@@ -235,6 +236,17 @@
     }
   });
 
+  // Header line: the page the conversation started on, and the latest one if it moved.
+  function pagesLine(list, c) {
+    const pages = list.filter(m => m.page_url).map(m => ({ url: m.page_url, title: m.page_title }));
+    const link = (p) => '<a href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer" title="' + esc(p.title || p.url) + '">' +
+      esc(String(p.url).replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')) + '</a>';
+    if (!pages.length) return c.source === 'website' ? '<div class="cb-tr-pages none">Page not recorded (conversation from before page tracking)</div>' : '';
+    const first = pages[0], last = pages[pages.length - 1];
+    return '<div class="cb-tr-pages"><span>Started on</span>' + link(first) +
+      (last.url !== first.url ? '<span>Now on</span>' + link(last) : '') + '</div>';
+  }
+
   async function openConvo(id, keepScroll) {
     openId = id;
     const view = $('convView'), was = view.scrollTop, atEnd = view.scrollTop + view.clientHeight >= view.scrollHeight - 30;
@@ -247,16 +259,18 @@
         (c.company ? ' · ' + esc(c.company) : '') +
         '<small>' + [c.customer_email, c.customer_id ? 'customer #' + c.customer_id : null,
           c.source === 'website' ? 'on the website' : 'admin preview' + (c.preview_by ? ' by ' + String(c.preview_by).replace(/^(member|user):/, '') : ''),
-          'started ' + rel(c.created_at), c.ip ? 'IP ' + c.ip : null].filter(Boolean).map(esc).join(' · ') + '</small>' + rateBar(j.rating) + '</div>' +
+          'started ' + rel(c.created_at), c.ip ? 'IP ' + c.ip : null].filter(Boolean).map(esc).join(' · ') + '</small>' + pagesLine(j.messages || [], c) + rateBar(j.rating) + '</div>' +
       transcript(j.messages);
     function transcript(list) {
+      const short = (u) => String(u || '').replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
       // Page lines: where the chat started, and each move to another page.
       // Add to Cart clicks: their own line (the older "added to their cart" note is
       // left out when the click is already shown).
       const hasCartEvents = list.some(m => m.role === 'event' && (m.cards || []).some(x => x && x.kind === 'cart'));
       let lastPage = null;
       const pageLine = (url, title, at, moved) => '<div class="cb-evt cb-evt-page"><span>' + (moved ? 'Moved to' : 'On page') + '</span>' +
-        '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="' + esc(url) + '">' + esc(title || url.replace(/^https?:\/\/(www\.)?/, '')) + '</a>' +
+        (title ? '<b>' + esc(title) + '</b>' : '') +
+        '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="Open ' + esc(url) + '">' + esc(short(url)) + '</a>' +
         '<em title="' + esc(full(at)) + '" data-ts="' + esc(at || '') + '">' + esc(rel(at)) + '</em></div>';
       return list.map(m => {
         if (m.role === 'event') {
@@ -292,6 +306,8 @@
               '<button type="button" data-dl="' + esc(f.id) + '" data-name="' + esc(f.name) + '">Download</button></div>').join('') + '</div>' : '') +
           (m.tools && m.tools.length ? '<div class="cb-used">' + m.tools.map(t => '<span>' + esc(t.tool) + ' → ' + esc(t.found) + '</span>').join('') + '</div>' : '') +
           '<div class="when" title="' + esc(full(m.created_at)) + '" data-ts="' + esc(m.created_at || '') + '">' + esc(rel(m.created_at)) + '</div>' +
+          (m.role === 'user' && m.page_url ? '<a class="cb-asked-on" href="' + esc(m.page_url) + '" target="_blank" rel="noopener noreferrer" title="' +
+            esc((m.page_title ? m.page_title + ' \u2014 ' : '') + m.page_url) + '">\ud83d\udd17 ' + esc(short(m.page_url)) + '</a>' : '') +
         '</div>');
       }).join('');
     }

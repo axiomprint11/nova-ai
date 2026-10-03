@@ -584,7 +584,7 @@ module.exports = function mountClientBot(app, deps) {
     input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] }
   }, {
     name: 'newest_products',
-    description: 'AxiomPrint\u2019s newest products, newest first (by the day each was added to the website). Use when the customer asks what is new, the latest or newest products, or recent additions.',
+    description: 'AxiomPrint\u2019s newest products, newest first. Use when the customer asks what is new, the latest or newest products, or recent additions.',
     input_schema: { type: 'object', properties: {} }
   }, {
     name: 'product_details',
@@ -1073,21 +1073,22 @@ module.exports = function mountClientBot(app, deps) {
       return { results: top, shown: PRODUCTS_SHOWN };
     }
     if (name === 'newest_products') {
-      // Newest by product.created. Only products every visitor can see: active, on axiomprint.com,
-      // not made for a customer (available_for_customers, or the ClientProduct category), and no
-      // test / demo / "Copy of" products (copies also keep the original's created date).
-      const rows = await runQuery('SELECT p.id, p.title, p.public_title, p.url, p.image, p.short_description, p.created FROM product p WHERE ' +
+      // Newest = highest product id (as the CRM's product list shows them). product.created is not
+      // used: a product made by copying another keeps the original's date. Only products every
+      // visitor can see: active, on axiomprint.com, with a photo, not made for a customer
+      // (available_for_customers, or the ClientProduct category), and no test / demo / "Copy of" products.
+      const rows = await runQuery('SELECT p.id, p.title, p.public_title, p.url, p.image, p.short_description FROM product p WHERE ' +
         publicProductWhere(null) +
         " AND COALESCE(p.product_category_id, 0) NOT IN (SELECT id FROM productcategory WHERE title = 'ClientProduct')" +
         " AND LOWER(CONCAT(COALESCE(p.title, ''), ' ', COALESCE(p.public_title, ''))) NOT REGEXP '(^|[^a-z])(test|demo)[0-9]*([^a-z]|$)'" +
         " AND LOWER(COALESCE(p.title, '')) NOT REGEXP '^copy of'" +
-        ' ORDER BY p.created DESC, p.id DESC LIMIT 12');
+        " AND p.image IS NOT NULL AND TRIM(p.image) <> ''" +
+        ' ORDER BY p.id DESC LIMIT 12');
       if (!rows.length) return { results: [] };
-      const month = (d) => { const t = new Date(d); return isNaN(t) ? undefined : t.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'America/Los_Angeles' }); };
       cards.push({ type: 'products', products: rows
         .map(r => ({ id: r.id, name: r.public_title || r.title, url: productLink(r), image: r.image || null, about: oneLine(r.short_description) })) });
-      return { results: rows.slice(0, 6).map(r => ({ id: r.id, name: r.public_title || r.title, added: month(r.created), about: clip(r.short_description, 160) })),
-        newest_first: true, shown: PRODUCTS_SHOWN };
+      return { results: rows.slice(0, 6).map(r => ({ id: r.id, name: r.public_title || r.title, about: clip(r.short_description, 160) })),
+        newest_first: true, note: 'Do not mention when they were added.', shown: PRODUCTS_SHOWN };
     }
     if (name === 'product_details') {
       const p = await publicProduct(input.product_id, cid);
@@ -1937,7 +1938,8 @@ module.exports = function mountClientBot(app, deps) {
     }
     let rows, count;
     try {
-    rows = await dbAll('SELECT c.*, rt.rating AS rating, ' + UNREAD + ' AS unread, (SELECT content FROM client_messages m WHERE m.chat_id = c.id AND m.role IN (\'user\',\'assistant\',\'note\') ORDER BY m.id DESC LIMIT 1) AS last_message ' +
+    rows = await dbAll('SELECT c.*, rt.rating AS rating, ' + UNREAD + ' AS unread, (SELECT content FROM client_messages m WHERE m.chat_id = c.id AND m.role IN (\'user\',\'assistant\',\'note\') ORDER BY m.id DESC LIMIT 1) AS last_message, ' +
+      '(SELECT page_url FROM client_messages m WHERE m.chat_id = c.id AND m.page_url IS NOT NULL ORDER BY m.id DESC LIMIT 1) AS last_page ' +
       'FROM client_chats c LEFT JOIN client_chat_reads r ON r.chat_id = c.id AND r.reader = ?' +
       ' LEFT JOIN client_chat_ratings rt ON rt.chat_id = c.id' +
       (where.length ? ' WHERE ' + where.join(' AND ') : '') + ' ORDER BY c.updated_at DESC, c.id DESC LIMIT 200', [reader].concat(p));

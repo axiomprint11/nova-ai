@@ -238,7 +238,7 @@ row as `turn`. Same-day turnarounds say "Same day — the team confirms the time
 
 ## Newest products
 
-"What's new?" and similar questions call the `newest_products` tool: up to 12 products, newest first by `product.created`, shown in the usual products list (photo, name, description, tap to price). Only products every visitor can see: active, on axiomprint.com, not made for a customer (`available_for_customers` empty, and not in the **ClientProduct** category), and no test, demo or "Copy of …" products. A signed-in customer's own products are not listed here either. Prompt rule 11b tells NovaAI to use it instead of saying there is no list of new products. A question that plainly asks what is new ("Any new products?", "what's new", "latest items") also forces the tool (`tool_choice`, like `forcePrice`), so the model cannot skip it.
+"What's new?" and similar questions call the `newest_products` tool: up to 12 products, newest first by product id (the order the CRM product list uses; `product.created` is not used because a copied product keeps the original's date), shown in the usual products list (photo, name, description, tap to price). Only products every visitor can see: active, on axiomprint.com, with a photo, not made for a customer (`available_for_customers` empty, and not in the **ClientProduct** category), and no test, demo or "Copy of …" products. A signed-in customer's own products are not listed here either. Prompt rule 11b tells NovaAI to use it instead of saying there is no list of new products. A question that plainly asks what is new ("Any new products?", "what's new", "latest items") also forces the tool (`tool_choice`, like `forcePrice`), so the model cannot skip it.
 
 ## Product lists: one list, not two
 

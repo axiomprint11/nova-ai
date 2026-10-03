@@ -169,7 +169,7 @@ to `/api/chat` for debugging.
 
 `client-bot.js` mounts a **separate** bot for axiomprint.com customers: its own SQLite tables (`client_chats`,
 `client_messages`, `client_bot_rules` + `_history`), its own tokens (signed with a key derived from `JWT_SECRET`,
-`kind:'client'` — staff `auth` rejects them), its own tools (no SQL; `newest_products` lists the newest public products by `product.created`, without client-linked, ClientProduct-category, test/demo or "Copy of" products). The customer id always comes from the
+`kind:'client'` — staff `auth` rejects them), its own tools (no SQL; `newest_products` lists the newest public products by product id (not `product.created` — copies keep the old date), with a photo, without client-linked, ClientProduct-category, test/demo or "Copy of" products). The customer id always comes from the
 session: `my_orders` / `order_status` filter on `estimate_clientid` themselves; products are limited to active
 `axiom_print` products and `available_for_customers` is honoured. Admin console at `/client-bot` (Conversations is the first tab; Try it as any
 customer, Conversations — read/unread per admin in SQLite `client_chat_reads`, Refresh, Unread filter, Mark as unread /
