@@ -1971,7 +1971,7 @@ module.exports = function mountClientBot(app, deps) {
           r.summary.quantity + ' ' + r.summary.product + ' (job "' + r.summary.job_name + '"), $' + usd2(Number(r.summary.price)) + '.']);
       }
       res.json({ ok: true, preview: r.preview || undefined, would_send: r.preview ? r.payload : undefined,
-        added: r.summary, job_name_saved: r.preview ? undefined : r.job_name_saved, checkout: SITE_URLS.checkout });
+        added: r.summary, job_name_saved: r.preview ? undefined : r.job_name_saved, checkout: SITE_URLS.checkout, cart: SITE_URLS.cart });
     } catch (e) {
       console.error('CLIENT_BOT cart', e.message);
       res.json({ ok: false, error: 'The cart could not be reached.' });

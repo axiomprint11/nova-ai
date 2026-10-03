@@ -44,6 +44,10 @@
   const MAX_FILES = 5, MAX_BYTES = 25 * 1024 * 1024;
   const fileIcon = (k) => ({ pdf: 'PDF', ai: 'AI', eps: 'EPS', psd: 'PSD', sheet: 'XLS', text: 'TXT', image: 'IMG' })[k] || 'FILE';
   const money = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Quote rows already added to the cart (this page visit): they stay "✓ In cart" when the pane is
+  // drawn again, and clicking them opens the cart page.
+  const IN_CART = new Map();
+  const cartKey = (it) => [it.product_id, JSON.stringify(it.options || {}), it.quantity, JSON.stringify(it.versions || null), it.width || '', it.height || ''].join('|');
 
   function card(c) {
     if (c.type === 'products') {
@@ -235,8 +239,11 @@
             (r.versions && r.versions.length ? '<small>' + r.versions.length + ' versions</small>' : '') + '</td>' +
           '<td>' + (r.discount && r.list_price > r.price ? '<s>' + money(r.list_price) + '</s> ' : '') + '<b>' + money(r.price) + '</b>' +
             '<small>' + money(r.each) + ' each' + (!sameReady && r.ready ? ' · ready ' + esc(r.ready) : '') + '</small></td>' +
-          '<td>' + (item.product_id ? '<a class="cc-cart" href="' + esc(item.url || '#') + '" target="_blank" rel="noopener" data-item="' +
-            esc(JSON.stringify(item)) + '">Add to Cart</a>' : '') + '</td></tr>';
+          '<td>' + (item.product_id ? (IN_CART.has(cartKey(item))
+            ? '<a class="cc-cart done" href="' + esc(IN_CART.get(cartKey(item))) + '" title="Go to your cart" data-cart="' + esc(IN_CART.get(cartKey(item))) +
+              '" data-item="' + esc(JSON.stringify(item)) + '">\u2713 In cart</a>'
+            : '<a class="cc-cart" href="' + esc(item.url || '#') + '" target="_blank" rel="noopener" data-item="' +
+            esc(JSON.stringify(item)) + '">Add to Cart</a>') : '') + '</td></tr>';
       }).join('') + '</tbody></table>' +
       (sameReady ? dueLine(turn) : '') +
     '</div>';
@@ -429,6 +436,10 @@
     // in the customer's real axiomprint.com cart (the click is their yes). Guest:
     // a sign-in link, or the product page with everything selected.
     const LOGIN = 'https://axiomprint.com/login';
+    function openCart(url) {
+      if (!/^https:\/\/(www\.)?axiomprint\.com\//.test(String(url))) return;
+      try { window.top.location.href = url; } catch (x) { window.open(url, '_blank', 'noopener'); }
+    }
     // The job name the Add to Cart box starts with: NovaAI's suggestion from the conversation
     // ("Grand Opening Cards"), else the product with what the customer chose, then " - 50x".
     // Never the same as another item added in this chat.
@@ -447,7 +458,9 @@
       const a = e.target.closest && e.target.closest('a.cc-cart[data-item]');
       if (!a) return;
       e.preventDefault();
-      if (a.classList.contains('done') || a.classList.contains('busy')) return;
+      // "In cart": take the customer to the cart page on axiomprint.com (the website tab itself).
+      if (a.classList.contains('done')) { if (a.dataset.cart) openCart(a.dataset.cart); return; }
+      if (a.classList.contains('busy')) return;
       let item = {};
       try { item = JSON.parse(a.getAttribute('data-item') || '{}'); } catch (x) {}
       const tr = a.closest('tr');
@@ -493,6 +506,7 @@
         }
         row.remove();
         a.classList.add('done'); a.textContent = j.preview ? 'Preview \u2713' : '\u2713 In cart';
+        if (!j.preview && j.cart) { a.dataset.cart = j.cart; a.title = 'Go to your cart'; IN_CART.set(cartKey(item), j.cart); }
         const line = document.createElement('div');
         line.className = 'cc-added-row';
         line.innerHTML = card({ type: 'cart_added', preview: j.preview, product: j.added.product, quantity: j.added.quantity,

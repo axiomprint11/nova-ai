@@ -491,6 +491,9 @@ The admin preview (**Try it** as a customer) never touches a real cart: it shows
 Not yet: editing or removing cart items (→ https://axiomprint.com/my-cart).
 
 
+**"✓ In cart"** (the row's button after an add) takes the website tab to the cart page (`SITE_URLS.cart`,
+https://axiomprint.com/my-cart). Added rows stay "In cart" while the page is open, even when the pane is drawn again.
+
 **Job name**: the Add to Cart box starts with NovaAI's suggestion for this quote (`job_name` on `price_product`, kept on the
 card as `job_hint` across Edit) — e.g. "Grand Opening Cards - 500x" — else the product plus the options the customer chose,
 then " - <qty>x". A name already used in the chat gets " (2)", " (3)". The customer can still change it.
