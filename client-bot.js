@@ -1037,6 +1037,13 @@ module.exports = function mountClientBot(app, deps) {
     const first = (t.match(/^.{12,}?[.!?](?=\s|$)/) || [t])[0];
     return first.length > 90 ? first.slice(0, 87).replace(/\s+\S*$/, '') + '\u2026' : first;
   }
+  const AFTER_CART_MARK = '[after Add to Cart]';
+  const AFTER_CART = AFTER_CART_MARK + ' (Automatic message, not typed by the customer.) The item is in the customer\u2019s cart. ' +
+    'If the customer asked about other products earlier in this conversation that have not been priced yet, move on to the NEXT one now: ' +
+    'show it with search_products (or price it with price_product straight away when the exact product is already known) \u2014 no questions first. ' +
+    'Start with one short line that the item is in their cart, in the language the customer has been writing in. ' +
+    'If nothing else is waiting, reply with exactly NONE and nothing else.';
+  const isAfterCart = (m) => m && m.role === 'user' && String(m.content || '').indexOf(AFTER_CART_MARK) === 0;
   const PRODUCTS_SHOWN = 'The customer sees these as ONE list: photo, name and a one-line description each, tap to price. Do NOT list ' +
     'the products again in your text. Write one short sentence and at most one question. If you want to describe a product, write ' +
     'it as a list line "- **Name** — a few words"; such lines are moved into the list under that product.';
@@ -1485,7 +1492,7 @@ module.exports = function mountClientBot(app, deps) {
     const chat = await dbGet('SELECT * FROM client_chats WHERE id = ?', [parseInt(req.params.id) || 0]);
     if (!ownsChat(chat, who)) return res.status(404).json({ ok: false, error: 'That conversation was not found.' });
     const msgs = (await dbAll("SELECT id, role, content, cards, created_at FROM client_messages WHERE chat_id = ? AND role IN ('user','assistant','event') ORDER BY id", [chat.id]))
-      .filter(m => m.role !== 'event' || /"kind":"cart"/.test(m.cards || '') && /"outcome":"added"/.test(m.cards || ''));
+      .filter(m => !isAfterCart(m) && (m.role !== 'event' || /"kind":"cart"/.test(m.cards || '') && /"outcome":"added"/.test(m.cards || '')));
     const files = await dbAll('SELECT message_id, name, kind FROM client_files WHERE chat_id = ? AND message_id IS NOT NULL ORDER BY id', [chat.id]);
     res.json({ ok: true, chat: { id: chat.id, title: chat.title, started: chat.created_at, updated: chat.updated_at },
       messages: msgs.map(m => {
@@ -1569,8 +1576,11 @@ module.exports = function mountClientBot(app, deps) {
     const who = await identify(req);
     if (!who) return res.status(401).json({ ok: false, error: 'Please reload the page.' });
     if (who.error) return res.status(who.status || 403).json({ ok: false, error: who.error });
-    const fileRefs = (Array.isArray(req.body && req.body.files) ? req.body.files : []).map(String).filter(x => /^[a-f0-9]{32}$/.test(x)).slice(0, MAX_FILES);
-    let text = String((req.body && req.body.message) || '').trim().slice(0, 2000);
+    // After an Add to Cart click the chat asks for one more answer by itself: NovaAI moves on to the
+    // next product the customer asked about. That turn is saved (the model needs it) but never shown.
+    const afterCart = !!(req.body && req.body.after === 'cart' && parseInt(req.body.chat_id));
+    const fileRefs = afterCart ? [] : (Array.isArray(req.body && req.body.files) ? req.body.files : []).map(String).filter(x => /^[a-f0-9]{32}$/.test(x)).slice(0, MAX_FILES);
+    let text = afterCart ? AFTER_CART : String((req.body && req.body.message) || '').trim().slice(0, 2000);
     if (!text && !fileRefs.length) return res.json({ ok: false, error: 'Empty message.' });
     const ip = clientIp(req);
     const busy = rateLimited(who.vid, who.source === 'preview') ||
@@ -1586,6 +1596,7 @@ module.exports = function mountClientBot(app, deps) {
       chat = await dbGet('SELECT * FROM client_chats WHERE id = ?', [askId]);
       if (!ownsChat(chat, who)) chat = null;
     }
+    if (!chat && afterCart) return res.json({ ok: true, skip: true });
     if (!chat) {
       const r = await dbRun('INSERT INTO client_chats (visitor_id, customer_id, customer_name, customer_email, company, source, preview_by, ip, user_agent, title) ' +
         'VALUES (?,?,?,?,?,?,?,?,?,?)', [who.vid, who.customer ? who.customer.id : null, who.customer ? who.customer.name : null,
@@ -1681,7 +1692,7 @@ module.exports = function mountClientBot(app, deps) {
     })();
     // "Any new products?", "what's new", "latest arrivals": always show the newest products.
     const askNew = /\bwhat'?s new\b|\b(any(thing)?|something) new\b|\b(new|newest|latest|recent(ly added)?)\s+(\w+\s+){0,2}(products?|items?|arrivals?|additions?|offerings?|services?|stuff|things)\b/i.test(text);
-    const forced = forcePrice ? 'price_product' : (askNew ? 'newest_products' : null);
+    const forced = afterCart ? null : forcePrice ? 'price_product' : (askNew ? 'newest_products' : null);
     let cards = [], used = [];
     let reply = '';
     let built = build(false);
@@ -1724,12 +1735,17 @@ module.exports = function mountClientBot(app, deps) {
       console.error('CLIENT_BOT error', e.message);
       reply = 'Sorry — something went wrong on our side. Please try again in a moment.';
     }
+    // Nothing else was asked for: no extra answer after the cart click.
+    if (afterCart && (!reply || /^\W*NONE\W*$/i.test(reply) || (!cards.length && /\bNONE\b/.test(reply) && reply.length < 40))) {
+      await dbRun('DELETE FROM client_messages WHERE id = ?', [ins.lastID]);
+      return res.json({ ok: true, skip: true, chat_id: chat.id });
+    }
     if (!reply) reply = 'Sorry — I could not answer that. Could you rephrase it?';
     reply = trimBoilerplate(reply, text);
     reply = mergeProductList(reply, cards);
     await dbRun('INSERT INTO client_messages (chat_id, role, content, cards, tools) VALUES (?,?,?,?,?)',
       [chat.id, 'assistant', reply, cards.length ? JSON.stringify(cards).slice(0, 200000) : null, used.length ? JSON.stringify(used) : null]);
-    await dbRun("UPDATE client_chats SET message_count = message_count + 2, updated_at = datetime('now') WHERE id = ?", [chat.id]);
+    await dbRun("UPDATE client_chats SET message_count = message_count + ?, updated_at = datetime('now') WHERE id = ?", [afterCart ? 1 : 2, chat.id]);
     // Admins previewing also see which lookups the answer used.
     res.json({ ok: true, chat_id: chat.id, reply: reply, cards: cards, tools: who.source === 'preview' ? used : undefined });
   });

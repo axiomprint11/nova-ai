@@ -473,6 +473,12 @@ The admin preview (**Try it** as a customer) never touches a real cart: it shows
 
 Not yet: editing or removing cart items (→ https://axiomprint.com/my-cart).
 
+
+**After the click** the chat shows one line — "✓ Added to Cart · 500 Business Cards · $32.97 · Check out ↗" — instead of a
+bubble, then asks NovaAI for one more answer by itself (`POST /api/client-bot/chat` with `after: 'cart'`). The model gets
+`AFTER_CART`: move on to the next product the customer asked about (show its list with search_products, or price it if the
+product is known), no questions; or reply NONE, in which case nothing is shown and the turn is deleted. The automatic turn is
+saved for the model, hidden from the customer's History and shown in Conversations as "↪ Automatic".
 ## Going live — checklist
 
 1. Fill in **Training → What Nova knows** (hours, phone, shipping, pickup, artwork rules) and review the house rules.

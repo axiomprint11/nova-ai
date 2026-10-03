@@ -84,12 +84,13 @@
       '</div>';
     }
     if (c.type === 'cart_added') {
-      return '<div class="cc-added' + (c.preview ? ' preview' : '') + '"><div class="cc-added-hd">' +
-        (c.preview ? 'Admin preview \u2014 not added to the real cart' : '\u2713 Added to your cart') + '</div>' +
-        '<div>' + Number(c.quantity || 0).toLocaleString() + ' ' + esc(c.product) +
-          (c.versions && c.versions.length ? ' (' + c.versions.length + ' versions)' : '') + ' \u00b7 <b>' + money(c.price) + '</b></div>' +
-        (c.job_name ? '<small>Job: ' + esc(c.job_name) + '</small>' : '') +
-        (c.checkout && !c.preview ? '<a class="cc-cart" href="' + esc(c.checkout) + '" target="_blank" rel="noopener">Upload artwork &amp; check out</a>' : '') +
+      // One line: ✓ Added to Cart · what · price · Check out
+      const what = Number(c.quantity || 0).toLocaleString() + ' ' + (c.product || '') +
+        (c.versions && c.versions.length ? ' (' + c.versions.length + ' versions)' : '');
+      return '<div class="cc-added' + (c.preview ? ' preview' : '') + '" title="' + esc(what + (c.job_name ? ' \u2014 job: ' + c.job_name : '')) + '">' +
+        '<b>' + (c.preview ? 'Preview \u2014 not in the real cart' : '\u2713 Added to Cart') + '</b>' +
+        '<span class="cc-added-what">' + esc(what) + '</span><span class="cc-added-p">' + money(c.price) + '</span>' +
+        (c.checkout && !c.preview ? '<a href="' + esc(c.checkout) + '" target="_blank" rel="noopener">Check out \u2197</a>' : '') +
       '</div>';
     }
     if (c.type === 'projects') return '<div class="cc-projs">' + (c.projects || []).map(project).join('') + '</div>';
@@ -476,12 +477,15 @@
         }
         row.remove();
         a.classList.add('done'); a.textContent = j.preview ? 'Preview \u2713' : '\u2713 In cart';
-        const b = add('ai', card({ type: 'cart_added', preview: j.preview, product: j.added.product, quantity: j.added.quantity,
+        const line = document.createElement('div');
+        line.className = 'cc-added-row';
+        line.innerHTML = card({ type: 'cart_added', preview: j.preview, product: j.added.product, quantity: j.added.quantity,
           price: j.added.price, job_name: j.added.job_name, versions: j.added.versions, checkout: j.checkout }) +
           (j.preview ? '<details class="cc-would"><summary>What would be sent to the cart</summary><pre>' + esc(JSON.stringify(j.would_send, null, 2)) + '</pre></details>' : '') +
-          (j.job_name_saved === false ? '<p class="cc-err">The job name could not be saved \u2014 please add it in your cart before checkout.</p>' : ''));
-        void b;
+          (j.job_name_saved === false ? '<p class="cc-err">The job name could not be saved \u2014 please add it in your cart before checkout.</p>' : '');
+        inner.appendChild(line); box.scrollTop = box.scrollHeight;
         if (!j.preview && opts.onCartAdded) opts.onCartAdded(j.added);
+        continueAfterCart();
       };
       go.onclick = doAdd;
       job.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); doAdd(); } };
@@ -640,6 +644,25 @@
       // over half the answer. The customer taps a product or the box when ready.
       if (!window.matchMedia || !window.matchMedia('(pointer: coarse)').matches) ta.focus();
       else if (document.activeElement === ta) ta.blur();
+    }
+    // After Add to Cart: NovaAI moves on to the next product the customer asked about (shows its list
+    // or prices it). Nothing is shown when there is nothing else to do.
+    async function continueAfterCart() {
+      if (!chatId) return;
+      if (busy) { setTimeout(continueAfterCart, 600); return; }
+      busy = true; send.disabled = true;
+      const b = add('ai', '<div class="typing-dots"><span></span><span></span><span></span></div>');
+      const row = b.closest('.msg-row');
+      try {
+        const r = await fetch('/api/client-bot/chat', { method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (opts.getToken ? opts.getToken() : '') },
+          body: JSON.stringify(Object.assign({ chat_id: chatId, after: 'cart' }, pageBody(), opts.extraBody ? opts.extraBody() : {})) });
+        const j = await r.json().catch(() => ({}));
+        if (!j.ok || j.skip) row.remove();
+        else { showAnswer(b, j.reply, j.cards || [], true); if (opts.onAnswer) opts.onAnswer(j, b); }
+      } catch (e) { row.remove(); }
+      busy = false; send.disabled = false;
+      box.scrollTop = box.scrollHeight;
     }
     // ---- attachments: the clip button, paste (screenshots) and drag & drop ----
     // Each file uploads as soon as it is added; Send waits for any still going.

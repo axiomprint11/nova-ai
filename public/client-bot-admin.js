@@ -290,6 +290,9 @@
           }
           return '';
         }
+        if (m.role === 'user' && String(m.content || '').indexOf('[after Add to Cart]') === 0)
+          return '<div class="cb-evt"><span>\u21aa Automatic</span>NovaAI moved on to the next item after Add to Cart' +
+            '<em title="' + esc(full(m.created_at)) + '" data-ts="' + esc(m.created_at || '') + '">' + esc(rel(m.created_at)) + '</em></div>';
         if (m.role === 'note' && hasCartEvents && /^(\[Admin preview[^\]]*\] )?The customer added to their cart/.test(m.content || '')) return '';
         let pre = '';
         if (m.role === 'user' && m.page_url && m.page_url !== lastPage) { pre = pageLine(m.page_url, m.page_title, m.created_at, lastPage != null); lastPage = m.page_url; }
