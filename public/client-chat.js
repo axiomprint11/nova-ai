@@ -24,9 +24,9 @@
     let html = '', inList = false;
     lines.forEach(l => {
       const item = l.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/);
-      if (item) { if (!inList) { html += '<ul>'; inList = true; } html += '<li>' + inline(item[1]) + '</li>'; return; }
+      if (item) { if (!inList) { html += '<ul>'; inList = true; } html += '<li dir="auto">' + inline(item[1]) + '</li>'; return; }
       if (inList) { html += '</ul>'; inList = false; }
-      html += l.trim() ? '<p>' + inline(l) + '</p>' : '';
+      html += l.trim() ? '<p dir="auto">' + inline(l) + '</p>' : '';
     });
     if (inList) html += '</ul>';
     return html;
@@ -516,7 +516,7 @@
         ? '<div class="msg-col"><div class="bubble user"></div></div>'
         : '<div class="msg-avatar ai cc-ai-av"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M10 2Q10.9 8.1 17 9Q10.9 9.9 10 16Q9.1 9.9 3 9Q9.1 8.1 10 2Z"/><path d="M18 13Q18.4 15.6 21 16Q18.4 16.4 18 19Q17.6 16.4 15 16Q17.6 15.6 18 13Z"/><circle cx="5" cy="19" r="1.4"/></svg></div><div class="msg-col"><div class="msg-meta">NovaAI</div><div class="bubble ai"></div></div>';
       const b = row.querySelector('.bubble');
-      if (role === 'user') { if (html) { const t = document.createElement('div'); t.textContent = html; b.appendChild(t); } }
+      if (role === 'user') { if (html) { const t = document.createElement('div'); t.dir = 'auto'; t.textContent = html; b.appendChild(t); } }
       else b.innerHTML = html;
       inner.appendChild(row);
       box.scrollTop = box.scrollHeight;
@@ -874,11 +874,30 @@
     let hintTimer = null;
     const sayHint = (m) => { clearTimeout(hintTimer); hintEl.textContent = m; hintEl.classList.add('cc-hint-err');
       hintTimer = setTimeout(() => { hintEl.textContent = hintText; hintEl.classList.remove('cc-hint-err'); }, 7000); };
+    // The language to listen for: the script of what the customer last typed (Armenian, Russian…), else the
+    // browser's language when it is not English, else none (the speech service works it out).
+    function scriptLang(t) {
+      t = String(t || '');
+      if (/[\u0530-\u058F]/.test(t)) return 'hy';
+      if (/[\u0400-\u04FF]/.test(t)) return 'ru';
+      if (/[\u10A0-\u10FF]/.test(t)) return 'ka';
+      if (/[\u0590-\u05FF]/.test(t)) return 'he';
+      return null;                                   // Latin or Arabic script: several languages, let it detect
+    }
+    function voiceLang() {
+      const typed = Array.from(inner.querySelectorAll('.msg-row.user .bubble')).slice(-3).map(b => b.textContent).join(' ') + ' ' + ta.value;
+      const s = scriptLang(typed);
+      if (s) return s;
+      const nav = String((navigator.languages && navigator.languages[0]) || navigator.language || '').toLowerCase().split('-')[0];
+      return /^[a-z]{2}$/.test(nav) && nav !== 'en' ? nav : null;
+    }
     if (window.AxiomVoice) {
       window.AxiomVoice.attach({ button: mic, input: ta, host: root.querySelector('.cc-shell'),
         useServer: () => fetch('/api/client-bot/voice').then(r => r.json()).then(j => !!(j && j.server)).catch(() => false),
+        lang: () => voiceLang(),
         transcribe: async (blob) => {
-          const r = await fetch('/api/client-bot/transcribe', { method: 'POST', body: blob,
+          const l = voiceLang();
+          const r = await fetch('/api/client-bot/transcribe' + (l ? '?lang=' + encodeURIComponent(l) : ''), { method: 'POST', body: blob,
             headers: { 'Content-Type': 'audio/wav', 'Authorization': 'Bearer ' + (opts.getToken ? opts.getToken() : '') } });
           const j = await r.json().catch(() => ({}));
           if (!r.ok || !j.ok) throw new Error(j.error || 'Could not turn that into text. Please try again, or type it.');

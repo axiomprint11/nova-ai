@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.6.21';
-const NOVA_BUILT = '10-02-2026 11:20pm';
+const NOVA_VERSION = '1.6.22';
+const NOVA_BUILT = '10-03-2026 9:05am';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -5969,7 +5969,9 @@ app.post('/api/transcribe', auth, (req, res, next) => {
   next();
 }, express.raw({ type: () => true, limit: 4 * 1024 * 1024 + 1024 }), async (req, res) => {
   try {
-    res.json({ ok: true, text: await SttStaff.transcribe(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)) });
+    // Staff: English unless ?lang= says otherwise.
+    const lang = /^[a-z]{2,3}$/.test(String(req.query.lang || '')) ? String(req.query.lang) : 'en';
+    res.json({ ok: true, text: await SttStaff.transcribe(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), { lang: lang }) });
   } catch (e) {
     if (/recording|format/.test(e.message)) return res.status(400).json({ ok: false, error: 'That recording could not be read. Please try again.' });
     console.error('STAFF transcribe', e.message);

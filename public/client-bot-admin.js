@@ -298,7 +298,7 @@
             '<div class="when" title="' + esc(full(m.created_at)) + '" data-ts="' + esc(m.created_at || '') + '">' + esc(rel(m.created_at)) + '</div></div>'
         : '<div class="cb-msg ' + (m.role === 'user' ? 'user' : 'ai') + '">' +
           '<div class="bubble ' + (m.role === 'user' ? 'user' : 'ai') + '">' +
-            (m.role === 'user' ? esc(m.content) : ClientChat.md(String(m.content || '').split('[[products]]').join('')) + (m.cards || []).map(ClientChat.card).join('')) + '</div>' +
+            (m.role === 'user' ? '<div dir="auto">' + esc(m.content) + '</div>' : ClientChat.md(String(m.content || '').split('[[products]]').join('')) + (m.cards || []).map(ClientChat.card).join('')) + '</div>' +
           // What they attached: the preview Nova saw, and the original to download.
           (m.files && m.files.length ? '<div class="cb-files">' + m.files.map(f =>
             '<div class="cb-file">' + (f.preview ? '<img data-prev="' + esc(f.id) + '" alt="">' : '<i>' + ClientChat.fileIcon(f.kind) + '</i>') +

@@ -81,7 +81,7 @@ or rate limits.
 |---|---|
 | `OPENAI_API_KEY=sk-…` | Turns on server speech-to-text (required) |
 | `STT_MODEL=gpt-4o-transcribe` | A more accurate model, at about twice the price (the default is `gpt-4o-mini-transcribe`) |
-| `STT_LANGUAGE=en` | The spoken language (default English) |
+| `STT_LANGUAGE=en` | Forces one spoken language. Leave it out (or `auto`) so customers can speak Armenian, Spanish… — the chat sends a hint and OpenAI detects the rest |
 | `STT_PROVIDER=browser` | Switches server speech-to-text off; the chat falls back to the browser's own recognition |
 
 ## Safety rules

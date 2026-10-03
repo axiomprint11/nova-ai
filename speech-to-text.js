@@ -56,12 +56,17 @@ module.exports = function makeStt(opts) {
   }
 
   // ---- OpenAI ----
-  async function openai(buf) {
+  // Language: STT_LANGUAGE in .env forces one (e.g. en); otherwise the chat's hint (the script the customer
+  // types in, or their browser language), otherwise the service detects it.
+  const forced = () => { const l = String(env.STT_LANGUAGE || '').toLowerCase(); return l && l !== 'auto' ? l : null; };
+  async function openai(buf, hint) {
+    const lang = forced() || hint || null;
     const form = new FormData();
     form.append('file', new Blob([buf], { type: 'audio/wav' }), 'speech.wav');
     form.append('model', env.STT_MODEL || 'gpt-4o-mini-transcribe');
-    form.append('language', env.STT_LANGUAGE || 'en');
-    form.append('prompt', 'A customer asking a print shop about products, prices and orders. ' + VOCAB + '.');
+    if (lang) form.append('language', lang);
+    // An English sentence here pulls other languages toward English, so it is only used for English.
+    form.append('prompt', lang === 'en' ? 'A customer asking a print shop about products, prices and orders. ' + VOCAB + '.' : VOCAB + '.');
     form.append('response_format', 'json');
     const r = await fetch((env.OPENAI_BASE_URL || 'https://api.openai.com/v1') + '/audio/transcriptions', {
       method: 'POST', headers: { Authorization: 'Bearer ' + env.OPENAI_API_KEY }, body: form,
@@ -83,7 +88,9 @@ module.exports = function makeStt(opts) {
     const t = await gAuth.getAccessToken();
     return t && (t.token || t);
   }
-  async function google(wav) {
+  const GOOGLE_CODES = { en: 'en-US', hy: 'hy-AM', es: 'es-US', ru: 'ru-RU', ar: 'ar-SA', fa: 'fa-IR', ka: 'ka-GE', he: 'iw-IL',
+    fr: 'fr-FR', de: 'de-DE', it: 'it-IT', pt: 'pt-BR', ko: 'ko-KR', ja: 'ja-JP', zh: 'cmn-Hans-CN', tl: 'fil-PH', vi: 'vi-VN', uk: 'uk-UA', tr: 'tr-TR' };
+  async function google(wav, hint) {
     const token = await googleToken();
     const per = wav.rate * 2 * 55;                       // 55-second pieces
     const parts = [];
@@ -93,7 +100,7 @@ module.exports = function makeStt(opts) {
       const r = await fetch('https://speech.googleapis.com/v1/speech:recognize', {
         method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          config: { encoding: 'LINEAR16', sampleRateHertz: wav.rate, languageCode: env.STT_LANGUAGE_CODE || 'en-US',
+          config: { encoding: 'LINEAR16', sampleRateHertz: wav.rate, languageCode: env.STT_LANGUAGE_CODE || GOOGLE_CODES[hint] || 'en-US',
                     enableAutomaticPunctuation: true, model: 'latest_long',
                     speechContexts: [{ phrases: VOCAB.split(/,\s*/).slice(0, 500) }] },
           audio: { content: Buffer.from(pcm).toString('base64') } }),
@@ -105,12 +112,13 @@ module.exports = function makeStt(opts) {
     return out;
   }
 
-  async function transcribe(buf) {
+  async function transcribe(buf, o) {
+    const hint = o && /^[a-z]{2,3}$/.test(String(o.lang || '')) ? String(o.lang) : null;
     const p = provider();
     if (!p) { const e = new Error('speech to text is not set up'); e.code = 'off'; throw e; }
     const wav = readWav(buf);
     if (wav.seconds < 0.3) return '';
-    const text = p === 'google' ? await google(wav) : await openai(buf);
+    const text = p === 'google' ? await google(wav, hint) : await openai(buf, hint);
     return text.replace(/\s+/g, ' ').trim();
   }
 

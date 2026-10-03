@@ -277,6 +277,18 @@ Ratings feed NovaAI's future answers through a **lessons layer** added to the sy
 **Training → Lessons from rated conversations** lists them all, with **Use in answers** (on/off without deleting),
 **Open conversation** and **Remove**. A 👎 without a note is kept for the record but teaches nothing — write the note.
 
+## Languages
+
+NovaAI answers in the language of the customer's latest message (prompt rule 1a): Armenian, Spanish, Russian, Arabic,
+Farsi, Kurdish or any other. Tools still work in English (search terms, option names), and product names, options,
+prices, links and the coupon code stay as the website has them; the quote cards and the chat's own buttons are English.
+Arabic-script text is shown right to left (`dir="auto"` on each paragraph and customer message).
+
+Voice typing no longer assumes English. The chat sends a language hint (`/api/client-bot/transcribe?lang=`) when it can
+tell: Armenian, Russian, Georgian or Hebrew letters in what the customer typed, else the browser's language if it is not
+English; without a hint the speech service detects the language. `STT_LANGUAGE=en` in `.env` forces English again
+(remove it, or set `auto`). Staff voice typing stays English. For better Armenian, `STT_MODEL=gpt-4o-transcribe`.
+
 ## The name: NovaAI
 
 Customers always see the assistant as **NovaAI** with an AI sparkle and an "AI" badge in the header, so it is clear they

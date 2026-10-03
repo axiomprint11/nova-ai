@@ -206,7 +206,7 @@
         var restarts = 0;
         function begin() {
           var r = new SR(); rec = r;
-          r.lang = opts.lang || 'en-US'; r.continuous = true; r.interimResults = true;
+          r.lang = (typeof opts.lang === 'function' ? opts.lang() : opts.lang) || 'en-US'; r.continuous = true; r.interimResults = true;
           r.onresult = function (e) {
             lastVoice = Date.now();
             var fin = [], tmp = '';
