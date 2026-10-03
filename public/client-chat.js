@@ -639,7 +639,7 @@
         }
       } catch (e) { if (window.console) console.error('NovaAI', e); b.innerHTML = '<p class="cc-err">Could not reach NovaAI. Please try again.</p>'; }
       busy = false; send.disabled = false;
-      box.scrollTop = box.scrollHeight;
+      revealAnswer(b);
       // Back to the box on a computer only: on a phone that would pop the keyboard
       // over half the answer. The customer taps a product or the box when ready.
       if (!window.matchMedia || !window.matchMedia('(pointer: coarse)').matches) ta.focus();
@@ -662,7 +662,15 @@
         else { showAnswer(b, j.reply, j.cards || [], true); if (opts.onAnswer) opts.onAnswer(j, b); }
       } catch (e) { row.remove(); }
       busy = false; send.disabled = false;
-      box.scrollTop = box.scrollHeight;
+      if (row.isConnected) revealAnswer(b); else box.scrollTop = box.scrollHeight;
+    }
+    // A new answer is read from the top: a long one is shown from its first line (the customer
+    // scrolls down through it); a short one simply comes fully into view at the bottom.
+    function revealAnswer(b) {
+      const row = b && b.closest ? b.closest('.msg-row') : null;
+      if (!row || !row.isConnected) { box.scrollTop = box.scrollHeight; return; }
+      const top = row.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 12;
+      box.scrollTop = row.offsetHeight + 24 > box.clientHeight ? top : box.scrollHeight;
     }
     // ---- attachments: the clip button, paste (screenshots) and drag & drop ----
     // Each file uploads as soon as it is added; Send waits for any still going.
