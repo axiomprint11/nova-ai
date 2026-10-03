@@ -1676,6 +1676,9 @@ module.exports = function mountClientBot(app, deps) {
       }
       return product && questions >= 2;
     })();
+    // "Any new products?", "what's new", "latest arrivals": always show the newest products.
+    const askNew = /\bwhat'?s new\b|\b(any(thing)?|something) new\b|\b(new|newest|latest|recent(ly added)?)\s+(\w+\s+){0,2}(products?|items?|arrivals?|additions?|offerings?|services?|stuff|things)\b/i.test(text);
+    const forced = forcePrice ? 'price_product' : (askNew ? 'newest_products' : null);
     let cards = [], used = [];
     let reply = '';
     let built = build(false);
@@ -1686,7 +1689,7 @@ module.exports = function mountClientBot(app, deps) {
         let r;
         try {
           r = await anthropic.messages.create(Object.assign({ model: MODEL, max_tokens: 900, system: sys, tools: TOOLS, messages: messages },
-            forcePrice && i === 0 ? { tool_choice: { type: 'tool', name: 'price_product' } } : {}));
+            forced && i === 0 ? { tool_choice: { type: 'tool', name: forced } } : {}));
         } catch (e) {
           // Refused because of an attachment: mark those files and start this answer again without them.
           if (e && e.status === 400 && built.sent.length && i === 0) {
@@ -1695,7 +1698,7 @@ module.exports = function mountClientBot(app, deps) {
             files.concat(pastFiles).forEach(f => { if (built.sent.indexOf(f.id) > -1) f.blocked = 1; });
             built = build(true); messages = built.messages; cards = []; used = [];
             r = await anthropic.messages.create(Object.assign({ model: MODEL, max_tokens: 900, system: sys, tools: TOOLS, messages: messages },
-              forcePrice ? { tool_choice: { type: 'tool', name: 'price_product' } } : {}));
+              forced ? { tool_choice: { type: 'tool', name: forced } } : {}));
           } else throw e;
         }
         const toolUses = (r.content || []).filter(b => b.type === 'tool_use');
