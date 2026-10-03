@@ -261,6 +261,12 @@ are talking to an AI: the launcher ("Ask NovaAI"), the header ("NovaAI · AxiomP
 The model calls itself NovaAI. A greeting saved in Setup that still says "Nova" is shown as "NovaAI" (and
 "AxiomPrint's assistant" as "AxiomPrint's AI assistant").
 
+## New chat
+
+A **New chat** button in the top bar (everyone; a pencil icon on phones) starts a fresh conversation: the chat and the
+Quote pane are cleared and the greeting shows again. For signed-in customers the previous conversation stays under
+History.
+
 ## History (signed-in customers)
 
 A **History** button in the header (signed-in customers only) lists their earlier chats, newest first, grouped Today /
