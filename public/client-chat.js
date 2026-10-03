@@ -250,8 +250,12 @@
   // The due-date popup floats above the page (fixed, kept inside the window):
   // hover on a computer, tap to open / close on a phone; scrolling or a tap
   // elsewhere closes it.
-  let dueTipEl = null, dueFor = null, duePinned = false;
-  function hideDue() { if (dueTipEl) dueTipEl.remove(); dueTipEl = null; dueFor = null; duePinned = false; }
+  // On a computer it stays open while the mouse is on the "?" or on the popup
+  // itself; a short delay lets the mouse cross the gap between them.
+  let dueTipEl = null, dueFor = null, duePinned = false, dueTimer = null;
+  function hideDue() { clearTimeout(dueTimer); dueTimer = null; if (dueTipEl) dueTipEl.remove(); dueTipEl = null; dueFor = null; duePinned = false; }
+  function keepDue() { clearTimeout(dueTimer); dueTimer = null; }
+  function hideDueSoon() { keepDue(); dueTimer = setTimeout(() => { if (!duePinned) hideDue(); }, 300); }
   function showDue(btn) {
     const t = btn.parentNode.querySelector('template.cc-due-tip');
     if (!t) return;
@@ -268,12 +272,18 @@
   }
   const finePointer = () => !window.matchMedia || window.matchMedia('(hover: hover) and (pointer: fine)').matches;
   document.addEventListener('mouseover', (e) => {
+    if (!finePointer()) return;
     const b = e.target.closest && e.target.closest('.cc-due-q');
-    if (b && finePointer() && dueFor !== b) showDue(b);
+    if (b) { keepDue(); if (dueFor !== b) showDue(b); return; }
+    if (dueTipEl && e.target.closest && e.target.closest('.cc-due-pop')) keepDue();
   });
   document.addEventListener('mouseout', (e) => {
-    const b = e.target.closest && e.target.closest('.cc-due-q');
-    if (b && finePointer() && !duePinned && !(e.relatedTarget && b.contains(e.relatedTarget))) hideDue();
+    if (!finePointer() || !dueTipEl || duePinned) return;
+    const from = e.target.closest && (e.target.closest('.cc-due-q') || e.target.closest('.cc-due-pop'));
+    if (!from) return;
+    const to = e.relatedTarget;
+    if (to && to.closest && (to.closest('.cc-due-pop') || to.closest('.cc-due-q') === dueFor)) return;   // still inside
+    hideDueSoon();
   });
   document.addEventListener('click', (e) => {
     const b = e.target.closest && e.target.closest('.cc-due-q');
