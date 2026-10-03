@@ -190,7 +190,7 @@ with the same product+options into a "Your quote" pane (≥800px) with Qty · Pr
 given). The bot prices first and never asks (prompt rule 9a, enforced with `tool_choice: price_product` after a product pick or
 two unanswered questions — `forcePrice` in the chat handler); questionable fields are yellow dropdowns on the card (an
 unstated quantity a yellow box) that re-price on change via `/api/client-bot/reprice`. Rows carry `turn` (the
-schedule timeline); the card ends with "Estimated Due: <day> · 5:00 PM" and a "?" that opens the staff calculator's
+schedule timeline); the card ends with "Estimated Ready: <day> · 5:00 PM" and a "?" that opens the staff calculator's
 day-tile popup (shared `.sch-*` styles; `dueLine()` / `dueTip()` in client-chat.js, floating `.cc-due-pop`). Cards have **Edit**: `POST /api/client-bot/reprice` re-runs `priceCard()` (the same function the tool uses,
 public options only, no model call) and saves a `role='note'` row that is folded into the model's next user turn.
 **Attachments**: `POST /api/client-bot/upload` (raw body, token + limits checked before the body is read) →

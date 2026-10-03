@@ -226,9 +226,9 @@ website changes what NovaAI says; an expired or deleted code is never offered. A
 NovaAI never invents or shares other codes and never says it combines with other discounts. Quotes show prices before
 the code.
 
-## Estimated due date and its popup
+## Estimated ready date and its popup
 
-Every quote ends with **Estimated Due: Wed, Oct 14 · 5:00 PM** and a small **?** — the same line and popup as the staff
+Every quote ends with **Estimated Ready: Wed, Oct 14 · 5:00 PM** and a small **?** — the same line and popup as the staff
 calculator. The ? opens a row of day tiles: Approved, Start Day, Day 1, Day 2 …, weekends and holidays greyed out
 ("not counted"), and the Ready day in purple, under "7 BUSINESS DAYS · PRODUCTION TIME ONLY", with the note "If
 approved today before/after the 5PM cutoff. Counting starts the day after the start day; weekends and holidays don't

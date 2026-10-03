@@ -648,7 +648,7 @@ function buildPriceCard(d) {
     // Same-day work isn't a calculation — it depends on the floor's load, so
     // promising a date here would be worse than saying nothing.
     if (sc.sameDay || sc.days === 0) {
-      return '<div class="pq-eta">Estimated Due: <b>Check with production</b>' +
+      return '<div class="pq-eta">Estimated Ready: <b>Check with production</b>' +
         '<span class="pq-eta-note">same-day turnaround</span></div>';
     }
     if (!sc.readyDate) return '';
@@ -658,7 +658,7 @@ function buildPriceCard(d) {
     // Day name matters as much as the date — "Fri" tells an AM whether it lands
     // before the weekend at a glance. 5PM is the daily cutoff.
     const label = DAY[d.getDay()] + ', ' + MON[d.getMonth()] + ' ' + d.getDate() + ' \u00b7 5:00 PM';
-    return '<div class="pq-eta">Estimated Due: <b>' + label + '</b>' +
+    return '<div class="pq-eta">Estimated Ready: <b>' + label + '</b>' +
       '<button type="button" class="pq-eta-q" aria-label="How this date is worked out">?</button></div>';
   }
 

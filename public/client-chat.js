@@ -176,11 +176,11 @@
   const MON3 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   function dueLine(turn) {
     if (!turn) return '';
-    if (turn.same_day) return '<div class="pq-eta cc-eta">Estimated Due: <b>Same day</b><span class="pq-eta-note">the team confirms the time</span></div>';
+    if (turn.same_day) return '<div class="pq-eta cc-eta">Estimated Ready: <b>Same day</b><span class="pq-eta-note">the team confirms the time</span></div>';
     const r = (turn.timeline || []).filter(t => t.type === 'ready').pop();
     if (!r) return '';
     const d = new Date(r.date + 'T12:00:00');
-    return '<div class="pq-eta cc-eta">Estimated Due: <b>' + DAY3[d.getDay()] + ', ' + MON3[d.getMonth()] + ' ' + d.getDate() + ' · 5:00 PM</b>' +
+    return '<div class="pq-eta cc-eta">Estimated Ready: <b>' + DAY3[d.getDay()] + ', ' + MON3[d.getMonth()] + ' ' + d.getDate() + ' · 5:00 PM</b>' +
       '<button type="button" class="pq-eta-q cc-due-q" aria-label="How this date is worked out">?</button>' +
       '<template class="cc-due-tip">' + dueTip(turn) + '</template></div>';
   }
