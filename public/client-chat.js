@@ -224,7 +224,8 @@
         const custom = (c.specs || []).some(s => /\(custom\)/i.test(String(s.value || '')));
         const options = {};
         (c.specs || []).forEach(s => { if (!/\(custom\)/i.test(String(s.value || ''))) options[s.field] = s.value; });
-        const item = { product_id: c.product_id || null, product: c.product, quantity: r.quantity, price: r.price,
+        const item = { product_id: c.product_id || null, product: c.product, quantity: r.quantity, price: r.price, job_hint: c.job_hint || undefined,
+          picked: (c.specs || []).filter(s => s.tag === 'specified' && String(s.value || '').length <= 22).slice(0, 2).map(s => s.value),
           url: r.cart && r.cart.url, share_id: r.cart && r.cart.share_id, config: r.cart && r.cart.config,
           versions: r.versions || undefined, options: options,
           width: custom && c.edit ? c.edit.width : undefined, height: custom && c.edit ? c.edit.height : undefined };
@@ -382,7 +383,7 @@
       const key = c.key || (c.product_id + '|' + JSON.stringify(c.specs || []));
       let g = groups.find(x => x.key === key);
       if (!g) { g = Object.assign({}, c, { key: key, rows: [] }); groups.unshift(g); }
-      else { groups = [g].concat(groups.filter(x => x !== g)); g.specs = c.specs; g.edit = c.edit; g.qty_unsure = c.qty_unsure; }
+      else { groups = [g].concat(groups.filter(x => x !== g)); g.specs = c.specs; g.edit = c.edit; g.qty_unsure = c.qty_unsure; if (c.job_hint) g.job_hint = c.job_hint; }
       rowsOf(c).forEach(r => {
         const i = g.rows.findIndex(x => Number(x.quantity) === Number(r.quantity));
         if (i > -1) g.rows[i] = r; else g.rows.push(r);
@@ -428,6 +429,19 @@
     // in the customer's real axiomprint.com cart (the click is their yes). Guest:
     // a sign-in link, or the product page with everything selected.
     const LOGIN = 'https://axiomprint.com/login';
+    // The job name the Add to Cart box starts with: NovaAI's suggestion from the conversation
+    // ("Grand Opening Cards"), else the product with what the customer chose, then " - 50x".
+    // Never the same as another item added in this chat.
+    const usedJobs = new Set();
+    function jobName(item) {
+      const qty = (item.versions && item.versions.length ? item.versions.reduce((n, v) => n + (Number(v.quantity) || 0), 0) : Number(item.quantity) || 0);
+      const product = String(item.product || 'Print job').replace(/\s+Printing$/i, '');
+      const base = item.job_hint || [product].concat((item.picked || []).filter(v => product.toLowerCase().indexOf(String(v).toLowerCase()) === -1)).join(' ');
+      const name = (b) => (b + (qty ? ' - ' + qty.toLocaleString('en-US') + 'x' : '')).slice(0, 120);
+      let out = name(base), n = 2;
+      while (usedJobs.has(out.toLowerCase()) && n < 50) out = name(base + ' (' + (n++) + ')');
+      return out;
+    }
     function closeAdd(tr) { const x = tr && tr.nextElementSibling; if (x && x.classList.contains('cc-addrow')) x.remove(); }
     root.addEventListener('click', async (e) => {
       const a = e.target.closest && e.target.closest('a.cc-cart[data-item]');
@@ -442,7 +456,7 @@
       const signedIn = opts.signedIn ? !!opts.signedIn() : false;
       if (!signedIn) logEvent({ kind: 'cart', outcome: 'signin', product: item.product, quantity: item.quantity, price: item.price });
       tr.insertAdjacentHTML('afterend', '<tr class="cc-addrow"><td colspan="3"><div class="cc-add">' + (signedIn
-        ? '<label><span>Job name</span><input type="text" class="cc-job" maxlength="120" value="' + esc(item.product || '') + '"></label>' +
+        ? '<label><span>Job name</span><input type="text" class="cc-job" maxlength="120" value="' + esc(jobName(item)) + '"></label>' +
           '<div class="cc-add-btns"><button type="button" class="cc-add-go">Add ' + Number(item.quantity || 0).toLocaleString() + ' to cart \u00b7 ' + money(item.price) + '</button>' +
           '<button type="button" class="cc-add-x">Cancel</button></div><div class="cc-add-msg"></div>'
         : '<div class="cc-add-msg">Sign in to add this to your cart: <a href="' + LOGIN + '" target="_blank" rel="noopener">Sign in</a>, then refresh the page.' +
@@ -486,6 +500,7 @@
           (j.preview ? '<details class="cc-would"><summary>What would be sent to the cart</summary><pre>' + esc(JSON.stringify(j.would_send, null, 2)) + '</pre></details>' : '') +
           (j.job_name_saved === false ? '<p class="cc-err">The job name could not be saved \u2014 please add it in your cart before checkout.</p>' : '');
         inner.appendChild(line); box.scrollTop = box.scrollHeight;
+        usedJobs.add(String((j.added && j.added.job_name) || job.value || '').toLowerCase());
         if (!j.preview && opts.onCartAdded) opts.onCartAdded(j.added);
         continueAfterCart();
       };
@@ -573,6 +588,7 @@
       (j.messages || []).forEach(m => {
         if (m.role === 'event') {
           const ev = (m.cards || [])[0] || {};
+          if (ev.kind === 'cart' && ev.job_name) usedJobs.add(String(ev.job_name).toLowerCase());
           if (ev.kind === 'cart') inner.insertAdjacentHTML('beforeend', '<div class="cc-evt">\ud83d\uded2 Added ' +
             esc((ev.quantity ? Number(ev.quantity).toLocaleString() + ' \u00d7 ' : '') + (ev.product || '')) + ' to your cart' +
             (ev.price != null ? ' \u00b7 ' + money(ev.price) : '') + '</div>');
@@ -838,6 +854,7 @@
         j = await r.json().catch(() => ({}));
       } catch (x) { j = { error: 'Could not reach NovaAI.' }; }
       if (!j.ok) return j;
+      if (c.job_hint && j.card && !j.card.job_hint) j.card.job_hint = c.job_hint;
       groups = groups.filter(g => g.key !== c.key);
       remember(j.card);
       if (el.closest('.cc-pane')) paintPane();

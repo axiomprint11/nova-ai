@@ -601,7 +601,8 @@ module.exports = function mountClientBot(app, deps) {
         items: { type: 'object', properties: { name: { type: 'string' }, quantity: { type: 'integer' } }, required: ['quantity'] } },
       options: { type: 'object', additionalProperties: { type: 'string' }, description: 'Option name -> choice title, using names from product_details. Omitted options use the default.' },
       width: { type: 'number', description: 'Custom width in inches, if a size was given.' },
-      height: { type: 'number', description: 'Custom height in inches.' }
+      height: { type: 'number', description: 'Custom height in inches.' },
+      job_name: { type: 'string', description: 'A short job name for the cart, in English, made from what the customer told you: the event, purpose, design, business or place (e.g. "Grand Opening Cards", "Dr. Kim Office Cards", "Spring Menu"). 2–5 words, no quantity. Make it different from earlier items in this chat. Leave it out if they said nothing specific.' }
     }, required: ['product_id'] }
   }, {
     name: 'get_template',
@@ -643,7 +644,7 @@ module.exports = function mountClientBot(app, deps) {
       versions: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, quantity: { type: 'integer' } } },
         description: 'For designs priced as versions.' },
       width: { type: 'number' }, height: { type: 'number' },
-      job_name: { type: 'string', description: 'Required by checkout. Suggest one, e.g. "Business Cards - Spring Promo"; if they do not care, the product name.' },
+      job_name: { type: 'string', description: 'Required by checkout. Suggest one from what the customer told you, with the quantity, e.g. "Grand Opening Cards - 500x"; different from earlier items in this chat. If they do not care, the product name and quantity.' },
       notes: { type: 'string' }
     }, required: ['product_id', 'job_name'] }
   }, {
@@ -1038,11 +1039,15 @@ module.exports = function mountClientBot(app, deps) {
     return first.length > 90 ? first.slice(0, 87).replace(/\s+\S*$/, '') + '\u2026' : first;
   }
   const AFTER_CART_MARK = '[after Add to Cart]';
-  const AFTER_CART = AFTER_CART_MARK + ' (Automatic message, not typed by the customer.) The item is in the customer\u2019s cart. ' +
+  const AFTER_CART = AFTER_CART_MARK + ' (Automatic message, not typed by the customer.) The item is in the customer\u2019s cart; a line on screen already says so \u2014 do not repeat it, and no links. ' +
     'If the customer asked about other products earlier in this conversation that have not been priced yet, move on to the NEXT one now: ' +
-    'show it with search_products (or price it with price_product straight away when the exact product is already known) \u2014 no questions first. ' +
-    'Start with one short line that the item is in their cart, in the language the customer has been writing in. ' +
-    'If nothing else is waiting, reply with exactly NONE and nothing else.';
+    'call search_products for it so they can pick from the list (or price_product straight away when the exact product is already known). Never ask about size, quantity or options. ' +
+    'Your text is one short line in the language the customer has been writing in, e.g. "Now the roll up banners \u2014 which one do you need?". ' +
+    'If nothing else is waiting, call nothing_pending.';
+  // The automatic turn must DO something: look the next product up, price it, or say nothing is waiting.
+  const TOOLS_AFTER_CART = () => TOOLS.concat([{ name: 'nothing_pending',
+    description: 'Call this when the customer asked for no other product in this conversation that still has to be priced.',
+    input_schema: { type: 'object', properties: {} } }]);
   const isAfterCart = (m) => m && m.role === 'user' && String(m.content || '').indexOf(AFTER_CART_MARK) === 0;
   const PRODUCTS_SHOWN = 'The customer sees these as ONE list: photo, name and a one-line description each, tap to price. Do NOT list ' +
     'the products again in your text. Write one short sentence and at most one question. If you want to describe a product, write ' +
@@ -1145,6 +1150,9 @@ module.exports = function mountClientBot(app, deps) {
     if (name === 'price_product') {
       const r = await priceCard(input, cid);
       if (r.error) return { error: r.error };
+      // The suggested job name rides on the card; the Add to Cart box starts from it (+ " - 50x").
+      const hint = String(input.job_name || '').replace(/[\u0000-\u001f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
+      if (hint) r.card.job_hint = hint;
       cards.push(r.card);
       return r.forModel;
     }
@@ -1727,8 +1735,8 @@ module.exports = function mountClientBot(app, deps) {
       for (let i = 0; i < 6; i++) {
         let r;
         try {
-          r = await anthropic.messages.create(Object.assign({ model: MODEL, max_tokens: 900, system: sys, tools: TOOLS, messages: messages },
-            forced && i === 0 ? { tool_choice: { type: 'tool', name: forced } } : {}));
+          r = await anthropic.messages.create(Object.assign({ model: MODEL, max_tokens: 900, system: sys, tools: afterCart ? TOOLS_AFTER_CART() : TOOLS, messages: messages },
+            forced && i === 0 ? { tool_choice: { type: 'tool', name: forced } } : afterCart && i === 0 ? { tool_choice: { type: 'any' } } : {}));
         } catch (e) {
           // Refused because of an attachment: mark those files and start this answer again without them.
           if (e && e.status === 400 && built.sent.length && i === 0) {
@@ -1736,11 +1744,12 @@ module.exports = function mountClientBot(app, deps) {
             await dbRun('UPDATE client_files SET blocked = 1 WHERE id IN (' + built.sent.map(x => parseInt(x)).join(',') + ')');
             files.concat(pastFiles).forEach(f => { if (built.sent.indexOf(f.id) > -1) f.blocked = 1; });
             built = build(true); messages = built.messages; cards = []; used = [];
-            r = await anthropic.messages.create(Object.assign({ model: MODEL, max_tokens: 900, system: sys, tools: TOOLS, messages: messages },
-              forced ? { tool_choice: { type: 'tool', name: forced } } : {}));
+            r = await anthropic.messages.create(Object.assign({ model: MODEL, max_tokens: 900, system: sys, tools: afterCart ? TOOLS_AFTER_CART() : TOOLS, messages: messages },
+              forced ? { tool_choice: { type: 'tool', name: forced } } : afterCart ? { tool_choice: { type: 'any' } } : {}));
           } else throw e;
         }
         const toolUses = (r.content || []).filter(b => b.type === 'tool_use');
+        if (afterCart && toolUses.some(t => t.name === 'nothing_pending')) { reply = 'NONE'; break; }
         const said = (r.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
         if (!toolUses.length) { reply = said; break; }
         messages.push({ role: 'assistant', content: r.content });

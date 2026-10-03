@@ -482,10 +482,15 @@ The admin preview (**Try it** as a customer) never touches a real cart: it shows
 Not yet: editing or removing cart items (→ https://axiomprint.com/my-cart).
 
 
+**Job name**: the Add to Cart box starts with NovaAI's suggestion for this quote (`job_name` on `price_product`, kept on the
+card as `job_hint` across Edit) — e.g. "Grand Opening Cards - 500x" — else the product plus the options the customer chose,
+then " - <qty>x". A name already used in the chat gets " (2)", " (3)". The customer can still change it.
+
 **After the click** the chat shows one line — "✓ Added to Cart · 500 Business Cards · $32.97 · Check out ↗" — instead of a
 bubble, then asks NovaAI for one more answer by itself (`POST /api/client-bot/chat` with `after: 'cart'`). The model gets
-`AFTER_CART`: move on to the next product the customer asked about (show its list with search_products, or price it if the
-product is known), no questions; or reply NONE, in which case nothing is shown and the turn is deleted. The automatic turn is
+`AFTER_CART` and must call a tool (`tool_choice: any`): search_products for the next product the customer asked about (its
+list to click), price_product if the product is known, or `nothing_pending` — then nothing is shown and the turn is deleted.
+It never asks about size or quantity and does not repeat "added" (the green line says it). The automatic turn is
 saved for the model, hidden from the customer's History and shown in Conversations as "↪ Automatic".
 ## Going live — checklist
 
