@@ -236,6 +236,10 @@ count. Shipping time comes after the due date." Hover on a computer; tap to open
 stays inside the window. The timeline is the same `buildTimeline()` the staff calculator uses, sent with each quote
 row as `turn`. Same-day turnarounds say "Same day — the team confirms the time".
 
+## Newest products
+
+"What's new?" and similar questions call the `newest_products` tool: up to 12 products, newest first by `product.created`, shown in the usual products list (photo, name, description, tap to price). Only products every visitor can see: active, on axiomprint.com, not made for a customer (`available_for_customers` empty, and not in the **ClientProduct** category), and no test, demo or "Copy of …" products. A signed-in customer's own products are not listed here either. Prompt rule 11b tells NovaAI to use it instead of saying there is no list of new products.
+
 ## Product lists: one list, not two
 
 When NovaAI suggests products, the customer sees ONE list: photo, name and a one-line description under it (tap to

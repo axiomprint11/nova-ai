@@ -133,7 +133,7 @@
       // does it); the page is told so it can refresh its cart count.
       signedIn: () => signedIn, onCartAdded: cartChanged,
       suggestions: j.customer
-        ? [['Where is my order?', 'Where is my latest order?'], ['Business card prices', 'How much are 500 business cards?']]
+        ? [['Status update of my last order', 'Status update of my last order'], ['Business card prices', 'How much are 500 business cards?']]
         : [['Business card prices', 'How much are 500 business cards?'], ['Banner options', 'What banner materials do you have?']]
     };
     if (!chat) chat = ClientChat.mount(document.getElementById('pcBody'), opts);

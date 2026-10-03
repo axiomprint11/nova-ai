@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.6.18';
-const NOVA_BUILT = '10-03-2026 1:00am';
+const NOVA_VERSION = '1.6.19';
+const NOVA_BUILT = '10-02-2026 11:30pm';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -2231,6 +2231,7 @@ estimateoption (product configuration - sizes, quantities, options) - KEY-VALUE 
 product (catalog, ~1300 rows):
 - id, title (e.g. 'A-Frame Sidewalk Sign','Retractable Roll Up Banner'), public_title
 - product_category_id -> productcategory.id
+- NEWEST PRODUCTS: product.created (timestamp) is the day a product was added; sort by created DESC. Live, public products: active = 1, available_for_websites contains 'axiom_print', available_for_customers NULL or empty (a non-empty JSON list = made for those customers), and not in the productcategory titled 'ClientProduct' (id 115, client-specific products). Several active products are internal tests (titles like 'Test 2', 'Web Dev Test', 'Trading Cards DEMO2', 'Foil Business Cards TEST') and 'Copy of …' duplicates, which keep the original's created date — leave them out of new-product lists.
 - Product names may differ from how staff refer to them. Search broadly: WHERE title LIKE '%A-Frame%' OR title LIKE '%Roll Up%'. Show the user the actual product titles you matched.
 - *** WEBSITE FILTER: The product table contains products for MULTIPLE websites (AxiomPrint and PrintHorse). This is the AxiomPrint CRM — ALWAYS restrict product searches to AxiomPrint products by adding: AND available_for_websites LIKE '%axiom_print%'. Never show or quote PrintHorse products (available_for_websites contains 'print_horse'). ***
 - RICH MATCHING FIELDS: products also have meta_keywords (comma-separated), added_keywords (JSON array), meta_title, public_title, meta_description, information (HTML product info), faq (JSON), and ai_training (authoritative per-product guidance). When matching a client's wording to a product, search these too: WHERE (title LIKE '%x%' OR public_title LIKE '%x%' OR meta_keywords LIKE '%x%' OR added_keywords LIKE '%x%'). When answering questions about a product or drafting a reply, prefer facts from ai_training, then information/faq.

@@ -65,7 +65,7 @@
     hint: 'Admin preview — saved under Conversations as "Admin preview". Add to Cart never touches a real cart here: it shows what would be sent.',
     signedIn: () => !!asCustomer,        // as a customer: Add to Cart shows the would-be cart item; as a visitor: the sign-in prompt
     suggestions: [['Business card prices', 'How much are 500 business cards?'], ['Banner options', 'What banner materials do you have?'],
-                  ['Where is my order?', 'Where is my latest order?']],
+                  ['Status update of my last order', 'Status update of my last order']],
     onAnswer: (j) => {
       const t = j.tools || [];
       $('toolsBox').innerHTML = '<div class="cb-h">What the last answer looked up</div>' + (t.length
