@@ -1,5 +1,7 @@
 require('dotenv').config();
 const express = require('express');
+// Money is always shown as 1,678.54 (comma thousands, two decimals); callers add the $.
+function usd2(n) { return Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -23,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.6.13';
-const NOVA_BUILT = '10-02-2026 11:20am';
+const NOVA_VERSION = '1.6.14';
+const NOVA_BUILT = '10-02-2026 10:15pm';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -2173,7 +2175,7 @@ function formatQuote(q) {
   q.specs.forEach(s => { out += s.label + ': ' + s.value + '\n'; });
   out += '\n';
   q.lines.forEach(l => {
-    out += 'Qty ' + Number(l.qty).toLocaleString() + ': ' + (l.price == null ? 'n/a' : '$' + l.price.toFixed(2)) + '\n';
+    out += 'Qty ' + Number(l.qty).toLocaleString() + ': ' + (l.price == null ? 'n/a' : '$' + usd2(l.price)) + '\n';
   });
   if (q.warning) out += '\n⚠️ ' + q.warning;
   return out.trim();
@@ -3168,7 +3170,7 @@ app.post('/api/chatbot/quote-to-crm', auth, async (req, res) => {
   // A price ladder is ONE quote, not three — the alternatives go in the
   // description so a manager sees them without three estimates to reconcile.
   const ladder = Array.isArray(b.ladder) && b.ladder.length > 1
-    ? b.ladder.map(r => Number(r.quantity).toLocaleString() + ': $' + Number(r.price).toFixed(2)).join('  |  ')
+    ? b.ladder.map(r => Number(r.quantity).toLocaleString() + ': $' + usd2(Number(r.price))).join('  |  ')
     : '';
 
   const payload = {
@@ -3808,11 +3810,12 @@ app.post('/api/chatbot/draft-reply', auth, async (req, res) => {
 
     const items = (Array.isArray(b.items) ? b.items : []).slice(0, 12).map(it =>
       '- ' + String(it.product || '') + ': ' + (Array.isArray(it.rows) ? it.rows : []).map(r =>
-        Number(r.quantity || 0).toLocaleString() + ' for $' + Number(r.price || 0).toFixed(2)).join(', ') +
+        Number(r.quantity || 0).toLocaleString() + ' for $' + usd2(Number(r.price || 0))).join(', ') +
       (it.summary ? ' (' + String(it.summary).slice(0, 200) + ')' : ''));
     const request = String(b.request || '').slice(0, 2500);
 
     const sys = 'You write the words of a quote reply email for AxiomPrint, a print shop. ' +
+      'Write any price as $1,678.54 (comma for thousands, two decimals). ' +
       'Return STRICT JSON only: {"subject":"...","greeting":"...","intro":"...","outro":"...","signoff":"..."}.\n' +
       '- greeting: "Hi <first name>," when the first name is known, otherwise "Hi there,".\n' +
       '- intro: one or two sentences in the spirit of "here is the pricing based on your request", naming what ' +
@@ -5298,9 +5301,10 @@ app.post('/api/draft-email', auth, async (req, res) => {
     }
     let rushNote = '';
     if (rush_offer && rush_offer.price != null) {
-      rushNote = '\nNOTE: This quote is priced at standard turnaround. Last time the client ordered with "' + rush_offer.label + '". In the OUTRO, briefly offer it: if they want "' + rush_offer.label + '" turnaround like last time, the price would be $' + Number(rush_offer.price).toFixed(2) + '.';
+      rushNote = '\nNOTE: This quote is priced at standard turnaround. Last time the client ordered with "' + rush_offer.label + '". In the OUTRO, briefly offer it: if they want "' + rush_offer.label + '" turnaround like last time, the price would be $' + usd2(Number(rush_offer.price)) + '.';
     }
     const sys = "You write client-ready quote emails for AxiomPrint, a print shop. Warm, professional, concise. " +
+      "Write any price as $1,678.54 (comma for thousands, two decimals). " +
       "Return STRICT JSON only: {\"greeting\":\"<e.g. Hi Daniel,>\",\"intro\":\"<1-2 sentence friendly intro that references what they asked for>\",\"outro\":\"<1-2 sentence close inviting next steps; include any clarifying question or turnaround offer here>\",\"signoff\":\"<e.g. Best,>\"}. " +
       "Do NOT include the price table or specs in any field - those are added separately. Do NOT use markdown or asterisks. Match the client's formality from their sample emails." + versionNote + rushNote;
     const userMsg = 'CLIENT NAME: ' + (client_name || 'there') +
@@ -6768,6 +6772,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     '- Delivery zones by one-way miles: ' + installPricing.zones.map((z, i, a) =>
       z.label + ' ' + (i === 0 ? 'under ' + z.max_mi : (z.max_mi == null ? a[i - 1].max_mi + '+' : a[i - 1].max_mi + '-' + z.max_mi)) +
       ' (' + z.guidance + ')').join(' · ') + '.\n' +
+    '- Write every price as $1,678.54 \u2014 a comma for thousands and two decimals (never $1678.54).\n' +
 
     // Knowledge the team wrote comes BEFORE the data dictionary. The dictionary
     // is reference material for building SQL; these are the answers themselves,
@@ -8393,10 +8398,10 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
               .map(u => u.field + ' -> ' + u.value + ' (required by another field)');
             toolResult = JSON.stringify({
               product: q.product, quantity: q.quantity,
-              total: '$' + q.price.toFixed(2), each: '$' + q.each.toFixed(2),
-              list_price: q.discount ? ('$' + q.list_price.toFixed(2)) : undefined,
+              total: '$' + usd2(q.price), each: '$' + usd2(q.each),
+              list_price: q.discount ? ('$' + usd2(q.list_price)) : undefined,
               discount: q.discount
-                ? (q.discount.percent + '% ' + q.discount.name + ' (' + q.discount.basis + ') - saves $' + q.discount.saved.toFixed(2))
+                ? (q.discount.percent + '% ' + q.discount.name + ' (' + q.discount.basis + ') - saves $' + usd2(q.discount.saved))
                 : undefined,
               specs_used: q.specs.map(u => ({ field: u.field, value: u.value, source: u.source })),
               custom_size: q.size,
@@ -8618,7 +8623,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
                   'If your repriced total differs a lot from the original, say so rather than presenting it as the same job.',
                 status: headline,
                 prepress: prep, production: prod,
-                total: j.total != null ? ('$' + Number(j.total).toFixed(2)) : null,
+                total: j.total != null ? ('$' + usd2(Number(j.total))) : null,
                 ordered: j.created ? String(j.created).slice(0, 10) : null,
                 specs: specs,
                 ui: 'A job card with the status, specs and a Reorder button has ALREADY been shown. Do NOT ' +

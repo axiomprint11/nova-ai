@@ -1,4 +1,6 @@
 // ===== Order Assist — standalone agent page =====
+// Money is always shown as 1,678.54 (comma thousands, two decimals); callers add the $.
+function usd2(n) { return Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 // Auth happens on the homepage (/). This page requires a token; if missing, bounce home.
 let token = localStorage.getItem('axiom_token');
 let username = localStorage.getItem('axiom_user');
@@ -593,7 +595,7 @@ function renderCalcHTML(state) {
   const sizeTag = (state.customSize && state.customSize.w && state.customSize.h)
     ? ' · ' + state.customSize.w + '" × ' + state.customSize.h + '"' : '';
   return '<div class="calc-head"><div class="calc-title">' + esc(state.data.product.title) + '</div>' +
-    '<div class="calc-price" id="' + state.id + '_price">' + (price == null ? '—' : '$' + price.toFixed(2)) +
+    '<div class="calc-price" id="' + state.id + '_price">' + (price == null ? '—' : '$' + usd2(price)) +
     ' <small>list price' + sizeTag + (state.customQty ? ' · ' + Number(state.customQty).toLocaleString() + ' qty' : '') + '</small></div></div>' +
     '<div class="calc-body">' + body + renderTurnaroundPanel(state) + customNote + '</div>';
 }
@@ -674,7 +676,7 @@ function updateCalcPrice(state) {
     const qtyNote = state.customQty ? ' · ' + Number(state.customQty).toLocaleString() + ' qty' : '';
     const sizeNote = (state.customSize && state.customSize.w && state.customSize.h)
       ? ' · ' + state.customSize.w + '" × ' + state.customSize.h + '"' : '';
-    pEl.innerHTML = (price == null ? '—' : '$' + price.toFixed(2)) + ' <small>list price' + sizeNote + qtyNote + '</small>';
+    pEl.innerHTML = (price == null ? '—' : '$' + usd2(price)) + ' <small>list price' + sizeNote + qtyNote + '</small>';
   }
   redrawTurnaround(state);
   return price;
@@ -1000,12 +1002,12 @@ function renderTurnaroundPanel(state) {
     const isSel = state.sel[tv.id] == it.id;
     const price = priceForTurnaroundItem(state, it.id);
     const each = (price != null && qty > 0)
-      ? '<span class="turn-each">$' + (price / qty).toFixed(2) + ' each</span>'
+      ? '<span class="turn-each">$' + usd2((price / qty)) + ' each</span>'
       : '';
     return '<button type="button" class="turn-card' + (isSel ? ' selected' : '') + '"' +
       ' data-calc="' + state.id + '" data-item="' + it.id + '">' +
       '<span class="turn-label">' + esc(it.title) + '</span>' +
-      '<span class="turn-price">' + (price == null ? '\u2014' : '$' + price.toFixed(2)) + '</span>' +
+      '<span class="turn-price">' + (price == null ? '\u2014' : '$' + usd2(price)) + '</span>' +
       each +
       '</button>';
   }).join('');
@@ -1247,7 +1249,7 @@ function buildQuoteBox(text, url, product, structured) {
     // Build the styled HTML email body (inline styles so it survives copy→Gmail)
     const rowsHtml = lines.map(l => {
       const q = Number(l.qty).toLocaleString();
-      const price = l.price == null ? 'n/a' : '$' + l.price.toFixed(2);
+      const price = l.price == null ? 'n/a' : '$' + usd2(l.price);
       return '<tr><td style="padding:7px 16px;border-bottom:1px solid #eee;font-size:14px;color:#333;">' + q + ' units</td>' +
         '<td style="padding:7px 16px;border-bottom:1px solid #eee;font-size:14px;color:#111;font-weight:600;text-align:right;">' + price + '</td></tr>';
     }).join('');
@@ -1561,7 +1563,7 @@ async function sendMessage(forceClassic) {
               cData.email_count = clientCtx.emails;
               if (!cData.last_order && clientCtx.last_order) {
                 const lo = clientCtx.last_order;
-                cData.last_order = [lo.product, lo.ordered, (lo.total != null ? '$' + lo.total : null)]
+                cData.last_order = [lo.product, lo.ordered, (lo.total != null ? '$' + usd2(lo.total) : null)]
                   .filter(Boolean).join(' · ');
               }
             }
@@ -2126,7 +2128,7 @@ function renderJobLookup(resp, ctx, result) {
   const card = document.createElement('div');
   card.style.cssText = 'border:1px solid #e5e5ef;border-radius:10px;padding:14px 16px;margin:10px 0;background:#fafafa;max-width:480px;';
   const price = est.new_total || est.estimate_price;
-  const priceStr = price != null ? ' · $' + Number(price).toFixed(2) : '';
+  const priceStr = price != null ? ' · $' + usd2(Number(price)) : '';
   card.innerHTML =
     '<div style="font-weight:600;font-size:15px;margin-bottom:6px">' + esc(est.e_number) + ' — ' + esc(est.label || est.product_title || 'Unknown product') + '</div>' +
     '<div style="font-size:13px;color:#666;margin-bottom:8px">' +
@@ -2157,7 +2159,7 @@ function renderJobLookup(resp, ctx, result) {
 // and an accordion that reveals the full decoded specs. `onReorder` fires when clicked.
 function buildOrderRow(o, onReorder) {
   const eNum = o.e_number || ('E' + o.id);
-  const price = (o.price != null && o.price !== '') ? ' · $' + Number(o.price).toFixed(2) : '';
+  const price = (o.price != null && o.price !== '') ? ' · $' + usd2(Number(o.price)) : '';
   const qty = o.qty ? ' · ' + Number(o.qty).toLocaleString() + ' qty' : '';
 
   const wrap = document.createElement('div');
@@ -2388,7 +2390,7 @@ async function composeCombinedEmail(ctx, quotes, bubble, host) {
   const blocks = quotes.map(q => {
     const specsHtml = (q.specs||[]).length ? ('<table style="width:100%;border-collapse:collapse;margin:0 0 4px;">' +
       (q.specs||[]).map(s => '<tr><td style="padding:3px 0;font-size:13px;color:#555;width:42%;">' + esc(s.label) + '</td><td style="padding:3px 0;font-size:13px;color:#111;font-weight:600;">' + esc(s.value) + '</td></tr>').join('') + '</table>') : '';
-    const rowsHtml = (q.lines||[]).map(l => '<tr><td style="padding:6px 16px;border-bottom:1px solid #eee;font-size:14px;color:#333;">' + Number(l.qty).toLocaleString() + ' units</td><td style="padding:6px 16px;border-bottom:1px solid #eee;font-size:14px;color:#111;font-weight:600;text-align:right;">' + (l.price==null?'n/a':'$'+l.price.toFixed(2)) + '</td></tr>').join('');
+    const rowsHtml = (q.lines||[]).map(l => '<tr><td style="padding:6px 16px;border-bottom:1px solid #eee;font-size:14px;color:#333;">' + Number(l.qty).toLocaleString() + ' units</td><td style="padding:6px 16px;border-bottom:1px solid #eee;font-size:14px;color:#111;font-weight:600;text-align:right;">' + (l.price==null?'n/a':'$'+usd2(l.price)) + '</td></tr>').join('');
     const prodLine = q.url ? ('<a href="' + esc(q.url) + '" style="color:#4f46e5;text-decoration:none;font-weight:700;">' + esc(q.product) + '</a>') : ('<strong>' + esc(q.product) + '</strong>');
     return '<div style="border:1px solid #e5e5ef;border-radius:10px;overflow:hidden;margin:0 0 14px;">' +
       '<div style="background:#f5f3ff;padding:9px 16px;font-size:15px;font-weight:700;color:#1e1b2e;">' + prodLine + '</div>' +
@@ -3019,7 +3021,7 @@ async function startPricing(ctx, product, bubble, opts) {
       txt += '\n';
       d.qtyLines.forEach((l, i) => {
         let tag = l.requested ? '  (requested)' : ((!d.qtySpecified && i===0) ? '  (default)' : '');
-        txt += 'Qty ' + Number(l.qty).toLocaleString() + ': ' + (l.price==null?'n/a':'$'+l.price.toFixed(2)) + tag + '\n';
+        txt += 'Qty ' + Number(l.qty).toLocaleString() + ': ' + (l.price==null?'n/a':'$'+usd2(l.price)) + tag + '\n';
       });
       const quoteSpecs = (d.specs || []).filter(s => !s.hidden).map(s => {
         if (quoteWH && /size/i.test(s.label) && /custom/i.test(String(s.value))) {
@@ -3069,7 +3071,7 @@ async function startPricing(ctx, product, bubble, opts) {
     fillDone.innerHTML = '<span class="phase-timer done">filled in ' + (fillMs/1000).toFixed(1) + 's</span>';
     bubble.appendChild(fillDone);
     // Rating strip for the built quote
-    const quoteSummary = 'QUOTE: ' + d.product + ' — ' + (d.qtyLines||[]).map(l => Number(l.qty).toLocaleString() + ': ' + (l.price==null?'n/a':'$'+l.price.toFixed(2))).join(', ');
+    const quoteSummary = 'QUOTE: ' + d.product + ' — ' + (d.qtyLines||[]).map(l => Number(l.qty).toLocaleString() + ': ' + (l.price==null?'n/a':'$'+usd2(l.price))).join(', ');
     attachRatingStrip(bubble, 'Rate this quote:', quoteSummary);
     // Notify a multi-product manager that this product's quote is ready
     if (opts.onDone) {
@@ -3103,7 +3105,7 @@ function renderStep(stepN, resp, content, ctx) {
   } else if (stepN === 4) {
     if (!d || !d.length) { content.innerHTML = '<span style="color:var(--muted)">No past orders.</span>'; return; }
     content.innerHTML = '<strong>Past orders (' + d.length + '):</strong>' + d.slice(0,8).map(o => {
-      const price = (o.price != null && o.price !== '') ? ' · $' + Number(o.price).toFixed(2) : '';
+      const price = (o.price != null && o.price !== '') ? ' · $' + usd2(Number(o.price)) : '';
       return '<div style="margin-top:4px;font-size:12px"><span style="color:var(--indigo-dark);font-weight:600">' + esc(o.e_number || ('E'+o.id)) + '</span> ' +
         esc(o.label || o.product || '') + ' <span style="color:var(--muted)">· ' + esc((o.created||'').slice(0,10)) + price + '</span></div>';
     }).join('') + (d.length > 8 ? '<div style="margin-top:4px;font-size:11px;color:var(--muted)">+ ' + (d.length-8) + ' more</div>' : '');

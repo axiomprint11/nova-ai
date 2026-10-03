@@ -18,6 +18,8 @@
  */
 (function (global) {
   'use strict';
+  // Money is always shown as 1,678.54 (comma thousands, two decimals); callers add the $.
+  function usd2(n) { return Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
   var CTX = {
     getToken: function () { return null; },
@@ -430,7 +432,7 @@ function buildJobCard(d) {
         '<div class="jb-name">' + esc(d.name || d.product || '') + '</div>' +
         '<div class="jb-meta">' + esc([d.product, d.client, meta.join(' · ')].filter(Boolean).join(' · ')) + '</div>' +
       '</div>' +
-      (d.total != null ? '<div class="jb-total">$' + Number(d.total).toFixed(2) + '</div>' : '') +
+      (d.total != null ? '<div class="jb-total">$' + usd2(Number(d.total)) + '</div>' : '') +
     '</div>' +
     (rows ? '<table class="jb-tbl">' + rows + '</table>' : '') +
     (d.versions > 1 || d.custom_size
@@ -727,10 +729,10 @@ function buildPriceCard(d) {
         '<div class="pq-qty">Qty ' + (state.quantity || 0) + (state.size ? ' · ' + esc(state.size) : '') + '</div></div>' +
         '<div class="pq-total">' +
           (state.discount
-            ? '<span class="pq-was">$' + Number(state.list_price || 0).toFixed(2) + '</span>'
+            ? '<span class="pq-was">$' + usd2(Number(state.list_price || 0)) + '</span>'
             : '') +
-          '$' + Number(state.price || 0).toFixed(2) +
-        '<span>$' + Number(state.each || 0).toFixed(2) + ' each</span></div></div>' +
+          '$' + usd2(Number(state.price || 0)) +
+        '<span>$' + usd2(Number(state.each || 0)) + ' each</span></div></div>' +
       (state.redirected
         ? '<div class="pq-redirect">Switched to <b>' + esc(state.product) + '</b> \u2014 ' +
           esc(state.redirected.from) + ' doesn\u2019t do ' + esc(state.redirected.reason) + '.</div>'
@@ -748,7 +750,7 @@ function buildPriceCard(d) {
       (state.discount
         ? '<div class="pq-disc">' + Number(state.discount.percent) + '% ' + esc(state.discount.name) +
           ' <em>' + esc(state.discount.basis) + ' rate</em>' +
-          '<span>saves $' + Number(state.discount.saved || 0).toFixed(2) + '</span></div>'
+          '<span>saves $' + usd2(Number(state.discount.saved || 0)) + '</span></div>'
         : '') +
       (editing ? editRows() : '<table class="pq-tbl">' + specRows() + '</table>' + versionsPanel()) +
       (editing ? '' :
@@ -1006,7 +1008,7 @@ function buildPriceCard(d) {
                 if (state.discount && after < before) {
                   // Say so plainly: the number on the card just changed.
                   res.innerHTML = '<div class="pq-client-empty">' + Number(state.discount.percent) +
-                    '% ' + esc(state.discount.name) + ' applied \u2014 now $' + after.toFixed(2) + '</div>';
+                    '% ' + esc(state.discount.name) + ' applied \u2014 now $' + usd2(after) + '</div>';
                   await new Promise(r => setTimeout(r, 900));
                 }
                 box.style.display = 'none';
@@ -1130,12 +1132,12 @@ function buildPriceCard(d) {
     });
     lines.push('');
     if (state.discount && state.list_price) {
-      lines.push('List price: $' + Number(state.list_price).toFixed(2));
-      lines.push('Your price: $' + Number(state.price).toFixed(2) +
-        '  ($' + Number(state.each).toFixed(2) + ' each)');
+      lines.push('List price: $' + usd2(Number(state.list_price)));
+      lines.push('Your price: $' + usd2(Number(state.price)) +
+        '  ($' + usd2(Number(state.each)) + ' each)');
     } else {
-      lines.push('Total: $' + Number(state.price || 0).toFixed(2) +
-        '  ($' + Number(state.each || 0).toFixed(2) + ' each)');
+      lines.push('Total: $' + usd2(Number(state.price || 0)) +
+        '  ($' + usd2(Number(state.each || 0)) + ' each)');
     }
     if (url) { lines.push(''); lines.push('Order now: ' + url); }
     return lines.join('\n');
@@ -1159,14 +1161,14 @@ function buildPriceCard(d) {
 
     const priceBlock = (state.discount && state.list_price)
       ? '<div style="font-size:13px;color:#6b6f80;">List price ' +
-        '<span style="text-decoration:line-through;">$' + Number(state.list_price).toFixed(2) + '</span></div>' +
+        '<span style="text-decoration:line-through;">$' + usd2(Number(state.list_price)) + '</span></div>' +
         '<div style="font-size:26px;font-weight:700;color:#5f51c7;line-height:1.2;">$' +
-        Number(state.price).toFixed(2) + '</div>' +
+        usd2(Number(state.price)) + '</div>' +
         '<div style="font-size:13px;color:#166534;font-weight:600;">Your price · $' +
-        Number(state.each).toFixed(2) + ' each</div>'
+        usd2(Number(state.each)) + ' each</div>'
       : '<div style="font-size:26px;font-weight:700;color:#5f51c7;line-height:1.2;">$' +
-        Number(state.price || 0).toFixed(2) + '</div>' +
-        '<div style="font-size:13px;color:#6b6f80;">$' + Number(state.each || 0).toFixed(2) + ' each</div>';
+        usd2(Number(state.price || 0)) + '</div>' +
+        '<div style="font-size:13px;color:#6b6f80;">$' + usd2(Number(state.each || 0)) + ' each</div>';
 
     return '' +
     '<div style="font-family:Helvetica,Arial,sans-serif;color:#22243a;max-width:560px;">' +

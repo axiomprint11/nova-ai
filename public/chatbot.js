@@ -1,6 +1,8 @@
 // ===== ChatBot — the AxiomPrint company brain =====
 // Answers staff questions from domain knowledge, meeting notes, agent training,
 // approved answers, and the live product database.
+// Money is always shown as 1,678.54 (comma thousands, two decimals); callers add the $.
+function usd2(n) { return Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 // Auth happens on the homepage (/). This page requires a token; if missing, bounce home.
 // Embedded mode: the CRM widget (widget.html) loads this same file, so the
 // bubble gets the ChatBot page's interface — chat on the left, calculator, cart
@@ -605,7 +607,7 @@ function renderCart() {
   pill.title = cartItems.length ? 'Cart' : 'Nothing in the cart yet';
   document.getElementById('cartCount').textContent = cartItems.length;
   const total = cartItems.reduce((a, b) => a + (Number(b.price) || 0), 0);
-  document.getElementById('cartTotal').textContent = '$' + total.toFixed(2);
+  document.getElementById('cartTotal').textContent = '$' + usd2(total);
   if (!cartItems.length) { hideCart(); return; }
   const pop = document.getElementById('cartPop');
   if (pop && pop.style.display !== 'none') drawCartPanel();
@@ -626,12 +628,12 @@ function drawCartPanel() {
           '<small>Qty ' + Number(it.quantity || 0).toLocaleString() +
           (it.summary ? ' · ' + esc(it.summary) : '') +
           (it.turnaround ? ' · ' + esc(it.turnaround) : '') + '</small></span>' +
-        '<span class="cart-price">$' + Number(it.price || 0).toFixed(2) + '</span>' +
+        '<span class="cart-price">$' + usd2(Number(it.price || 0)) + '</span>' +
         '<button type="button" class="cart-rm" data-id="' + it.id + '" title="Remove">✕</button>' +
       '</div>').join('') +
     '<div class="cart-ft">' +
-      (list > total ? '<span class="cart-saved">Saves $' + (list - total).toFixed(2) + '</span>' : '<span></span>') +
-      '<b>$' + total.toFixed(2) + '</b>' +
+      (list > total ? '<span class="cart-saved">Saves $' + usd2((list - total)) + '</span>' : '<span></span>') +
+      '<b>$' + usd2(total) + '</b>' +
     '</div>' +
     '<div class="cart-actions">' +
       '<button type="button" class="cart-clear" onclick="clearCart()">Empty</button>' +
@@ -1029,7 +1031,7 @@ function onCardRepriced(card, st) {
     pq.data = st;
     if (pq.marker) {
       const p = pq.marker.querySelector('.pq-moved-p');
-      if (p && st.price != null) p.textContent = '$' + Number(st.price).toFixed(2);
+      if (p && st.price != null) p.textContent = '$' + usd2(Number(st.price));
       const q = pq.marker.querySelector('.pq-moved-q');
       if (q && st.quantity) q.textContent = 'Qty ' + Number(st.quantity).toLocaleString();
     }
@@ -1105,7 +1107,7 @@ function renderShelf() {
     (shelfCollapsed ? '' : '<div class="shelf-list">' + quoteShelf.map((q, i) => {
     const open = shelfOpen === i;
     const total = q.rows.length === 1
-      ? '$' + Number(q.rows[0].price).toFixed(2)
+      ? '$' + usd2(Number(q.rows[0].price))
       : q.rows.length + ' quantities';
     const disc = (q.rows.find(r => r.discount) || {}).discount;
     return '<div class="shelf-item' + (open ? ' open' : '') + '">' +
@@ -1123,8 +1125,8 @@ function renderShelf() {
               Number(r.quantity).toLocaleString() + '</td>' +
               '<td class="shelf-order"><button type="button" data-order="' + i + '-' + ri + '">Order now</button></td><td>' +
               (r.discount && r.list_price > r.price
-                ? '<s>$' + Number(r.list_price).toFixed(2) + '</s> ' : '') + '$' +
-              Number(r.price).toFixed(2) + '</td></tr>').join('') + '</table>' +
+                ? '<s>$' + usd2(Number(r.list_price)) + '</s> ' : '') + '$' +
+              usd2(Number(r.price)) + '</td></tr>').join('') + '</table>' +
             '<div class="shelf-acts">' +
               '<button type="button" class="sa-view" data-view="' + i + '">View</button>' +
               '<button type="button" data-edit="' + i + '">Re-price</button>' +
@@ -1435,8 +1437,8 @@ function draftItemHtml(q) {
                esc(sp.value) + '</td></tr>').join('');
   const qtyRows = q.rows.map(r =>
     '<tr><td>' + Number(r.quantity).toLocaleString() + '</td><td><b>$' +
-    Number(r.price).toFixed(2) + '</b>' +
-    (r.each ? ' <span class="dr-each">$' + Number(r.each).toFixed(2) + ' each</span>' : '') +
+    usd2(Number(r.price)) + '</b>' +
+    (r.each ? ' <span class="dr-each">$' + usd2(Number(r.each)) + ' each</span>' : '') +
     '</td><td class="dr-order">' +
       (r.url ? '<a href="' + esc(r.url) + '" target="_blank" rel="noopener">Order now</a>' : '') +
     '</td></tr>').join('');
@@ -1771,7 +1773,7 @@ function drawCheckoutForm() {
     '</div>' +
 
     '<div class="co-items">' + cartItems.length + ' item' + (cartItems.length === 1 ? '' : 's') +
-      ' · <b>$' + cartItems.reduce((a, b) => a + (Number(b.price) || 0), 0).toFixed(2) + '</b></div>' +
+      ' · <b>$' + usd2(cartItems.reduce((a, b) => a + (Number(b.price) || 0), 0)) + '</b></div>' +
     '<div class="co-msg" id="coMsg"></div>' +
     '<button type="button" class="co-submit" id="coSubmit" onclick="submitCheckout(this)">Place order</button>';
 
@@ -1888,7 +1890,7 @@ function paneMarker(data, card) {
   d.innerHTML = '<b>' + esc((data && data.product) || 'Quote') + '</b>' +
     (isFinite(qty) && qty ? ' <span class="pq-moved-q">Qty ' + qty.toLocaleString() + '</span>' : '') +
     ((data && data.price) != null ? ' <span class="pq-moved-p">$' +
-      Number(data.price).toFixed(2) + '</span>' : '') +
+      usd2(Number(data.price)) + '</span>' : '') +
     '<button type="button" class="pq-moved-order">Order now</button>' +
     '<button type="button" class="pq-moved-show">Show</button>';
 
@@ -2322,7 +2324,7 @@ async function showJobPeek(el, eNum) {
       '<div class="jp-prod">' + esc(data.product || data.name || 'Job') + '</div>' +
       (data.name && data.product ? '<div class="jp-name">' + esc(data.name) + '</div>' : '') +
       '<div class="jp-meta">' + esc([data.client, data.created].filter(Boolean).join(' · ')) +
-      (data.total != null ? ' · $' + Number(data.total).toFixed(2) : '') + '</div>' +
+      (data.total != null ? ' · $' + usd2(Number(data.total)) : '') + '</div>' +
       '<div class="jp-status">' + esc(data.status || '') + '</div>' +
     '</div>';
   document.body.appendChild(peekBox);

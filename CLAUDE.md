@@ -122,6 +122,8 @@ and support `floor()`/`round()`. Product config lives in `product.formula`, `pro
 
 No framework. Global functions, `innerHTML` string templates, `esc()` for escaping, shared styling in
 `axiom-shared.css`.
+Money is always shown as `$1,678.54`: use `usd2(n)` (defined in server.js, client-bot.js, chatbot.js, axiom-cards.js,
+order-assist.js and index.html), never `'$' + n.toFixed(2)`. The prompts tell the models the same.
 
 - `index.html` — login + legacy all-in-one chat + admin panel, with its JS inline in the file
 - `order-assist.html` + `order-assist.js` (~2700 lines) — the real product: stepped flow, calculator

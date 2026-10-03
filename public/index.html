@@ -540,6 +540,8 @@ textarea { flex: 1; border: none; background: transparent; font-size: 14.5px; re
 </div>
 
 <script>
+// Money is always shown as 1,678.54 (comma thousands, two decimals); callers add the $.
+function usd2(n) { return Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 let token = localStorage.getItem('axiom_token');
 let username = localStorage.getItem('axiom_user');
 let isAdmin = localStorage.getItem('axiom_admin') === '1';
@@ -1123,7 +1125,7 @@ function renderCalcHTML(state) {
   const customNote = (state.customQty != null && state.customQty !== '' && price == null)
     ? '<div class="calc-note" style="color:#ef4444">That quantity is below the minimum available.</div>' : '';
   return '<div class="calc-head"><div class="calc-title">' + esc(state.data.product.title) + '</div>' +
-    '<div class="calc-price" id="' + state.id + '_price">' + (price == null ? '—' : '$' + price.toFixed(2)) +
+    '<div class="calc-price" id="' + state.id + '_price">' + (price == null ? '—' : '$' + usd2(price)) +
     ' <small>list price' + (state.customQty ? ' · ' + Number(state.customQty).toLocaleString() + ' qty' : '') + '</small></div></div>' +
     '<div class="calc-body">' + body + customNote + '</div>';
 }
@@ -1149,7 +1151,7 @@ function updateCalcPrice(state) {
   const pEl = document.getElementById(state.id + '_price');
   if (pEl) {
     const qtyNote = state.customQty ? ' · ' + Number(state.customQty).toLocaleString() + ' qty' : '';
-    pEl.innerHTML = (price == null ? '—' : '$' + price.toFixed(2)) + ' <small>list price' + qtyNote + '</small>';
+    pEl.innerHTML = (price == null ? '—' : '$' + usd2(price)) + ' <small>list price' + qtyNote + '</small>';
   }
   return price;
 }
@@ -1466,7 +1468,7 @@ function buildQuoteBox(text, url, product, structured) {
   const selected = lines.map((l) => l.requested ? true : true); // all on by default
   function lineLabel(l, i) {
     const tag = l.requested ? ' (requested)' : ((!l.requested && i===0 && !lines.some(x=>x.requested)) ? ' (default)' : '');
-    return 'Qty ' + Number(l.qty).toLocaleString() + ': ' + (l.price==null?'n/a':'$'+l.price.toFixed(2)) + tag;
+    return 'Qty ' + Number(l.qty).toLocaleString() + ': ' + (l.price==null?'n/a':'$'+usd2(l.price)) + tag;
   }
   function buildText() {
     let t = product + '\n\n';
@@ -1536,7 +1538,7 @@ function buildQuoteBox(text, url, product, structured) {
     // Build the styled HTML email body (inline styles so it survives copy→Gmail)
     const rowsHtml = emailLines.map(l => {
       const q = Number(l.qty).toLocaleString();
-      const price = l.price == null ? 'n/a' : '$' + l.price.toFixed(2);
+      const price = l.price == null ? 'n/a' : '$' + usd2(l.price);
       return '<tr><td style="padding:7px 16px;border-bottom:1px solid #eee;font-size:14px;color:#333;">' + q + ' units</td>' +
         '<td style="padding:7px 16px;border-bottom:1px solid #eee;font-size:14px;color:#111;font-weight:600;text-align:right;">' + price + '</td></tr>';
     }).join('');
@@ -2318,7 +2320,7 @@ async function composeCombinedEmail(ctx, quotes, bubble, host) {
   const blocks = quotes.map(q => {
     const specsHtml = (q.specs||[]).length ? ('<table style="width:100%;border-collapse:collapse;margin:0 0 4px;">' +
       (q.specs||[]).map(s => '<tr><td style="padding:3px 0;font-size:13px;color:#555;width:42%;">' + esc(s.label) + '</td><td style="padding:3px 0;font-size:13px;color:#111;font-weight:600;">' + esc(s.value) + '</td></tr>').join('') + '</table>') : '';
-    const rowsHtml = (q.lines||[]).map(l => '<tr><td style="padding:6px 16px;border-bottom:1px solid #eee;font-size:14px;color:#333;">' + Number(l.qty).toLocaleString() + ' units</td><td style="padding:6px 16px;border-bottom:1px solid #eee;font-size:14px;color:#111;font-weight:600;text-align:right;">' + (l.price==null?'n/a':'$'+l.price.toFixed(2)) + '</td></tr>').join('');
+    const rowsHtml = (q.lines||[]).map(l => '<tr><td style="padding:6px 16px;border-bottom:1px solid #eee;font-size:14px;color:#333;">' + Number(l.qty).toLocaleString() + ' units</td><td style="padding:6px 16px;border-bottom:1px solid #eee;font-size:14px;color:#111;font-weight:600;text-align:right;">' + (l.price==null?'n/a':'$'+usd2(l.price)) + '</td></tr>').join('');
     const prodLine = q.url ? ('<a href="' + esc(q.url) + '" style="color:#4f46e5;text-decoration:none;font-weight:700;">' + esc(q.product) + '</a>') : ('<strong>' + esc(q.product) + '</strong>');
     return '<div style="border:1px solid #e5e5ef;border-radius:10px;overflow:hidden;margin:0 0 14px;">' +
       '<div style="background:#f5f3ff;padding:9px 16px;font-size:15px;font-weight:700;color:#1e1b2e;">' + prodLine + '</div>' +
@@ -2617,7 +2619,7 @@ function renderDecisionPanel(ctx, data, bubble, opts) {
       txt += '\n';
       d.qtyLines.forEach((l, i) => {
         let tag = l.requested ? '  (requested)' : ((!d.qtySpecified && i===0) ? '  (default)' : '');
-        txt += 'Qty ' + Number(l.qty).toLocaleString() + ': ' + (l.price==null?'n/a':'$'+l.price.toFixed(2)) + tag + '\n';
+        txt += 'Qty ' + Number(l.qty).toLocaleString() + ': ' + (l.price==null?'n/a':'$'+usd2(l.price)) + tag + '\n';
       });
       bubble.appendChild(buildQuoteBox(txt.trim(), d.url, d.product, { specs: (d.specs || []).filter(s => !s.hidden), lines: d.qtyLines || [], timeline: d.timeline || null }));
     }
@@ -2671,7 +2673,7 @@ function renderStep(stepN, resp, content, ctx) {
   } else if (stepN === 4) {
     if (!d || !d.length) { content.innerHTML = '<span style="color:var(--muted)">No past orders.</span>'; return; }
     content.innerHTML = '<strong>Past orders (' + d.length + '):</strong>' + d.slice(0,8).map(o => {
-      const price = (o.price != null && o.price !== '') ? ' · $' + Number(o.price).toFixed(2) : '';
+      const price = (o.price != null && o.price !== '') ? ' · $' + usd2(Number(o.price)) : '';
       return '<div style="margin-top:4px;font-size:12px"><span style="color:var(--indigo-dark);font-weight:600">' + esc(o.e_number || ('E'+o.id)) + '</span> ' +
         esc(o.label || o.product || '') + ' <span style="color:var(--muted)">· ' + esc((o.created||'').slice(0,10)) + price + '</span></div>';
     }).join('') + (d.length > 8 ? '<div style="margin-top:4px;font-size:11px;color:var(--muted)">+ ' + (d.length-8) + ' more</div>' : '');
