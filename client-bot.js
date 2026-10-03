@@ -873,49 +873,157 @@ module.exports = function mountClientBot(app, deps) {
                email: r[0].email || null, phone: r[0].phone || null };
     } catch (e) { return null; }
   }
-  // What the website's cart wants for one priced item.
-  async function cartPayload(priced, cid) {
+  // What the website's cart wants for one priced item — the same shape as an item the customer adds on
+  // the website (docs/CLIENT_BOT.md "Cart item shape", from the website team's cart API guide): every
+  // value of selectedOption is the FULL option object from the website catalog (GET
+  // /products/product-info/{id}), keyed by the exact variable title, one key per variable (hidden ones
+  // too), plus printSides, customSize, selectedMetric, activeMode and the sample fees.
+  const catalogCache = new Map();
+  async function catalogProduct(pid) {
+    const hit = catalogCache.get(pid);
+    if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.product;
+    const r = await cartCall('GET', '/products/product-info/' + parseInt(pid));
+    const j = r.json || {};
+    const product = (j && Array.isArray(j.variables)) ? j : (j.data && Array.isArray(j.data.variables)) ? j.data
+      : (j.product && Array.isArray(j.product.variables)) ? j.product : null;
+    if (!r.ok || !product) throw new Error('product-info ' + pid + ' ' + r.status + ' ' + r.text.slice(0, 120));
+    catalogCache.set(pid, { at: Date.now(), product: product });
+    return product;
+  }
+  const CART_DROP = ['_id', '__v', 'createdAt', 'updatedAt', 'filters', 'material', 'variable_item_id'];
+  function cartOption(variable, item) {
+    const o = Object.assign({}, item);
+    CART_DROP.forEach(k => { delete o[k]; });
+    o.id = Number(item.variable_item_id);
+    o.variable_id = Number(variable.variable_id);
+    o.type = variable.type;
+    o.parent_order = variable.order;
+    o.preview_mode = variable.preview_mode == null ? null : variable.preview_mode;
+    o.multiple = false;
+    o.dieLine = null;
+    o.swap = variable.type === 'size_new' ? 'true' : null;
+    o.calculation = 0;
+    o.material_id = item.material_id != null ? item.material_id : (item.material && item.material.id != null ? item.material.id : null);
+    o.value = item.value == null ? 0 : item.value;
+    if (variable.type === 'size_new') o.configs = variable.configs;
+    return o;
+  }
+  // An item is allowed when each of its "only with" filters is met by the choice already made.
+  const relIds = (f) => (f.relatedItems || []).map(x => Number(x && typeof x === 'object' ? (x.variable_item_id != null ? x.variable_item_id : x.id) : x)).filter(Boolean);
+  function cartAllowed(item, chosen) {
+    return (item.filters || []).every(f => {
+      const t = f.relatedTo && (f.relatedTo.title || f.relatedTo);
+      const rel = relIds(f);
+      if (!t || typeof t !== 'string' || !rel.length) return true;
+      const picked = chosen[t];
+      return !picked || rel.indexOf(Number(picked.variable_item_id)) > -1;
+    });
+  }
+  const byPref = (a, b) => (Number(b.default) - Number(a.default)) || (Number(a.order) - Number(b.order));
+  async function cartPayload(priced, cid, extra) {
+    extra = extra || {};
     const raw = priced.raws[0];
     const pid = parseInt(raw.product_id);
-    const [vars, prod] = await Promise.all([
-      runQuery('SELECT id, title, internal FROM product_variables WHERE product_id = ' + pid + ' ORDER BY `order`'),
-      runQuery('SELECT id, product_category_id, need_design FROM product WHERE id = ' + pid + ' LIMIT 1')
+    const [product, prodRows] = await Promise.all([
+      catalogProduct(pid),
+      runQuery('SELECT id, product_category_id, need_design, sample_base, sample_fee, sample_per_price FROM product WHERE id = ' + pid + ' LIMIT 1')
     ]);
-    const byId = {};
-    vars.forEach(v => { byId[Number(v.id)] = v; });
-    const itemIds = raw.specs.map(sp => parseInt(sp.item_id)).filter(Boolean);
-    const titles = {};
-    if (itemIds.length) (await runQuery('SELECT id, title FROM product_variable_item WHERE id IN (' + itemIds.join(',') + ')'))
-      .forEach(i => { titles[Number(i.id)] = i.title; });
-    // Option name -> chosen value, named exactly as the website names them (the
-    // variable title, underscores kept — the same names orders are saved with).
-    const selectedOption = {};
-    let tier = null, custom = false;
+    const db = prodRows[0] || {};
+    // Nova's choices, by variable id: the item it priced with (ids are the website's variable_item_id).
+    const mine = {};
+    let custom = false, qtySpec = null;
     raw.specs.forEach(sp => {
       if (!sp || sp.isVersionRow || sp.isVersions) return;
-      const v = byId[Number(sp.variable_id)];
-      if (!v || Number(v.internal) === 1) return;
-      if (sp.isQuantity) { selectedOption[v.title] = String(raw.quantity); tier = parseInt(sp.item_id) || null; return; }
+      if (sp.isQuantity) { qtySpec = sp; return; }
       if (/\(custom\)/i.test(String(sp.value || ''))) custom = true;
-      selectedOption[v.title] = titles[Number(sp.item_id)] || String(sp.value);
+      if (sp.variable_id) mine[Number(sp.variable_id)] = { item: parseInt(sp.item_id) || null, title: String(sp.value || '').replace(/\s*\(custom\)\s*$/i, '') };
     });
-    const noFile = prod[0] && Number(prod[0].need_design) === 0;
+    const variables = product.variables.slice().sort((a, b) => Number(a.order) - Number(b.order));
+    const chosen = {}, selectedOption = {}, problems = [];
+    variables.forEach(v => {
+      const items = Array.isArray(v.items) ? v.items : [];
+      if (!items.length) return;                          // free-text option: only when the customer typed one
+      const allowed = items.filter(i => cartAllowed(i, chosen));
+      let item = null;
+      if (v.type === 'quantity_list' || /^quantity$/i.test(v.title)) {
+        const q = String(raw.quantity);
+        item = (qtySpec && qtySpec.item_id && items.find(i => Number(i.variable_item_id) === parseInt(qtySpec.item_id))) ||
+          items.filter(i => String(i.title).replace(/,/g, '').trim() === q).sort(byPref)[0] || null;
+      } else {
+        const m = mine[Number(v.variable_id)];
+        if (m) item = (m.item && items.find(i => Number(i.variable_item_id) === m.item)) ||
+          items.filter(i => String(i.title).toLowerCase() === m.title.toLowerCase()).sort(byPref)[0] || null;
+        // Print_Color follows the printed sides: n/n for "Front and Back", n/0 otherwise.
+        if (!item && v.title === 'Print_Color') {
+          const sides = chosen.Printed_Sides || chosen.Print_Sides;
+          if (sides) {
+            const two = /back/i.test(sides.title);
+            item = allowed.filter(i => { const c = String(i.title).match(/(\d)\/(\d)/); return c && ((c[2] !== '0') === two); }).sort(byPref)[0] || null;
+          }
+        }
+      }
+      if (!item) item = allowed.find(i => Number(i.default) === 1) || allowed.slice().sort(byPref)[0] || items.find(i => Number(i.default) === 1) || items[0];
+      if (!allowed.includes(item)) problems.push(v.title + ': "' + item.title + '" is not allowed with the other choices');
+      chosen[v.title] = item;
+      selectedOption[v.title] = cartOption(v, item);
+    });
+    // Size: the variable of type size_new, whatever its title.
+    const sizeVar = variables.find(v => v.type === 'size_new');
+    const sizeItem = sizeVar ? chosen[sizeVar.title] : null;
+    let w = null, h = null;
+    if (custom && raw.width && raw.height) { w = Number(raw.width); h = Number(raw.height); }
+    else if (sizeItem) { const m = String(sizeItem.title).match(/([\d.]+)\s*["']?\s*x\s*([\d.]+)/i); if (m) { w = Number(m[1]); h = Number(m[2]); } }
+    const sides = chosen.Printed_Sides || chosen.Print_Sides;
+    const side = (s) => ({ type: 'print', side: s, material_from_id: null, die_line_from_id: null, need_white_support: false,
+      need_vdp: false, version_name: null, version_order: null });
+    const noFile = Number(db.need_design) === 0;
     const versions = priced.versions;
+    const qtyListed = !!variables.find(v => (v.type === 'quantity_list' || /^quantity$/i.test(v.title)) && chosen[v.title] &&
+      String(chosen[v.title].title).replace(/,/g, '').trim() === String(raw.quantity));
+    const pick = (a, b) => (a != null ? a : (b != null ? b : null));
     const payload = {
-      userId: parseInt(cid), productId: pid, price: Number(Number(raw.list_price != null ? raw.list_price : raw.price).toFixed(2)),
+      userId: parseInt(cid), productId: pid,
+      // The cart gets the regular price; the account discount is applied by the website at checkout.
+      price: Number(Number(raw.list_price != null ? raw.list_price : raw.price).toFixed(2)),
       selectedOption: selectedOption,
-      availableKeys: vars.filter(v => Number(v.internal) !== 1).map(v => v.title),
-      parentCategoryId: prod[0] ? (prod[0].product_category_id || null) : null,
-      designType: noFile ? 'No File' : 'Send the Files Later',
+      availableKeys: variables.map(v => v.title),
+      customSize: sizeVar && w && h ? { width: w.toFixed(2), height: h.toFixed(2) } : {},
+      selectedMetric: (sizeVar && sizeVar.configs && sizeVar.configs.metric) || 'inch',
+      activeMode: w && h && h > w ? 'portrait' : 'landscape',
+      printSides: sides && /back/i.test(sides.title) ? [side('front'), side('back')] : [side('front')],
+      designType: noFile ? 'No File' : 'Print Ready',
       proofOptions: noFile ? 'No Proof' : 'YES (online PDF proof)',
-      customSize: custom && raw.width && raw.height ? { width: Number(raw.width), height: Number(raw.height) } : {},
+      artNotes: String(extra.notes || '').slice(0, 1000),
+      sample_base: pick(product.sample_base, db.sample_base),
+      sample_fee: pick(product.sample_fee, db.sample_fee),
+      sample_per_price: pick(product.sample_per_price, db.sample_per_price),
+      parentCategoryId: pick(product.product_category_id, db.product_category_id),
       totalQuantity: versions ? versions.reduce((a, v) => a + v.quantity, 0) : 0,
-      customQuantity: tier ? 0 : parseInt(raw.quantity) || 0,
+      // A quantity that is not one of the listed ones travels as a custom quantity.
+      customQuantity: versions || qtyListed ? 0 : parseInt(raw.quantity) || 0,
       versionObject: versions ? versions.map(v => ({ name: v.name, quantity: v.quantity })) : []
     };
-    // Only for a custom size; null is refused by the cart API.
-    if (custom && raw.width && raw.height) payload.selectedMetric = 'Inch';
+    if (extra.job_name) payload.jobName = String(extra.job_name).slice(0, 120);
+    if (problems.length) console.error('CLIENT_BOT cart options', pid, problems.join('; '));
     return payload;
+  }
+  // The website team's checklist for a new cart item (their guide, section 8).
+  function cartItemProblems(item, payload) {
+    const out = [];
+    const so = item && item.selectedOption;
+    if (!so || typeof so !== 'object') return ['no selectedOption'];
+    Object.keys(so).forEach(k => {
+      const o = so[k];
+      if (!o || typeof o !== 'object' || !isFinite(Number(o.id)) || !isFinite(Number(o.variable_id))) out.push(k + ' is not an option object');
+    });
+    const want = payload.availableKeys.filter(k => payload.selectedOption[k]);
+    const missing = want.filter(k => !so[k]), extraKeys = Object.keys(so).filter(k => want.indexOf(k) === -1);
+    if (missing.length) out.push('missing ' + missing.join(', '));
+    if (extraKeys.length) out.push('extra ' + extraKeys.join(', '));
+    if (!Array.isArray(item.printSides) || !item.printSides.length) out.push('no printSides');
+    if (!(Number(item.price) > 0)) out.push('price ' + item.price);
+    ['sample_base', 'sample_fee', 'sample_per_price'].forEach(k => { if (item[k] === undefined) out.push('no ' + k); });
+    return out;
   }
   // Price it again and add it. input: product_id, options, quantity | versions,
   // width, height, job_name, notes.
@@ -932,7 +1040,9 @@ module.exports = function mountClientBot(app, deps) {
     const card = priced.card, row = card.rows[0];
     const jobName = String(input.job_name || '').trim().slice(0, 120) || card.product;
     const notes = String(input.notes || '').trim().slice(0, 1000);
-    const payload = await cartPayload(priced, cid);
+    let payload;
+    try { payload = await cartPayload(priced, cid, { job_name: jobName, notes: notes }); }
+    catch (e) { console.error('CLIENT_BOT cart product', e.message); return { error: 'This product could not be added to the cart right now.' }; }
     const summary = { product: card.product, product_id: card.product_id, quantity: row.quantity, price: row.price,
       versions: card.versions || undefined, job_name: jobName,
       options: card.specs.map(sp => sp.field + ': ' + sp.value) };
@@ -956,10 +1066,15 @@ module.exports = function mountClientBot(app, deps) {
     const mine = items.filter(i => Number(i.productId || i.product_id) === payload.productId);
     const newest = (mine.length ? mine : items).slice().sort((a, b) => new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0))[0];
     const itemId = newest && (newest.id || newest._id);
-    let named = false;
-    if (itemId) {
-      // add-item does not keep the job name, and checkout needs one.
-      const u = await cartCall('PUT', '/cart/update-item/' + encodeURIComponent(String(itemId)), { jobName: jobName, notes: notes });
+    // Check the new line against the website team's checklist (logged, never shown to the customer).
+    if (newest) {
+      const bad = cartItemProblems(newest, payload);
+      if (bad.length) console.error('CLIENT_BOT cart check', cid, payload.productId, itemId, bad.join('; '));
+    }
+    let named = !!(newest && String(newest.jobName || newest.job_name || '').trim());
+    if (itemId && !named) {
+      // The job name did not stick: send the whole item again with it (never a partial update).
+      const u = await cartCall('PUT', '/cart/update-item/' + encodeURIComponent(String(itemId)), Object.assign({}, payload, { jobName: jobName }));
       named = u.ok;
       if (!u.ok) console.error('CLIENT_BOT cart name', cid, itemId, u.status, u.text);
     }

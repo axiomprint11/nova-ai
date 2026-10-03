@@ -180,7 +180,7 @@ state (`tokenKey: 'axiom-print-app'`, JSON) and Nova verifies it with `CUSTOMER_
 `/api/v1/customers/me`); a signed handoff (`CLIENT_SSO_SECRET`) also works. First name and the contact person (`manager`)
 ride in the visitor token; the account record stays in memory only. Signed-in customers get their account discount on quotes
 (quoteProduct `client_id`, as the staff chats); the cart is sent the pre-discount price. **Add to Cart** puts the item in the real website cart: `addToCart()` re-prices, builds the
-`cart/add-item` payload (`selectedOption` keyed by exact variable titles), creates the cart user on a 404, names the job
+`cart/add-item` payload in the website's own item shape (`cartPayload()`: catalog `GET /products/product-info/{id}`, `selectedOption` = full catalog option objects keyed by exact variable titles, every variable, plus printSides/customSize/sample fees — `docs/WEBSITE_CART_API.md`), creates the cart user on a 404, names the job
 with `update-item`; `POST /api/client-bot/cart` (button) and the `add_to_cart` tool both use it; the admin preview only
 returns the would-be payload. Full write-up: `docs/CLIENT_BOT.md`. Never give it a tool that takes a customer id or SQL.
 `price_product` takes `quantities` — or `versions: [{name, quantity}]` for several designs of one size, priced as ONE

@@ -462,14 +462,23 @@ customer said yes.
 What Nova's server does (it never takes a price, customer id or option from the browser or the model as given):
 
 1. Prices the item again (`priceCard`, public options only) — list price, as the product page.
-2. `POST /cart/add-item` with `userId` (the verified customer), `productId`, `price`, `selectedOption` (variable title,
-   underscores kept → chosen option title; `Quantity` as a string — the same names orders are saved with),
-   `availableKeys`, `parentCategoryId` (`product.product_category_id`), `designType` / `proofOptions` ("Send the Files
-   Later" / "YES (online PDF proof)", or "No File" / "No Proof" when `product.need_design = 0`), `customSize` +
-   `selectedMetric: "Inch"` for custom sizes only, `customQuantity` for a quantity that is not a listed tier, and for
-   versions `totalQuantity` + `versionObject: [{name, quantity}]`.
+2. Loads the product from the website catalog, `GET /products/product-info/{id}` (cached 5 minutes), and builds the item in
+   the website's own shape (`cartPayload()`, following the website team's guide, `docs/WEBSITE_CART_API.md`):
+   - `selectedOption`: one key per catalog variable, the **exact** `variable.title`, hidden ones too; each value is the
+     **full catalog option object** (`id` = numeric `variable_item_id`, `variable_id` numeric, `type`, `parent_order`,
+     `preview_mode`, `multiple:false`, `dieLine:null`, `swap` ("true" for `size_new`), `calculation:0`, `material_id`,
+     `value`; `_id`, `__v`, dates, `filters`, `material`, `variable_item_id` removed). The item is the one Nova priced
+     with (same ids); otherwise the allowed default (`filters` respected); `Print_Color` follows the sides (n/n for
+     "Front and Back", n/0 otherwise); Quantity is the listed item, or the default plus `customQuantity`.
+   - `availableKeys` (variable titles in order), `printSides` (front, plus back when the sides title has "Back"),
+     `customSize` `{width:"3.50", height:"2.00"}` from the `size_new` item or the custom size, `selectedMetric` (the
+     size variable's `configs.metric`), `activeMode`, `designType` "Print Ready" (or "No File"), `proofOptions`,
+     `artNotes`, `sample_base` / `sample_fee` / `sample_per_price`, `parentCategoryId`, `jobName`, and for versions
+     `totalQuantity` + `versionObject`. `price` is the list price (the website applies the account discount).
 3. `404 "User does not exist"` → `POST /axiom-user` (email, names, `userId`, the account record), then add once more.
-4. The newest item in the returned cart → `PUT /cart/update-item/<id>` `{ jobName, notes }` (add-item does not keep them).
+4. The new item in the returned cart is checked against the guide's checklist (`cartItemProblems()`, logged as
+   `CLIENT_BOT cart check`). If the job name did not stick, the whole item is sent again with it
+   (`PUT /cart/update-item/<id>`) — never a partial update.
 5. The chat posts `{ type: 'nova-client:add-to-cart', id, item: { alreadyAdded: true } }` to the page; the website
    refreshes its cart count and answers `nova-client:cart-result`. (`window.NovaClientChat.onCartChanged` is an
    optional extra hook.)
