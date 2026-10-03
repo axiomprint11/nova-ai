@@ -198,7 +198,38 @@
         '<small>' + [c.customer_email, c.customer_id ? 'customer #' + c.customer_id : null,
           c.source === 'website' ? 'on the website' : 'admin preview' + (c.preview_by ? ' by ' + String(c.preview_by).replace(/^(member|user):/, '') : ''),
           'started ' + rel(c.created_at), c.ip ? 'IP ' + c.ip : null].filter(Boolean).map(esc).join(' · ') + '</small></div>' +
-      j.messages.map(m => m.role === 'note'
+      transcript(j.messages);
+    function transcript(list) {
+      // Page lines: where the chat started, and each move to another page.
+      // Add to Cart clicks: their own line (the older "added to their cart" note is
+      // left out when the click is already shown).
+      const hasCartEvents = list.some(m => m.role === 'event' && (m.cards || []).some(x => x && x.kind === 'cart'));
+      let lastPage = null;
+      const pageLine = (url, title, at, moved) => '<div class="cb-evt cb-evt-page"><span>' + (moved ? 'Moved to' : 'On page') + '</span>' +
+        '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="' + esc(url) + '">' + esc(title || url.replace(/^https?:\/\/(www\.)?/, '')) + '</a>' +
+        '<em title="' + esc(full(at)) + '" data-ts="' + esc(at || '') + '">' + esc(rel(at)) + '</em></div>';
+      return list.map(m => {
+        if (m.role === 'event') {
+          const ev = (m.cards || [])[0] || {};
+          if (ev.kind === 'page' && m.page_url) {
+            if (m.page_url === lastPage) return '';
+            const first = lastPage == null; lastPage = m.page_url;
+            return pageLine(m.page_url, m.page_title, m.created_at, !first);
+          }
+          if (ev.kind === 'cart') {
+            const label = { added: 'Added to cart', signin: 'Clicked Add to Cart \u2014 asked to sign in', failed: 'Add to Cart failed', preview: 'Add to Cart (admin preview)' }[ev.outcome] || 'Clicked Add to Cart';
+            return '<div class="cb-evt cb-evt-cart cb-evt-' + esc(ev.outcome || 'clicked') + '"><span>\ud83d\uded2 ' + esc(label) + '</span><b>' +
+              esc((ev.quantity ? Number(ev.quantity).toLocaleString() + ' \u00d7 ' : '') + (ev.product || '')) + '</b>' +
+              (ev.price != null ? '<i>$' + Number(ev.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</i>' : '') +
+              (ev.job_name ? '<i>job \u201c' + esc(ev.job_name) + '\u201d</i>' : '') + (ev.error ? '<i>' + esc(ev.error) + '</i>' : '') +
+              '<em title="' + esc(full(m.created_at)) + '" data-ts="' + esc(m.created_at || '') + '">' + esc(rel(m.created_at)) + '</em></div>';
+          }
+          return '';
+        }
+        if (m.role === 'note' && hasCartEvents && /^(\[Admin preview[^\]]*\] )?The customer added to their cart/.test(m.content || '')) return '';
+        let pre = '';
+        if (m.role === 'user' && m.page_url && m.page_url !== lastPage) { pre = pageLine(m.page_url, m.page_title, m.created_at, lastPage != null); lastPage = m.page_url; }
+        return pre + (m.role === 'note'
         ? '<div class="cb-msg note"><div class="cb-note">\u270e ' + esc(m.content) + '</div>' + (m.cards || []).map(ClientChat.card).join('') +
             '<div class="when" title="' + esc(full(m.created_at)) + '" data-ts="' + esc(m.created_at || '') + '">' + esc(rel(m.created_at)) + '</div></div>'
         : '<div class="cb-msg ' + (m.role === 'user' ? 'user' : 'ai') + '">' +
@@ -211,7 +242,9 @@
               '<button type="button" data-dl="' + esc(f.id) + '" data-name="' + esc(f.name) + '">Download</button></div>').join('') + '</div>' : '') +
           (m.tools && m.tools.length ? '<div class="cb-used">' + m.tools.map(t => '<span>' + esc(t.tool) + ' → ' + esc(t.found) + '</span>').join('') + '</div>' : '') +
           '<div class="when" title="' + esc(full(m.created_at)) + '" data-ts="' + esc(m.created_at || '') + '">' + esc(rel(m.created_at)) + '</div>' +
-        '</div>').join('');
+        '</div>');
+      }).join('');
+    }
     $('convView').querySelectorAll('img[data-prev]').forEach(async (img) => {
       try {
         const r = await fetch('/api/admin/client-bot/files/' + img.getAttribute('data-prev') + '/preview', { headers: H() });

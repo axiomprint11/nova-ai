@@ -74,6 +74,20 @@
   .cb-listbar button, .cb-tr-unread { border: none; background: none; color: var(--indigo-dark); font: 600 11.5px/1 inherit; cursor: pointer; padding: 3px 4px; }
   .cb-listbar button:hover, .cb-tr-unread:hover { text-decoration: underline; }
   .cb-tr-unread { float: right; font-size: 12px; }
+  /* events in a transcript: the page the customer was on, and Add to Cart clicks */
+  .cb-evt { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin: 8px auto 12px; max-width: 92%; width: fit-content;
+    padding: 5px 11px; border-radius: 999px; font-size: 11.5px; color: var(--muted); background: #f4f5fa; border: 1px solid var(--line); }
+  .cb-evt span { font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: 10px; }
+  .cb-evt a { color: var(--indigo-dark); text-decoration: none; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cb-evt a:hover { text-decoration: underline; }
+  .cb-evt b { color: var(--ink); font-weight: 600; }
+  .cb-evt i { font-style: normal; }
+  .cb-evt em { font-style: normal; opacity: .8; }
+  .cb-evt-cart { background: #eef2ff; border-color: #c7d2fe; color: #3730a3; }
+  .cb-evt-cart span { text-transform: none; letter-spacing: 0; font-size: 11.5px; }
+  .cb-evt-added { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+  .cb-evt-failed { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+  .cb-evt-signin { background: #fffbeb; border-color: #fde68a; color: #92400e; }
   .cb-when { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 700; color: var(--indigo-dark); margin-bottom: 3px; }
   .cb-when span { font-weight: 500; color: var(--muted); white-space: nowrap; }
   .cb-row .t { font-weight: 600; font-size: 12.5px; color: var(--ink); display: flex; gap: 6px; align-items: center; }

@@ -84,6 +84,10 @@ module.exports = function mountClientBot(app, deps) {
       tools TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP)`);
     db.run('CREATE INDEX IF NOT EXISTS client_messages_chat ON client_messages(chat_id)');
+    // The website page the customer was on (for the admin transcript); role='event'
+    // rows record page changes and Add to Cart clicks. Never sent to the model.
+    db.run('ALTER TABLE client_messages ADD COLUMN page_url TEXT', () => {});
+    db.run('ALTER TABLE client_messages ADD COLUMN page_title TEXT', () => {});
     // Files a visitor attached. The file itself is on disk (UPLOAD_DIR); `ref` is
     // the random handle the browser uses, and only the visitor who uploaded it
     // can attach it to a message.
@@ -1339,6 +1343,54 @@ module.exports = function mountClientBot(app, deps) {
     next(err);
   });
 
+  // ---------------------------------------------------------------- page + events
+  // The page on the website the customer is chatting from (sent by the header
+  // script). Only http(s) pages; query values that could be secrets are dropped.
+  function cleanPage(url, title) {
+    try {
+      const u = new URL(String(url || '').slice(0, 1000));
+      if (!/^https?:$/.test(u.protocol)) return null;
+      Array.from(u.searchParams.keys()).forEach(k => { if (/token|pass|secret|auth|key|sig|session|code|^k$/i.test(k)) u.searchParams.delete(k); });
+      return { url: u.toString().slice(0, 500), title: String(title || '').replace(/\s+/g, ' ').trim().slice(0, 150) || null };
+    } catch (e) { return null; }
+  }
+  // What happened outside the messages, for the admin transcript: the customer moved
+  // to another page, or clicked Add to Cart (added / needed to sign in / failed).
+  app.post('/api/client-bot/event', async (req, res) => {
+    const who = await identify(req);
+    if (!who) return res.status(401).json({ ok: false });
+    if (who.error) return res.status(who.status || 403).json({ ok: false });
+    if (overLimit('evt:' + who.vid, 200, 10 * 60 * 1000)) return res.status(429).json({ ok: false });
+    const b = req.body || {};
+    const chat = parseInt(b.chat_id) ? await dbGet('SELECT id, visitor_id, customer_id, source FROM client_chats WHERE id = ?', [parseInt(b.chat_id)]) : null;
+    if (!ownsChat(chat, who)) return res.json({ ok: false });
+    try {
+      if (b.kind === 'page') {
+        const page = cleanPage(b.url, b.title);
+        if (!page) return res.json({ ok: false });
+        const last = await dbGet('SELECT page_url FROM client_messages WHERE chat_id = ? AND page_url IS NOT NULL ORDER BY id DESC LIMIT 1', [chat.id]);
+        if (last && last.page_url === page.url) return res.json({ ok: true, same: true });
+        await dbRun('INSERT INTO client_messages (chat_id, role, content, cards, page_url, page_title) VALUES (?,?,?,?,?,?)',
+          [chat.id, 'event', 'Moved to page: ' + page.url, JSON.stringify([{ type: 'event', kind: 'page' }]), page.url, page.title]);
+        return res.json({ ok: true });
+      }
+      if (b.kind === 'cart') {
+        const outcome = ['added', 'signin', 'failed', 'preview'].indexOf(b.outcome) > -1 ? b.outcome : 'clicked';
+        const ev = { type: 'event', kind: 'cart', outcome: outcome, product: String(b.product || '').slice(0, 120),
+          quantity: parseInt(b.quantity) || null, price: isFinite(Number(b.price)) ? Number(b.price) : null,
+          job_name: b.job_name ? String(b.job_name).slice(0, 120) : null, error: b.error ? String(b.error).slice(0, 200) : null };
+        const said = { added: 'added it to their cart', signin: 'was asked to sign in first', failed: 'it could not be added', preview: 'admin preview \u2014 not really added', clicked: 'clicked' }[outcome];
+        await dbRun('INSERT INTO client_messages (chat_id, role, content, cards) VALUES (?,?,?,?)',
+          [chat.id, 'event', 'Add to Cart: ' + (ev.quantity ? ev.quantity + ' \u00d7 ' : '') + ev.product + (ev.price != null ? ' ($' + usd2(ev.price) + ')' : '') + ' \u2014 ' + said +
+            (ev.error ? ': ' + ev.error : ''), JSON.stringify([ev])]);
+        // A cart click is worth a look: it brings the conversation back up as unread.
+        await dbRun("UPDATE client_chats SET updated_at = datetime('now') WHERE id = ?", [chat.id]);
+        return res.json({ ok: true });
+      }
+      res.json({ ok: false });
+    } catch (e) { console.error('CLIENT_BOT event', e.message); res.status(500).json({ ok: false }); }
+  });
+
   // ---------------------------------------------------------------- history
   // A conversation belongs to the visitor who had it — and, for a signed-in
   // customer, to that customer on any device or visit (History). Admin previews
@@ -1373,12 +1425,13 @@ module.exports = function mountClientBot(app, deps) {
     if (overLimit('hist:' + who.vid, 120, 10 * 60 * 1000)) return res.status(429).json({ ok: false, error: 'Please wait a moment.' });
     const chat = await dbGet('SELECT * FROM client_chats WHERE id = ?', [parseInt(req.params.id) || 0]);
     if (!ownsChat(chat, who)) return res.status(404).json({ ok: false, error: 'That conversation was not found.' });
-    const msgs = await dbAll("SELECT id, role, content, cards, created_at FROM client_messages WHERE chat_id = ? AND role IN ('user','assistant') ORDER BY id", [chat.id]);
+    const msgs = (await dbAll("SELECT id, role, content, cards, created_at FROM client_messages WHERE chat_id = ? AND role IN ('user','assistant','event') ORDER BY id", [chat.id]))
+      .filter(m => m.role !== 'event' || /"kind":"cart"/.test(m.cards || '') && /"outcome":"added"/.test(m.cards || ''));
     const files = await dbAll('SELECT message_id, name, kind FROM client_files WHERE chat_id = ? AND message_id IS NOT NULL ORDER BY id', [chat.id]);
     res.json({ ok: true, chat: { id: chat.id, title: chat.title, started: chat.created_at, updated: chat.updated_at },
       messages: msgs.map(m => {
         let cards = [];
-        if (m.role === 'assistant' && m.cards) { try { cards = JSON.parse(m.cards); } catch (e) { cards = []; } }
+        if ((m.role === 'assistant' || m.role === 'event') && m.cards) { try { cards = JSON.parse(m.cards); } catch (e) { cards = []; } }
         return { role: m.role, content: m.content, at: m.created_at, cards: Array.isArray(cards) ? cards : [],
                  files: files.filter(f => f.message_id === m.id).map(f => ({ name: f.name, kind: f.kind })) };
       }) });
@@ -1539,7 +1592,9 @@ module.exports = function mountClientBot(app, deps) {
         ? current.slice(0, -1).concat([{ type: 'text', text: notes.join('\n') + '\n\n' + text }]) : notes.join('\n') + '\n\n' + current) : current });
       return { messages: messages, sent: budget.used };
     }
-    const ins = await dbRun('INSERT INTO client_messages (chat_id, role, content) VALUES (?,?,?)', [chat.id, 'user', text]);
+    const page = cleanPage(req.body && req.body.page_url, req.body && req.body.page_title);
+    const ins = await dbRun('INSERT INTO client_messages (chat_id, role, content, page_url, page_title) VALUES (?,?,?,?,?)',
+      [chat.id, 'user', text, page ? page.url : null, page ? page.title : null]);
     if (files.length) await dbRun('UPDATE client_files SET chat_id = ?, message_id = ? WHERE id IN (' + files.map(f => parseInt(f.id)).join(',') + ')',
       [chat.id, ins.lastID]);
 
@@ -1801,7 +1856,7 @@ module.exports = function mountClientBot(app, deps) {
     }
     let rows, count;
     try {
-    rows = await dbAll('SELECT c.*, ' + UNREAD + ' AS unread, (SELECT content FROM client_messages m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) AS last_message ' +
+    rows = await dbAll('SELECT c.*, ' + UNREAD + ' AS unread, (SELECT content FROM client_messages m WHERE m.chat_id = c.id AND m.role IN (\'user\',\'assistant\',\'note\') ORDER BY m.id DESC LIMIT 1) AS last_message ' +
       'FROM client_chats c LEFT JOIN client_chat_reads r ON r.chat_id = c.id AND r.reader = ?' +
       (where.length ? ' WHERE ' + where.join(' AND ') : '') + ' ORDER BY c.updated_at DESC, c.id DESC LIMIT 200', [reader].concat(p));
     count = await dbGet('SELECT COUNT(*) AS n FROM client_chats c LEFT JOIN client_chat_reads r ON r.chat_id = c.id AND r.reader = ? WHERE ' + UNREAD, [reader]);
@@ -1820,9 +1875,10 @@ module.exports = function mountClientBot(app, deps) {
     const chat = await dbGet('SELECT * FROM client_chats WHERE id = ?', [parseInt(req.params.id)]);
     if (!chat) return res.status(404).json({ ok: false, error: 'Not found' });
     await markRead(chat.id, readerOf(req));                // opening it = read
-    const msgs = await dbAll('SELECT id, role, content, cards, tools, created_at FROM client_messages WHERE chat_id = ? ORDER BY id', [chat.id]);
+    const msgs = await dbAll('SELECT id, role, content, cards, tools, created_at, page_url, page_title FROM client_messages WHERE chat_id = ? ORDER BY id', [chat.id]);
     const files = await dbAll('SELECT ref, message_id, name, kind, size, info, preview_path FROM client_files WHERE chat_id = ? ORDER BY id', [chat.id]);
     res.json({ ok: true, chat: chat, messages: msgs.map(m => ({ id: m.id, role: m.role, content: m.content, created_at: m.created_at,
+      page_url: m.page_url || null, page_title: m.page_title || null,
       cards: m.cards ? JSON.parse(m.cards) : [], tools: m.tools ? JSON.parse(m.tools) : [],
       files: files.filter(f => f.message_id === m.id).map(f => ({ id: f.ref, name: f.name, kind: f.kind, size: f.size, info: f.info,
         preview: !!f.preview_path })) })) });

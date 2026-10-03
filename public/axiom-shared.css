@@ -2189,3 +2189,6 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .cc-price .cc-eta { margin-top: 10px; padding-top: 9px; }
 .sch-tip.cc-due-pop { position: fixed; z-index: 60; max-width: min(440px, calc(100vw - 16px)); box-sizing: border-box; }
 @media (max-width: 420px) { .sch-tip.cc-due-pop .sch-day { min-width: 38px; padding: 4px 4px 5px; } }
+/* client chat History: an Add to Cart from that conversation */
+.cc-evt { margin: 6px auto 12px; width: fit-content; max-width: 92%; padding: 5px 12px; border-radius: 999px; font-size: 12px;
+  background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }

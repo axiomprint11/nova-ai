@@ -264,6 +264,28 @@ are talking to an AI: the launcher ("Ask NovaAI"), the header ("NovaAI · AxiomP
 The model calls itself NovaAI. A greeting saved in Setup that still says "Nova" is shown as "NovaAI" (and
 "AxiomPrint's assistant" as "AxiomPrint's AI assistant").
 
+## Moving the chat window
+
+On a computer the chat window can be **dragged by its title bar** (the NovaAI logo and name) anywhere on the page; it
+stays inside the window and is remembered in that browser (`localStorage` `novaClientChatPos` on the website).
+Double-click the title bar to put it back in the corner. The header script places an invisible drag handle over the
+title area — the chat tells it how wide that area is (`nova-client:drag-area`), so the buttons on the right always
+work. Phones keep the full-screen chat.
+
+## Pages and Add to Cart in the transcript
+
+The header script tells the chat which page the customer is on (`nova-client:page`, again whenever it changes,
+including single-page navigation). Query values that could be secrets (token, password, key, code, session…) are
+removed — in the browser and again on Nova's server. Each customer message is saved with its page; when the customer
+moves to another page during a conversation, a "Moved to" line is saved too (`POST /api/client-bot/event`). In
+**Conversations** the transcript shows "On page <title>" where the chat started and "Moved to <title>" at each change
+(the link opens the page).
+
+Every **Add to Cart** click is saved as well: *Added to cart* (with the job name), *Clicked Add to Cart — asked to sign
+in* (guests), *Add to Cart failed* (with the reason) or *admin preview*. A cart click brings the conversation back up
+as unread. Customers reopening a chat from History see "🛒 Added … to your cart" where it happened. None of this is
+sent to the model.
+
 ## New chat
 
 A **New chat** button in the top bar (everyone; a pencil icon on phones) starts a fresh conversation: the chat and the

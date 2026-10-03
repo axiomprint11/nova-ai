@@ -427,6 +427,7 @@
       if (tr.nextElementSibling && tr.nextElementSibling.classList.contains('cc-addrow')) { closeAdd(tr); return; }
       root.querySelectorAll('.cc-addrow').forEach(x => x.remove());
       const signedIn = opts.signedIn ? !!opts.signedIn() : false;
+      if (!signedIn) logEvent({ kind: 'cart', outcome: 'signin', product: item.product, quantity: item.quantity, price: item.price });
       tr.insertAdjacentHTML('afterend', '<tr class="cc-addrow"><td colspan="3"><div class="cc-add">' + (signedIn
         ? '<label><span>Job name</span><input type="text" class="cc-job" maxlength="120" value="' + esc(item.product || '') + '"></label>' +
           '<div class="cc-add-btns"><button type="button" class="cc-add-go">Add ' + Number(item.quantity || 0).toLocaleString() + ' to cart \u00b7 ' + money(item.price) + '</button>' +
@@ -453,6 +454,10 @@
           j = await r.json().catch(() => ({}));
         } catch (err) { j = { error: 'Could not reach NovaAI.' }; }
         a.classList.remove('busy');
+        if (j.needs_signin) logEvent({ kind: 'cart', outcome: 'signin', product: item.product, quantity: item.quantity, price: item.price });
+        else if (!j.ok) logEvent({ kind: 'cart', outcome: 'failed', product: item.product, quantity: item.quantity, price: item.price, job_name: job.value, error: j.error || 'not added' });
+        else logEvent({ kind: 'cart', outcome: j.preview ? 'preview' : 'added', product: (j.added && j.added.product) || item.product,
+          quantity: (j.added && j.added.quantity) || item.quantity, price: (j.added && j.added.price) || item.price, job_name: (j.added && j.added.job_name) || job.value });
         if (j.needs_signin) { msg.innerHTML = 'Please <a href="' + LOGIN + '" target="_blank" rel="noopener">sign in</a> again, then refresh the page.'; go.disabled = false; go.textContent = 'Try again'; return; }
         if (!j.ok) {
           msg.innerHTML = esc(j.error || 'That could not be added.') + (item.url && item.url !== '#'
@@ -477,6 +482,23 @@
     const send = root.querySelector('.cc-send');
     const sugg = root.querySelector('.cc-sugg');
 
+    // The website page the chat is on (the header script tells us), and events the
+    // team sees in the transcript: moving to another page, Add to Cart clicks.
+    let page = null, sentPage = null;
+    function pageBody() { return page && page.url ? { page_url: page.url, page_title: page.title || '' } : {}; }
+    function logEvent(ev) {
+      if (!chatId) return;
+      try {
+        fetch('/api/client-bot/event', { method: 'POST', keepalive: true,
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (opts.getToken ? opts.getToken() : '') },
+          body: JSON.stringify(Object.assign({ chat_id: chatId }, ev, opts.extraBody ? opts.extraBody() : {})) }).catch(() => {});
+      } catch (e) {}
+    }
+    function setPage(url, title) {
+      if (!url) return;
+      page = { url: String(url), title: String(title || '') };
+      if (chatId && sentPage !== page.url) { sentPage = page.url; logEvent({ kind: 'page', url: page.url, title: page.title }); }
+    }
     function add(role, html) {
       const row = document.createElement('div');
       row.className = 'msg-row' + (role === 'user' ? ' user' : '');
@@ -528,11 +550,18 @@
         j = await r.json().catch(() => ({}));
       } catch (e) { j = {}; }
       if (!j.ok) return j.error || 'That conversation could not be opened.';
-      chatId = j.chat.id; groups = []; pending = []; paintFiles();
+      chatId = j.chat.id; sentPage = null; groups = []; pending = []; paintFiles();
       refreshTabs(); inner.innerHTML = ''; sugg.style.display = 'none';
       inner.insertAdjacentHTML('beforeend', '<div class="cc-hist-note">Conversation from ' + esc(when(j.chat.started)) +
         '. Prices are from then \u2014 tap <b>Edit</b> \u2192 <b>Update price</b> on a quote, or just ask, for today\u2019s price.</div>');
       (j.messages || []).forEach(m => {
+        if (m.role === 'event') {
+          const ev = (m.cards || [])[0] || {};
+          if (ev.kind === 'cart') inner.insertAdjacentHTML('beforeend', '<div class="cc-evt">\ud83d\uded2 Added ' +
+            esc((ev.quantity ? Number(ev.quantity).toLocaleString() + ' \u00d7 ' : '') + (ev.product || '')) + ' to your cart' +
+            (ev.price != null ? ' \u00b7 ' + money(ev.price) : '') + '</div>');
+          return;
+        }
         if (m.role === 'user') {
           const ub = add('user', m.content);
           if (m.files && m.files.length) ub.insertAdjacentHTML('afterbegin', '<div class="cc-sent-files">' + m.files.map(f =>
@@ -583,12 +612,13 @@
         const r = await fetch('/api/client-bot/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (opts.getToken ? opts.getToken() : '') },
-          body: JSON.stringify(Object.assign({ chat_id: chatId, message: text, files: sending.map(f => f.id) }, opts.extraBody ? opts.extraBody() : {}))
+          body: JSON.stringify(Object.assign({ chat_id: chatId, message: text, files: sending.map(f => f.id) }, pageBody(), opts.extraBody ? opts.extraBody() : {}))
         });
         const j = await r.json().catch(() => ({}));
         if (!j.ok) { b.innerHTML = '<p class="cc-err">' + esc(j.error || 'Something went wrong. Please try again.') + '</p>'; }
         else {
           chatId = j.chat_id;
+          if (page && page.url) sentPage = page.url;
           showAnswer(b, j.reply, j.cards || [], true);
           if (opts.onCartAdded && (j.cards || []).some(c => c.type === 'cart_added' && !c.preview)) opts.onCartAdded();
           if (opts.onAnswer) opts.onAnswer(j, b);
@@ -855,11 +885,12 @@
     return {
       // Signed in (or out) mid-conversation: keep what is on screen, start a fresh
       // conversation on the server for the new account, and say hello.
-      resume: (g) => { chatId = null; projLoaded = false; projBody.innerHTML = ''; refreshTabs(); add('ai', md(g || opts.greeting || '')); box.scrollTop = box.scrollHeight; },
-      reset: (g) => { chatId = null; groups = []; pending = []; paintFiles(); paintPane(); greet(g || opts.greeting); },
+      resume: (g) => { chatId = null; sentPage = null; projLoaded = false; projBody.innerHTML = ''; refreshTabs(); add('ai', md(g || opts.greeting || '')); box.scrollTop = box.scrollHeight; },
+      reset: (g) => { chatId = null; sentPage = null; groups = []; pending = []; paintFiles(); paintPane(); greet(g || opts.greeting); },
       setGreeting: (g) => { opts.greeting = g; if (!chatId) greet(g); },
       load: load,
       chatId: () => chatId,
+      setPage: setPage,
       ask: ask
     };
   }

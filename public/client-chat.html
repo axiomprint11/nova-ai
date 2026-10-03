@@ -138,9 +138,25 @@
     };
     if (!chat) chat = ClientChat.mount(document.getElementById('pcBody'), opts);
     else chat.resume(j.greeting);              // signed in or out mid-chat: keep the conversation on screen
+    if (pageNow) chat.setPage(pageNow.url, pageNow.title);
     paintSignin();
     paintHistory();
+    dragArea();
   }
+
+  // The website page we are on (for the team's transcript), from the header script.
+  let pageNow = null;
+  // Desktop: the website drags the window by the title area of this bar; tell it how
+  // wide that area is so the buttons on the right stay clickable.
+  function dragArea() {
+    if (!embedded) return;
+    const head = document.querySelector('.pc-head');
+    const btns = Array.from(head.querySelectorAll('button')).filter(b => b.offsetParent);
+    const left = btns.length ? Math.min.apply(null, btns.map(b => b.getBoundingClientRect().left)) : head.offsetWidth;
+    parentSay({ type: 'nova-client:drag-area', w: Math.max(0, Math.round(left - 8)), h: head.offsetHeight });
+  }
+  window.addEventListener('resize', dragArea);
+  if (window.ResizeObserver) new ResizeObserver(dragArea).observe(document.querySelector('.pc-head'));
 
   // ---- History (signed-in customers): earlier chats, newest first ----
   let greeting = '';
@@ -148,6 +164,7 @@
   function paintHistory() {
     document.getElementById('pcNewBtn').hidden = !chat;
     document.getElementById('pcHistBtn').hidden = !signedIn;
+    setTimeout(dragArea, 0);
     if (!signedIn) histEl.hidden = true;
   }
   function placeHistory() { histEl.style.top = document.querySelector('.pc-head').offsetHeight + 'px'; }
@@ -262,6 +279,11 @@
   window.addEventListener('message', async (ev) => {
     if (PARENTS.indexOf(ev.origin) === -1 || !ev.data) return;
     if (ev.data.type === 'nova-client:login-ready') { loginReady = true; return; }
+    if (ev.data.type === 'nova-client:page') {
+      pageNow = { url: String(ev.data.url || '').slice(0, 500), title: String(ev.data.title || '').slice(0, 150) };
+      if (chat) chat.setPage(pageNow.url, pageNow.title);
+      return;
+    }
     if (ev.data.type === 'nova-client:login-url') {     // only a page on the website itself
       try { const u = new URL(String(ev.data.url || '')); if (PARENTS.indexOf(u.origin) !== -1) loginUrl = u.href; } catch (e) {}
       return;

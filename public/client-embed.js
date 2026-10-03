@@ -79,6 +79,14 @@
     var panel = el('div', 'position:fixed;z-index:2147483001;display:none;background:#fff;overflow:hidden;' +
       'box-shadow:0 18px 50px rgba(30,20,70,.28);border:1px solid #e4e4ef;');
     var isOpen = false;
+    // Desktop: the window can be dragged by its title bar and stays where it was
+    // left (remembered in this browser). Double-click the title bar to put it back.
+    var POS_KEY = 'novaClientChatPos', pos = null;
+    try { pos = JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch (e) { pos = null; }
+    function clampPos(l, t) {
+      var w = panel.offsetWidth || Math.min(876, window.innerWidth - 40), h = panel.offsetHeight || Math.min(620, window.innerHeight - 40);
+      return { left: Math.max(0, Math.min(l, window.innerWidth - w)), top: Math.max(0, Math.min(t, window.innerHeight - h)) };
+    }
     function place() {
       if (small()) {
         // Fit the visible area, so the phone keyboard never covers the message box.
@@ -93,8 +101,43 @@
         panel.style.width = Math.min(876, window.innerWidth - 40) + 'px';
         panel.style.height = Math.min(620, window.innerHeight - 40) + 'px';
         panel.style.borderRadius = '16px'; panel.style.border = '1px solid #e4e4ef';
+        if (pos) {
+          var p = clampPos(pos.left, pos.top);
+          panel.style.left = p.left + 'px'; panel.style.top = p.top + 'px'; panel.style.right = 'auto'; panel.style.bottom = 'auto';
+        }
       }
+      if (handle) handle.style.display = small() ? 'none' : 'block';
     }
+    // The drag handle covers the title area of the chat's top bar (the chat tells us
+    // how wide that is, so its buttons stay clickable).
+    var handle = el('div', 'position:absolute;left:0;top:0;width:0;height:0;z-index:2;cursor:move;background:transparent;touch-action:none;');
+    handle.title = 'Drag to move \u00b7 double-click to put it back';
+    var drag = null;
+    handle.addEventListener('pointerdown', function (e) {
+      if (small() || e.button !== 0) return;
+      e.preventDefault();
+      var r = panel.getBoundingClientRect();
+      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+      try { handle.setPointerCapture(e.pointerId); } catch (x) {}
+      document.documentElement.style.userSelect = 'none';
+    });
+    handle.addEventListener('pointermove', function (e) {
+      if (!drag) return;
+      var p = clampPos(e.clientX - drag.dx, e.clientY - drag.dy);
+      panel.style.left = p.left + 'px'; panel.style.top = p.top + 'px'; panel.style.right = 'auto'; panel.style.bottom = 'auto';
+      pos = p;
+    });
+    function endDrag() {
+      if (!drag) return;
+      drag = null; document.documentElement.style.userSelect = '';
+      try { if (pos) localStorage.setItem(POS_KEY, JSON.stringify(pos)); } catch (x) {}
+    }
+    handle.addEventListener('pointerup', endDrag);
+    handle.addEventListener('pointercancel', endDrag);
+    handle.addEventListener('dblclick', function () {
+      pos = null; try { localStorage.removeItem(POS_KEY); } catch (x) {}
+      place();
+    });
     var frame = document.createElement('iframe');
     frame.title = 'NovaAI — AxiomPrint AI assistant';
     frame.setAttribute('allow', 'clipboard-write; microphone');   // microphone: speech to text
@@ -194,6 +237,7 @@
     [600, 1500, 3500].forEach(function (t) { setTimeout(later, t); });
 
     panel.appendChild(frame);
+    panel.appendChild(handle);
     bubble.onclick = open;
     bar.onclick = open;
     document.body.appendChild(bubble);
@@ -217,6 +261,27 @@
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && isOpen) close(); });
 
     function say(msg) { try { frame.contentWindow.postMessage(msg, HOST); } catch (e) {} }
+    // The page the customer is on, for the team's transcript (sent again when it
+    // changes, including single-page navigation). Query values that could be
+    // secrets are dropped here, and again on Nova's server.
+    var lastPage = null;
+    function pageNow() {
+      try {
+        var u = new URL(location.href);
+        Array.from(u.searchParams.keys()).forEach(function (k) { if (/token|pass|secret|auth|key|sig|session|code|^k$/i.test(k)) u.searchParams.delete(k); });
+        return u.toString().slice(0, 500);
+      } catch (e) { return null; }
+    }
+    function sayPage(force) {
+      if (!loaded) return;
+      var url = pageNow();
+      if (!url || (!force && url === lastPage)) return;
+      lastPage = url;
+      say({ type: 'nova-client:page', url: url, title: String(document.title || '').slice(0, 150) });
+    }
+    setInterval(function () { sayPage(false); }, 1500);
+    window.addEventListener('popstate', function () { setTimeout(function () { sayPage(false); }, 50); });
+    window.addEventListener('hashchange', function () { sayPage(false); });
     function val(v) { try { return typeof v === 'function' ? v() : v; } catch (e) { return null; } }
     // The customer's login token. The website keeps it under tokenKey
     // ('axiom-print-app'), usually as saved app state (JSON) with the token inside.
@@ -274,8 +339,14 @@
         if (CFG.loginUrl) say({ type: 'nova-client:login-url', url: String(CFG.loginUrl) });
         if (typeof CFG.login === 'function') say({ type: 'nova-client:login-ready' });
         if (typeof CFG.addToCart === 'function') say({ type: 'nova-client:cart-ready' });
+        sayPage(true);
       }
       if (d.type === 'nova-client:close') close();
+      if (d.type === 'nova-client:drag-area') {
+        handle.style.width = Math.max(0, Math.min(Number(d.w) || 0, 2000)) + 'px';
+        handle.style.height = Math.max(0, Math.min(Number(d.h) || 0, 200)) + 'px';
+        return;
+      }
       // Sign in from the chat, form version: the site's own login function does it
       // (and signs the website in too). The password goes from the chat to this
       // page only, then to the site's login — never to Nova.
