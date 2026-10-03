@@ -161,22 +161,32 @@
     const d = TAGS[t];
     return d ? '<span class="cc-tag ' + d[1] + '" title="' + esc(d[2]) + '">' + d[0] + '</span>' : '';
   }
-  // "?" next to the ready date: how it was counted, day by day (from the server's
-  // timeline for the chosen turnaround, assuming artwork is approved today).
-  function whyPanel(turn) {
+  // Estimated due date at the foot of a quote, with the same day-by-day popup the
+  // staff calculator shows (shared .sch-* styles): approved, start day, each
+  // production day, weekends/holidays skipped, ready. From the server's timeline
+  // for the chosen turnaround, assuming artwork is approved today.
+  const DAY3 = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const MON3 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function dueLine(turn) {
     if (!turn) return '';
-    const day = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    const tl = (turn.timeline || []).map(t =>
-      '<li class="cc-why-' + esc(t.type) + '"><span>' + esc(day(t.date)) + '</span><b>' + esc(
-        t.type === 'approved' ? 'Approved' + (turn.before_cutoff === false ? ' (after 5 PM)' : '') :
-        t.type === 'start' ? 'Start day' + (t.approvedToo ? '' : '') :
-        t.type === 'skipped' ? t.label + ' \u2014 not counted' : t.label) + '</b></li>').join('');
-    return '<div class="cc-why-pop" hidden><div class="cc-why-hd">How the ready date is worked out</div>' +
-      (turn.label ? '<p><b>' + esc(turn.label) + '</b>' + (turn.days && !/business\s*day/i.test(turn.label) ? ' = ' + turn.days + ' business day' + (turn.days === 1 ? '' : 's') : '') + ' of production.</p>' : '') +
-      (turn.same_day ? '<p>Same-day jobs depend on when your artwork is approved \u2014 the team confirms the time.</p>' :
-      '<p>The clock starts once your artwork is approved and the order is paid. Approved before 5 PM (Pacific) on a business day: that day is the <b>start day</b>; otherwise the next business day is. Counting begins the day after the start day, and weekends and holidays don\u2019t count.</p>' +
-      (tl ? '<ul class="cc-why-tl">' + tl + '</ul>' : '') +
-      '<p class="cc-why-note">Dates assume approval today. Shipping time comes after the ready date.</p>') + '</div>';
+    if (turn.same_day) return '<div class="pq-eta cc-eta">Estimated Due: <b>Same day</b><span class="pq-eta-note">the team confirms the time</span></div>';
+    const r = (turn.timeline || []).filter(t => t.type === 'ready').pop();
+    if (!r) return '';
+    const d = new Date(r.date + 'T12:00:00');
+    return '<div class="pq-eta cc-eta">Estimated Due: <b>' + DAY3[d.getDay()] + ', ' + MON3[d.getMonth()] + ' ' + d.getDate() + ' · 5:00 PM</b>' +
+      '<button type="button" class="pq-eta-q cc-due-q" aria-label="How this date is worked out">?</button>' +
+      '<template class="cc-due-tip">' + dueTip(turn) + '</template></div>';
+  }
+  function dueTip(turn) {
+    const cells = (turn.timeline || []).map(t => {
+      const d = new Date(t.date + 'T12:00:00');
+      const cls = t.type === 'ready' ? ' ready' : t.type === 'start' ? ' start' : t.type === 'approved' ? ' approved' : t.type === 'skipped' ? ' off' : '';
+      return '<span class="sch-day' + cls + '"><em>' + DAY3[d.getDay()].toUpperCase() + '</em><b>' + d.getDate() + '</b><i>' + esc(t.label) + '</i></span>';
+    }).join('');
+    return '<div class="sch-tip-in"><div class="sch-tip-hd">' + esc(turn.label || (turn.days + ' business days')) + ' · production time only</div>' +
+      '<div class="sch-row">' + cells + '</div>' +
+      '<div class="sch-tip-ft">If approved today ' + (turn.before_cutoff ? 'before' : 'after') + ' the 5PM cutoff. Counting starts the day after the ' +
+      'start day; weekends and holidays don’t count. Shipping time comes after the due date.</div></div>';
   }
   // `ref` (inside the chat) adds the Edit button; the admin transcript has none.
   function quote(c, ref) {
@@ -189,10 +199,9 @@
     return '<div class="cc-price' + (unsure ? ' cc-unsure' : '') + '" data-key="' + esc(c.key || '') + '"' + (ref != null ? ' data-ref="' + ref + '"' : '') + '>' +
       '<div class="cc-price-hd">' +
         (c.image ? '<img src="' + esc(c.image) + '" alt="" onerror="this.remove()">' : '') +
-        '<div><b>' + esc(c.product) + '</b>' + (sameReady ? '<small>Ready ' + esc(sameReady) +
-          (turn ? ' <button type="button" class="cc-why" title="How is this date worked out?" aria-label="How is the ready date worked out?">?</button>' : '') + '</small>' : '') + '</div>' +
+        '<div><b>' + esc(c.product) + '</b>' + (rows.length === 1 && rows[0].quantity ? '<small>Qty ' + Number(rows[0].quantity).toLocaleString() + '</small>' : '') + '</div>' +
         (canEdit ? '<button type="button" class="cc-edit-btn" title="Change options or quantities">\u270e Edit</button>' : '') +
-      '</div>' + whyPanel(turn) +
+      '</div>' +
       '<table class="cc-specs">' + (c.specs || []).filter(s => !/^quantity$/i.test(s.field)).slice(0, 16).map(s => {
         // "Clarify" fields left on the default: a yellow dropdown to pick right here.
         const f = canEdit && s.tag === 'questionable' ? ((c.edit && c.edit.fields) || []).find(x => x.field === s.field && x.choices && x.choices.length > 1) : null;
@@ -221,10 +230,11 @@
             esc(r.quantity) + '">' : Number(r.quantity || 0).toLocaleString()) +
             (r.versions && r.versions.length ? '<small>' + r.versions.length + ' versions</small>' : '') + '</td>' +
           '<td>' + (r.discount && r.list_price > r.price ? '<s>' + money(r.list_price) + '</s> ' : '') + '<b>' + money(r.price) + '</b>' +
-            '<small>' + money(r.each) + ' each' + (!sameReady && r.ready ? ' · ready ' + esc(r.ready) + (turn ? ' <button type="button" class="cc-why" aria-label="How is the ready date worked out?">?</button>' : '') : '') + '</small></td>' +
+            '<small>' + money(r.each) + ' each' + (!sameReady && r.ready ? ' · ready ' + esc(r.ready) : '') + '</small></td>' +
           '<td>' + (item.product_id ? '<a class="cc-cart" href="' + esc(item.url || '#') + '" target="_blank" rel="noopener" data-item="' +
             esc(JSON.stringify(item)) + '">Add to Cart</a>' : '') + '</td></tr>';
       }).join('') + '</tbody></table>' +
+      (sameReady ? dueLine(turn) : '') +
     '</div>';
   }
 
@@ -237,16 +247,47 @@
     const left = hidden.length - 4;
     if (left > 0) b.textContent = 'Show more products (' + left + ')'; else b.remove();
   });
-  // "?" by the ready date opens (and closes) how it was worked out.
-  document.addEventListener('click', (e) => {
-    const b = e.target.closest && e.target.closest('.cc-why');
-    if (!b) return;
-    e.preventDefault(); e.stopPropagation();
-    const pop = b.closest('.cc-price') && b.closest('.cc-price').querySelector('.cc-why-pop');
-    if (!pop) return;
-    pop.hidden = !pop.hidden;
-    b.classList.toggle('on', !pop.hidden);
+  // The due-date popup floats above the page (fixed, kept inside the window):
+  // hover on a computer, tap to open / close on a phone; scrolling or a tap
+  // elsewhere closes it.
+  let dueTipEl = null, dueFor = null, duePinned = false;
+  function hideDue() { if (dueTipEl) dueTipEl.remove(); dueTipEl = null; dueFor = null; duePinned = false; }
+  function showDue(btn) {
+    const t = btn.parentNode.querySelector('template.cc-due-tip');
+    if (!t) return;
+    hideDue();
+    dueTipEl = document.createElement('div');
+    dueTipEl.className = 'sch-tip cc-due-pop';
+    dueTipEl.innerHTML = t.innerHTML;
+    document.body.appendChild(dueTipEl);
+    dueFor = btn;
+    const r = btn.getBoundingClientRect(), w = dueTipEl.offsetWidth, h = dueTipEl.offsetHeight;
+    const left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8));
+    const top = r.top - h - 8 >= 8 ? r.top - h - 8 : Math.min(r.bottom + 8, window.innerHeight - h - 8);
+    dueTipEl.style.left = left + 'px'; dueTipEl.style.top = Math.max(8, top) + 'px';
+  }
+  const finePointer = () => !window.matchMedia || window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  document.addEventListener('mouseover', (e) => {
+    const b = e.target.closest && e.target.closest('.cc-due-q');
+    if (b && finePointer() && dueFor !== b) showDue(b);
   });
+  document.addEventListener('mouseout', (e) => {
+    const b = e.target.closest && e.target.closest('.cc-due-q');
+    if (b && finePointer() && !duePinned && !(e.relatedTarget && b.contains(e.relatedTarget))) hideDue();
+  });
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('.cc-due-q');
+    if (b) {
+      e.preventDefault(); e.stopPropagation();
+      if (dueFor === b && duePinned) { hideDue(); return; }
+      if (dueFor !== b) showDue(b);
+      duePinned = true;
+      return;
+    }
+    if (dueTipEl && !(e.target.closest && e.target.closest('.cc-due-pop'))) hideDue();
+  });
+  window.addEventListener('scroll', () => { if (dueTipEl) hideDue(); }, true);
+  window.addEventListener('resize', () => { if (dueTipEl) hideDue(); });
 
   function mount(root, opts) {
     opts = opts || {};

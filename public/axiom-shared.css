@@ -2184,3 +2184,8 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .cc-why-tl li.cc-why-start::before { background: var(--indigo); }
 .cc-why-tl li.cc-why-ready::before { background: #16a34a; }
 .cc-why-tl li.cc-why-ready b { color: #15803d; }
+
+/* ---- client chat: Estimated Due line and its day-by-day popup (staff .sch-* styles) ---- */
+.cc-price .cc-eta { margin-top: 10px; padding-top: 9px; }
+.sch-tip.cc-due-pop { position: fixed; z-index: 60; max-width: min(440px, calc(100vw - 16px)); box-sizing: border-box; }
+@media (max-width: 420px) { .sch-tip.cc-due-pop .sch-day { min-width: 38px; padding: 4px 4px 5px; } }

@@ -223,13 +223,15 @@ offered it (if they ask, it is for first orders only). When: once per conversati
 quote, and whenever someone asks about coupons, promo codes or deals. NovaAI never invents or shares other codes and
 never says it combines with other discounts. Quotes show prices before the code.
 
-## Ready date: the "?"
+## Estimated due date and its popup
 
-Next to "Ready Thursday, October 8" on a quote is a small **?**. It opens how the date was worked out: the turnaround
-chosen (e.g. 4 Business Days), the rule (the clock starts when artwork is approved and the order is paid; approved
-before 5 PM Pacific on a business day makes that day the start day, otherwise the next business day; counting starts
-the day after; weekends and holidays don't count) and the day-by-day timeline from today — the same `buildTimeline()`
-the staff calculator uses, sent with each quote row as `turn`.
+Every quote ends with **Estimated Due: Wed, Oct 14 · 5:00 PM** and a small **?** — the same line and popup as the staff
+calculator. The ? opens a row of day tiles: Approved, Start Day, Day 1, Day 2 …, weekends and holidays greyed out
+("not counted"), and the Ready day in purple, under "7 BUSINESS DAYS · PRODUCTION TIME ONLY", with the note "If
+approved today before/after the 5PM cutoff. Counting starts the day after the start day; weekends and holidays don't
+count. Shipping time comes after the due date." Hover on a computer; tap to open and close on a phone; it always
+stays inside the window. The timeline is the same `buildTimeline()` the staff calculator uses, sent with each quote
+row as `turn`. Same-day turnarounds say "Same day — the team confirms the time".
 
 ## Product lists: one list, not two
 
