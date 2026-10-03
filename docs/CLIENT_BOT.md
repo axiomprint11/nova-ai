@@ -451,7 +451,7 @@ reply if the model adds it anyway (never a sentence with a $ amount in it).
 Signed-in customers only. The item goes into the customer's **real axiomprint.com cart** through the website's cart API
 (`CLIENT_CART_API`, default `https://website.workroomapp.com/api/v1`); the chat never leaves the page.
 
-**From a quote:** Add to Cart on a quantity row → a **Job name** box (pre-filled with the product name; checkout needs
+**From a quote:** Add to Cart on a quantity row → a **Job name** box (pre-filled with a name from the conversation and the quantity, see below; checkout needs
 one) → **Add … to cart**. The click is the customer's yes. The row turns into "✓ In cart" and Nova shows "Added to your
 cart" with **Upload artwork & check out**. A guest gets "Sign in to add this to your cart" (login link), or the product
 page with everything selected.
