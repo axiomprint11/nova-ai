@@ -191,7 +191,7 @@ function buildPicks(products, opts) {
     b.type = 'button';
     b.className = 'cb-pick' + (i >= SHOW ? ' cb-pick-extra' : '');
     const pct = (p.match != null)
-      ? '<span class="cb-pick-pct ' + (p.match >= 75 ? 'hi' : p.match >= 60 ? 'mid' : 'lo') + '">' + p.match + '%</span>'
+      ? '<span class="cb-pick-pct ' + (p.match >= 75 ? 'hi' : p.match >= 60 ? 'mid' : 'lo') + '">' + p.match + '% match</span>'
       : '';
     b.innerHTML = (p.image
       ? '<img class="cb-pick-img" src="' + esc(p.image) + '" alt="" loading="lazy" onerror="this.remove()">'

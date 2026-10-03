@@ -56,6 +56,8 @@
         '<div class="cc-prod' + (i >= 4 ? ' cc-later' : '') + '" role="button" tabindex="0" data-pick="' + esc(p.id) + '" data-name="' + esc(p.name) + '" title="Price this product">' +
           (p.image ? '<img src="' + esc(p.image) + '" alt="" loading="lazy" onerror="this.remove()">' : '<span class="cc-ph"></span>') +
           '<span class="cc-prod-txt"><b>' + esc(p.name) + '</b>' + ((p.desc || p.about) ? '<small>' + esc(p.desc || p.about) + '</small>' : '') + '</span>' +
+          (p.match != null ? '<i class="cc-match ' + (p.match >= 75 ? 'hi' : p.match >= 60 ? 'mid' : 'lo') + '" title="How well this product matches what you asked for">' +
+            Number(p.match) + '% match</i>' : '') +
           (p.url ? '<a class="cc-prod-link" href="' + esc(p.url) + '" target="_blank" rel="noopener" title="Open the product page">\u2197</a>' : '') +
         '</div>').join('') +
         (more ? '<button type="button" class="cc-prods-more">Show more products (' + more + ')</button>' : '') + '</div>';

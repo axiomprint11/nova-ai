@@ -1061,22 +1061,46 @@ module.exports = function mountClientBot(app, deps) {
     input = input || {};
     const cid = who.customer ? parseInt(who.customer.id) : null;
     if (name === 'search_products') {
+      // One product list per answer: with several products asked for, the first one's list is shown
+      // and the next comes after it is priced or added to the cart (rule 9b).
+      if (cards.some(c => c && c.type === 'products')) return { not_shown: 'A product list is already on screen in this answer. Show one list at a time: ' +
+        'say you are starting with the first product; this one comes next, after the first is priced or added to the cart.' };
       const terms = searchTerms(String(input.query || '')).slice(0, 6);
       if (!terms.length) return { results: [] };
       const cond = terms.map(w => {
         const like = deps.mysql.escape('%' + likeStem(w) + '%');
         return '(p.title LIKE ' + like + ' OR p.public_title LIKE ' + like + ' OR p.meta_keywords LIKE ' + like + ')';
       }).join(' OR ');
-      const rows = await runQuery('SELECT p.id, p.title, p.public_title, p.url, p.image, p.short_description FROM product p WHERE ' +
+      const rows = await runQuery('SELECT p.id, p.title, p.public_title, p.url, p.image, p.short_description, p.meta_keywords FROM product p WHERE ' +
         publicProductWhere(cid) + ' AND (' + cond + ') LIMIT 60');
-      const score = (r) => terms.reduce((n, w) => n + ((String(r.public_title || r.title) + ' ').toLowerCase().indexOf(likeStem(w)) > -1 ? 2 : 0), 0);
-      const top = rows.sort((a, b) => score(b) - score(a)).slice(0, 6).map(r => ({
+      // Match %, the same idea as the staff chat's: how many of the words the product covers
+      // (name or keywords), whether its NAME carries them, and how much it sells now
+      // (orders in the last 12 months, relative to the busiest product in this list).
+      let sold = {};
+      if (rows.length) {
+        try {
+          (await runQuery('SELECT estimate_productid AS id, COUNT(*) AS n FROM estimate WHERE estimate_productid IN (' +
+            rows.map(r => parseInt(r.id)).join(',') + ') AND created >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH) GROUP BY estimate_productid'))
+            .forEach(x => { sold[x.id] = Number(x.n) || 0; });
+        } catch (e) { sold = {}; }
+      }
+      const maxSold = Math.max(1, ...rows.map(r => sold[r.id] || 0));
+      const has = (t, w) => (' ' + String(t || '').toLowerCase() + ' ').indexOf(likeStem(w)) > -1;
+      rows.forEach(r => {
+        const name = (r.public_title || '') + ' ' + (r.title || '');
+        const inName = terms.filter(w => has(name, w)).length;
+        const covered = terms.filter(w => has(name, w) || has(r.meta_keywords, w)).length;
+        const pop = (sold[r.id] || 0) > 0 ? Math.log10(sold[r.id] + 1) / Math.log10(maxSold + 1) : 0;
+        r._match = Math.max(5, Math.round(Math.min(99, (covered / terms.length) * 40 + (inName / terms.length) * 30 + pop * 29)));
+      });
+      rows.sort((a, b) => b._match - a._match);
+      const top = rows.slice(0, 6).map(r => ({
         id: r.id, name: r.public_title || r.title, link: productLink(r), about: clip(r.short_description, 160)
       }));
       // The customer sees up to 12 (four at first, "Show more" for the rest), best match first.
-      const ranked = rows.slice().sort((a, b) => score(b) - score(a)).slice(0, 12);
+      const ranked = rows.slice(0, 12);
       if (top.length) cards.push({ type: 'products', products: ranked
-        .map(r => ({ id: r.id, name: r.public_title || r.title, url: productLink(r), image: r.image || null, about: oneLine(r.short_description) })) });
+        .map(r => ({ id: r.id, name: r.public_title || r.title, url: productLink(r), image: r.image || null, about: oneLine(r.short_description), match: r._match })) });
       return { results: top, shown: PRODUCTS_SHOWN };
     }
     if (name === 'newest_products') {
@@ -1349,6 +1373,7 @@ module.exports = function mountClientBot(app, deps) {
       '8. When something needs a person (complaints, refunds, artwork review, custom work), point them to: ' + (rules.contact || DEFAULT_CONTACT) + '.',
       '9. When the visitor picks a product from a list, their message reads "I\u2019d like to price <name> (product #<id>)". That is their choice: price THAT product id with price_product straight away, using every size, quantity and option already mentioned in the conversation.',
       '9a. PRICE FIRST, DO NOT ASK. Never ask a clarifying question before pricing — no "which paper?", "how many?", "one side or two?". Call price_product straight away with every option the customer stated (they show as Specified) and leave everything else on the website default (Default). No quantity given: leave quantities out and the default quantity is priced. Fields that change the price but were not stated show on the card as YELLOW dropdowns the customer picks from right there — do not ask about them; at most add a few words such as "you can pick the finish on the quote". Ask a question only when you cannot tell which product they mean, or when price_product itself says something is required. This overrides any house rule that says to confirm details before pricing.',
+      '9b. SEVERAL PRODUCTS in one message (e.g. "business cards and roll up banners"): keep it short. Number them, one line each ("1) Business cards", "2) Roll up banners"), then "Starting with the business cards \u2014 which one do you need?" and call search_products for the FIRST one only (or price it straight away if the exact product is clear). Do not describe the products, list their types in a sentence or ask about quantities and specs. The next one comes after the first is priced or added to the cart. Never show product ids (#449) to the customer.',
       '10. AxiomPrint also INSTALLS signs and graphics on site and DELIVERS locally in the Los Angeles area. Price those only with estimate_installation / estimate_delivery, always call the result an estimate, and never quote a rate yourself. When a product and its installation are both asked for, price the product with price_product and the installation with estimate_installation.',
       '11. Artwork templates: use get_template. The customer gets a Download button — do not send them to email for a template unless none exists.',
       '11b. What is new: when the customer asks about new, newest or latest products or recent additions, call newest_products and show them \u2014 never say there is no list of new products.',

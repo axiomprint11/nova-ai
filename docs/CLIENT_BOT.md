@@ -250,6 +250,14 @@ drawn where the lines were — intro above, question below. Products without a d
 first sentence of their website short description. The model later reads the marker as the products shown, in order,
 with their ids, so "the second one" still works.
 
+
+Each product in a search list carries a small **"70% match"** badge (green 75+, yellow 60+, grey below), worked out like the
+staff chat's: the share of the customer's words the product covers (name or keywords), whether its name carries them, and
+its orders in the last 12 months against the busiest product in the list. The list is sorted by it.
+
+**Several products in one message** (rule 9b): NovaAI numbers them, starts with the first and shows only that one's list —
+a second search in the same answer is refused by the tool (`not_shown`). The next product follows after the first is priced
+or added to the cart (see Add to Cart).
 ## Conversations: read / unread, Refresh
 
 The Conversations list works like a phone's messages. An unread conversation has a **blue dot** and a bold name;

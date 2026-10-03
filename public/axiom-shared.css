@@ -627,7 +627,7 @@ textarea { flex: 1; border: none; background: transparent; font-size: 14.5px; re
 .cb-pick:hover:not(:disabled) .cb-pick-go.info { background: #0d9488; color: #fff; border-color: #0d9488; }
 .cb-pick-go { flex: none; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; color: var(--indigo-dark); background: var(--indigo-light); border: 1px solid #ddd6fe; border-radius: 5px; padding: 3px 8px; margin-left: 8px; }
 .cb-pick:hover:not(:disabled) .cb-pick-go { background: var(--indigo); color: #fff; border-color: var(--indigo); }
-.cb-pick-pct { flex: none; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 20px; white-space: nowrap; }
+.cb-pick-pct { flex: none; font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 20px; white-space: nowrap; line-height: 16px; }
 .cb-pick-pct.hi { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
 .cb-pick-pct.mid { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
 .cb-pick-pct.lo { background: #eef1f5; color: #64748b; border: 1px solid #dfe4ea; }
@@ -1808,6 +1808,11 @@ body.nova-embed .calc-pane-body { padding: 12px; }
   border-radius: 10px; text-decoration: none; color: var(--ink) !important; font-weight: 600 !important; font-size: 12.5px; background: #fff; }
 .cc-prod:hover { border-color: var(--indigo); background: #f8f7ff; }
 .cc-prod.cc-later { display: none; }
+/* how well a listed product matches the request (same colours as the staff chat) */
+.cc-match { flex: none; font-style: normal; font-size: 10px; font-weight: 600; line-height: 16px; padding: 0 6px; border-radius: 20px; white-space: nowrap; }
+.cc-match.hi { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+.cc-match.mid { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+.cc-match.lo { background: #eef1f5; color: #64748b; border: 1px solid #dfe4ea; }
 .cc-prods-more { align-self: flex-start; margin-top: 2px; padding: 6px 12px; border: 1.5px dashed #c7d2fe; border-radius: 8px; background: #fff;
   color: var(--indigo-dark); font: 600 12px/1 inherit; cursor: pointer; }
 .cc-prods-more:hover { border-style: solid; background: var(--indigo-light); }
