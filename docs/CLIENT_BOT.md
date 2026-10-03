@@ -305,14 +305,23 @@ are talking to an AI: the launcher ("Ask NovaAI"), the header ("NovaAI · AxiomP
 The model calls itself NovaAI. A greeting saved in Setup that still says "Nova" is shown as "NovaAI" (and
 "AxiomPrint's assistant" as "AxiomPrint's AI assistant").
 
-## Moving the chat window
+## Moving, resizing and minimizing the chat window
 
-On a computer the chat window can be **dragged by its title bar** (the NovaAI logo and name) anywhere on the page; it
-stays inside the window and is remembered in that browser (`localStorage` `novaClientChatPos` on the website).
-Double-click the title bar to put it back in the corner. The header script places an invisible drag handle over the
-title area — the chat tells it how wide that area is (`nova-client:drag-area`), so the buttons on the right always
-work. Phones keep the full-screen chat.
+On a computer the chat behaves like a desktop window:
 
+- **Move** it by its title bar (the NovaAI logo and name). It can go partly off the screen on any side except the top;
+  at least 100px of the title area always stays on screen so it can be pulled back. Double-click the title bar to put it
+  back in the corner at its normal size.
+- **Resize** it from any edge or corner (at least 380 × 420; at most the browser window). Under 800px wide the Quote
+  pane folds into the conversation as usual.
+- Position and size are remembered in that browser (`localStorage` `novaClientChatPos`: left, top, w, h).
+- The header script places an invisible drag handle over the title area — the chat tells it how wide that area is
+  (`nova-client:drag-area`), so the buttons on the right always work — and thin resize grips on the window's edges.
+- **Minimize** (the "–" button, where the ✕ was) hides the window without ending anything. If the customer had started
+  a conversation the launcher says **Back to chat** with a green dot (on phones the bottom bar says "Back to your
+  chat"); opening it shows the same conversation. `nova-client:close` carries `active` for this.
+
+Phones keep the full-screen chat.
 ## Pages and Add to Cart in the transcript
 
 The header script tells the chat which page the customer is on (`nova-client:page`, again whenever it changes,

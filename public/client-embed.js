@@ -60,6 +60,14 @@
     bubble.type = 'button';
     bubble.setAttribute('aria-label', 'Chat with NovaAI');
     bubble.innerHTML = CHAT_ICON + '<span>Ask NovaAI</span>';
+    // After minimizing a conversation, the launchers say so: the chat is still there.
+    var waiting = false;
+    function label() {
+      bubble.innerHTML = CHAT_ICON + '<span>' + (waiting ? 'Back to chat' : 'Ask NovaAI') + '</span>' +
+        (waiting ? '<span style="width:8px;height:8px;border-radius:50%;background:#4ade80;box-shadow:0 0 0 2px rgba(255,255,255,.6)"></span>' : '');
+      bubble.setAttribute('aria-label', waiting ? 'Back to your NovaAI chat' : 'Chat with NovaAI');
+      var t = bar.querySelector('b'); if (t) t.textContent = waiting ? 'Back to your chat' : (CFG.barTitle || 'Ask NovaAI');
+    }
 
     // Phone: a full-width bar fixed to the bottom of the screen — tap to chat.
     // The site's own sticky bars (Add to Cart, Order now) are moved up above it.
@@ -81,12 +89,23 @@
     var isOpen = false;
     // Desktop: the window can be dragged by its title bar and stays where it was
     // left (remembered in this browser). Double-click the title bar to put it back.
+    // Like a desktop window: it can be moved partly off the screen, but a strip of the
+    // title bar always stays reachable so it can be pulled back. It can also be resized
+    // from any edge or corner. Position and size are remembered in this browser.
     var POS_KEY = 'novaClientChatPos', pos = null;
     try { pos = JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch (e) { pos = null; }
+    var MIN_W = 380, MIN_H = 420, KEEP = 100, TITLE = 56;
+    function defW() { return Math.min(876, window.innerWidth - 40); }
+    function defH() { return Math.min(620, window.innerHeight - 40); }
+    function sizeW() { return Math.max(MIN_W, Math.min((pos && pos.w) || defW(), window.innerWidth)); }
+    function sizeH() { return Math.max(MIN_H, Math.min((pos && pos.h) || defH(), window.innerHeight)); }
     function clampPos(l, t) {
-      var w = panel.offsetWidth || Math.min(876, window.innerWidth - 40), h = panel.offsetHeight || Math.min(620, window.innerHeight - 40);
-      return { left: Math.max(0, Math.min(l, window.innerWidth - w)), top: Math.max(0, Math.min(t, window.innerHeight - h)) };
+      // At least KEEP px of the draggable title area (left part of the top bar) stays on screen.
+      var hw = (handle && handle.offsetWidth) || 300;
+      return { left: Math.max(Math.min(0, KEEP - hw), Math.min(l, window.innerWidth - KEEP)),
+               top: Math.max(0, Math.min(t, window.innerHeight - TITLE)) };
     }
+    function save() { try { if (pos) localStorage.setItem(POS_KEY, JSON.stringify(pos)); } catch (x) {} }
     function place() {
       if (small()) {
         // Fit the visible area, so the phone keyboard never covers the message box.
@@ -98,15 +117,16 @@
       } else {
         panel.style.top = 'auto'; panel.style.left = SIDE === 'left' ? '20px' : 'auto';
         panel.style.right = SIDE === 'right' ? '20px' : 'auto'; panel.style.bottom = '20px';
-        panel.style.width = Math.min(876, window.innerWidth - 40) + 'px';
-        panel.style.height = Math.min(620, window.innerHeight - 40) + 'px';
+        panel.style.width = sizeW() + 'px';
+        panel.style.height = sizeH() + 'px';
         panel.style.borderRadius = '16px'; panel.style.border = '1px solid #e4e4ef';
-        if (pos) {
+        if (pos && pos.left != null) {
           var p = clampPos(pos.left, pos.top);
           panel.style.left = p.left + 'px'; panel.style.top = p.top + 'px'; panel.style.right = 'auto'; panel.style.bottom = 'auto';
         }
       }
       if (handle) handle.style.display = small() ? 'none' : 'block';
+      grips.forEach(function (g) { g.style.display = small() ? 'none' : 'block'; });
     }
     // The drag handle covers the title area of the chat's top bar (the chat tells us
     // how wide that is, so its buttons stay clickable).
@@ -125,18 +145,59 @@
       if (!drag) return;
       var p = clampPos(e.clientX - drag.dx, e.clientY - drag.dy);
       panel.style.left = p.left + 'px'; panel.style.top = p.top + 'px'; panel.style.right = 'auto'; panel.style.bottom = 'auto';
-      pos = p;
+      pos = { left: p.left, top: p.top, w: panel.offsetWidth, h: panel.offsetHeight };
     });
     function endDrag() {
       if (!drag) return;
       drag = null; document.documentElement.style.userSelect = '';
-      try { if (pos) localStorage.setItem(POS_KEY, JSON.stringify(pos)); } catch (x) {}
+      save();
     }
     handle.addEventListener('pointerup', endDrag);
     handle.addEventListener('pointercancel', endDrag);
     handle.addEventListener('dblclick', function () {
       pos = null; try { localStorage.removeItem(POS_KEY); } catch (x) {}
       place();
+    });
+    // Resize grips on every edge and corner (thin strips over the frame's border).
+    var EDGES = { n: 'top:-3px;left:12px;right:12px;height:8px;cursor:ns-resize;', s: 'bottom:-3px;left:12px;right:12px;height:8px;cursor:ns-resize;',
+      e: 'right:-3px;top:12px;bottom:12px;width:8px;cursor:ew-resize;', w: 'left:-3px;top:12px;bottom:12px;width:8px;cursor:ew-resize;',
+      ne: 'top:-3px;right:-3px;width:16px;height:16px;cursor:nesw-resize;', nw: 'top:-3px;left:-3px;width:16px;height:16px;cursor:nwse-resize;',
+      se: 'bottom:-3px;right:-3px;width:16px;height:16px;cursor:nwse-resize;', sw: 'bottom:-3px;left:-3px;width:16px;height:16px;cursor:nesw-resize;' };
+    var grips = [], rs = null;
+    Object.keys(EDGES).forEach(function (k) {
+      var g = el('div', 'position:absolute;z-index:3;background:transparent;touch-action:none;' + EDGES[k]);
+      g.setAttribute('data-edge', k);
+      g.addEventListener('pointerdown', function (e) {
+        if (small() || e.button !== 0) return;
+        e.preventDefault();
+        var r = panel.getBoundingClientRect();
+        rs = { k: k, x: e.clientX, y: e.clientY, l: r.left, t: r.top, w: r.width, h: r.height };
+        try { g.setPointerCapture(e.pointerId); } catch (x) {}
+        document.documentElement.style.userSelect = 'none';
+        frame.style.pointerEvents = 'none';
+      });
+      g.addEventListener('pointermove', function (e) {
+        if (!rs || rs.k !== k) return;
+        var dx = e.clientX - rs.x, dy = e.clientY - rs.y, l = rs.l, t = rs.t, w = rs.w, h = rs.h;
+        if (k.indexOf('e') > -1) w = rs.w + dx;
+        if (k.indexOf('s') > -1) h = rs.h + dy;
+        if (k.indexOf('w') > -1) { w = rs.w - dx; }
+        if (k.indexOf('n') > -1) { h = rs.h - dy; }
+        w = Math.max(MIN_W, Math.min(w, window.innerWidth)); h = Math.max(MIN_H, Math.min(h, window.innerHeight));
+        if (k.indexOf('w') > -1) l = rs.l + rs.w - w;
+        if (k.indexOf('n') > -1) { t = Math.max(0, rs.t + rs.h - h); h = rs.t + rs.h - t; }
+        panel.style.width = w + 'px'; panel.style.height = h + 'px';
+        panel.style.left = l + 'px'; panel.style.top = t + 'px'; panel.style.right = 'auto'; panel.style.bottom = 'auto';
+        pos = { left: l, top: t, w: w, h: h };
+      });
+      function endResize() {
+        if (!rs) return;
+        rs = null; document.documentElement.style.userSelect = ''; frame.style.pointerEvents = '';
+        save();
+      }
+      g.addEventListener('pointerup', endResize);
+      g.addEventListener('pointercancel', endResize);
+      grips.push(g);
     });
     var frame = document.createElement('iframe');
     frame.title = 'NovaAI — AxiomPrint AI assistant';
@@ -162,7 +223,7 @@
       launcher();
       lockPage(small());
     }
-    function close() { isOpen = false; panel.style.display = 'none'; lockPage(false); launcher(); }
+    function close() { isOpen = false; panel.style.display = 'none'; lockPage(false); label(); launcher(); }
 
     // ---- which launcher shows ----
     function launcher() {
@@ -238,6 +299,7 @@
 
     panel.appendChild(frame);
     panel.appendChild(handle);
+    grips.forEach(function (g) { panel.appendChild(g); });
     bubble.onclick = open;
     bar.onclick = open;
     document.body.appendChild(bubble);
@@ -341,7 +403,7 @@
         if (typeof CFG.addToCart === 'function') say({ type: 'nova-client:cart-ready' });
         sayPage(true);
       }
-      if (d.type === 'nova-client:close') close();
+      if (d.type === 'nova-client:close') { waiting = !!d.active; close(); }
       if (d.type === 'nova-client:drag-area') {
         handle.style.width = Math.max(0, Math.min(Number(d.w) || 0, 2000)) + 'px';
         handle.style.height = Math.max(0, Math.min(Number(d.h) || 0, 200)) + 'px';
