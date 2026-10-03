@@ -885,7 +885,15 @@
     return {
       // Signed in (or out) mid-conversation: keep what is on screen, start a fresh
       // conversation on the server for the new account, and say hello.
-      resume: (g) => { chatId = null; sentPage = null; projLoaded = false; projBody.innerHTML = ''; refreshTabs(); add('ai', md(g || opts.greeting || '')); box.scrollTop = box.scrollHeight; },
+      // Nothing said yet (the usual case: the sign-in arrives a moment after the chat
+      // opens): replace the greeting instead of adding a second one.
+      resume: (g, sugg) => {
+        const started = !!chatId || !!inner.querySelector('.msg-row.user');
+        chatId = null; sentPage = null; projLoaded = false; projBody.innerHTML = ''; refreshTabs();
+        if (sugg) opts.suggestions = sugg;
+        if (!started) { greet(g || opts.greeting); return; }
+        add('ai', md(g || opts.greeting || '')); box.scrollTop = box.scrollHeight;
+      },
       reset: (g) => { chatId = null; sentPage = null; groups = []; pending = []; paintFiles(); paintPane(); greet(g || opts.greeting); },
       setGreeting: (g) => { opts.greeting = g; if (!chatId) greet(g); },
       load: load,

@@ -137,7 +137,7 @@
         : [['Business card prices', 'How much are 500 business cards?'], ['Banner options', 'What banner materials do you have?']]
     };
     if (!chat) chat = ClientChat.mount(document.getElementById('pcBody'), opts);
-    else chat.resume(j.greeting);              // signed in or out mid-chat: keep the conversation on screen
+    else chat.resume(j.greeting, opts.suggestions);   // signed in or out: replace the greeting, or keep the conversation on screen
     if (pageNow) chat.setPage(pageNow.url, pageNow.title);
     paintSignin();
     paintHistory();

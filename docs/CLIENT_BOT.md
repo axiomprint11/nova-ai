@@ -256,6 +256,23 @@ read** clears the dots; **Mark as unread** (top of an open conversation) puts th
 newest chats and the open conversation's newest messages; the list also refreshes itself every minute while the tab
 is open ("Updated … ago" under the filters).
 
+## Thumbs up / down and lessons
+
+Every open conversation has a **👍 / 👎** bar at the top. 👍 saves straight away and offers an optional note ("what was
+good"); 👎 opens a box for **what wasn't right**. The rating shows as a badge in the list; **Edit** changes the note, and
+clicking the active thumb again clears the rating. Ratings live in SQLite `client_chat_ratings` (one per chat: rating,
+note, active, who rated, when).
+
+Ratings feed NovaAI's future answers through a **lessons layer** added to the system prompt (`lessonsLayer()`, cached
+60 s and refreshed on every change):
+
+- **AVOID** — up to 15 active 👎 ratings with a note, each written as the note plus the customer's first question for
+  context.
+- **GOOD EXAMPLES** — up to 4 active 👍 conversations, as the first customer message and NovaAI's first answer.
+
+**Training → Lessons from rated conversations** lists them all, with **Use in answers** (on/off without deleting),
+**Open conversation** and **Remove**. A 👎 without a note is kept for the record but teaches nothing — write the note.
+
 ## The name: NovaAI
 
 Customers always see the assistant as **NovaAI** with an AI sparkle and an "AI" badge in the header, so it is clear they
@@ -291,6 +308,10 @@ sent to the model.
 A **New chat** button in the top bar (everyone; a pencil icon on phones) starts a fresh conversation: the chat and the
 Quote pane are cleared and the greeting shows again. For signed-in customers the previous conversation stays under
 History.
+
+Signing in (from the chat, or a page that loads already signed in) swaps the guest greeting for "Hi <first name>!"
+instead of adding a second greeting; once the customer has written something, the sign-in greeting is added under the
+conversation (`resume()` in client-chat.js).
 
 ## History (signed-in customers)
 

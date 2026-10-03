@@ -173,7 +173,8 @@ to `/api/chat` for debugging.
 session: `my_orders` / `order_status` filter on `estimate_clientid` themselves; products are limited to active
 `axiom_print` products and `available_for_customers` is honoured. Admin console at `/client-bot` (Conversations is the first tab; Try it as any
 customer, Conversations — read/unread per admin in SQLite `client_chat_reads`, Refresh, Unread filter, Mark as unread /
-Mark all read — Training, Setup); public page `/client-chat` for the website iframe. Admins only until
+Mark all read, 👍/👎 per conversation with a "what wasn't right" note in SQLite `client_chat_ratings`, fed back into the
+prompt by `lessonsLayer()` as AVOID notes + good examples and managed under Training → Lessons — Training, Setup); public page `/client-chat` for the website iframe. Admins only until
 `CLIENT_BOT_PUBLIC=1`. Website sign-in: the header script reads the customer token from the site's saved
 state (`tokenKey: 'axiom-print-app'`, JSON) and Nova verifies it with `CUSTOMER_VERIFY_URL` (default laravelapi
 `/api/v1/customers/me`); a signed handoff (`CLIENT_SSO_SECRET`) also works. First name and the contact person (`manager`)

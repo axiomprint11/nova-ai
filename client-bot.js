@@ -91,6 +91,11 @@ module.exports = function mountClientBot(app, deps) {
     // Files a visitor attached. The file itself is on disk (UPLOAD_DIR); `ref` is
     // the random handle the browser uses, and only the visitor who uploaded it
     // can attach it to a message.
+    // Thumbs up / down on a whole conversation, with what was (not) right. Active
+    // ratings become lessons NovaAI reads in every new conversation.
+    db.run(`CREATE TABLE IF NOT EXISTS client_chat_ratings (
+      chat_id INTEGER PRIMARY KEY, rating TEXT NOT NULL, note TEXT, active INTEGER NOT NULL DEFAULT 1,
+      rated_by TEXT, rated_at TEXT DEFAULT CURRENT_TIMESTAMP)`);
     // Read / unread in the admin Conversations list, per admin (like a phone's messages).
     db.run(`CREATE TABLE IF NOT EXISTS client_chat_reads (
       chat_id INTEGER NOT NULL, reader TEXT NOT NULL, read_at TEXT NOT NULL,
@@ -1262,7 +1267,35 @@ module.exports = function mountClientBot(app, deps) {
       'It cannot be applied in this chat; quotes show prices before the code. Never invent or share any other code, and never say it combines with other discounts.';
   }
 
-  function systemPrompt(rules, who, extra) {
+  // ---------------------------------------------------------------- lessons from ratings
+  // Thumbs down: what the team said was wrong, as things to avoid. Thumbs up: a few
+  // short examples of conversations that went well. Cached briefly; any rating
+  // change clears it.
+  let lessonsCache = { at: 0, text: '' };
+  async function lessonsLayer() {
+    if (Date.now() - lessonsCache.at < 60 * 1000) return lessonsCache.text;
+    let text = '';
+    try {
+      const downs = await dbAll("SELECT r.chat_id, r.note, (SELECT content FROM client_messages m WHERE m.chat_id = r.chat_id AND m.role = 'user' ORDER BY m.id LIMIT 1) AS asked " +
+        "FROM client_chat_ratings r WHERE r.rating = 'down' AND r.active = 1 AND TRIM(COALESCE(r.note, '')) <> '' ORDER BY r.rated_at DESC LIMIT 15");
+      const ups = await dbAll("SELECT r.chat_id, r.note, " +
+        "(SELECT content FROM client_messages m WHERE m.chat_id = r.chat_id AND m.role = 'user' ORDER BY m.id LIMIT 1) AS asked, " +
+        "(SELECT content FROM client_messages m WHERE m.chat_id = r.chat_id AND m.role = 'assistant' ORDER BY m.id LIMIT 1) AS answered " +
+        "FROM client_chat_ratings r WHERE r.rating = 'up' AND r.active = 1 ORDER BY r.rated_at DESC LIMIT 4");
+      const cut = (t, n) => { t = String(t || '').replace(/\[\[products\]\]/g, '(product list)').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '\u2026' : t; };
+      const parts = [];
+      if (downs.length) parts.push('AVOID \u2014 the team marked these answers as wrong (do not repeat these mistakes):\n' +
+        downs.map(d => '- ' + cut(d.note, 300) + (d.asked ? ' (the customer had asked: "' + cut(d.asked, 120) + '")' : '')).join('\n'));
+      const goodUps = ups.filter(u => u.asked && u.answered);
+      if (goodUps.length) parts.push('GOOD EXAMPLES \u2014 the team liked how these went; match their tone and approach (not their prices, which change):\n' +
+        goodUps.map(u => '- Customer: "' + cut(u.asked, 160) + '" \u2192 NovaAI: "' + cut(u.answered, 300) + '"' + (u.note ? ' (why it was good: ' + cut(u.note, 200) + ')' : '')).join('\n'));
+      if (parts.length) text = 'LESSONS FROM RATED CONVERSATIONS (from the AxiomPrint team; follow them unless they conflict with the rules above):\n' + parts.join('\n\n');
+    } catch (e) { console.error('CLIENT_BOT lessons', e.message); }
+    lessonsCache = { at: Date.now(), text: text };
+    return text;
+  }
+
+  function systemPrompt(rules, who, extra, lessons) {
     const signIn = who.customer
       ? 'SIGN-IN: The visitor is signed in on axiomprint.com as ' + (who.customer.name || 'a customer') +
         (who.customer.company ? ' (' + who.customer.company + ')' : '') + '. Call them by their FIRST name: ' +
@@ -1302,7 +1335,8 @@ module.exports = function mountClientBot(app, deps) {
       String(rules.rules || '').slice(0, 8000),
       '',
       'WHAT YOU KNOW ABOUT AXIOMPRINT (answer from this; if it is not here or in the tools, say you will check with the team):',
-      String(rules.knowledge || '').slice(0, 12000)
+      String(rules.knowledge || '').slice(0, 12000),
+      lessons ? '\n' + String(lessons).slice(0, 9000) : ''
     ].join('\n');
   }
 
@@ -1625,7 +1659,7 @@ module.exports = function mountClientBot(app, deps) {
     let built = build(false);
     let messages = built.messages;
     try {
-      const sys = systemPrompt(rules, who, await couponRule(who));
+      const sys = systemPrompt(rules, who, await couponRule(who), await lessonsLayer());
       for (let i = 0; i < 6; i++) {
         let r;
         try {
@@ -1823,6 +1857,28 @@ module.exports = function mountClientBot(app, deps) {
     try { await dbRun("INSERT OR REPLACE INTO client_chat_reads (chat_id, reader, read_at) VALUES (?, ?, datetime('now'))", [chatId, reader]); }
     catch (e) { console.error('CLIENT_BOT markRead', e.message); }
   }
+  // Rate a conversation: { rating: 'up' | 'down' | null, note }. null removes it.
+  app.post('/api/admin/client-bot/chats/:id/rating', auth, adminOnly, async (req, res) => {
+    const id = parseInt(req.params.id) || 0;
+    const b = req.body || {};
+    try {
+      if (b.rating !== 'up' && b.rating !== 'down') await dbRun('DELETE FROM client_chat_ratings WHERE chat_id = ?', [id]);
+      else await dbRun("INSERT OR REPLACE INTO client_chat_ratings (chat_id, rating, note, active, rated_by, rated_at) VALUES (?,?,?,1,?,datetime('now'))",
+        [id, b.rating, String(b.note || '').trim().slice(0, 1000) || null, readerOf(req)]);
+      lessonsCache.at = 0;
+      res.json({ ok: true });
+    } catch (e) { console.error('CLIENT_BOT rating', e.message); res.status(500).json({ ok: false }); }
+  });
+  // The lessons list (Training tab): every rating, with the conversation it came from.
+  app.get('/api/admin/client-bot/ratings', auth, adminOnly, async (req, res) => {
+    const rows = await dbAll("SELECT r.*, c.customer_name, c.customer_id, c.title, c.source FROM client_chat_ratings r LEFT JOIN client_chats c ON c.id = r.chat_id ORDER BY r.rated_at DESC LIMIT 300");
+    res.json({ ok: true, ratings: rows });
+  });
+  app.post('/api/admin/client-bot/ratings/:id/active', auth, adminOnly, async (req, res) => {
+    await dbRun('UPDATE client_chat_ratings SET active = ? WHERE chat_id = ?', [req.body && req.body.active ? 1 : 0, parseInt(req.params.id) || 0]);
+    lessonsCache.at = 0;
+    res.json({ ok: true });
+  });
   app.post('/api/admin/client-bot/chats/:id/unread', auth, adminOnly, async (req, res) => {
     try { await dbRun('DELETE FROM client_chat_reads WHERE chat_id = ? AND reader = ?', [parseInt(req.params.id) || 0, readerOf(req)]); }
     catch (e) { console.error('CLIENT_BOT unread', e.message); return res.status(500).json({ ok: false }); }
@@ -1856,8 +1912,9 @@ module.exports = function mountClientBot(app, deps) {
     }
     let rows, count;
     try {
-    rows = await dbAll('SELECT c.*, ' + UNREAD + ' AS unread, (SELECT content FROM client_messages m WHERE m.chat_id = c.id AND m.role IN (\'user\',\'assistant\',\'note\') ORDER BY m.id DESC LIMIT 1) AS last_message ' +
+    rows = await dbAll('SELECT c.*, rt.rating AS rating, ' + UNREAD + ' AS unread, (SELECT content FROM client_messages m WHERE m.chat_id = c.id AND m.role IN (\'user\',\'assistant\',\'note\') ORDER BY m.id DESC LIMIT 1) AS last_message ' +
       'FROM client_chats c LEFT JOIN client_chat_reads r ON r.chat_id = c.id AND r.reader = ?' +
+      ' LEFT JOIN client_chat_ratings rt ON rt.chat_id = c.id' +
       (where.length ? ' WHERE ' + where.join(' AND ') : '') + ' ORDER BY c.updated_at DESC, c.id DESC LIMIT 200', [reader].concat(p));
     count = await dbGet('SELECT COUNT(*) AS n FROM client_chats c LEFT JOIN client_chat_reads r ON r.chat_id = c.id AND r.reader = ? WHERE ' + UNREAD, [reader]);
     } catch (e) {
@@ -1875,9 +1932,10 @@ module.exports = function mountClientBot(app, deps) {
     const chat = await dbGet('SELECT * FROM client_chats WHERE id = ?', [parseInt(req.params.id)]);
     if (!chat) return res.status(404).json({ ok: false, error: 'Not found' });
     await markRead(chat.id, readerOf(req));                // opening it = read
+    const rating = await dbGet('SELECT rating, note, active FROM client_chat_ratings WHERE chat_id = ?', [chat.id]).catch(() => null);
     const msgs = await dbAll('SELECT id, role, content, cards, tools, created_at, page_url, page_title FROM client_messages WHERE chat_id = ? ORDER BY id', [chat.id]);
     const files = await dbAll('SELECT ref, message_id, name, kind, size, info, preview_path FROM client_files WHERE chat_id = ? ORDER BY id', [chat.id]);
-    res.json({ ok: true, chat: chat, messages: msgs.map(m => ({ id: m.id, role: m.role, content: m.content, created_at: m.created_at,
+    res.json({ ok: true, chat: chat, rating: rating || null, messages: msgs.map(m => ({ id: m.id, role: m.role, content: m.content, created_at: m.created_at,
       page_url: m.page_url || null, page_title: m.page_title || null,
       cards: m.cards ? JSON.parse(m.cards) : [], tools: m.tools ? JSON.parse(m.tools) : [],
       files: files.filter(f => f.message_id === m.id).map(f => ({ id: f.ref, name: f.name, kind: f.kind, size: f.size, info: f.info,

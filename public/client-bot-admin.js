@@ -148,7 +148,8 @@
       b.innerHTML = '<div class="cb-when" title="' + esc(full(c.updated_at)) + '" data-ts="' + esc(c.updated_at || '') + '">' + esc(rel(c.updated_at)) +
           '<span>' + (c.message_count || 0) + ' messages</span></div>' +
         '<div class="t">' + esc(c.customer_name || (c.customer_id ? 'Customer #' + c.customer_id : 'Visitor (not signed in)')) +
-        '<span class="cb-tag ' + (c.source === 'website' ? 'web' : 'pre') + '">' + (c.source === 'website' ? 'Website' : 'Preview') + '</span></div>' +
+        '<span class="cb-tag ' + (c.source === 'website' ? 'web' : 'pre') + '">' + (c.source === 'website' ? 'Website' : 'Preview') + '</span>' +
+        (c.rating ? '<span class="cb-rt ' + c.rating + '" title="Rated ' + (c.rating === 'up' ? 'good' : 'not good') + '">' + (c.rating === 'up' ? '\ud83d\udc4d' : '\ud83d\udc4e') + '</span>' : '') + '</div>' +
         '<small>' + esc([c.company, c.customer_email].filter(Boolean).join(' · ')) + '</small>' +
         '<small>' + esc(c.last_message || c.title || '') + '</small>';
       b.onclick = () => openConvo(c.id);
@@ -185,6 +186,55 @@
     loadConvos();
   });
 
+  // ---- Thumbs up / down on a conversation: NovaAI learns from it ----
+  function rateBar(r) {
+    r = r || {};
+    return '<div class="cb-rate" data-rating="' + esc(r.rating || '') + '">' +
+      '<span>Rate this conversation</span>' +
+      '<button type="button" class="cb-up' + (r.rating === 'up' ? ' on' : '') + '" title="Good \u2014 NovaAI will use it as an example">\ud83d\udc4d</button>' +
+      '<button type="button" class="cb-down' + (r.rating === 'down' ? ' on' : '') + '" title="Not good \u2014 say what was wrong and NovaAI will avoid it">\ud83d\udc4e</button>' +
+      (r.rating && r.active === 0 ? '<em>not used in answers</em>' : '') +
+      (r.note ? '<div class="cb-rate-saved"><b>' + (r.rating === 'up' ? 'What was good' : 'What wasn\u2019t right') + ':</b> ' + esc(r.note) + ' <button type="button" class="cb-rate-edit">Edit</button></div>' : '') +
+      '<div class="cb-rate-note" hidden><textarea rows="3" maxlength="1000"></textarea>' +
+      '<div><button type="button" class="cb-rate-save">Save</button><button type="button" class="cb-rate-x">Cancel</button>' +
+      '<small>NovaAI reads this in every new conversation (Training \u2192 Lessons).</small></div></div></div>';
+  }
+  function openNote(bar, kind, text) {
+    const box = bar.querySelector('.cb-rate-note'), ta = box.querySelector('textarea');
+    box.hidden = false; box.dataset.kind = kind;
+    ta.placeholder = kind === 'down' ? 'What wasn\u2019t right? e.g. \u201cAsked for the quantity instead of pricing the default\u201d, \u201cToo long\u201d, \u201cWrong product suggested\u201d'
+      : 'What was good? (optional) e.g. \u201cShort answer, priced straight away, offered the coupon\u201d';
+    ta.value = text || ''; ta.focus();
+  }
+  async function saveRating(rating, note) {
+    await fetch('/api/admin/client-bot/chats/' + openId + '/rating', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, H()),
+      body: JSON.stringify({ rating: rating, note: note || '' }) }).catch(() => {});
+    await openConvo(openId, true);
+  }
+  $('convView').addEventListener('click', async (e) => {
+    const bar = e.target.closest('.cb-rate');
+    if (!bar || !openId) return;
+    const cur = bar.dataset.rating;
+    const saved = bar.querySelector('.cb-rate-saved');
+    const curNote = saved ? saved.textContent.replace(/^[^:]*:\s*/, '').replace(/\s*Edit$/, '') : '';
+    if (e.target.closest('.cb-up')) {
+      if (cur === 'up') { await saveRating(null); return; }          // click again: take it back
+      await saveRating('up', '');
+      const nb = $('convView').querySelector('.cb-rate');
+      if (nb) openNote(nb, 'up', ''); return;
+    }
+    if (e.target.closest('.cb-down')) {
+      if (cur === 'down' && !bar.querySelector('.cb-rate-note').hidden) return;
+      openNote(bar, 'down', cur === 'down' ? curNote : ''); return;
+    }
+    if (e.target.closest('.cb-rate-edit')) { openNote(bar, cur || 'down', curNote); return; }
+    if (e.target.closest('.cb-rate-x')) { bar.querySelector('.cb-rate-note').hidden = true; return; }
+    if (e.target.closest('.cb-rate-save')) {
+      const box = bar.querySelector('.cb-rate-note');
+      await saveRating(box.dataset.kind || 'down', box.querySelector('textarea').value.trim());
+    }
+  });
+
   async function openConvo(id, keepScroll) {
     openId = id;
     const view = $('convView'), was = view.scrollTop, atEnd = view.scrollTop + view.clientHeight >= view.scrollHeight - 30;
@@ -197,7 +247,7 @@
         (c.company ? ' · ' + esc(c.company) : '') +
         '<small>' + [c.customer_email, c.customer_id ? 'customer #' + c.customer_id : null,
           c.source === 'website' ? 'on the website' : 'admin preview' + (c.preview_by ? ' by ' + String(c.preview_by).replace(/^(member|user):/, '') : ''),
-          'started ' + rel(c.created_at), c.ip ? 'IP ' + c.ip : null].filter(Boolean).map(esc).join(' · ') + '</small></div>' +
+          'started ' + rel(c.created_at), c.ip ? 'IP ' + c.ip : null].filter(Boolean).map(esc).join(' · ') + '</small>' + rateBar(j.rating) + '</div>' +
       transcript(j.messages);
     function transcript(list) {
       // Page lines: where the chat started, and each move to another page.
@@ -282,7 +332,39 @@
   }, 60000);
 
   // ---- Training ----
+  // Lessons from rated conversations: what NovaAI reads from the thumbs.
+  async function loadLessons() {
+    const box = $('tLessons'); if (!box) return;
+    const j = await fetch('/api/admin/client-bot/ratings', { headers: H() }).then(r => r.json()).catch(() => ({}));
+    const list = (j && j.ratings) || [];
+    if (!list.length) { box.innerHTML = '<div class="cb-empty" style="padding:14px">No rated conversations yet. Rate one under Conversations with \ud83d\udc4d or \ud83d\udc4e.</div>'; return; }
+    box.innerHTML = list.map(r => '<div class="cb-lesson' + (r.active ? '' : ' off') + '">' +
+      '<div class="cb-lesson-hd"><span>' + (r.rating === 'up' ? '\ud83d\udc4d Good example' : '\ud83d\udc4e Avoid') + '</span>' +
+        '<small>' + esc(rel(r.rated_at)) + ' \u00b7 ' + esc(r.customer_name || (r.customer_id ? 'Customer #' + r.customer_id : 'Visitor')) + '</small></div>' +
+      '<div class="cb-lesson-tx">' + (r.note ? esc(r.note) : '<i>' + (r.rating === 'down' ? 'No note \u2014 add one so NovaAI knows what to avoid.' : 'No note \u2014 used as an example of a good answer.') + '</i>') + '</div>' +
+      '<div class="cb-lesson-ft"><label><input type="checkbox" data-act="' + r.chat_id + '"' + (r.active ? ' checked' : '') + '> Use in answers</label>' +
+        '<button type="button" data-open="' + r.chat_id + '">Open conversation</button>' +
+        '<button type="button" data-del="' + r.chat_id + '">Remove</button></div></div>').join('');
+  }
+  document.addEventListener('change', async (e) => {
+    const c = e.target.closest && e.target.closest('#tLessons input[data-act]');
+    if (!c) return;
+    await fetch('/api/admin/client-bot/ratings/' + c.dataset.act + '/active', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, H()),
+      body: JSON.stringify({ active: c.checked }) }).catch(() => {});
+    loadLessons();
+  });
+  document.addEventListener('click', async (e) => {
+    const o = e.target.closest && e.target.closest('#tLessons [data-open]');
+    const d = e.target.closest && e.target.closest('#tLessons [data-del]');
+    if (o) { document.querySelector('.cb-tabs button[data-v="convos"]').click(); openConvo(parseInt(o.dataset.open)); }
+    if (d && confirm('Remove this rating? NovaAI will stop using it.')) {
+      await fetch('/api/admin/client-bot/chats/' + d.dataset.del + '/rating', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, H()),
+        body: JSON.stringify({ rating: null }) }).catch(() => {});
+      loadLessons();
+    }
+  });
   async function loadTraining() {
+    loadLessons();
     const j = await fetch('/api/admin/client-bot/rules', { headers: H() }).then(r => r.json()).catch(() => ({}));
     if (!j || !j.ok) return;
     $('tRules').value = j.rules.rules || '';
