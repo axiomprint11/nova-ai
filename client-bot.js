@@ -127,6 +127,10 @@ module.exports = function mountClientBot(app, deps) {
     db.run('UPDATE client_bot_rules SET rules = REPLACE(rules, ?, ?) WHERE id = 1',
       ['- When you give a price, offer the Order now link so they can check out with everything preselected.',
        '- When you give a price, keep it short and point to the Add to Cart button on the quote. For several quantities, compare them in one line.']);
+    ['design TEXT', 'design_min REAL', 'design_max REAL'].forEach(c => {
+      db.run('ALTER TABLE client_bot_rules ADD COLUMN ' + c, () => {});
+      db.run('ALTER TABLE client_bot_rules_history ADD COLUMN ' + c, () => {});
+    });
     db.run('ALTER TABLE client_bot_rules ADD COLUMN mode TEXT', () => {
       db.get('SELECT mode FROM client_bot_rules WHERE id = 1', (e, r) => { if (!e && r && (r.mode === 'live' || r.mode === 'test')) savedMode = r.mode; });
     });
@@ -145,7 +149,13 @@ module.exports = function mountClientBot(app, deps) {
 
   async function loadRules() {
     const r = await dbGet('SELECT * FROM client_bot_rules WHERE id = 1');
-    return r || { rules: DEFAULT_RULES, knowledge: DEFAULT_KNOWLEDGE, greeting: DEFAULT_GREETING, contact: DEFAULT_CONTACT };
+    const out = r || { rules: DEFAULT_RULES, knowledge: DEFAULT_KNOWLEDGE, greeting: DEFAULT_GREETING, contact: DEFAULT_CONTACT };
+    // Graphic design services: empty means "not set yet" -> the defaults.
+    if (out.design == null || out.design === '') out.design = DEFAULT_DESIGN;
+    if (!(Number(out.design_min) > 0)) out.design_min = DEFAULT_DESIGN_MIN;
+    if (!(Number(out.design_max) > 0)) out.design_max = DEFAULT_DESIGN_MAX;
+    if (Number(out.design_max) < Number(out.design_min)) out.design_max = out.design_min;
+    return out;
   }
 
   // The visitor's address. nginx appends the real client address as the LAST
@@ -586,6 +596,13 @@ module.exports = function mountClientBot(app, deps) {
     name: 'newest_products',
     description: 'AxiomPrint\u2019s newest products, newest first. Use when the customer asks what is new, the latest or newest products, or recent additions.',
     input_schema: { type: 'object', properties: {} }
+  }, {
+    name: 'estimate_design',
+    description: 'Estimate AxiomPrint\u2019s in-house GRAPHIC DESIGN service when the customer wants something designed, created, changed or fixed in a file (NovaAI cannot design or edit files). Split the request into pieces and give each one its hours (low and high) from the DESIGN SERVICES guide. Returns the price range at the current hourly rates. Never work the money out yourself.',
+    input_schema: { type: 'object', properties: {
+      pieces: { type: 'array', description: 'Each piece of design work, e.g. [{"task":"VIP card, front and back, from their logo","hours_low":1.5,"hours_high":3}]',
+        items: { type: 'object', properties: { task: { type: 'string' }, hours_low: { type: 'number' }, hours_high: { type: 'number' } }, required: ['task', 'hours_low', 'hours_high'] } }
+    }, required: ['pieces'] }
   }, {
     name: 'product_details',
     description: 'Details of one product: description, options the customer can choose, quantities, turnaround and file preparation notes, and its page link.',
@@ -1241,6 +1258,23 @@ module.exports = function mountClientBot(app, deps) {
       return { results: rows.slice(0, 6).map(r => ({ id: r.id, name: r.public_title || r.title, about: clip(r.short_description, 160) })),
         newest_first: true, note: 'Do not mention when they were added.', shown: PRODUCTS_SHOWN };
     }
+    if (name === 'estimate_design') {
+      const r = await loadRules();
+      const lo = Number(r.design_min), hi = Number(r.design_max);
+      const pieces = (Array.isArray(input.pieces) ? input.pieces : []).slice(0, 20).map(x => {
+        let a = Math.max(0, Math.min(200, Number(x && x.hours_low) || 0)), b = Math.max(0, Math.min(200, Number(x && x.hours_high) || 0));
+        if (b < a) { const t = a; a = b; b = t; }
+        if (!b) b = a;
+        return { task: String((x && x.task) || 'Design').slice(0, 120), hours_low: Math.round(a * 4) / 4, hours_high: Math.round(b * 4) / 4 };
+      }).filter(x => x.hours_high > 0);
+      if (!pieces.length) return { error: 'Give each piece of design work its hours (hours_low, hours_high).' };
+      const hl = pieces.reduce((n, x) => n + x.hours_low, 0), hh = pieces.reduce((n, x) => n + x.hours_high, 0);
+      const low = Math.round(hl * lo), high = Math.round(hh * hi);
+      const hrs = (n) => (Math.round(n * 100) / 100).toString();
+      return { pieces: pieces, hours: hrs(hl) + '\u2013' + hrs(hh) + ' hours', hourly_rate: '$' + usd2(lo).replace(/\.00$/, '') + '\u2013$' + usd2(hi).replace(/\.00$/, '') + ' per hour',
+        estimate: '$' + usd2(low).replace(/\.00$/, '') + '\u2013$' + usd2(high).replace(/\.00$/, ''),
+        say: 'Give the estimate exactly as written here (estimate, hours, hourly rate); it is an estimate \u2014 the final price depends on the project.' };
+    }
     if (name === 'product_details') {
       const p = await publicProduct(input.product_id, cid);
       if (!p) return { error: 'No such product on axiomprint.com.' };
@@ -1507,8 +1541,15 @@ module.exports = function mountClientBot(app, deps) {
       '16. SIGNED-IN customers: first name only; repeat their email, phone, company or address only if they ask. Their contact person comes from get_customer. Their account discount is already in the quoted prices (the regular price shows struck through); never quote the percentage. Account settings: https://axiomprint.com/account — order history: https://axiomprint.com/account/order-history.',
       '17. ADD TO CART puts the product, with the chosen options and quantity, into their axiomprint.com cart so they can upload artwork and check out. Signed-in customers only. Before adding: know the product, every option that matters, the quantity (or versions) and the turnaround; ask for a job name and suggest one (e.g. "Business Cards - Spring Promo"; if they do not care, the product name); read the order back with the price ("500 Business Cards, 16pt Matte, 2-sided, Standard turnaround, job \'Spring Promo\', $89.50. Add to your cart?") and wait for a clear yes. Then call add_to_cart with exactly what you priced. After: "Added \u2713 …, you can upload your artwork and check out here: https://axiomprint.com/checkout". If it fails: apologise, point to the product page, retry at most once. You cannot edit or remove cart items yet — send them to https://axiomprint.com/my-cart. A customer who used the Add to Cart button on a quote has already added it; do not add it again.',
       extra || '',
+      '19. GRAPHIC DESIGN AND FILE CHANGES: when the customer asks you to design, create, draw, edit, fix or change artwork or a file, say plainly that NovaAI cannot design or edit files yet, and that AxiomPrint offers in-house graphic design at $' + usd2(Number(rules.design_min || DEFAULT_DESIGN_MIN)).replace(/\.00$/, '') + '\u2013$' + usd2(Number(rules.design_max || DEFAULT_DESIGN_MAX)).replace(/\.00$/, '') + ' per hour depending on the project. ' +
+        'Turn their request into pieces and hours with the DESIGN SERVICES guide below and call estimate_design; give its estimate and hours in one or two lines (never your own arithmetic). Then offer to price the printing too (price first, as usual). ' +
+        'To go ahead with design, point them to ' + (rules.contact || DEFAULT_CONTACT) + '. Never claim you designed, edited or checked a file.',
       '',
       signIn,
+      '',
+      '',
+      'DESIGN SERVICES (set by AxiomPrint):',
+      String(rules.design || DEFAULT_DESIGN),
       '',
       'HOUSE RULES (set by AxiomPrint — follow them unless they conflict with the rules above):',
       String(rules.rules || '').slice(0, 8000),
@@ -2139,8 +2180,8 @@ module.exports = function mountClientBot(app, deps) {
   app.get('/api/admin/client-bot/rules', auth, adminOnly, async (req, res) => {
     const r = await loadRules();
     const hist = await dbAll('SELECT id, changed_at, changed_by, note FROM client_bot_rules_history ORDER BY id DESC LIMIT 30');
-    res.json({ ok: true, rules: r, history: hist, fixed_rules: systemPrompt({ rules: '', knowledge: '', contact: r.contact }, { customer: null })
-      .split('\n\nHOUSE RULES')[0] });
+    res.json({ ok: true, rules: r, history: hist, fixed_rules: systemPrompt({ rules: '', knowledge: '', contact: r.contact, design_min: r.design_min, design_max: r.design_max }, { customer: null })
+      .split('\n\nDESIGN SERVICES')[0] });
   });
 
   app.post('/api/admin/client-bot/rules', auth, adminOnly, async (req, res) => {
@@ -2151,12 +2192,16 @@ module.exports = function mountClientBot(app, deps) {
       rules: String(b.rules != null ? b.rules : cur.rules || '').slice(0, 8000),
       knowledge: String(b.knowledge != null ? b.knowledge : cur.knowledge || '').slice(0, 12000),
       greeting: String(b.greeting != null ? b.greeting : cur.greeting || '').slice(0, 500),
-      contact: String(b.contact != null ? b.contact : cur.contact || '').slice(0, 300)
+      contact: String(b.contact != null ? b.contact : cur.contact || '').slice(0, 300),
+      design: String(b.design != null ? b.design : cur.design || '').slice(0, 6000),
+      design_min: b.design_min != null && Number(b.design_min) > 0 ? Math.min(1000, Number(b.design_min)) : Number(cur.design_min),
+      design_max: b.design_max != null && Number(b.design_max) > 0 ? Math.min(1000, Number(b.design_max)) : Number(cur.design_max)
     };
-    await dbRun('INSERT INTO client_bot_rules_history (rules, knowledge, greeting, contact, changed_by, note) VALUES (?,?,?,?,?,?)',
-      [cur.rules, cur.knowledge, cur.greeting, cur.contact, who, 'Before change by ' + who]);
-    await dbRun("UPDATE client_bot_rules SET rules = ?, knowledge = ?, greeting = ?, contact = ?, updated_at = datetime('now'), updated_by = ? WHERE id = 1",
-      [next.rules, next.knowledge, next.greeting, next.contact, who]);
+    if (next.design_max < next.design_min) return res.json({ ok: false, error: 'The highest design rate is below the lowest.' });
+    await dbRun('INSERT INTO client_bot_rules_history (rules, knowledge, greeting, contact, design, design_min, design_max, changed_by, note) VALUES (?,?,?,?,?,?,?,?,?)',
+      [cur.rules, cur.knowledge, cur.greeting, cur.contact, cur.design, cur.design_min, cur.design_max, who, 'Before change by ' + who]);
+    await dbRun("UPDATE client_bot_rules SET rules = ?, knowledge = ?, greeting = ?, contact = ?, design = ?, design_min = ?, design_max = ?, updated_at = datetime('now'), updated_by = ? WHERE id = 1",
+      [next.rules, next.knowledge, next.greeting, next.contact, next.design, next.design_min, next.design_max, who]);
     res.json({ ok: true, rules: await loadRules() });
   });
 
@@ -2188,6 +2233,26 @@ const DEFAULT_GREETING = 'Hi! I’m NovaAI, AxiomPrint’s AI assistant. Ask me 
   ' — or, if you’re signed in, about your orders.';
 
 const DEFAULT_CONTACT = 'the AxiomPrint team at order@axiomprint.com';
+// Graphic design services (Training → Graphic design services). Hours per kind of job; NovaAI turns a
+// request into hours with this and the estimate_design tool prices them with the hourly rates.
+const DEFAULT_DESIGN_MIN = 65, DEFAULT_DESIGN_MAX = 86;
+const DEFAULT_DESIGN = [
+  'AxiomPrint has in-house graphic designers. The price depends on the project.',
+  '',
+  'Typical time per piece (hours, low–high):',
+  '- Small change to an existing file (text, date, phone number): 0.25–0.5',
+  '- Make a customer file print-ready (size, bleed, resolution, colors): 0.5–1',
+  '- Business card from the customer\u2019s logo and text: 1–2',
+  '- Postcard, flyer or rack card, one side: 1.5–3 (both sides: 2.5–4)',
+  '- Banner, sign or poster: 1.5–3',
+  '- Sticker or label: 1–2',
+  '- Brochure (tri-fold or bi-fold): 3–6',
+  '- Menu: 2–4 per page',
+  '- Booklet or catalog: 1–2 per page',
+  '- Packaging or box on a die line: 4–8',
+  '- Logo design: 5–10',
+  '- Several pieces in one brand: add up each piece; a new brand look (no logo or style yet) adds 2–4',
+].join('\n');
 
 const DEFAULT_RULES = [
   '- Be warm, brief and helpful. Use the customer’s first name when they are signed in.',

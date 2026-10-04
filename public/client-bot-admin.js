@@ -390,6 +390,9 @@
     $('tKnowledge').value = j.rules.knowledge || '';
     $('tGreeting').value = j.rules.greeting || '';
     $('tContact').value = j.rules.contact || '';
+    $('tDesign').value = j.rules.design || '';
+    $('tDesignMin').value = j.rules.design_min != null ? j.rules.design_min : '';
+    $('tDesignMax').value = j.rules.design_max != null ? j.rules.design_max : '';
     $('tFixed').textContent = j.fixed_rules || '';
     $('tMsg').textContent = j.rules.updated_at ? 'Last saved ' + when(j.rules.updated_at) +
       (j.rules.updated_by && j.rules.updated_by !== 'seed' ? ' by ' + String(j.rules.updated_by).replace(/^(member|user):/, '') : '') : '';
@@ -402,6 +405,9 @@
         if (!v || !v.ok) return;
         $('tRules').value = v.version.rules || ''; $('tKnowledge').value = v.version.knowledge || '';
         $('tGreeting').value = v.version.greeting || ''; $('tContact').value = v.version.contact || '';
+        if (v.version.design) $('tDesign').value = v.version.design;
+        if (v.version.design_min) $('tDesignMin').value = v.version.design_min;
+        if (v.version.design_max) $('tDesignMax').value = v.version.design_max;
         $('tMsg').textContent = 'Loaded the version from ' + when(h.changed_at) + ' — Save to use it.';
       };
       $('tHist').appendChild(d);
@@ -410,9 +416,10 @@
   $('tSave').onclick = async () => {
     $('tMsg').textContent = 'Saving…';
     const j = await fetch('/api/admin/client-bot/rules', { method: 'POST', headers: H(), body: JSON.stringify({
-      rules: $('tRules').value, knowledge: $('tKnowledge').value, greeting: $('tGreeting').value, contact: $('tContact').value
+      rules: $('tRules').value, knowledge: $('tKnowledge').value, greeting: $('tGreeting').value, contact: $('tContact').value,
+      design: $('tDesign').value, design_min: Number($('tDesignMin').value) || null, design_max: Number($('tDesignMax').value) || null
     }) }).then(r => r.json()).catch(() => ({}));
-    $('tMsg').textContent = j && j.ok ? 'Saved — the next message uses it.' : 'Could not save.';
+    $('tMsg').textContent = j && j.ok ? 'Saved — the next message uses it.' : ((j && j.error) || 'Could not save.');
     if (j && j.ok) { greeting = j.rules.greeting; loadTraining(); }
   };
 

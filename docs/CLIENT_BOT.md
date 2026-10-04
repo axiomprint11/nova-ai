@@ -285,6 +285,20 @@ Ratings feed NovaAI's future answers through a **lessons layer** added to the sy
 **Training → Lessons from rated conversations** lists them all, with **Use in answers** (on/off without deleting),
 **Open conversation** and **Remove**. A 👎 without a note is kept for the record but teaches nothing — write the note.
 
+## Graphic design services
+
+NovaAI cannot design or edit files. When a customer asks for design, a new piece of artwork or a change to a file
+(prompt rule 19), it says so, offers AxiomPrint's in-house designers at the hourly range, splits the request into
+pieces with hours from the **design guide**, and calls `estimate_design` (`pieces: [{task, hours_low, hours_high}]`).
+The tool works the money out — total low hours × lowest rate to total high hours × highest rate, e.g. 3–5 hours at
+$65–$86 = **$195–$430** — so the model never does the arithmetic. It then offers to price the printing too, and points
+to the hand-off contact to go ahead with design.
+
+Everything is edited in **Training → Graphic design services**: lowest and highest hourly rate and the guide (one line
+per kind of job with its hours). Stored in `client_bot_rules` (`design`, `design_min`, `design_max`; earlier versions in
+the history), used from the next message. Empty fields fall back to the defaults ($65–$86 and the starting guide in
+`DEFAULT_DESIGN`).
+
 ## Languages
 
 NovaAI answers in the language of the customer's latest message (prompt rule 1a): Armenian, Spanish, Russian, Arabic,

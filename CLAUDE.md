@@ -217,7 +217,8 @@ posts it to `POST /api/client-bot/transcribe` → `speech-to-text.js` (OpenAI wi
 `STT_PROVIDER=google`; never stored); with no service it falls back to browser SpeechRecognition behind the same bar
 (`GET /api/client-bot/voice`). The staff ChatBot page and CRM widget use the same recording bar (`GET /api/voice`,
 `POST /api/transcribe`, staff `auth`); `axiom-speech.js` is no longer loaded anywhere. Iframe `allow="microphone"`.
-First-order coupon: prompt rule 18 from `couponRule()` — SavewithNova10, 10% off (`CLIENT_BOT_WELCOME_CODE`), terms read
+Graphic design: prompt rule 19 + `estimate_design` (hours from the editable guide × the hourly range, Training →
+Graphic design services; `client_bot_rules.design / design_min / design_max`). First-order coupon: prompt rule 18 from `couponRule()` — SavewithNova10, 10% off (`CLIENT_BOT_WELCOME_CODE`), terms read
 live from `promo_code`; given to anyone who asks, pitched to guests and signed-in customers with no invoiced estimate
 (`hasOrdered()`) after a quote / on hesitation / when ready to order, at most twice.
 It also has `get_template` (die lines of visible options; customer-specific dies only for that customer; PDFs streamed

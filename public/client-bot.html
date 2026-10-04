@@ -173,6 +173,12 @@
     font-family: inherit; font-size: 13px; line-height: 1.5; resize: vertical; outline: none; height: auto; min-height: 220px; }
   .cb-card textarea#tGreeting { min-height: 64px; }
   .cb-card textarea#tKnowledge { min-height: 280px; }
+  .cb-card textarea#tDesign { min-height: 240px; }
+  .cb-rate-row { display: flex; gap: 14px; flex-wrap: wrap; }
+  .cb-rate-row label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .cb-rate-row span { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; color: var(--ink); }
+  .cb-rate-row input { width: 80px; margin: 0; }
+  .cb-rate-row small { font-weight: 400; font-size: 12px; color: var(--muted); }
   .cb-card textarea:focus, .cb-card input:focus { border-color: var(--indigo); }
   .cb-card input[type=text] { margin: 0; padding: 9px 11px; font-size: 13px; }
   .cb-fixed { white-space: pre-wrap; font-size: 12px; line-height: 1.55; color: var(--ink-soft); background: #fafafd; border-radius: 9px; padding: 10px 12px; max-height: 340px; overflow-y: auto; }
@@ -256,6 +262,18 @@
             <h3>What Nova knows</h3>
             <p class="sub">Facts customers ask about: hours, pickup, shipping, artwork guidelines, common questions. Nova answers from this and the product pages only.</p>
             <textarea id="tKnowledge" rows="12"></textarea>
+          </div>
+          <div class="cb-card">
+            <h3>Graphic design services</h3>
+            <p class="sub">When a customer asks for design or a change to a file, NovaAI says it cannot design or edit files yet,
+              offers the in-house designers, turns the request into hours with the guide below and gives a price range
+              (low hours × lowest rate to high hours × highest rate).</p>
+            <div class="cb-rate-row">
+              <label>Lowest rate <span>$ <input type="number" id="tDesignMin" min="1" step="1"> <small>per hour</small></span></label>
+              <label>Highest rate <span>$ <input type="number" id="tDesignMax" min="1" step="1"> <small>per hour</small></span></label>
+            </div>
+            <p class="sub" style="margin-top:10px">Time per kind of job — one line each, hours low–high. NovaAI estimates from these.</p>
+            <textarea id="tDesign" rows="12"></textarea>
           </div>
           <div class="cb-card">
             <h3>Greeting</h3>
