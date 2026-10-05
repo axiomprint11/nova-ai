@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.6.30';
-const NOVA_BUILT = '10-05-2026 9:05am';
+const NOVA_VERSION = '1.6.31';
+const NOVA_BUILT = '10-05-2026 12:20pm';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -691,6 +691,40 @@ function getGmail() {
   });
   gmailClient = google.gmail({ version: 'v1', auth });
   return gmailClient;
+}
+
+// ---- Sending email (Gmail API, as order@axiomprint.com) ----
+// Needs the gmail.send scope added to the service account's domain-wide delegation in Google Admin
+// (Security → API controls → Domain-wide delegation → the client id of gmail-key.json). Used for
+// NovaAI's escalations (past-due jobs). MAIL_FROM in .env changes the sending address.
+let gmailSendClient = null;
+function getGmailSend() {
+  if (gmailSendClient) return gmailSendClient;
+  const key = JSON.parse(fs.readFileSync('/opt/axiom-ai/gmail-key.json', 'utf8'));
+  const auth = new google.auth.JWT({
+    email: key.client_email,
+    key: key.private_key,
+    scopes: ['https://www.googleapis.com/auth/gmail.send'],
+    subject: process.env.MAIL_FROM || GMAIL_USER
+  });
+  gmailSendClient = google.gmail({ version: 'v1', auth });
+  return gmailSendClient;
+}
+async function sendMail({ to, subject, text, html, replyTo }) {
+  const clean = (v) => String(v || '').replace(/[\r\n]+/g, ' ').trim();
+  const from = clean(process.env.MAIL_FROM || GMAIL_USER);
+  const b64 = (t) => Buffer.from(String(t || ''), 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n');
+  const boundary = 'nova-' + require('crypto').randomBytes(8).toString('hex');
+  const lines = ['From: NovaAI <' + from + '>', 'To: ' + clean(to),
+    'Subject: =?UTF-8?B?' + Buffer.from(clean(subject), 'utf8').toString('base64') + '?=',
+    replyTo ? 'Reply-To: ' + clean(replyTo) : null, 'MIME-Version: 1.0',
+    'Content-Type: multipart/alternative; boundary="' + boundary + '"', '',
+    '--' + boundary, 'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', b64(text),
+    '--' + boundary, 'Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', b64(html || ''),
+    '--' + boundary + '--', ''].filter(x => x !== null);
+  const raw = Buffer.from(lines.join('\r\n'), 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const r = await getGmailSend().users.messages.send({ userId: 'me', requestBody: { raw: raw } });
+  return r && r.data ? r.data.id : null;
 }
 
 // ---- Google Drive (read-only, shared Team Drive job folders) ----
@@ -8824,7 +8858,7 @@ mountMcp(app, { runQuery, dataDictionary: DATA_DICTIONARY });
 require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly,
   quoteProduct, buildOrderLink, stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming,
   InstallPricing, getInstallPricing: () => installPricing, routeLookup, toTime24, driveFileBytes,
-  extractAttachmentText, relatedRules, dataDir: __dirname });
+  extractAttachmentText, relatedRules, sendMail, dataDir: __dirname });
 
 app.get(/^(?!\/api).*/, serveVersionedHtml('index.html'));
 

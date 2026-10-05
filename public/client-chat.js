@@ -144,7 +144,7 @@
       '</div>' +
       '<div class="cc-steps">' + steps.map(s =>
         '<div class="cc-step ' + esc(s.state) + '"><i></i><b>' + esc(s.label) + '</b><span>' + esc(s.status) + '</span>' +
-          (s.note ? '<small>' + esc(s.note) + '</small>' : '') + '</div>').join('') + '</div>' +
+          (s.note ? '<small' + (s.late ? ' class="cc-late"' : '') + '>' + esc(s.note) + '</small>' : '') + '</div>').join('') + '</div>' +
       '<div class="cc-proj-foot"><a href="' + HISTORY + '" target="_blank" rel="noopener">' +
         (needs ? 'Upload files / review proof' : unpaid ? 'Pay online' : 'Order history') + ' \u2197</a></div>' +
     '</div>';

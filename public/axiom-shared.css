@@ -2206,3 +2206,6 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 /* client chat History: an Add to Cart from that conversation */
 .cc-evt { margin: 6px auto 12px; width: fit-content; max-width: 92%; padding: 5px 12px; border-radius: 999px; font-size: 12px;
   background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
+
+/* a job past its due date (client chat, My projects) */
+.cc-step small.cc-late { color: #b91c1c; font-weight: 600; }

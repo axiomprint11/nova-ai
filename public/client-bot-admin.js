@@ -176,6 +176,9 @@
   $('convRefresh').onclick = refreshConvos;
   // Also by itself every minute while the Conversations tab is on screen.
   setInterval(() => { if (!document.hidden && $('vConvos') && $('vConvos').offsetParent) loadConvos(); }, 60000);
+  // A link like /client-bot?chat=123 (the escalation email) opens that conversation.
+  const deepChat = parseInt(new URLSearchParams(location.search).get('chat'));
+  if (deepChat) setTimeout(() => { openConvo(deepChat); }, 500);
   $('convReadAll').onclick = async () => {
     await fetch('/api/admin/client-bot/chats/read-all', { method: 'POST', headers: H() }).catch(() => {});
     loadConvos();
@@ -309,6 +312,13 @@
             if (m.page_url === lastPage) return '';
             const first = lastPage == null; lastPage = m.page_url;
             return pageLine(m.page_url, m.page_title, m.created_at, !first);
+          }
+          if (ev.kind === 'escalation') {
+            const st = ev.preview ? 'admin preview \u2014 no email sent' : ev.already ? 'already escalated in the last 24 hours'
+              : ev.sent ? 'email sent to ' + (ev.to || '') : 'email NOT sent' + (ev.error ? ' (' + ev.error + ')' : '');
+            return '<div class="cb-evt cb-evt-esc' + (ev.sent || ev.already ? '' : ' bad') + '"><span>\u26a0 Past due \u2014 escalated</span><b>' +
+              esc((ev.orders || []).join(', ')) + '</b><i>' + esc(st) + '</i>' +
+              '<em title="' + esc(full(m.created_at)) + '" data-ts="' + esc(m.created_at || '') + '">' + esc(rel(m.created_at)) + '</em></div>';
           }
           if (ev.kind === 'cart') {
             const label = { added: 'Added to cart', signin: 'Clicked Add to Cart \u2014 asked to sign in', failed: 'Add to Cart failed', preview: 'Add to Cart (admin preview)' }[ev.outcome] || 'Clicked Add to Cart';
@@ -479,9 +489,22 @@
       chk(true, 'Website sign-in: the customer\'s axiomprint.com login (<code>tokenKey: \'axiom-print-app\'</code>), checked with <code>customers/me</code>.') +
       chk(true, 'Add to Cart puts the item in the customer\'s real website cart (signed-in customers).') +
       '<p style="color:var(--muted)">Model: ' + esc(o.model || '') + ' · Conversations so far: ' + ((o.counts && o.counts.chats) || 0) + '</p>' +
+      '<h2>Past-due escalations</h2>' +
+      '<p>When a customer asks about an order that is past its due date, NovaAI tells them it is being escalated and emails the job to <b>' +
+        esc(o.escalate_to || '') + '</b> (once a day per job). Emails are sent as order@axiomprint.com through Google — this needs the ' +
+        '<code>gmail.send</code> permission (docs/CLIENT_BOT.md).</p>' +
+      '<p><button type="button" class="cb-btn" id="escTest">Send test email</button> <span id="escMsg" style="font-size:12.5px"></span></p>' +
       '<h2>Website snippet</h2>' +
       '<pre>&lt;script&gt;\n  window.NovaClientChat = Object.assign(window.NovaClientChat || {}, {\n    testKey: \'…your CLIENT_BOT_TEST_KEY…\',\n    tokenKey: \'axiom-print-app\'\n  });\n&lt;/script&gt;\n&lt;script src="https://nova.axiomprint.com/client-embed.js" defer&gt;&lt;/script&gt;</pre>' +
       '<p>The full write-up is in <code>docs/CLIENT_BOT.md</code>.</p>';
+    const et = $('escTest');
+    if (et) et.onclick = async () => {
+      et.disabled = true; $('escMsg').textContent = 'Sending…'; $('escMsg').style.color = '';
+      const j = await fetch('/api/admin/client-bot/escalation-test', { method: 'POST', headers: H() }).then(r => r.json()).catch(() => ({}));
+      et.disabled = false;
+      $('escMsg').textContent = j && j.ok ? 'Sent to ' + j.to + ' — check the inbox.' : 'Not sent: ' + ((j && j.error) || 'no answer');
+      $('escMsg').style.color = j && j.ok ? '#15803d' : '#b91c1c';
+    };
     $('setupBox').querySelectorAll('[data-mode]').forEach(btn => {
       btn.onclick = async () => {
         const m = btn.getAttribute('data-mode');

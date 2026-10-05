@@ -285,6 +285,29 @@ Ratings feed NovaAI's future answers through a **lessons layer** added to the sy
 **Training → Lessons from rated conversations** lists them all, with **Use in answers** (on/off without deleting),
 **Open conversation** and **Remove**. A 👎 without a note is kept for the record but teaches nothing — write the note.
 
+## Past-due escalations
+
+`my_orders` / `order_status` flag a job **past due** when its due time (`estimate.complete_by`, compared with the database's
+own clock — both Los Angeles time) has passed and it is not finished or on its way (quotes and cancelled jobs never are).
+The customer's job card shows "Past due · was due …" in red.
+
+- **Past due and not waiting on the customer** → the tool tells NovaAI to say: *"It seems like this order is past due. I'm
+  escalating it right away so we can get you an updated turnaround time."* (no old date, no new promise), and
+  `escalatePastDue()` emails the job at once to `CLIENT_BOT_ESCALATE_TO` (default **gary@axiomprint.com**): customer,
+  company, email, phone, account manager, what they asked, product, size, quantity, due date and days late, the three
+  status steps, invoice, a CRM link and a link that opens the conversation in Nova (`/client-bot?chat=<id>`). Reply-To is the
+  customer. At most one email per job per 24 hours (`client_escalations`); admin previews never send.
+- **Past due but waiting on the customer** (files to upload, proof to review, re-upload) → no escalation; NovaAI says it is
+  waiting on that step.
+- Conversations shows an orange "⚠ Past due — escalated" line (email sent / already escalated today / red "email NOT sent"
+  with the reason).
+
+**Sending email** uses the Gmail API as order@axiomprint.com (`sendMail()` in server.js; `MAIL_FROM` changes the sender).
+Google must allow it once: Google Admin → Security → Access and data control → API controls → **Manage Domain Wide
+Delegation** → the service account's client ID (`client_id` in `/opt/axiom-ai/gmail-key.json`) → **Edit** → add
+`https://www.googleapis.com/auth/gmail.send` to the existing scopes (keep `gmail.readonly` and `drive.readonly`) → Authorize.
+Then Setup → **Send test email**.
+
 ## Graphic design services
 
 NovaAI cannot design or edit files. When a customer asks for design, a new piece of artwork or a change to a file

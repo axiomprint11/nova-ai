@@ -133,7 +133,10 @@ module.exports = function mountClientBot(app, deps) {
       db.run('ALTER TABLE client_bot_rules ADD COLUMN ' + c, () => {});
       db.run('ALTER TABLE client_bot_rules_history ADD COLUMN ' + c, () => {});
     });
-    db.run('ALTER TABLE client_chats ADD COLUMN visit TEXT', () => {});     // how they reached the site + device (JSON)
+    db.run('ALTER TABLE client_chats ADD COLUMN visit TEXT', () => {});
+    // Past-due jobs NovaAI escalated (one email per job per day).
+    db.run(`CREATE TABLE IF NOT EXISTS client_escalations (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, customer_id INTEGER,
+      estimate_id INTEGER, kind TEXT, sent_to TEXT, email_id TEXT, ok INTEGER, error TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`);     // how they reached the site + device (JSON)
     db.run('ALTER TABLE client_bot_rules ADD COLUMN mode TEXT', () => {
       db.get('SELECT mode FROM client_bot_rules WHERE id = 1', (e, r) => { if (!e && r && (r.mode === 'live' || r.mode === 'test')) savedMode = r.mode; });
     });
@@ -731,7 +734,8 @@ module.exports = function mountClientBot(app, deps) {
     'COALESCE(e.new_total, e.estimate_price) AS total, i.id AS invoice_id, i.invoice_type, i.payment_status, ' +
     'e.estimate_proofimage AS proof, p.image AS product_image, e.estimate_name AS job_name, ' +
     'e.prepress_status, e.production_status, i.invoice_total_payment AS invoice_total, ' +
-    "DATE_FORMAT(e.created, '%b %e, %Y %l:%i %p') AS placed_label, DATE_FORMAT(e.complete_by, '%b %e, %Y %l:%i %p') AS due_label " +
+    "DATE_FORMAT(e.created, '%b %e, %Y %l:%i %p') AS placed_label, DATE_FORMAT(e.complete_by, '%b %e, %Y %l:%i %p') AS due_label, " +
+    '(e.complete_by IS NOT NULL AND e.complete_by < NOW()) AS past_due_raw, DATEDIFF(NOW(), e.complete_by) AS days_late, e.complete_by ' +
     'FROM estimate e LEFT JOIN product p ON p.id = e.estimate_productid ' +
     'LEFT JOIN invoice i ON i.id = e.estimate_invoiceid ' +
     'WHERE e.estimate_clientid = ' + parseInt(cid) + ' AND (i.id IS NULL OR (i.invoice_clientid = ' + parseInt(cid) +
@@ -1151,6 +1155,12 @@ module.exports = function mountClientBot(app, deps) {
       else if (s.last_scan) pr = ['current', s.last_scan.step];
       else if (r.production_status === 'in_production' || r.production_status === 'reprint' || r.production_status === 'hard_copy') pr = ['current', 'In production'];
       const tracking = h.shipping_tracking_number ? ((h.shipping_company ? String(h.shipping_company).toUpperCase() + ' ' : '') + h.shipping_tracking_number) : null;
+      // Past due: the due time has passed and the job is neither finished nor on its way (quotes and
+      // cancelled jobs never are). When it waits on the customer (files, proof), that is said instead.
+      const isQuote = !r.invoice_id || r.invoice_type === 'estimate';
+      const late = Number(r.past_due_raw) === 1 && !isQuote && pr[0] !== 'done' && dv[0] !== 'done' &&
+        !/cancel|void/i.test(String(r.production_status || '') + ' ' + String(stg.estimate_stage || ''));
+      const waiting = late && (pf[0] === 'action' || pf[0] === 'problem');
       return Object.assign({
         order: 'E' + r.id, name: r.job_name || null, product: r.product || null,
         size: opt('Size'), quantity: opt('Quantity') || s.quantity || null,
@@ -1158,9 +1168,10 @@ module.exports = function mountClientBot(app, deps) {
         invoice: r.invoice_id ? 'INV' + r.invoice_id : null,
         total: r.invoice_total != null ? Number(r.invoice_total) : (r.total != null ? Number(r.total) : null),
         paid: r.payment_status || null, quote: !r.invoice_id || r.invoice_type === 'estimate',
+        past_due: late || undefined, days_late: late ? Math.max(1, Number(r.days_late) || 1) : undefined, waiting_on_customer: waiting || undefined,
         steps: [
           { label: 'Preflight check', state: pf[0], status: pf[1] },
-          { label: 'Production', state: pr[0], status: pr[1], note: pr[0] !== 'done' && r.due_label ? 'Due ' + r.due_label : null },
+          { label: 'Production', state: pr[0], status: pr[1], note: pr[0] !== 'done' && r.due_label ? (late ? 'Past due \u00b7 was due ' : 'Due ') + r.due_label : null, late: late || undefined },
           { label: method, state: dv[0], status: dv[1], note: tracking ? 'Tracking ' + tracking : (s.shipped ? 'on ' + s.shipped : null) }
         ]
       }, orderImage(r));
@@ -1191,13 +1202,96 @@ module.exports = function mountClientBot(app, deps) {
   const projectsForModel = (list) => list.map(p => ({ order: p.order, job_name: p.name, product: p.product, size: p.size, quantity: p.quantity,
     placed: p.placed, invoice: p.invoice, total: p.total, payment: p.paid,
     preflight: p.steps[0].status, production: p.steps[1].status, [p.steps[2].label.toLowerCase()]: p.steps[2].status,
-    due: p.due, tracking: p.steps[2].note || undefined }));
+    due: p.due, tracking: p.steps[2].note || undefined,
+    past_due: p.past_due || undefined, days_late: p.days_late, waiting_on_customer: p.waiting_on_customer }));
   const PROJECTS_SHOWN = 'The customer sees each project as a card (picture, E-number, size, quantity, invoice and paid status, and the ' +
     'Preflight / Production / Pick up-Shipping steps). Do NOT list the projects again. Answer in one or two sentences: what needs their ' +
     'action (files to upload, a proof to review, an unpaid invoice) and anything they asked about. Files are uploaded and invoices paid in ' +
     'their order history: ' + 'https://axiomprint.com/account/order-history';
 
-  async function runTool(name, input, who, cards) {
+  // ---------------------------------------------------------------- past-due escalation
+  // A job past its due date (and not waiting on the customer) is escalated at once: an email to
+  // ESCALATE_TO (default gary@axiomprint.com) with the job and the customer, at most once a day per
+  // job, and an event line in the conversation. NovaAI tells the customer it is past due and escalated.
+  const ESCALATE_TO = String(process.env.CLIENT_BOT_ESCALATE_TO || 'gary@axiomprint.com').trim();
+  const NOVA_URL = String(process.env.NOVA_PUBLIC_URL || 'https://nova.axiomprint.com').replace(/\/+$/, '');
+  const htmlEsc = (t) => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  async function escalatePastDue(projects, who, ctx) {
+    const late = projects.filter(p => p.past_due && !p.waiting_on_customer);
+    if (!late.length) return null;
+    const preview = who.source === 'preview';
+    const fresh = [];
+    for (const p of late) {
+      const eid = parseInt(String(p.order).replace(/\D/g, ''));
+      const done = await dbGet("SELECT id FROM client_escalations WHERE estimate_id = ? AND ok = 1 AND created_at > datetime('now', '-1 day')", [eid]).catch(() => null);
+      fresh.push({ p: p, eid: eid, again: !!done });
+    }
+    const toSend = fresh.filter(x => !x.again);
+    let ok = true, error = null, emailId = null;
+    if (toSend.length && !preview) {
+      const c = who.customer || {};
+      let phone = '', manager = null;
+      try {
+        const r = await runQuery('SELECT phone, company_phone FROM customer WHERE id = ' + parseInt(c.id) + ' LIMIT 1');
+        phone = r[0] ? (r[0].phone || r[0].company_phone || '') : '';
+        manager = await contactFromDb(c.id);
+      } catch (e) {}
+      const jobs = toSend.map(x => x.p);
+      const subject = 'Past due: ' + jobs.map(p => p.order + (p.name ? ' ' + p.name : '')).join(', ') + ' \u2014 ' +
+        (c.name || 'customer #' + c.id) + (c.company ? ' (' + c.company + ')' : '');
+      const line = (p) => [
+        p.order + (p.name ? ' \u2014 ' + p.name : ''), p.product, [p.size && 'Size ' + p.size, p.quantity && 'Qty ' + p.quantity].filter(Boolean).join(' \u00b7 '),
+        'Due ' + p.due + ' (' + p.days_late + ' day' + (p.days_late === 1 ? '' : 's') + ' late)',
+        p.steps.map(st => st.label + ': ' + st.status).join(' | '),
+        [p.invoice, p.total != null ? '$' + usd2(p.total) : null, p.paid].filter(Boolean).join(' \u00b7 '),
+        'CRM: https://crm.axiomprint.com/estimates/' + String(p.order).replace(/\D/g, '')
+      ].filter(Boolean);
+      const text = ['NovaAI told a customer their order is past due and that we are escalating it for an updated turnaround time.', '',
+        'Customer: ' + (c.name || '') + (c.company ? ' \u2014 ' + c.company : '') + ' (customer #' + c.id + ')',
+        'Email: ' + (c.email || '') + (phone ? '   Phone: ' + phone : ''), manager ? 'Account manager: ' + manager.name : '', '',
+        'They asked: "' + String(ctx.text || '').slice(0, 400) + '"', '']
+        .concat(jobs.map(p => line(p).join('\n')).join('\n\n').split('\n'))
+        .concat(['', 'Conversation: ' + NOVA_URL + '/client-bot?chat=' + ctx.chatId]).filter(x => x !== null).join('\n');
+      const html = '<div style="font:14px/1.5 Arial,sans-serif;color:#1f2937">' +
+        '<p><b style="color:#b91c1c">Past due \u2014 NovaAI told the customer we are escalating it for an updated turnaround time.</b></p>' +
+        '<p><b>' + htmlEsc(c.name || '') + '</b>' + (c.company ? ' \u2014 ' + htmlEsc(c.company) : '') + ' (customer #' + htmlEsc(c.id) + ')<br>' +
+        htmlEsc(c.email || '') + (phone ? ' \u00b7 ' + htmlEsc(phone) : '') + (manager ? '<br>Account manager: ' + htmlEsc(manager.name) : '') + '</p>' +
+        '<p>They asked: <i>\u201c' + htmlEsc(String(ctx.text || '').slice(0, 400)) + '\u201d</i></p>' +
+        jobs.map(p => '<table style="border-collapse:collapse;margin:0 0 14px;font-size:13px;border:1px solid #e5e7eb">' +
+          [['Order', '<a href="https://crm.axiomprint.com/estimates/' + String(p.order).replace(/\D/g, '') + '">' + htmlEsc(p.order) + '</a>' + (p.name ? ' \u2014 ' + htmlEsc(p.name) : '')],
+           ['Product', htmlEsc(p.product || '')], ['Size / qty', htmlEsc([p.size, p.quantity && 'Qty ' + p.quantity].filter(Boolean).join(' \u00b7 '))],
+           ['Due', '<b style="color:#b91c1c">' + htmlEsc(p.due) + ' \u2014 ' + p.days_late + ' day' + (p.days_late === 1 ? '' : 's') + ' late</b>'],
+           ['Status', p.steps.map(st => htmlEsc(st.label) + ': <b>' + htmlEsc(st.status) + '</b>').join('<br>')],
+           ['Invoice', htmlEsc([p.invoice, p.total != null ? '$' + usd2(p.total) : null, p.paid].filter(Boolean).join(' \u00b7 '))]]
+            .map(r => '<tr><td style="padding:5px 10px;color:#6b7280;border-top:1px solid #e5e7eb;vertical-align:top">' + r[0] +
+              '</td><td style="padding:5px 10px;border-top:1px solid #e5e7eb">' + r[1] + '</td></tr>').join('') + '</table>').join('') +
+        '<p><a href="' + NOVA_URL + '/client-bot?chat=' + ctx.chatId + '">Open the conversation in Nova</a></p></div>';
+      try {
+        if (!deps.sendMail) throw new Error('email sending is not set up');
+        emailId = await deps.sendMail({ to: ESCALATE_TO, subject: subject, text: text, html: html, replyTo: c.email || undefined });
+      } catch (e) {
+        ok = false; error = String(e && e.message || e).slice(0, 300);
+        console.error('CLIENT_BOT escalation email', error);
+      }
+    }
+    for (const x of toSend) {
+      await dbRun('INSERT INTO client_escalations (chat_id, customer_id, estimate_id, kind, sent_to, email_id, ok, error) VALUES (?,?,?,?,?,?,?,?)',
+        [ctx.chatId || null, who.customer ? who.customer.id : null, x.eid, preview ? 'past_due_preview' : 'past_due', ESCALATE_TO, emailId, preview ? 0 : (ok ? 1 : 0), preview ? 'admin preview: not sent' : error]).catch(() => {});
+    }
+    if (ctx.chatId) {
+      const ev = { kind: 'escalation', orders: fresh.map(x => x.p.order), sent: toSend.length > 0 && !preview && ok, preview: preview || undefined,
+        already: toSend.length ? undefined : true, to: ESCALATE_TO, error: error || undefined };
+      await dbRun('INSERT INTO client_messages (chat_id, role, content, cards) VALUES (?,?,?,?)', [ctx.chatId, 'event', '', JSON.stringify([ev])]).catch(() => {});
+    }
+    return { orders: fresh.map(x => x.p.order) };
+  }
+  const PAST_DUE_SAY = 'PAST DUE: this order is past its due date and is not finished. Say exactly this, in the customer\u2019s language: ' +
+    '"It seems like this order is past due. I\u2019m escalating it right away so we can get you an updated turnaround time." ' +
+    'Do not give the old due date as if it still stands, do not promise a new date, and do not mention emails or staff names.';
+  const WAITING_SAY = 'This order is past its due date because it is waiting on the customer (files to upload or a proof to review): ' +
+    'tell them kindly that it is waiting on that step, and that the date will be updated once it is done.';
+
+  async function runTool(name, input, who, cards, ctx) {
     input = input || {};
     const cid = who.customer ? parseInt(who.customer.id) : null;
     if (name === 'search_products') {
@@ -1400,7 +1494,10 @@ module.exports = function mountClientBot(app, deps) {
         const rows = await runQuery(ownOrdersSql(cid) + ' ORDER BY e.id DESC LIMIT ' + n);
         const projects = await projectCards(rows);
         if (projects.length) cards.push({ type: 'projects', projects: projects });
-        return { orders: projectsForModel(projects), shown: projects.length ? PROJECTS_SHOWN : undefined };
+        const esc1 = await escalatePastDue(projects, who, ctx || {});
+        return { past_due: esc1 ? PAST_DUE_SAY + ' Past-due orders: ' + esc1.orders.join(', ') + '.' : undefined,
+          waiting_on_customer: projects.some(p => p.waiting_on_customer) ? WAITING_SAY : undefined,
+          orders: projectsForModel(projects), shown: projects.length ? PROJECTS_SHOWN : undefined };
       }
       const raw = String(input.order_number || '').trim();
       const n = parseInt(raw.replace(/[^0-9]/g, ''));
@@ -1418,7 +1515,10 @@ module.exports = function mountClientBot(app, deps) {
         options: specs.filter(s => s.estimate_id === rows[i].id && s.v != null && String(s.v).trim() !== '').slice(0, 14)
           .map(s => ({ field: s.f, value: String(s.v).slice(0, 80) })) }));
       cards.push({ type: 'projects', projects: projects });
-      return { orders: out, shown: PROJECTS_SHOWN };
+      const esc2 = await escalatePastDue(projects, who, ctx || {});
+      return { past_due: esc2 ? PAST_DUE_SAY + ' Past-due orders: ' + esc2.orders.join(', ') + '.' : undefined,
+        waiting_on_customer: projects.some(p => p.waiting_on_customer) ? WAITING_SAY : undefined,
+        orders: out, shown: PROJECTS_SHOWN };
     }
     return { error: 'Unknown tool.' };
   }
@@ -1916,7 +2016,7 @@ module.exports = function mountClientBot(app, deps) {
         const results = [];
         for (const tu of toolUses) {
           let out;
-          try { out = await runTool(tu.name, tu.input, who, cards); }
+          try { out = await runTool(tu.name, tu.input, who, cards, { chatId: chat.id, text: text }); }
           catch (e) { out = { error: 'That lookup failed.' }; console.error('CLIENT_BOT tool', tu.name, e.message); }
           used.push({ tool: tu.name, input: tu.input, found: out && (out.error || out.not_found) ? (out.error || out.not_found) :
             (out && out.orders ? out.orders.length + ' order(s)' : out && out.results ? out.results.length + ' product(s)' : 'ok') });
@@ -2047,6 +2147,21 @@ module.exports = function mountClientBot(app, deps) {
     const m = mode();
     res.json({ mode: m === 'open' ? 'live' : m });
   });
+  // Setup → Past-due escalations → Send test email.
+  app.post('/api/admin/client-bot/escalation-test', auth, adminOnly, async (req, res) => {
+    try {
+      if (!deps.sendMail) throw new Error('email sending is not set up');
+      await deps.sendMail({ to: ESCALATE_TO, subject: 'NovaAI test — past-due escalations reach you',
+        text: 'This is a test from NovaAI (Setup → Past-due escalations). Escalation emails for past-due jobs will arrive like this one.',
+        html: '<p>This is a test from NovaAI (Setup → Past-due escalations). Escalation emails for past-due jobs will arrive like this one.</p>' });
+      res.json({ ok: true, to: ESCALATE_TO });
+    } catch (e) {
+      const m = String(e && e.message || e);
+      res.json({ ok: false, error: /scope|unauthorized_client|insufficient/i.test(m)
+        ? 'Google has not allowed sending yet — add the gmail.send permission (docs/CLIENT_BOT.md, "Past-due escalations").' : m.slice(0, 200) });
+    }
+  });
+
   app.post('/api/admin/client-bot/mode', auth, adminOnly, async (req, res) => {
     const want = String((req.body && req.body.mode) || '');
     if (want !== 'live' && want !== 'test') return res.status(400).json({ ok: false, error: 'Mode must be live or test.' });
@@ -2084,7 +2199,7 @@ module.exports = function mountClientBot(app, deps) {
     const c = await dbGet("SELECT COUNT(*) AS chats, SUM(CASE WHEN source='website' THEN 1 ELSE 0 END) AS website, " +
       "SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END) AS signed_in FROM client_chats");
     res.json({ ok: true, public_on: publicOn(), mode: mode(), switch: savedMode || (publicOn() ? 'live' : 'test'),
-      test_key: !!process.env.CLIENT_BOT_TEST_KEY, sso_secret: !!process.env.CLIENT_SSO_SECRET,
+      test_key: !!process.env.CLIENT_BOT_TEST_KEY, escalate_to: ESCALATE_TO, sso_secret: !!process.env.CLIENT_SSO_SECRET,
       verify_url: true, model: MODEL, counts: c || {} });
   });
 
