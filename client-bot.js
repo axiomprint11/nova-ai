@@ -25,6 +25,8 @@
 // Money is always shown as 1,678.54 (comma thousands, two decimals); callers add the $.
 function usd2(n) { return Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
+const VisitorInfo = require('./visitor-info');
+
 module.exports = function mountClientBot(app, deps) {
   const { db, runQuery, jwt, crypto, anthropic, auth, adminOnly, quoteProduct, buildOrderLink,
           stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming,
@@ -131,6 +133,7 @@ module.exports = function mountClientBot(app, deps) {
       db.run('ALTER TABLE client_bot_rules ADD COLUMN ' + c, () => {});
       db.run('ALTER TABLE client_bot_rules_history ADD COLUMN ' + c, () => {});
     });
+    db.run('ALTER TABLE client_chats ADD COLUMN visit TEXT', () => {});     // how they reached the site + device (JSON)
     db.run('ALTER TABLE client_bot_rules ADD COLUMN mode TEXT', () => {
       db.get('SELECT mode FROM client_bot_rules WHERE id = 1', (e, r) => { if (!e && r && (r.mode === 'live' || r.mode === 'test')) savedMode = r.mode; });
     });
@@ -1787,11 +1790,12 @@ module.exports = function mountClientBot(app, deps) {
     }
     if (!chat && afterCart) return res.json({ ok: true, skip: true });
     if (!chat) {
-      const r = await dbRun('INSERT INTO client_chats (visitor_id, customer_id, customer_name, customer_email, company, source, preview_by, ip, user_agent, title) ' +
-        'VALUES (?,?,?,?,?,?,?,?,?,?)', [who.vid, who.customer ? who.customer.id : null, who.customer ? who.customer.name : null,
+      const visit = VisitorInfo.cleanVisit(req.body && req.body.visit, req.body && req.body.device);
+      const r = await dbRun('INSERT INTO client_chats (visitor_id, customer_id, customer_name, customer_email, company, source, preview_by, ip, user_agent, title, visit) ' +
+        'VALUES (?,?,?,?,?,?,?,?,?,?,?)', [who.vid, who.customer ? who.customer.id : null, who.customer ? who.customer.name : null,
         who.customer ? who.customer.email : null, who.customer ? who.customer.company : null, who.source, who.staff || null,
         ip,
-        String(req.headers['user-agent'] || '').slice(0, 200), (text || 'Sent files').slice(0, 120)]);
+        String(req.headers['user-agent'] || '').slice(0, 400), (text || 'Sent files').slice(0, 120), visit ? JSON.stringify(visit).slice(0, 6000) : null]);
       chat = { id: r.lastID };
     }
     // Attachments: only this visitor's own uploads, not yet sent with another message.
@@ -2160,7 +2164,11 @@ module.exports = function mountClientBot(app, deps) {
       count = { n: 0 };
     }
     res.json({ ok: true, unread: count ? count.n : 0,
-      chats: rows.map(r => Object.assign(r, { unread: !!r.unread, last_message: String(r.last_message || '').slice(0, 160) })) });
+      chats: rows.map(r => {
+        const vi = VisitorInfo.visitor(r);
+        return Object.assign(r, { unread: !!r.unread, last_message: String(r.last_message || '').slice(0, 160),
+          src: vi.source ? vi.source.label : null, dev_type: r.user_agent ? vi.device.type : null, visit: undefined, user_agent: undefined });
+      }) });
   });
 
   app.get('/api/admin/client-bot/chats/:id', auth, adminOnly, async (req, res) => {
@@ -2170,7 +2178,7 @@ module.exports = function mountClientBot(app, deps) {
     const rating = await dbGet('SELECT rating, note, active FROM client_chat_ratings WHERE chat_id = ?', [chat.id]).catch(() => null);
     const msgs = await dbAll('SELECT id, role, content, cards, tools, created_at, page_url, page_title FROM client_messages WHERE chat_id = ? ORDER BY id', [chat.id]);
     const files = await dbAll('SELECT ref, message_id, name, kind, size, info, preview_path FROM client_files WHERE chat_id = ? ORDER BY id', [chat.id]);
-    res.json({ ok: true, chat: chat, rating: rating || null, messages: msgs.map(m => ({ id: m.id, role: m.role, content: m.content, created_at: m.created_at,
+    res.json({ ok: true, chat: chat, visitor: VisitorInfo.visitor(chat), rating: rating || null, messages: msgs.map(m => ({ id: m.id, role: m.role, content: m.content, created_at: m.created_at,
       page_url: m.page_url || null, page_title: m.page_title || null,
       cards: m.cards ? JSON.parse(m.cards) : [], tools: m.tools ? JSON.parse(m.tools) : [],
       files: files.filter(f => f.message_id === m.id).map(f => ({ id: f.ref, name: f.name, kind: f.kind, size: f.size, info: f.info,

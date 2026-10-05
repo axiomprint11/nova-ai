@@ -336,6 +336,30 @@ On a computer the chat behaves like a desktop window:
   chat"); opening it shows the same conversation. `nova-client:close` carries `active` for this.
 
 Phones keep the full-screen chat.
+## Visitor details (Conversations)
+
+The top of each conversation shows who is chatting (`visitor-info.js`; never sent to the model):
+
+- **Came from** — how they reached axiomprint.com, from the first page of their visit: ad click ids (`gclid`/`gbraid`/
+  `wbraid` → Google Ads, `msclkid` → Microsoft Ads, `ttclid`, `li_fat_id`), UTM tags (`utm_source`, `utm_medium`,
+  `utm_campaign`…; `utm_source=chatgpt.com` → ChatGPT, `gmb` → Google Business Profile), `fbclid`, `srsltid` (Google free
+  product listings), else the referring site (Google, Bing, ChatGPT, Perplexity, Gemini, Yelp, Facebook, Instagram, …),
+  else an in-app browser (Instagram app, Facebook app, Google app…), else **Direct**.
+- **First visit** — the same for their first visit in that browser (kept 180 days), when it was a different visit.
+- **Device** — phone / tablet / computer, system, browser or app (from the user agent), plus screen size, language and
+  time zone measured by the chat page.
+- **IP address**, **Landed on** (with the referring site) and **Campaign tags**, and **Chatting from** (first and latest
+  page). Long tracking values are hidden from the displayed addresses (the link keeps the full address); secret-looking
+  query values are removed before anything is stored.
+
+The website header script records the visit once per tab session (`sessionStorage` `novaClientVisit`; first visit in
+`localStorage` `novaClientFirstVisit`) and sends it with `nova-client:page`; the chat sends it with the message that starts
+a conversation (`visit`, `device`), stored as JSON in `client_chats.visit`. The list shows "📱 via ChatGPT" on each row.
+
+**IP addresses need nginx to pass them.** Nova reads the last `X-Forwarded-For` entry, which nginx adds with
+`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` in the `location` that proxies to port 3000. Without it every
+visitor shows as `::1`/`127.0.0.1` — and they all share one per-address rate limit.
+
 ## Pages and Add to Cart in the transcript
 
 The header script tells the chat which page the customer is on (`nova-client:page`, again whenever it changes,

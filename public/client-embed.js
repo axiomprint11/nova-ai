@@ -334,12 +334,31 @@
         return u.toString().slice(0, 500);
       } catch (e) { return null; }
     }
+    // How the visitor reached the site: the first page of this visit (tab session) with the site
+    // that sent them (referrer) and any campaign tags (UTM, ad click ids) — and their very first
+    // visit in this browser. Sent to the chat so the team sees "came from Google / ChatGPT / Yelp".
+    var VISIT_TAGS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id', 'gclid', 'gbraid', 'wbraid',
+      'gad_source', 'fbclid', 'msclkid', 'ttclid', 'li_fat_id', 'twclid', 'srsltid', 'yclid', 'ref', 'source'];
+    function sameSite(u) { try { return /(^|\.)axiomprint\.com$/i.test(new URL(u).hostname); } catch (e) { return false; } }
+    function readVisit() {
+      var tags = {};
+      try { var q = new URL(location.href).searchParams; VISIT_TAGS.forEach(function (k) { var v = q.get(k); if (v) tags[k] = String(v).slice(0, 120); }); } catch (e) {}
+      var ref = document.referrer && !sameSite(document.referrer) ? String(document.referrer).slice(0, 300) : '';
+      return { landing: pageNow(), referrer: ref, tags: tags, at: new Date().toISOString() };
+    }
+    var visit = null, firstVisit = null;
+    try { visit = JSON.parse(sessionStorage.getItem('novaClientVisit') || 'null'); } catch (e) { visit = null; }
+    if (!visit) { visit = readVisit(); try { sessionStorage.setItem('novaClientVisit', JSON.stringify(visit)); } catch (e) {} }
+    try { firstVisit = JSON.parse(localStorage.getItem('novaClientFirstVisit') || 'null'); } catch (e) { firstVisit = null; }
+    if (!firstVisit || !(Date.now() - new Date(firstVisit.at).getTime() < 180 * 864e5)) {
+      firstVisit = visit; try { localStorage.setItem('novaClientFirstVisit', JSON.stringify(firstVisit)); } catch (e) {}
+    }
     function sayPage(force) {
       if (!loaded) return;
       var url = pageNow();
       if (!url || (!force && url === lastPage)) return;
       lastPage = url;
-      say({ type: 'nova-client:page', url: url, title: String(document.title || '').slice(0, 150) });
+      say({ type: 'nova-client:page', url: url, title: String(document.title || '').slice(0, 150), visit: visit, first: firstVisit });
     }
     setInterval(function () { sayPage(false); }, 1500);
     window.addEventListener('popstate', function () { setTimeout(function () { sayPage(false); }, 50); });

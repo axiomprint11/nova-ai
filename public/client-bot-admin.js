@@ -152,6 +152,8 @@
         (c.rating ? '<span class="cb-rt ' + c.rating + '" title="Rated ' + (c.rating === 'up' ? 'good' : 'not good') + '">' + (c.rating === 'up' ? '\ud83d\udc4d' : '\ud83d\udc4e') + '</span>' : '') + '</div>' +
         '<small>' + esc([c.company, c.customer_email].filter(Boolean).join(' · ')) + '</small>' +
         '<small>' + esc(c.last_message || c.title || '') + '</small>' +
+        (c.src || c.dev_type ? '<small class="cb-row-src">' + (c.dev_type ? (c.dev_type === 'Desktop' ? '\ud83d\udcbb ' : '\ud83d\udcf1 ') : '') +
+          (c.src ? 'via ' + esc(c.src) : '') + '</small>' : '') +
         (c.last_page ? '<small class="cb-row-page" title="' + esc(c.last_page) + '">\ud83d\udd17 ' + esc(String(c.last_page).replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')) + '</small>' : '');
       b.onclick = () => openConvo(c.id);
       box.appendChild(b);
@@ -237,14 +239,42 @@
   });
 
   // Header line: the page the conversation started on, and the latest one if it moved.
-  function pagesLine(list, c) {
+  // An address to read: no https://www., and without long tracking values (the full address is in the link).
+  function shortUrl(u) {
+    try {
+      const x = new URL(String(u));
+      const keep = Array.from(x.searchParams.keys()).filter(k => /^utm_/.test(k));
+      const dropped = Array.from(x.searchParams.keys()).length - keep.length;
+      const q = keep.map(k => k + '=' + x.searchParams.get(k)).join('&');
+      return (x.hostname.replace(/^www\./, '') + x.pathname).replace(/\/$/, '') + (q ? '?' + q : '') + (dropped ? ' \u2026' : '');
+    } catch (e) { return String(u || '').replace(/^https?:\/\/(www\.)?/, '').slice(0, 120); }
+  }
+  const urlLink = (u, title) => '<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer" title="' + esc(title ? title + ' \u2014 ' + u : u) + '">' + esc(shortUrl(u)) + '</a>';
+  // Visitor details at the top of a conversation: how they reached the site, device, IP, pages.
+  function visitorBox(v, list, c) {
+    v = v || {};
+    const rows = [];
+    const row = (label, html) => rows.push('<div class="cb-vis-row"><span>' + esc(label) + '</span><div>' + html + '</div></div>');
+    if (v.source) row('Came from', '<b class="cb-src">' + esc(v.source.label) + '</b> <i>' + esc(v.source.kind || '') + '</i>' +
+      (v.source.detail ? ' <small>' + esc(v.source.detail) + '</small>' : ''));
+    else if (c.source === 'website') row('Came from', '<small>Not recorded (conversation from before visit tracking)</small>');
+    const d = v.device || {};
+    if (d.label) row('Device', esc(d.label) + (d.app && d.browser ? ' <small>(' + esc(d.browser) + ')</small>' : '') +
+      ([d.screen && d.screen + ' screen', d.lang, d.tz].filter(Boolean).length ? ' <small>' + esc([d.screen && d.screen + ' screen', d.lang, d.tz].filter(Boolean).join(' \u00b7 ')) + '</small>' : ''));
+    if (v.ip) row('IP address', esc(v.ip));
+    else if (v.ip_note) row('IP address', '<small>' + esc(v.ip_note) + '</small>');
+    if (v.landing) row('Landed on', urlLink(v.landing) + (v.referrer ? ' <small>from ' + urlLink(v.referrer) + '</small>' : '') +
+      (v.arrived ? ' <small>\u00b7 ' + esc(rel(v.arrived)) + '</small>' : ''));
+    const tags = Object.keys(v.tags || {});
+    if (tags.length) row('Campaign tags', tags.map(k => '<code>' + esc(k) + '=' + esc(String(v.tags[k]).slice(0, 60)) + '</code>').join(' '));
+    if (v.first && v.first.source) row('First visit', esc(rel(v.first.at)) + ' \u00b7 via <b>' + esc(v.first.source.label) + '</b> <i>' + esc(v.first.source.kind || '') + '</i>' +
+      (v.first.landing ? ' <small>' + urlLink(v.first.landing) + '</small>' : ''));
     const pages = list.filter(m => m.page_url).map(m => ({ url: m.page_url, title: m.page_title }));
-    const link = (p) => '<a href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer" title="' + esc(p.title || p.url) + '">' +
-      esc(String(p.url).replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')) + '</a>';
-    if (!pages.length) return c.source === 'website' ? '<div class="cb-tr-pages none">Page not recorded (conversation from before page tracking)</div>' : '';
-    const first = pages[0], last = pages[pages.length - 1];
-    return '<div class="cb-tr-pages"><span>Started on</span>' + link(first) +
-      (last.url !== first.url ? '<span>Now on</span>' + link(last) : '') + '</div>';
+    if (pages.length) {
+      const first = pages[0], last = pages[pages.length - 1];
+      row('Chatting from', urlLink(first.url, first.title) + (last.url !== first.url ? ' <small>\u2192 now on</small> ' + urlLink(last.url, last.title) : ''));
+    }
+    return rows.length ? '<div class="cb-vis">' + rows.join('') + '</div>' : '';
   }
 
   async function openConvo(id, keepScroll) {
@@ -259,10 +289,10 @@
         (c.company ? ' · ' + esc(c.company) : '') +
         '<small>' + [c.customer_email, c.customer_id ? 'customer #' + c.customer_id : null,
           c.source === 'website' ? 'on the website' : 'admin preview' + (c.preview_by ? ' by ' + String(c.preview_by).replace(/^(member|user):/, '') : ''),
-          'started ' + rel(c.created_at), c.ip ? 'IP ' + c.ip : null].filter(Boolean).map(esc).join(' · ') + '</small>' + pagesLine(j.messages || [], c) + rateBar(j.rating) + '</div>' +
+          'started ' + rel(c.created_at)].filter(Boolean).map(esc).join(' · ') + '</small>' + visitorBox(j.visitor, j.messages || [], c) + rateBar(j.rating) + '</div>' +
       transcript(j.messages);
     function transcript(list) {
-      const short = (u) => String(u || '').replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
+      const short = shortUrl;
       // Page lines: where the chat started, and each move to another page.
       // Add to Cart clicks: their own line (the older "added to their cart" note is
       // left out when the click is already shown).

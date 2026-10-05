@@ -206,7 +206,9 @@ changes; if the site defines `NovaClientChat.login(email, password) → token`, 
 credentials go only to the parent page (`nova-client:login` / `login-result`), never to Nova or the model. `resume()`
 keeps the conversation on screen across a sign-in. Desktop: the window drags by its title bar (loader handle sized by
 `nova-client:drag-area`; may go partly off screen, title strip kept reachable), resizes from edges/corners, and minimizes
-("Back to chat" launcher); position + size in website `localStorage`. The loader reports the page (`nova-client:page`); user
+("Back to chat" launcher); position + size in website `localStorage`. The loader also records how the visitor arrived (referrer, UTM, ad click ids; per tab session + first visit) and the chat
+sends it with a new conversation (`client_chats.visit`); `visitor-info.js` turns it and the user agent into source / device
+for the admin view. The loader reports the page (`nova-client:page`); user
 messages store `page_url`/`page_title`, and `role='event'` rows (page moves, Add to Cart clicks with outcome) come
 from `POST /api/client-bot/event` — shown in the admin transcript, never sent to the model. Product lists are shown once: `mergeProductList()` moves the model's
 "- **Name** — desc" lines into the products card (desc under the name; else `oneLine(short_description)`) and leaves a

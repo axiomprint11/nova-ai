@@ -103,6 +103,18 @@
   .cb-lesson-ft input { margin: 0; width: auto; }
   .cb-lesson-ft button { border: none; background: none; color: var(--indigo-dark); font: 600 11.5px/1 inherit; cursor: pointer; padding: 0; }
   .cb-lesson-ft button[data-del] { color: #b91c1c; margin-left: auto; }
+  /* visitor details at the top of a conversation */
+  .cb-vis { margin-top: 10px; display: grid; gap: 5px; font-size: 12.5px; }
+  .cb-vis-row { display: grid; grid-template-columns: 110px 1fr; gap: 10px; align-items: baseline; }
+  .cb-vis-row > span { color: var(--muted); font-weight: 600; font-size: 11.5px; }
+  .cb-vis-row > div { min-width: 0; overflow-wrap: anywhere; }
+  .cb-vis-row a { color: var(--indigo-dark); text-decoration: none; font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .cb-vis-row a:hover { text-decoration: underline; }
+  .cb-vis-row small { color: var(--muted); }
+  .cb-vis-row i { color: var(--muted); font-style: normal; }
+  .cb-vis-row code { font-size: 11px; background: #f4f5fa; border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; margin: 0 3px 3px 0; display: inline-block; }
+  .cb-src { background: #eef2ff; color: #3730a3; border-radius: 6px; padding: 1px 7px; font-weight: 700; }
+  .cb-row-src { color: #4f46e5 !important; font-size: 11px !important; }
   /* events in a transcript: the page the customer was on, and Add to Cart clicks */
   .cb-evt { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin: 8px auto 12px; max-width: 92%; width: fit-content;
     padding: 5px 11px; border-radius: 999px; font-size: 11.5px; color: var(--muted); background: #f4f5fa; border: 1px solid var(--line); }

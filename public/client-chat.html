@@ -140,7 +140,7 @@
     };
     if (!chat) chat = ClientChat.mount(document.getElementById('pcBody'), opts);
     else chat.resume(j.greeting, opts.suggestions);   // signed in or out: replace the greeting, or keep the conversation on screen
-    if (pageNow) chat.setPage(pageNow.url, pageNow.title);
+    if (pageNow) chat.setPage(pageNow.url, pageNow.title, pageNow.visit, pageNow.first);
     paintSignin();
     paintHistory();
     dragArea();
@@ -282,8 +282,10 @@
     if (PARENTS.indexOf(ev.origin) === -1 || !ev.data) return;
     if (ev.data.type === 'nova-client:login-ready') { loginReady = true; return; }
     if (ev.data.type === 'nova-client:page') {
-      pageNow = { url: String(ev.data.url || '').slice(0, 500), title: String(ev.data.title || '').slice(0, 150) };
-      if (chat) chat.setPage(pageNow.url, pageNow.title);
+      pageNow = { url: String(ev.data.url || '').slice(0, 500), title: String(ev.data.title || '').slice(0, 150),
+                  visit: ev.data.visit && typeof ev.data.visit === 'object' ? ev.data.visit : null,
+                  first: ev.data.first && typeof ev.data.first === 'object' ? ev.data.first : null };
+      if (chat) chat.setPage(pageNow.url, pageNow.title, pageNow.visit, pageNow.first);
       return;
     }
     if (ev.data.type === 'nova-client:login-url') {     // only a page on the website itself

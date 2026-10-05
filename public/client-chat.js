@@ -530,7 +530,22 @@
     // The website page the chat is on (the header script tells us), and events the
     // team sees in the transcript: moving to another page, Add to Cart clicks.
     let page = null, sentPage = null;
-    function pageBody() { return page && page.url ? { page_url: page.url, page_title: page.title || '' } : {}; }
+    // A new conversation also carries how the visitor reached the site (from the header script) and
+    // what the browser says about the device — for the team's Conversations view, never for the model.
+    let visit = null;
+    function deviceInfo() {
+      const uad = navigator.userAgentData;
+      let tz = '';
+      try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
+      return { screen: (screen.width || 0) + 'x' + (screen.height || 0), dpr: window.devicePixelRatio || 1,
+        lang: navigator.language || '', tz: tz, touch: navigator.maxTouchPoints || 0,
+        mobile: uad ? !!uad.mobile : undefined, platform: uad ? uad.platform : undefined };
+    }
+    function pageBody() {
+      const b = page && page.url ? { page_url: page.url, page_title: page.title || '' } : {};
+      if (!chatId) { b.visit = visit; b.device = deviceInfo(); }
+      return b;
+    }
     function logEvent(ev) {
       if (!chatId) return;
       try {
@@ -539,7 +554,8 @@
           body: JSON.stringify(Object.assign({ chat_id: chatId }, ev, opts.extraBody ? opts.extraBody() : {})) }).catch(() => {});
       } catch (e) {}
     }
-    function setPage(url, title) {
+    function setPage(url, title, v, first) {
+      if (v || first) visit = { visit: v || null, first: first || null };
       if (!url) return;
       page = { url: String(url), title: String(title || '') };
       if (chatId && sentPage !== page.url) { sentPage = page.url; logEvent({ kind: 'page', url: page.url, title: page.title }); }
