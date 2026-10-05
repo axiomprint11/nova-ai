@@ -114,6 +114,14 @@
   .cb-vis-row i { color: var(--muted); font-style: normal; }
   .cb-vis-row code { font-size: 11px; background: #f4f5fa; border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; margin: 0 3px 3px 0; display: inline-block; }
   .cb-src { background: #eef2ff; color: #3730a3; border-radius: 6px; padding: 1px 7px; font-weight: 700; }
+  .cb-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 2px; }
+  .cb-chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 999px; font-size: 12px;
+    background: #f4f5fa; border: 1px solid var(--line); color: var(--ink); white-space: nowrap; cursor: default; }
+  .cb-chip svg { flex: none; color: #6b7280; }
+  .cb-chip.src { background: #eef2ff; border-color: #c7d2fe; color: #3730a3; font-weight: 600; }
+  .cb-chip.src svg { color: #4f46e5; }
+  .cb-chip.muted { color: var(--muted); }
+  .cb-chip.sm { height: 20px; font-size: 11.5px; padding: 0 7px; vertical-align: middle; }
   .cb-row-src { color: #4f46e5 !important; font-size: 11px !important; }
   /* events in a transcript: the page the customer was on, and Add to Cart clicks */
   .cb-evt { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin: 8px auto 12px; max-width: 92%; width: fit-content;

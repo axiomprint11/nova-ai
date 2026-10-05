@@ -369,7 +369,7 @@ The top of each conversation shows who is chatting (`visitor-info.js`; never sen
   product listings), else the referring site (Google, Bing, ChatGPT, Perplexity, Gemini, Yelp, Facebook, Instagram, …),
   else an in-app browser (Instagram app, Facebook app, Google app…), else **Direct**.
 - **First visit** — the same for their first visit in that browser (kept 180 days), when it was a different visit.
-- **Device** — phone / tablet / computer, system, browser or app (from the user agent), plus screen size, language and
+- **Device** (one line of icon chips with tooltips: source, device + system, browser or app, screen, language, time zone, IP) — phone / tablet / computer, system, browser or app (from the user agent), plus screen size, language and
   time zone measured by the chat page.
 - **IP address**, **Landed on** (with the referring site) and **Campaign tags**, and **Chatting from** (first and latest
   page). Long tracking values are hidden from the displayed addresses (the link keeps the full address); secret-looking

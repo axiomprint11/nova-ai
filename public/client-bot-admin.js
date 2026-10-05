@@ -253,29 +253,67 @@
     } catch (e) { return String(u || '').replace(/^https?:\/\/(www\.)?/, '').slice(0, 120); }
   }
   const urlLink = (u, title) => '<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer" title="' + esc(title ? title + ' \u2014 ' + u : u) + '">' + esc(shortUrl(u)) + '</a>';
-  // Visitor details at the top of a conversation: how they reached the site, device, IP, pages.
+  // Visitor details at the top of a conversation. One line of icon chips (source, device, browser,
+  // screen, language, time zone, IP) — the full wording is in each chip's tooltip — then the pages.
+  const VI = (d) => '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+  const ICON = {
+    laptop: VI('<rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/>'),
+    phone: VI('<rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18.5h2"/>'),
+    tablet: VI('<rect x="4.5" y="2.5" width="15" height="19" rx="2"/><path d="M11 18.5h2"/>'),
+    browser: VI('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'),
+    app: VI('<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M9 12h6M12 9v6"/>'),
+    screen: VI('<rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M8 21h8M12 17v4"/>'),
+    lang: VI('<path d="M4 6h9M8.5 4v2M6 6c.8 3 2.8 5.3 5.5 6.5M11 6c-.8 3.5-3 6-6.5 7.5"/><path d="M13 20l3.5-8 3.5 8M14.2 17.5h4.6"/>'),
+    clock: VI('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+    pin: VI('<path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>'),
+    search: VI('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>'),
+    ai: VI('<path d="M10 3l1.6 4.4L16 9l-4.4 1.6L10 15l-1.6-4.4L4 9l4.4-1.6z"/><path d="M18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z"/>'),
+    star: VI('<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"/>'),
+    people: VI('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M16.5 14.6c2.6.2 4.4 1.9 5 4.9"/>'),
+    ad: VI('<path d="M3 10v4h3l6 4V6L6 10H3z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/>'),
+    mail: VI('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5L12 13l8.5-6.5"/>'),
+    link: VI('<path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/>'),
+    direct: VI('<path d="M5 12h14M13 6l6 6-6 6"/>'),
+    map: VI('<path d="M9 4L3 6.5v13L9 17l6 2.5 6-2.5v-13L15 6.5 9 4z"/><path d="M9 4v13M15 6.5v13"/>')
+  };
+  function sourceIcon(s) {
+    const k = String((s && s.kind) || '').toLowerCase();
+    return /paid/.test(k) ? ICON.ad : /ai assistant/.test(k) ? ICON.ai : /maps/.test(k) ? ICON.map : /search|shopping/.test(k) ? ICON.search
+      : /directory|review/.test(k) ? ICON.star : /social|app/.test(k) ? ICON.people : /email|text/.test(k) ? ICON.mail
+      : /referral|campaign/.test(k) ? ICON.link : ICON.direct;
+  }
+  const chip = (icon, text, tip, cls) => '<span class="cb-chip' + (cls ? ' ' + cls : '') + '" title="' + esc(tip || text) + '">' + icon + '<span>' + esc(text) + '</span></span>';
   function visitorBox(v, list, c) {
     v = v || {};
     const rows = [];
     const row = (label, html) => rows.push('<div class="cb-vis-row"><span>' + esc(label) + '</span><div>' + html + '</div></div>');
-    if (v.source) row('Came from', '<b class="cb-src">' + esc(v.source.label) + '</b> <i>' + esc(v.source.kind || '') + '</i>' +
-      (v.source.detail ? ' <small>' + esc(v.source.detail) + '</small>' : ''));
-    else if (c.source === 'website') row('Came from', '<small>Not recorded (conversation from before visit tracking)</small>');
     const d = v.device || {};
-    if (d.label) row('Device', esc(d.label) + (d.app && d.browser ? ' <small>(' + esc(d.browser) + ')</small>' : '') +
-      ([d.screen && d.screen + ' screen', d.lang, d.tz].filter(Boolean).length ? ' <small>' + esc([d.screen && d.screen + ' screen', d.lang, d.tz].filter(Boolean).join(' \u00b7 ')) + '</small>' : ''));
-    if (v.ip) row('IP address', esc(v.ip));
-    else if (v.ip_note) row('IP address', '<small>' + esc(v.ip_note) + '</small>');
-    if (v.landing) row('Landed on', urlLink(v.landing) + (v.referrer ? ' <small>from ' + urlLink(v.referrer) + '</small>' : '') +
-      (v.arrived ? ' <small>\u00b7 ' + esc(rel(v.arrived)) + '</small>' : ''));
+    const chips = [];
+    if (v.source) chips.push(chip(sourceIcon(v.source), v.source.label, 'Came from ' + v.source.label + ' — ' + (v.source.kind || '') +
+      (v.source.detail ? ' (' + v.source.detail + ')' : ''), 'src'));
+    else if (c.source === 'website') chips.push(chip(ICON.direct, 'Source not recorded', 'This conversation is from before visit tracking', 'muted'));
+    if (d.label) {
+      const devIcon = d.type === 'Phone' ? ICON.phone : d.type === 'Tablet' ? ICON.tablet : ICON.laptop;
+      chips.push(chip(devIcon, d.os || d.type || 'Device', (d.type || 'Device') + (d.os ? ' — ' + d.os : '')));
+      if (d.app) chips.push(chip(ICON.app, d.app, 'Opened inside the ' + d.app + (d.browser ? ' (' + d.browser + ')' : '')));
+      else if (d.browser) chips.push(chip(ICON.browser, d.browser, 'Browser: ' + d.browser));
+    }
+    if (d.screen) chips.push(chip(ICON.screen, d.screen.replace('x', '×'), 'Screen ' + d.screen.replace('x', ' × ') + ' px'));
+    if (d.lang) chips.push(chip(ICON.lang, d.lang, 'Browser language: ' + d.lang));
+    if (d.tz) chips.push(chip(ICON.clock, d.tz.split('/').pop().replace(/_/g, ' '), 'Time zone: ' + d.tz));
+    if (v.ip) chips.push(chip(ICON.pin, v.ip, 'IP address ' + v.ip));
+    else if (v.ip_note) chips.push(chip(ICON.pin, 'IP not recorded', v.ip_note, 'muted'));
+    if (chips.length) rows.push('<div class="cb-chips">' + chips.join('') + '</div>');
     const tags = Object.keys(v.tags || {});
-    if (tags.length) row('Campaign tags', tags.map(k => '<code>' + esc(k) + '=' + esc(String(v.tags[k]).slice(0, 60)) + '</code>').join(' '));
-    if (v.first && v.first.source) row('First visit', esc(rel(v.first.at)) + ' \u00b7 via <b>' + esc(v.first.source.label) + '</b> <i>' + esc(v.first.source.kind || '') + '</i>' +
-      (v.first.landing ? ' <small>' + urlLink(v.first.landing) + '</small>' : ''));
+    if (v.landing) row('Landed on', urlLink(v.landing) + (v.referrer ? ' <small>from ' + urlLink(v.referrer) + '</small>' : '') +
+      (v.arrived ? ' <small>· ' + esc(rel(v.arrived)) + '</small>' : '') +
+      (tags.length ? ' ' + tags.map(k => '<code>' + esc(k) + '=' + esc(String(v.tags[k]).slice(0, 60)) + '</code>').join(' ') : ''));
+    if (v.first && v.first.source) row('First visit', esc(rel(v.first.at)) + ' · ' +
+      chip(sourceIcon(v.first.source), v.first.source.label, (v.first.source.kind || '') + (v.first.landing ? ' — ' + v.first.landing : ''), 'src sm'));
     const pages = list.filter(m => m.page_url).map(m => ({ url: m.page_url, title: m.page_title }));
     if (pages.length) {
       const first = pages[0], last = pages[pages.length - 1];
-      row('Chatting from', urlLink(first.url, first.title) + (last.url !== first.url ? ' <small>\u2192 now on</small> ' + urlLink(last.url, last.title) : ''));
+      row('Chatting from', urlLink(first.url, first.title) + (last.url !== first.url ? ' <small>→ now on</small> ' + urlLink(last.url, last.title) : ''));
     }
     return rows.length ? '<div class="cb-vis">' + rows.join('') + '</div>' : '';
   }
