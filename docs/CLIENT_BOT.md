@@ -258,7 +258,7 @@ its orders in the last 12 months against the busiest product in the list. The li
 **Several products in one message** (rule 9b): NovaAI numbers them, starts with the first and shows only that one's list —
 a second search in the same answer is refused by the tool (`not_shown`). The next product follows after the first is priced
 or added to the cart (see Add to Cart).
-## Conversations: read / unread, Refresh
+## Conversations: read / unread, Refresh (and the badge in Admin)
 
 The Conversations list works like a phone's messages. An unread conversation has a **blue dot** and a bold name;
 opening it marks it read, and it turns unread again when the customer writes something new. Read state is per admin
@@ -266,7 +266,8 @@ opening it marks it read, and it turns unread again when the customer writes som
 an admin's first visit everything older than 12 hours counts as read. **Unread (n)** filters to unread only; **Mark all
 read** clears the dots; **Mark as unread** (top of an open conversation) puts the dot back. **Refresh** loads the
 newest chats and the open conversation's newest messages; the list also refreshes itself every minute while the tab
-is open ("Updated … ago" under the filters).
+is open ("Updated … ago" under the filters). The staff **Admin** menu shows the same unread count as a blue badge beside "Client ChatBot"
+(`GET /api/admin/client-bot/unread-count`, refreshed every minute and when the tab comes back into view).
 
 ## Thumbs up / down and lessons
 

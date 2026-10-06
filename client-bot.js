@@ -2243,15 +2243,28 @@ module.exports = function mountClientBot(app, deps) {
     catch (e) { console.error('CLIENT_BOT read-all', e.message); return res.status(500).json({ ok: false }); }
     res.json({ ok: true });
   });
-  app.get('/api/admin/client-bot/chats', auth, adminOnly, async (req, res) => {
-    const reader = readerOf(req);
-    // First visit for this admin: everything before today counts as read, so the
-    // list starts with what is new instead of a wall of dots.
+  // First visit for this admin: everything older than 12 hours counts as read, so the
+  // list starts with what is new instead of a wall of dots.
+  async function initReads(reader) {
     try {
       const seen = await dbGet('SELECT 1 AS x FROM client_chat_reads WHERE reader = ? LIMIT 1', [reader]);
       if (!seen) await dbRun("INSERT OR IGNORE INTO client_chat_reads (chat_id, reader, read_at) SELECT id, ?, updated_at FROM client_chats " +
         "WHERE updated_at < datetime('now', '-12 hours')", [reader]);
     } catch (e) { console.error('CLIENT_BOT reads init', e.message); }
+  }
+  // The unread count on its own (the badge beside "Client ChatBot" in the staff Admin menu).
+  app.get('/api/admin/client-bot/unread-count', auth, adminOnly, async (req, res) => {
+    const reader = readerOf(req);
+    await initReads(reader);
+    try {
+      const r = await dbGet('SELECT COUNT(*) AS n FROM client_chats c LEFT JOIN client_chat_reads r ON r.chat_id = c.id AND r.reader = ? ' +
+        'WHERE (r.read_at IS NULL OR r.read_at < c.updated_at)', [reader]);
+      res.json({ ok: true, unread: (r && r.n) || 0 });
+    } catch (e) { res.json({ ok: false, unread: 0 }); }
+  });
+  app.get('/api/admin/client-bot/chats', auth, adminOnly, async (req, res) => {
+    const reader = readerOf(req);
+    await initReads(reader);
     const where = [], p = [];
     const UNREAD = '(r.read_at IS NULL OR r.read_at < c.updated_at)';
     if (req.query.unread === '1') where.push(UNREAD);
