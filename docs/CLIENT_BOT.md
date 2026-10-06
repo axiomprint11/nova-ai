@@ -291,17 +291,25 @@ Ratings feed NovaAI's future answers through a **lessons layer** added to the sy
 When a customer asks about the status, the deadline or when an order will be ready, NovaAI answers the way the team does
 (prompt rule 6, from each order's `deadline.say`, built in `deadlineFacts()`):
 
-> Your job was approved and paid on Tue, Sep 29, with a 5 Business Days turnaround, so it is estimated to be ready for
-> pick-up on Wed, Oct 7 by 5:00 PM.
+> Your order was approved on Tue, Oct 6 and is in production with an express turnaround. It’s due to be ready for
+> pick-up on Fri, Oct 9 by 5:00 PM — we’ll email you as soon as it’s ready.
 
-> … ready on Fri, Oct 9 by 5:00 PM. Then it ships with UPS Ground; transit time comes after the ready date.
+> Your order was approved on Sun, Oct 4 and is in production with a 6 business day turnaround. It’s due to be ready on
+> Mon, Oct 12 by 5:00 PM, and then it ships via UPS 3 Day Select.
 
-- **Approved and paid** = `estimate.production_started_at` (the moment the system set the deadline; stored in UTC, shown in
-  Los Angeles time). Not set yet → "The ready date is set once the job is approved and paid…".
+Payment and shipping transit time are not mentioned.
+
+- **Approved** = `estimate.production_started_at` (the moment the system set the deadline; stored in UTC, shown in
+  Los Angeles time). Not set yet → "Production starts as soon as your proof is approved and the order is paid…".
 - **Turnaround** = the job's `Turnaround` option. **Ready by** = `estimate.complete_by`.
 - **Pick-up / shipping** = `estimate_handle.shipping_method` and `shipping_service_code` (UPS codes become "UPS Ground",
   "UPS 2nd Day Air"…), delivery, installation, USPS drop-off.
 - The job card shows the same facts on one line. A past-due job uses the escalation sentence instead (below).
+- **Turnaround questions** (how days are counted, the 4 PM cutoff, Rush / Express, weekends, pick-up hours, shipping
+  time) are answered from the website's turnaround page, `CLIENT_BOT_TURNAROUND_URL` (default
+  https://axiomprint.com/pages/turnaround), with the link. `turnaroundInfo()` reads the page once a day and puts its text
+  in the prompt; if the page can't be read or looks wrong it uses a built-in summary (`TURNAROUND_FALLBACK`, from the page
+  as of Oct 2026) — update that summary if the page changes a lot.
 
 ## Past-due escalations
 

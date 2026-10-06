@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.6.33';
-const NOVA_BUILT = '10-06-2026 3:00pm';
+const NOVA_VERSION = '1.6.34';
+const NOVA_BUILT = '10-06-2026 5:00pm';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---

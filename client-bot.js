@@ -1149,22 +1149,49 @@ module.exports = function mountClientBot(app, deps) {
       : m === 'service' ? 'Service on site' : null;
     let say = null;
     if (!st.finished && !st.late) {
-      const ta = turnaround ? 'a ' + turnaround + ' turnaround' : 'your chosen turnaround';
+      // "6 Business Days" -> "a 6 business day turnaround"; "Express" -> "an express turnaround"
+      const t = turnaround ? String(turnaround).replace(/\bbusiness days?\b/i, 'business day').replace(/\bdays\b/i, 'day').toLowerCase() : '';
+      const ta = t ? (/^[aeiou8]/.test(t) || /^(11|18)\b/.test(t) ? 'an ' : 'a ') + t + ' turnaround' : 'your chosen turnaround';
+      const next = m === 'pick_up' ? ' for pick-up on ' + ready + ' \u2014 we\u2019ll email you as soon as it\u2019s ready.'
+        : (m === 'shipping' || m === 'blind_drop_ship') ? ' on ' + ready + ', and then it ships' + (svc ? ' via ' + svc : '') + '.'
+        : m === 'usps_mail_drop_off' ? ' on ' + ready + ', and then it goes out by USPS mail.'
+        : m === 'delivery' ? ' on ' + ready + ', and then our team delivers it to you.'
+        : m === 'installation' ? ' on ' + ready + ', and then our team schedules the installation with you.'
+        : ' on ' + ready + '.';
       if (r.started_day && ready) {
-        say = 'Your job was approved and paid on ' + r.started_day + ', with ' + ta + ', so it is estimated to be ready' +
-          (m === 'pick_up' ? ' for pick-up' : '') + ' on ' + ready + '.' + (m === 'pick_up' ? '' : ' ') +
-          (m === 'pick_up' ? ''
-            : (m === 'shipping' || m === 'blind_drop_ship') ? 'Then it ships' + (svc ? ' with ' + svc : '') + '; transit time comes after the ready date.'
-            : m === 'usps_mail_drop_off' ? 'Then it goes to USPS as a mail drop-off.'
-            : m === 'delivery' ? 'Then our team delivers it locally.'
-            : m === 'installation' ? 'Then our team schedules the installation with you.'
-            : 'The shipping method is not set yet.');
+        say = 'Your order was approved on ' + r.started_day + ' and is in production with ' + ta + '. It\u2019s due to be ready' + next;
       } else {
-        say = 'The ready date is set once the job is approved and paid: production starts then, with ' + ta + '.' +
-          (handoff ? ' Chosen shipping: ' + handoff.replace(/ on .*$/, '') + '.' : '');
+        say = 'Production starts as soon as your proof is approved and the order is paid; with ' + ta + ', the ready date is set at that point.' +
+          (handoff ? ' Chosen ' + (m === 'pick_up' ? 'option' : 'shipping') + ': ' + handoff.replace(/ on .*$/, '') + '.' : '');
       }
     }
     return { approved_paid: r.started_day || null, turnaround: turnaround || null, ready_by: ready, handoff: handoff, say: say };
+  }
+  // The website's turnaround page — how production time is counted. Read live once a day so edits on the site
+  // reach NovaAI; the summary below (from the page, Oct 2026) is used when the page cannot be read.
+  const TURNAROUND_URL = String(process.env.CLIENT_BOT_TURNAROUND_URL || 'https://axiomprint.com/pages/turnaround');
+  const TURNAROUND_FALLBACK = [
+    'When the clock starts: production begins once payment is received, print-ready files are in and the proof is approved. Approved (and paid) before 4 PM Pacific = that business day; after 4 PM = the next business day. "No Proof Needed" orders paid before the cutoff start the same day.',
+    'Options: Standard (most economical, for planned projects); Rush (up to 50% faster, adds a 15-20% fee, typically 2-4 business days); Express (fastest; same day on select products; complex items such as packaging in about half the standard time). Availability depends on the product, complexity, materials and capacity.',
+    'Business days only: weekends, company holidays, shipping holidays and closures do not count.',
+    'Production and shipping are separate: turnaround is production only (not design or delivery). Shipping time starts when the carrier first scans the label; Ground is typically 1-5 business days.',
+    'Pick-up: Glendale, Monday-Friday 9 AM-6 PM, Saturday 10 AM-2 PM; the customer gets an email when it is ready. Local delivery: schedule 24 hours ahead via hello@axiomprint.com; fees may apply.',
+    'Delays can come from late proof approval, missing or incorrect files, changes after approval, payment holds, material availability, custom requirements, carrier delays or equipment issues; the team contacts the customer if action is needed.'
+  ].join('\n');
+  let turnaroundCache = { at: 0, text: TURNAROUND_FALLBACK };
+  async function turnaroundInfo() {
+    if (Date.now() - turnaroundCache.at < 24 * 60 * 60 * 1000) return turnaroundCache.text;
+    turnaroundCache.at = Date.now();
+    try {
+      const r = await fetch(TURNAROUND_URL, { headers: { 'Accept': 'text/html' }, signal: AbortSignal.timeout(8000) });
+      const html = r.ok ? await r.text() : '';
+      const main = (html.match(/<main[\s\S]*?<\/main>/i) || [html])[0].replace(/<(script|style|noscript)[\s\S]*?<\/\1>/gi, ' ');
+      const text = stripHtml(main).replace(/\s+/g, ' ').trim();
+      // A page that only renders in the browser has almost no text here: keep the summary then.
+      if (text.length > 600 && /business day/i.test(text) && /4\s?PM|cutoff|cut-off/i.test(text)) turnaroundCache.text = text.slice(0, 5000);
+      else turnaroundCache.text = TURNAROUND_FALLBACK;
+    } catch (e) { turnaroundCache.text = TURNAROUND_FALLBACK; console.error('CLIENT_BOT turnaround page', e.message); }
+    return turnaroundCache.text;
   }
   async function projectCards(rows) {
     if (!rows.length) return [];
@@ -1658,7 +1685,7 @@ module.exports = function mountClientBot(app, deps) {
     return text;
   }
 
-  function systemPrompt(rules, who, extra, lessons) {
+  function systemPrompt(rules, who, extra, lessons, turnaround) {
     const signIn = who.customer
       ? 'SIGN-IN: The visitor is signed in on axiomprint.com as ' + (who.customer.name || 'a customer') +
         (who.customer.company ? ' (' + who.customer.company + ')' : '') + '. Call them by their FIRST name: ' +
@@ -1701,6 +1728,7 @@ module.exports = function mountClientBot(app, deps) {
       signIn,
       '',
       '',
+      turnaround ? 'TURNAROUND (from ' + TURNAROUND_URL + '): for questions about turnaround \u2014 how production days are counted, the 4 PM cutoff, Rush or Express, weekends and holidays, pick-up hours, shipping time \u2014 answer from this in one or two sentences and add the link ' + TURNAROUND_URL + '. Turnaround is production time only; shipping is separate. For a customer\u2019s own order, the ready date comes from the order tools.\n' + String(turnaround).slice(0, 5000) + '\n' : '',
       'DESIGN SERVICES (set by AxiomPrint):',
       String(rules.design || DEFAULT_DESIGN),
       '',
@@ -2041,7 +2069,7 @@ module.exports = function mountClientBot(app, deps) {
     let built = build(false);
     let messages = built.messages;
     try {
-      const sys = systemPrompt(rules, who, await couponRule(who), await lessonsLayer());
+      const sys = systemPrompt(rules, who, await couponRule(who), await lessonsLayer(), await turnaroundInfo());
       for (let i = 0; i < 6; i++) {
         let r;
         try {
