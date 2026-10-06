@@ -12,6 +12,7 @@ users.db
 users.db-journal
 knowledge_files/
 client-uploads/
+talk-recordings/
 
 # Dependencies
 node_modules/

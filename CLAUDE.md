@@ -239,6 +239,20 @@ job snapshots (invoice line, picture, E-number, size, qty, Preflight / Productio
 from `prepress_status`, `estimate_stage`, scans, `estimate_handle`), served by `GET /api/client-bot/projects` and the
 order tools. Express 5 route syntax: optional segments are `{/:name}`, not `:name?` — the latter crashes at boot.
 
+## TalkAi (NovaAI on the phone)
+
+`talk-ai.js` answers the Twilio number with NovaAI. Twilio's voice webhook hits Nova (`POST /api/talk/twilio/voice`,
+`X-Twilio-Signature` checked with `TWILIO_AUTH_TOKEN`), Nova calls ElevenLabs `register-call` and returns its TwiML;
+ElevenLabs listens and speaks, and asks Nova for every answer as a **Custom LLM** (`POST /api/talk/llm/v1/chat/completions`,
+OpenAI-style SSE, `TALKAI_LLM_KEY`). Nova answers with Claude and the client bot's own tools and rules —
+`mountClientBot` returns `{ TOOLS, runTool, loadRules, turnaroundInfo, … }` for it — plus `verify_caller`
+(order number + account email / ZIP / phone; order tools refuse until it passes), `take_message` (emails the team) and
+`transfer_call` (Twilio REST redirect). ElevenLabs system tools (end_call…) pass through as tool calls. After the call the
+ElevenLabs post-call webhook (`/api/talk/hook/elevenlabs`, HMAC `ELEVENLABS_WEBHOOK_SECRET`; server.js skips its JSON
+parser for `/api/talk/hook/`) stores the transcript, summary and MP3 (`talk-recordings/`, gitignored). SQLite `talk_settings`,
+`talk_calls`, `talk_turns`, `talk_reads`. Admin page `/talk-ai` (Calls · Try it · Training · Setup), linked after Client ChatBot
+in the Admin menu with an unread badge. Full write-up: `docs/TALK_AI.md`.
+
 ## Installation & local delivery pricing
 
 Separate from the product formula engine, and **not** duplicated: `public/install-pricing.js` is one UMD file

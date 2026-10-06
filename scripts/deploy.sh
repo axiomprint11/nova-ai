@@ -13,7 +13,8 @@ SRC=${NOVA_SRC:-/tmp/nova-ai}
 FILES=("$@")
 if [ ${#FILES[@]} -eq 0 ]; then
   FILES=(server.js client-bot.js visitor-info.js public/admin.html speech-to-text.js public/axiom-voice.js public/axiom-cards.js public/client-embed.js public/client-chat.html public/client-chat.js
-         public/client-bot-admin.js public/client-bot.html public/axiom-shared.css docs/CLIENT_BOT.md CLAUDE.md)
+         public/client-bot-admin.js public/client-bot.html public/axiom-shared.css docs/CLIENT_BOT.md CLAUDE.md
+         talk-ai.js public/talk-ai.html public/talk-ai.js docs/TALK_AI.md)
 fi
 B="bk-$(date +%Y-%m-%d-%H%M)"
 cd "$LIVE" || { echo "!!! $LIVE not found"; exit 1; }

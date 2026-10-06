@@ -25,9 +25,11 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.6.34';
-const NOVA_BUILT = '10-06-2026 5:00pm';
-app.use(express.json({ limit: '25mb' }));
+const NOVA_VERSION = '1.7.0';
+const NOVA_BUILT = '10-06-2026 5:30pm';
+const jsonBody = express.json({ limit: '25mb' });
+// TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
+app.use((req, res, next) => req.path.indexOf('/api/talk/hook/') === 0 ? next() : jsonBody(req, res, next));
 
 // --- Auto cache-busting HTML server ---
 // Serves an HTML page but rewrites every local .js/.css reference to include
@@ -8856,10 +8858,13 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
 mountMcp(app, { runQuery, dataDictionary: DATA_DICTIONARY });
 
 // The customer-facing bot — separate tables, rules, tools and tokens (client-bot.js).
-require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly,
+const clientBot = require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly,
   quoteProduct, buildOrderLink, stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming,
   InstallPricing, getInstallPricing: () => installPricing, routeLookup, toTime24, driveFileBytes,
   extractAttachmentText, relatedRules, sendMail, dataDir: __dirname });
+// TalkAi — NovaAI on the phone (Twilio + ElevenLabs), sharing the client bot's tools and rules (talk-ai.js).
+require('./talk-ai')(app, { db, runQuery, mysql, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly, serveVersionedHtml,
+  sendMail, dataDir: __dirname }, clientBot);
 
 app.get(/^(?!\/api).*/, serveVersionedHtml('index.html'));
 

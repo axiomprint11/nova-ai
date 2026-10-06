@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TalkAi · Axiom AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/axiom-shared.css">
+<style>
+  /* TalkAi — NovaAI on the phone. Admins only. */
+  .tk-top { flex: none; display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: #fff; flex-wrap: wrap; }
+  .tk-top h1 { font-size: 15px; margin: 0; display: flex; align-items: center; gap: 8px; }
+  .tk-top h1 span { font-weight: 500; color: var(--muted); }
+  .tk-top h1 svg { color: var(--indigo-dark); }
+  .tk-pill { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 20px; white-space: nowrap; }
+  .tk-pill.off { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+  .tk-pill.on { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+  .tk-pill.fw { background: #eef2ff; color: #3730a3; border: 1px solid #c7d2fe; }
+  .tk-num { font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+  .tk-top .sp { flex: 1; }
+  .tk-tabs { display: flex; gap: 4px; }
+  .tk-tabs button { border: 1px solid transparent; background: none; padding: 7px 13px; border-radius: 9px; font: 600 13px/1 inherit; color: var(--ink-soft); cursor: pointer; }
+  .tk-tabs button.on { background: var(--indigo-light); color: var(--indigo-dark); }
+  .tk-tabs .tk-ucount { margin-left: 4px; }
+  .tk-main { flex: 1; min-height: 0; display: flex; }
+  .tk-view { flex: 1; min-height: 0; display: none; }
+  .tk-view.on { display: flex; }
+  .tk-empty { color: var(--muted); font-size: 13px; padding: 30px; text-align: center; }
+  .tk-ucount { display: inline-block; min-width: 16px; padding: 1px 5px; border-radius: 9px; background: #0a84ff; color: #fff; font-size: 10.5px; line-height: 1.3; text-align: center; }
+  .tk-ucount:empty { display: none; }
+
+  /* Calls */
+  .tk-list { width: 360px; flex: none; border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: #fcfcfe; }
+  .tk-filters { padding: 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 7px; }
+  .tk-filters input { margin: 0; padding: 8px 10px; font-size: 13px; }
+  .tk-filters .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tk-filters .row button { border: 1px solid var(--line); background: #fff; border-radius: 7px; padding: 4px 10px; font: 12px/1.3 inherit; cursor: pointer; }
+  .tk-filters .row button.on { border-color: var(--indigo); background: var(--indigo-light); color: var(--indigo-dark); font-weight: 600; }
+  .tk-qrow { display: flex; gap: 6px; }
+  .tk-qrow input { flex: 1; min-width: 0; }
+  .tk-refresh { flex: none; display: flex; align-items: center; gap: 5px; padding: 0 11px; border: 1px solid var(--line); border-radius: 9px; background: #fff;
+    color: var(--indigo-dark); font: 600 12.5px/1 inherit; cursor: pointer; }
+  .tk-refresh svg { width: 15px; height: 15px; }
+  .tk-refresh.spin svg { animation: tkSpin .7s linear infinite; }
+  @keyframes tkSpin { to { transform: rotate(360deg); } }
+  .tk-listbar { display: flex; justify-content: space-between; align-items: center; padding: 6px 14px 0; font-size: 11px; color: var(--muted); }
+  .tk-listbar button, .tk-link { border: none; background: none; color: var(--indigo-dark); font: 600 11.5px/1 inherit; cursor: pointer; padding: 3px 4px; }
+  .tk-listbar button:hover, .tk-link:hover { text-decoration: underline; }
+  .tk-rows { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .tk-row { position: relative; text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 9px; padding: 8px 9px 8px 22px; font: 12px/1.35 inherit; cursor: pointer; }
+  .tk-row:hover { border-color: var(--indigo); background: #f8f7ff; }
+  .tk-row.on { border-color: var(--indigo); background: var(--indigo-light); }
+  .tk-row.unread::before { content: ''; position: absolute; left: 8px; top: 50%; width: 9px; height: 9px; margin-top: -4px; border-radius: 50%; background: #0a84ff; }
+  .tk-row.unread .t { font-weight: 800; }
+  .tk-row .w { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 700; color: var(--indigo-dark); margin-bottom: 3px; }
+  .tk-row .w span { font-weight: 500; color: var(--muted); white-space: nowrap; }
+  .tk-row .t { font-weight: 600; font-size: 12.5px; color: var(--ink); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .tk-row small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tk-tag { font-size: 9.5px; font-weight: 700; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; background: #eef1f5; color: #475569; }
+  .tk-tag.ok { background: #dcfce7; color: #166534; } .tk-tag.test { background: #fef3c7; color: #92400e; } .tk-tag.msg { background: #fff7ed; color: #9a3412; }
+  .tk-tag.tr { background: #eef2ff; color: #3730a3; }
+  .tk-detail { flex: 1; min-width: 0; overflow-y: auto; padding: 18px 24px; }
+  .tk-hd { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; background: #fff; font-size: 13px; }
+  .tk-hd b.big { font-size: 15px; }
+  .tk-hd .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .tk-chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 999px; font-size: 12px; background: #f4f5fa;
+    border: 1px solid var(--line); color: var(--ink); white-space: nowrap; }
+  .tk-chip.ok { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+  .tk-chip.warn { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+  .tk-hd .who { margin-top: 6px; color: var(--ink-soft); }
+  .tk-hd .who i { font-style: normal; color: var(--muted); }
+  .tk-audio { margin-top: 10px; display: flex; align-items: center; gap: 10px; }
+  .tk-audio audio { width: 100%; max-width: 520px; height: 36px; }
+  .tk-sum { border: 1px solid #e0e7ff; background: #f8f9ff; border-radius: 12px; padding: 10px 14px; font-size: 13px; line-height: 1.5; margin-bottom: 14px; }
+  .tk-sum span { display: block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--indigo-dark); margin-bottom: 3px; }
+  .tk-tx { max-width: 760px; }
+  .tk-say { display: flex; gap: 10px; margin-bottom: 10px; }
+  .tk-say .who { flex: none; width: 58px; font-size: 11px; font-weight: 700; color: var(--muted); padding-top: 8px; text-align: right; }
+  .tk-say .who small { display: block; font-weight: 500; }
+  .tk-say .b { min-width: 0; padding: 8px 12px; border-radius: 12px; font-size: 13.5px; line-height: 1.45; background: #f7f7fc; max-width: 640px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .tk-say.caller .b { background: var(--ink); color: #fff; }
+  .tk-say.caller .who { color: var(--ink); }
+  .tk-used { display: flex; flex-wrap: wrap; gap: 4px; margin: -4px 0 10px 68px; }
+  .tk-used span { font-size: 10.5px; background: #f1f0fb; color: #4c1d95; border-radius: 5px; padding: 1px 6px; }
+  .tk-evt { display: flex; align-items: center; gap: 7px; margin: 6px 0 12px 68px; width: fit-content; max-width: 640px; padding: 5px 11px; border-radius: 999px;
+    font-size: 11.5px; color: #9a3412; background: #fff7ed; border: 1px solid #fed7aa; }
+  .tk-evt.ok { color: #065f46; background: #ecfdf5; border-color: #a7f3d0; }
+  .tk-evt.bad { color: #991b1b; background: #fef2f2; border-color: #fecaca; }
+  .tk-sec { display: flex; align-items: center; justify-content: space-between; margin: 18px 0 10px; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--muted); max-width: 760px; }
+
+  /* Try it */
+  .tk-try { flex: 1; display: flex; min-height: 0; }
+  .tk-tryside { width: 300px; flex: none; border-right: 1px solid var(--line); background: #fcfcfe; padding: 14px; overflow-y: auto; font-size: 12.5px; color: var(--ink-soft); }
+  .tk-tryside input { margin: 6px 0 10px; padding: 8px 10px; font-size: 13px; }
+  .tk-h { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 4px 0 8px; }
+  .tk-trymain { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .tk-trylog { flex: 1; overflow-y: auto; padding: 18px 24px; }
+  .tk-trybar { flex: none; display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); background: #fff; }
+  .tk-trybar input { margin: 0; flex: 1; }
+  .tk-btn { border: none; background: var(--indigo); color: #fff; padding: 9px 16px; border-radius: 9px; font: 600 13px/1 inherit; cursor: pointer; white-space: nowrap; }
+  .tk-btn.ghost { background: #fff; color: var(--ink-soft); border: 1px solid var(--line); }
+  .tk-btn:disabled { opacity: .55; cursor: default; }
+  .tk-hint { font-size: 12px; color: #6b5d2e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 9px; padding: 7px 10px; line-height: 1.45; }
+
+  /* Training */
+  .tk-train { flex: 1; overflow-y: auto; padding: 20px 24px; }
+  .tk-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; max-width: 1200px; }
+  .tk-card { border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 14px 16px; margin-bottom: 14px; }
+  .tk-card h3 { font-size: 14px; margin: 0 0 4px; }
+  .tk-card p.sub { font-size: 12px; color: var(--muted); margin: 0 0 10px; line-height: 1.45; }
+  .tk-card textarea { width: 100%; box-sizing: border-box; border: 1.5px solid var(--line); border-radius: 10px; padding: 10px 12px; font: 13px/1.5 inherit;
+    resize: vertical; outline: none; min-height: 70px; }
+  .tk-card textarea#sRules { min-height: 170px; }
+  .tk-card textarea:focus, .tk-card input:focus { border-color: var(--indigo); }
+  .tk-card input[type=text] { margin: 0; padding: 9px 11px; font-size: 13px; }
+  .tk-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .tk-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .tk-fields label small { font-weight: 400; }
+  .tk-check { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
+  .tk-check input { width: auto; margin: 0; }
+  .tk-mode { display: flex; gap: 10px; flex-wrap: wrap; }
+  .tk-mode button { flex: 1; min-width: 180px; text-align: left; padding: 12px 14px; border: 1.5px solid var(--line); border-radius: 12px; background: #fff; cursor: pointer; font: inherit; }
+  .tk-mode button b { display: block; font-size: 14px; margin-bottom: 2px; }
+  .tk-mode button small { color: var(--muted); font-size: 12px; line-height: 1.4; display: block; }
+  .tk-mode button.on { border-color: var(--indigo); background: var(--indigo-light); }
+  .tk-mode button.on.ai { border-color: #16a34a; background: #f0fdf4; }
+  .tk-save { display: flex; align-items: center; gap: 10px; }
+  .tk-msg { font-size: 12.5px; color: var(--muted); }
+  .tk-msg.err { color: #b91c1c; }
+  .tk-shared a { color: var(--indigo-dark); font-weight: 600; text-decoration: none; }
+  .tk-shared ul { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6; color: var(--ink-soft); }
+
+  /* Setup */
+  .tk-setup { flex: 1; overflow-y: auto; padding: 20px 24px; }
+  .tk-setup-in { max-width: 920px; font-size: 13.5px; line-height: 1.6; }
+  .tk-setup h2 { font-size: 16px; margin: 0 0 4px; }
+  .tk-setup .lead { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+  .tk-step { border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 14px 16px; margin-bottom: 14px; }
+  .tk-step h3 { font-size: 14px; margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
+  .tk-step h3 i { font-style: normal; width: 22px; height: 22px; border-radius: 50%; background: var(--indigo-light); color: var(--indigo-dark); display: inline-flex;
+    align-items: center; justify-content: center; font-size: 12px; font-weight: 800; flex: none; }
+  .tk-step h3 i.done { background: #dcfce7; color: #166534; }
+  .tk-step ol, .tk-step ul { margin: 6px 0 0; padding-left: 20px; }
+  .tk-step li { margin: 3px 0; }
+  .tk-step code { background: #f3f3fb; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .tk-copy { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .tk-copy code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fafafd; font-size: 12px; }
+  .tk-copy pre { flex: 1; min-width: 0; margin: 0; white-space: pre-wrap; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fafafd; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .tk-copy button { flex: none; border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 10px; font: 600 12px/1 inherit; color: var(--indigo-dark); cursor: pointer; }
+  .tk-copy span.l { flex: none; width: 150px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .tk-keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; margin-top: 6px; }
+  .tk-keys b.y { color: #16a34a; } .tk-keys b.n { color: #b45309; }
+  .tk-keys code { font-weight: 600; }
+  .tk-keys span { color: var(--ink-soft); }
+  .tk-hits { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .tk-hits td { padding: 5px 8px; border-top: 1px solid var(--line); vertical-align: top; }
+  .tk-hits td:first-child { white-space: nowrap; color: var(--muted); }
+  .tk-hits b.y { color: #16a34a; } .tk-hits b.n { color: #b91c1c; }
+  @media (max-width: 900px) {
+    .tk-view, .tk-detail, .tk-trymain { min-width: 0; }
+    .tk-detail, .tk-trylog { padding: 14px; }
+    .tk-say { gap: 8px; } .tk-say .who { width: 46px; }
+    .tk-used, .tk-evt { margin-left: 54px; }
+    .tk-evt { border-radius: 12px; }
+    .tk-list { width: 100%; }
+    .tk-view#vCalls.detail .tk-list { display: none; }
+    .tk-view#vCalls:not(.detail) .tk-detail { display: none; }
+    .tk-grid { grid-template-columns: 1fr; }
+    .tk-tryside { display: none; }
+    .tk-fields { grid-template-columns: 1fr; }
+    .tk-copy span.l { width: auto; }
+    .tk-copy { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+<div class="tk-top">
+  <a class="btn-ghost" href="/admin" style="text-decoration:none" title="Back to Admin">&larr;</a>
+  <h1><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+    TalkAi <span>· NovaAI on the phone</span></h1>
+  <span class="tk-pill off" id="tkPill">Loading…</span>
+  <span class="tk-num" id="tkNum"></span>
+  <div class="sp"></div>
+  <div class="tk-tabs">
+    <button type="button" data-v="calls" class="on">Calls <b class="tk-ucount" id="tkUnreadTab"></b></button>
+    <button type="button" data-v="try">Try it</button>
+    <button type="button" data-v="train">Training</button>
+    <button type="button" data-v="setup">Setup</button>
+  </div>
+</div>
+
+<div class="tk-main">
+  <!-- Calls -->
+  <div class="tk-view on" id="vCalls">
+    <div class="tk-list">
+      <div class="tk-filters">
+        <div class="tk-qrow"><input type="text" id="callQ" placeholder="Search number, name, company or words said">
+          <button type="button" class="tk-refresh" id="callRefresh" title="Load the newest calls"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg><span>Refresh</span></button></div>
+        <div class="row" id="callFilter">
+          <button type="button" data-f="" class="on">All</button>
+          <button type="button" data-f="unread">Unread <b class="tk-ucount" id="tkUnread"></b></button>
+          <button type="button" data-f="phone">Phone calls</button>
+          <button type="button" data-f="messages">Messages &amp; transfers</button>
+          <button type="button" data-f="tests">Tests</button>
+        </div>
+      </div>
+      <div class="tk-listbar"><span id="callStamp"></span><button type="button" id="callReadAll">Mark all read</button></div>
+      <div class="tk-rows" id="callRows"><div class="tk-empty">Loading…</div></div>
+    </div>
+    <div class="tk-detail" id="callView"><div class="tk-empty">Pick a call.</div></div>
+  </div>
+
+  <!-- Try it -->
+  <div class="tk-view" id="vTry">
+    <div class="tk-try">
+      <aside class="tk-tryside">
+        <div class="tk-h">Test the phone NovaAI in text</div>
+        <p style="margin:0 0 10px;line-height:1.5">The same brain, rules and tools a caller gets — typed instead of spoken. Saved under Calls → Tests.
+          To check a caller's orders, give NovaAI an order number and the email, ZIP or phone on that account, as a caller would.</p>
+        <label class="tk-h" for="tryFrom" style="display:block">Calling from (optional)</label>
+        <input type="text" id="tryFrom" placeholder="e.g. 818 555 1234">
+        <button type="button" class="tk-btn ghost" id="tryNew" style="width:100%">Start a new test call</button>
+        <div style="margin-top:14px" class="tk-hint">Prices, order details and escalations are real (a past-due order emails the team). Transfers are not made on a test.</div>
+      </aside>
+      <div class="tk-trymain">
+        <div class="tk-trylog" id="tryLog"></div>
+        <form class="tk-trybar" id="tryForm" autocomplete="off">
+          <input type="text" id="tryInput" placeholder="Say something as the caller…">
+          <button type="submit" class="tk-btn" id="trySend">Send</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Training -->
+  <div class="tk-view" id="vTrain">
+    <div class="tk-train">
+      <div class="tk-grid">
+        <div>
+          <div class="tk-card">
+            <h3>Who answers the number</h3>
+            <p class="sub">Change it any time — the next call follows it.</p>
+            <div class="tk-mode" id="sMode">
+              <button type="button" data-m="ai" class="ai"><b>NovaAI answers</b><small>Prices, products, turnaround and verified order status. Falls back to the forward number (or the closed message) if the voice service is down.</small></button>
+              <button type="button" data-m="forward"><b>Forward to the team</b><small>Every call rings the forward number below. NovaAI stays quiet.</small></button>
+              <button type="button" data-m="message"><b>Closed message</b><small>Callers hear the closed message below and the call ends.</small></button>
+            </div>
+          </div>
+          <div class="tk-card">
+            <h3>Greeting</h3>
+            <p class="sub">The first thing every caller hears. Keep the two legal points: that NovaAI is an AI assistant, and that the call is recorded.</p>
+            <textarea id="sGreeting" rows="3"></textarea>
+          </div>
+          <div class="tk-card">
+            <h3>Phone rules</h3>
+            <p class="sub">How NovaAI should behave on calls, on top of the shared house rules. One rule per line. The next call uses them.</p>
+            <textarea id="sRules" rows="8"></textarea>
+          </div>
+          <div class="tk-card">
+            <h3>Numbers and messages</h3>
+            <div class="tk-fields">
+              <label>Transfer to <small>When a caller asks for a person (Dialpad main line or an extension's number). Empty = NovaAI takes a message instead.</small>
+                <input type="text" id="sTransfer" placeholder="e.g. 818 555 1234"></label>
+              <label>Forward number <small>Used by "Forward to the team", and as the fallback when NovaAI can't answer.</small>
+                <input type="text" id="sForward" placeholder="e.g. 818 555 1234"></label>
+              <label>Messages go to <small>Messages NovaAI takes and call summaries (comma for several).</small>
+                <input type="text" id="sNotify" placeholder="gary@axiomprint.com"></label>
+              <div></div>
+            </div>
+            <label class="tk-check"><input type="checkbox" id="sSummary"> Email a summary and transcript of every call to that address</label>
+            <h3 style="margin-top:14px">Closed message</h3>
+            <p class="sub">Read out when the number is set to Closed message, or when no one picks up a forwarded call.</p>
+            <textarea id="sClosed" rows="3"></textarea>
+          </div>
+          <div class="tk-save"><button type="button" class="tk-btn" id="sSave">Save</button><span class="tk-msg" id="sMsg"></span></div>
+        </div>
+        <div>
+          <div class="tk-card tk-shared">
+            <h3>Shared with the website chat</h3>
+            <p class="sub">NovaAI on the phone uses the same training as the customer chat, so both give the same answers. Edit these in
+              <a href="/client-bot">Client ChatBot → Training</a>:</p>
+            <ul>
+              <li>House rules and what NovaAI knows about AxiomPrint</li>
+              <li>Graphic design services and rates</li>
+              <li>Hand-off contact</li>
+              <li>The turnaround page (axiomprint.com/pages/turnaround)</li>
+            </ul>
+          </div>
+          <div class="tk-card">
+            <h3>Built-in phone rules</h3>
+            <p class="sub">Always on, in the code:</p>
+            <ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.6;color:var(--ink-soft)">
+              <li>Short spoken sentences; no lists or links read out</li>
+              <li>Answers in the caller's language</li>
+              <li>No order details until the caller gives the order number and the email, ZIP or phone on the account (three tries)</li>
+              <li>Prices only from the website calculator</li>
+              <li>Never takes card numbers or payments</li>
+              <li>Past-due orders escalated by email, as in the chat</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Setup -->
+  <div class="tk-view" id="vSetup"><div class="tk-setup"><div class="tk-setup-in" id="setupBox"><div class="tk-empty">Loading…</div></div></div></div>
+</div>
+
+<script src="/talk-ai.js"></script>
+</body>
+</html>

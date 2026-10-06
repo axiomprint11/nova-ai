@@ -1323,14 +1323,16 @@ module.exports = function mountClientBot(app, deps) {
         [p.invoice, p.total != null ? '$' + usd2(p.total) : null, p.paid].filter(Boolean).join(' \u00b7 '),
         'CRM: https://crm.axiomprint.com/estimates/' + String(p.order).replace(/\D/g, '')
       ].filter(Boolean);
-      const text = ['NovaAI told a customer their order is past due and that we are escalating it for an updated turnaround time.', '',
+      const link = ctx.link || (NOVA_URL + '/client-bot?chat=' + ctx.chatId);
+      const via = ctx.via ? ' ' + ctx.via : '';
+      const text = ['NovaAI told a customer' + via + ' that their order is past due and that we are escalating it for an updated turnaround time.', '',
         'Customer: ' + (c.name || '') + (c.company ? ' \u2014 ' + c.company : '') + ' (customer #' + c.id + ')',
         'Email: ' + (c.email || '') + (phone ? '   Phone: ' + phone : ''), manager ? 'Account manager: ' + manager.name : '', '',
         'They asked: "' + String(ctx.text || '').slice(0, 400) + '"', '']
         .concat(jobs.map(p => line(p).join('\n')).join('\n\n').split('\n'))
-        .concat(['', 'Conversation: ' + NOVA_URL + '/client-bot?chat=' + ctx.chatId]).filter(x => x !== null).join('\n');
+        .concat(['', (ctx.via ? 'Call: ' : 'Conversation: ') + link]).filter(x => x !== null).join('\n');
       const html = '<div style="font:14px/1.5 Arial,sans-serif;color:#1f2937">' +
-        '<p><b style="color:#b91c1c">Past due \u2014 NovaAI told the customer we are escalating it for an updated turnaround time.</b></p>' +
+        '<p><b style="color:#b91c1c">Past due \u2014 NovaAI told the customer' + htmlEsc(via) + ' we are escalating it for an updated turnaround time.</b></p>' +
         '<p><b>' + htmlEsc(c.name || '') + '</b>' + (c.company ? ' \u2014 ' + htmlEsc(c.company) : '') + ' (customer #' + htmlEsc(c.id) + ')<br>' +
         htmlEsc(c.email || '') + (phone ? ' \u00b7 ' + htmlEsc(phone) : '') + (manager ? '<br>Account manager: ' + htmlEsc(manager.name) : '') + '</p>' +
         '<p>They asked: <i>\u201c' + htmlEsc(String(ctx.text || '').slice(0, 400)) + '\u201d</i></p>' +
@@ -1342,7 +1344,7 @@ module.exports = function mountClientBot(app, deps) {
            ['Invoice', htmlEsc([p.invoice, p.total != null ? '$' + usd2(p.total) : null, p.paid].filter(Boolean).join(' \u00b7 '))]]
             .map(r => '<tr><td style="padding:5px 10px;color:#6b7280;border-top:1px solid #e5e7eb;vertical-align:top">' + r[0] +
               '</td><td style="padding:5px 10px;border-top:1px solid #e5e7eb">' + r[1] + '</td></tr>').join('') + '</table>').join('') +
-        '<p><a href="' + NOVA_URL + '/client-bot?chat=' + ctx.chatId + '">Open the conversation in Nova</a></p></div>';
+        '<p><a href="' + link + '">' + (ctx.via ? 'Open the call in Nova' : 'Open the conversation in Nova') + '</a></p></div>';
       try {
         if (!deps.sendMail) throw new Error('email sending is not set up');
         emailId = await deps.sendMail({ to: ESCALATE_TO, subject: subject, text: text, html: html, replyTo: c.email || undefined });
@@ -2441,6 +2443,11 @@ module.exports = function mountClientBot(app, deps) {
   app.get('/client-bot', (req, res, next) => { res.setHeader('Content-Security-Policy', "frame-ancestors 'self'"); next(); },
     serveVersionedHtml('client-bot.html'));
   app.get('/client-chat', allowFraming, serveVersionedHtml('client-chat.html'));
+
+  // What TalkAi (the phone NovaAI, talk-ai.js) shares with the chat: the same tools, rules,
+  // knowledge, turnaround page and lessons, so the phone and the website answer alike.
+  return { TOOLS, runTool, loadRules, turnaroundInfo, lessonsLayer, customerById, contactFromDb,
+    TURNAROUND_URL, DEFAULT_CONTACT, DEFAULT_DESIGN_MIN, DEFAULT_DESIGN_MAX, ESCALATE_TO };
 };
 
 const DEFAULT_GREETING = 'Hi! I’m NovaAI, AxiomPrint’s AI assistant. Ask me about our products, prices and options' +

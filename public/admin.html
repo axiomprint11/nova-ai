@@ -238,6 +238,7 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
       <button class="nav-item" id="navPricing" onclick="tab('pricing')">Installation Pricing</button>
       <button class="nav-item" id="navConnections" onclick="tab('connections')">Connections</button>
       <a class="nav-item" href="/client-bot" style="text-decoration:none;display:flex;align-items:center;gap:8px">Client ChatBot &#8599;<span class="nav-badge" id="cbUnread" hidden title="Unread client conversations"></span></a>
+      <a class="nav-item" href="/talk-ai" style="text-decoration:none;display:flex;align-items:center;gap:8px">TalkAi &#8599;<span class="nav-badge" id="tkUnread" hidden title="Unread TalkAi calls"></span></a>
     </aside>
     <div class="content">
       <div id="tabUsers">
@@ -445,9 +446,22 @@ async function refreshClientUnread() {
     el.hidden = n === 0;
   } catch (e) {}
 }
-refreshClientUnread();
-setInterval(() => { if (!document.hidden) refreshClientUnread(); }, 60000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshClientUnread(); });
+// Unread TalkAi calls, beside "TalkAi".
+async function refreshTalkUnread() {
+  const el = document.getElementById('tkUnread');
+  if (!el || !token) return;
+  try {
+    const r = await fetch('/api/admin/talk/unread-count', { headers: { 'Authorization': 'Bearer ' + token } });
+    const j = await r.json();
+    const n = j && j.ok ? Number(j.unread) || 0 : 0;
+    el.textContent = n > 99 ? '99+' : String(n);
+    el.hidden = n === 0;
+  } catch (e) {}
+}
+const refreshUnread = () => { refreshClientUnread(); refreshTalkUnread(); };
+refreshUnread();
+setInterval(() => { if (!document.hidden) refreshUnread(); }, 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshUnread(); });
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtDate(s){ if(!s) return ''; const d=new Date(s.replace(' ','T')+'Z'); return d.toLocaleDateString()+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}); }
