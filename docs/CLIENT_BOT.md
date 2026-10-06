@@ -286,6 +286,23 @@ Ratings feed NovaAI's future answers through a **lessons layer** added to the sy
 **Training → Lessons from rated conversations** lists them all, with **Use in answers** (on/off without deleting),
 **Open conversation** and **Remove**. A 👎 without a note is kept for the record but teaches nothing — write the note.
 
+## Order deadlines
+
+When a customer asks about the status, the deadline or when an order will be ready, NovaAI answers the way the team does
+(prompt rule 6, from each order's `deadline.say`, built in `deadlineFacts()`):
+
+> Your job was approved and paid on Tue, Sep 29, with a 5 Business Days turnaround, so it is estimated to be ready for
+> pick-up on Wed, Oct 7 by 5:00 PM.
+
+> … ready on Fri, Oct 9 by 5:00 PM. Then it ships with UPS Ground; transit time comes after the ready date.
+
+- **Approved and paid** = `estimate.production_started_at` (the moment the system set the deadline; stored in UTC, shown in
+  Los Angeles time). Not set yet → "The ready date is set once the job is approved and paid…".
+- **Turnaround** = the job's `Turnaround` option. **Ready by** = `estimate.complete_by`.
+- **Pick-up / shipping** = `estimate_handle.shipping_method` and `shipping_service_code` (UPS codes become "UPS Ground",
+  "UPS 2nd Day Air"…), delivery, installation, USPS drop-off.
+- The job card shows the same facts on one line. A past-due job uses the escalation sentence instead (below).
+
 ## Past-due escalations
 
 `my_orders` / `order_status` flag a job **past due** when its due time (`estimate.complete_by`, compared with the database's

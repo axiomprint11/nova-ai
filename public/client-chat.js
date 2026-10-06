@@ -145,6 +145,11 @@
       '<div class="cc-steps">' + steps.map(s =>
         '<div class="cc-step ' + esc(s.state) + '"><i></i><b>' + esc(s.label) + '</b><span>' + esc(s.status) + '</span>' +
           (s.note ? '<small' + (s.late ? ' class="cc-late"' : '') + '>' + esc(s.note) + '</small>' : '') + '</div>').join('') + '</div>' +
+      (p.deadline && (p.deadline.approved_paid || p.deadline.turnaround || p.deadline.handoff) ? '<div class="cc-proj-dl">' + [
+        p.deadline.approved_paid ? 'Approved &amp; paid <b>' + esc(p.deadline.approved_paid) + '</b>' : 'Starts when approved &amp; paid',
+        p.deadline.turnaround ? esc(p.deadline.turnaround) : null,
+        p.deadline.ready_by && !p.past_due ? 'Ready <b>' + esc(p.deadline.ready_by) + '</b>' : null,
+        p.deadline.handoff ? esc(String(p.deadline.handoff).replace(/ on .*$/, '')) : null].filter(Boolean).join(' \u00b7 ') + '</div>' : '') +
       '<div class="cc-proj-foot"><a href="' + HISTORY + '" target="_blank" rel="noopener">' +
         (needs ? 'Upload files / review proof' : unpaid ? 'Pay online' : 'Order history') + ' \u2197</a></div>' +
     '</div>';

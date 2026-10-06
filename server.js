@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.6.32';
-const NOVA_BUILT = '10-06-2026 11:00am';
+const NOVA_VERSION = '1.6.33';
+const NOVA_BUILT = '10-06-2026 3:00pm';
 app.use(express.json({ limit: '25mb' }));
 
 // --- Auto cache-busting HTML server ---
@@ -2237,6 +2237,7 @@ estimate (the line item / job):
 - estimate_price (line price), estimate_name (item name)
 - created, updated (datetime; use 'created' NOT created_at)
 - production_status: not_started,in_production,reprint,complete,hard_copy
+- DEADLINE: complete_by = the ready-by deadline the system set (Los Angeles time, usually 5:00 PM). production_started_at = the moment the job was approved AND paid and the deadline was set — stored in UTC, so show it with CONVERT_TZ(production_started_at, '+00:00', 'America/Los_Angeles'). The turnaround the customer chose is the estimateoption 'Turnaround' (e.g. '5 Business Days', 'Next Day', 'Express'); the shipping method is estimate_handle.shipping_method (pick_up, shipping, blind_drop_ship, delivery, installation, usps_mail_drop_off, tbd) with shipping_service_code (UPS: 01 Next Day Air, 02 2nd Day Air, 03 Ground, 12 3 Day Select, 13 Next Day Air Saver, 14 Next Day Air Early, 59 2nd Day Air A.M.; FedEx codes are names like FEDEX_GROUND). Explain a deadline as: approved and paid on <date>, <turnaround> turnaround, ready on <complete_by>, then pick-up on that date or the shipping service.
 - *** PRODUCTION STATUS WARNING: The estimate.production_status column is OFTEN STALE and unreliable - it frequently still says 'not_started' even when the job is actively in production. NEVER report production status from this column alone. The TRUE current production status comes from qr_scan_history (see below). Always check qr_scan_history before telling anyone a job's production state. ***
 - estimate_type: estimate,sample,reprint,color_match,reorder
 - estimate_drive_link: the Google Drive folder URL/ID for this job's design files (proofs, print-ready files, customer files). To SHOW a job's files/images, use the view_job_files tool with the job number - it reads this link and lists the images/PDFs. (Note: the older drive_files table is legacy/stale and stops around estimate 1071470 - do NOT use it; estimate_drive_link is the current source.)

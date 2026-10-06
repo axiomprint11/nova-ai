@@ -2209,3 +2209,6 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 
 /* a job past its due date (client chat, My projects) */
 .cc-step small.cc-late { color: #b91c1c; font-weight: 600; }
+/* the deadline facts under a job's steps (approved & paid · turnaround · ready · pick up / shipping) */
+.cc-proj-dl { margin: 8px 12px 0; padding: 7px 10px; border-radius: 8px; background: #f6f7fb; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.cc-proj-dl b { color: var(--ink); font-weight: 600; }
