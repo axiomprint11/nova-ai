@@ -147,7 +147,27 @@
   .tk-ul { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6; color: var(--ink-soft); }
   .tk-select { width: 100%; padding: 8px 10px; border: 1.5px solid var(--line); border-radius: 10px; font: 13px inherit; background: #fff; }
   .tk-am { border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 12px 14px; margin-bottom: 10px; display: flex; gap: 12px; align-items: flex-start; }
-  .tk-am .av { flex: none; width: 38px; height: 38px; border-radius: 50%; background: var(--indigo-light); color: var(--indigo-dark); display: flex; align-items: center; justify-content: center; font-weight: 800; }
+  .tk-av { position: relative; flex: none; width: 32px; height: 32px; border-radius: 50%; overflow: hidden; background: var(--indigo-light); color: var(--indigo-dark);
+    display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; }
+  .tk-av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #fff; }
+  .tk-am .tk-av { width: 40px; height: 40px; font-size: 15px; }
+  .tk-flabel { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .tk-pick { position: relative; }
+  .tk-pickbtn { width: 100%; display: flex; align-items: center; gap: 10px; padding: 7px 12px 7px 8px; border: 1.5px solid var(--line); border-radius: 10px;
+    background: #fff; cursor: pointer; font: inherit; text-align: left; min-height: 46px; }
+  .tk-pickbtn:hover, .tk-pickbtn.open { border-color: var(--indigo); }
+  .tk-pickbtn .chev { margin-left: auto; color: var(--muted); font-size: 12px; }
+  .tk-pick .who { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+  .tk-pick .nm { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+  .tk-pick .ct { font-size: 11.5px; font-weight: 400; color: #a3a8bd; margin-left: 4px; white-space: nowrap; }
+  .tk-pick .ti { font-size: 12px; font-weight: 400; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tk-picklist { position: absolute; z-index: 40; left: 0; right: 0; top: calc(100% + 4px); background: #fff; border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: 0 14px 36px rgba(24, 24, 70, .16); padding: 6px; }
+  .tk-picksearch { width: 100%; box-sizing: border-box; margin: 0 0 6px !important; }
+  .tk-pickopts { max-height: 340px; overflow-y: auto; }
+  .tk-opt { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border: 0; background: none; border-radius: 9px; cursor: pointer; text-align: left; font: inherit; }
+  .tk-opt:hover, .tk-opt.hl { background: #f4f5fb; }
+  .tk-opt.on { background: var(--indigo-light); }
   .tk-am .bd { flex: 1; min-width: 0; font-size: 13px; }
   .tk-am .bd b { font-size: 14px; } .tk-am .bd small { color: var(--muted); }
   .tk-am .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }

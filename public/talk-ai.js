@@ -359,7 +359,7 @@
       if (Number(l.ring_first)) tags.push('<span class="tk-chip">Rings ' + esc(phone(l.ring_number)) + ' first' + (Number(l.screen) !== 0 ? ' · press 1' : '') + '</span>');
       if (l.voice_id) tags.push('<span class="tk-chip">Own voice</span>');
       if (!l.number && !Number(l.main_line)) tags.push('<span class="tk-chip warn">Not answering yet — give it a number or tick "their clients"</span>');
-      return '<div class="tk-am' + (Number(l.active) ? '' : ' off') + '"><div class="av">' + esc(String(l.am_name || '?').charAt(0)) + '</div><div class="bd">' +
+      return '<div class="tk-am' + (Number(l.active) ? '' : ' off') + '">' + avatar(l.photo, l.am_name) + '<div class="bd">' +
         '<b>' + esc(l.am_name || 'Account manager') + '</b> <small>' + esc(l.am_title || '') + (l.calls ? ' · ' + l.calls + ' call' + (l.calls === 1 ? '' : 's') : '') + '</small>' +
         '<div class="tags">' + tags.join('') + '</div>' +
         (l.training ? '<div style="margin-top:6px;color:var(--ink-soft);font-size:12.5px;white-space:pre-wrap">' + esc(String(l.training).slice(0, 220)) + (l.training.length > 220 ? '…' : '') + '</div>' : '') +
@@ -382,6 +382,53 @@
       };
     });
   }
+  // A person's CRM photo, with their initial underneath (shown when there is no photo or it fails to load).
+  function avatar(photo, name) {
+    return '<span class="tk-av">' + esc(String(name || '?').trim().charAt(0).toUpperCase() || '?') +
+      (photo ? '<img src="' + esc(photo) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">' : '') + '</span>';
+  }
+  // The account manager picker: photo, name and client count (a native select can't show pictures).
+  function personRow(m) {
+    return avatar(m.photo, m.name) + '<span class="who"><span class="nm">' + esc(m.name) + ' <span class="ct">' + Number(m.clients || 0).toLocaleString('en-US') + ' clients</span></span>' +
+      (m.title ? '<span class="ti">' + esc(m.title) + '</span>' : '') + '</span>';
+  }
+  function amPicker(box, current, onPick) {
+    const wrap = box.querySelector('#amPick'), btn = wrap.querySelector('.tk-pickbtn'), list = wrap.querySelector('.tk-picklist'),
+      search = wrap.querySelector('.tk-picksearch'), opts = wrap.querySelector('.tk-pickopts');
+    let shown = [], hl = 0;
+    const paintBtn = () => {
+      const m = (managers || []).find(x => x.id === parseInt($('amWho').value));
+      btn.innerHTML = (m ? personRow(m) : '<span class="who"><span class="ti" style="font-size:13px">Pick one…</span></span>') + '<span class="chev">▾</span>';
+    };
+    const paintList = () => {
+      const q = search.value.trim().toLowerCase();
+      shown = (managers || []).filter(m => !q || (m.name + ' ' + (m.title || '') + ' ' + (m.email || '')).toLowerCase().indexOf(q) > -1);
+      hl = Math.min(hl, Math.max(shown.length - 1, 0));
+      opts.innerHTML = shown.length ? shown.map((m, i) => '<button type="button" class="tk-opt' + (m.id === parseInt($('amWho').value) ? ' on' : '') + (i === hl ? ' hl' : '') + '" data-i="' + i + '">' + personRow(m) + '</button>').join('')
+        : '<div class="tk-empty" style="padding:10px">No one matches.</div>';
+      opts.querySelectorAll('.tk-opt').forEach(b => { b.onclick = () => pick(shown[parseInt(b.dataset.i)]); });
+    };
+    const open = (on) => {
+      list.hidden = !on; btn.classList.toggle('open', on);
+      if (on) { search.value = ''; hl = Math.max(shown.findIndex(m => m.id === parseInt($('amWho').value)), 0); paintList(); search.focus();
+        const cur = opts.querySelector('.tk-opt.on'); if (cur) cur.scrollIntoView({ block: 'nearest' }); }
+    };
+    const pick = (m) => { if (!m) return; $('amWho').value = m.id; paintBtn(); open(false); btn.focus(); onPick(m); };
+    btn.onclick = () => open(list.hidden);
+    search.oninput = () => { hl = 0; paintList(); };
+    search.onkeydown = (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); hl = Math.max(0, Math.min(shown.length - 1, hl + (e.key === 'ArrowDown' ? 1 : -1))); paintList();
+        const h = opts.querySelector('.tk-opt.hl'); if (h) h.scrollIntoView({ block: 'nearest' }); }
+      else if (e.key === 'Enter') { e.preventDefault(); pick(shown[hl]); }
+      else if (e.key === 'Escape') { open(false); btn.focus(); }
+    };
+    document.addEventListener('mousedown', function away(e) {
+      if (!document.body.contains(wrap)) { document.removeEventListener('mousedown', away); return; }
+      if (!list.hidden && !wrap.contains(e.target)) open(false);
+    });
+    $('amWho').value = current || '';
+    paintBtn();
+  }
   function editLine(l) {
     l = l || { main_line: 1, active: 1, screen: 1, own_numbers: [] };
     const box = $('amEdit');
@@ -394,9 +441,9 @@
     box.hidden = false;
     box.innerHTML = '<h3>' + (l.id ? 'Edit ' + esc(l.am_name) : 'Add an account manager') + '</h3><div class="tk-form">' +
       sec(1, 'The person', 'Who this NovaAI works for.') +
-        '<label>Account manager<select id="amWho" class="tk-select">' + (l.id ? '' : '<option value="">Pick one…</option>') +
-          (managers || []).map(m => '<option value="' + m.id + '"' + (Number(l.am_user_id) === m.id ? ' selected' : '') + ' data-phone="' + esc(m.phone) + '" data-cell="' + esc(m.cell || '') + '" data-email="' + esc(m.email) + '">' +
-            esc(m.name) + (m.title ? ' — ' + esc(m.title) : '') + ' (' + m.clients + ' clients)</option>').join('') + '</select></label>' +
+        '<div class="tk-flabel">Account manager<div class="tk-pick" id="amPick"><input type="hidden" id="amWho">' +
+          '<button type="button" class="tk-pickbtn" aria-haspopup="listbox"></button>' +
+          '<div class="tk-picklist" hidden><input type="text" class="tk-picksearch" placeholder="Search by name or title" autocomplete="off"><div class="tk-pickopts" role="listbox"></div></div></div></div>' +
         '<label>Their email <small>Messages, call summaries and anything they ask NovaAI to email them.</small><input type="text" id="amNotify" value="' + esc(l.notify_to || '') + '" placeholder="their email"></label></div>' +
       sec(2, 'Their NovaAI number', 'A Twilio number that always answers for them. Give it to clients, or forward their missed calls to it.') +
         '<label>Twilio number<select id="amNum" class="tk-select">' + numOpts + '</select></label>' +
@@ -420,13 +467,12 @@
       '<label class="chk"><input type="checkbox" id="amActive"' + (Number(l.active) || !l.id ? ' checked' : '') + '> <span>On</span></label>' +
       '<div class="acts"><button type="button" class="tk-btn" id="amSave">Save</button><button type="button" class="tk-btn ghost" id="amCancel">Cancel</button>' +
         '<span class="tk-msg" id="amMsg"></span>' + (l.id ? '<button type="button" class="del" id="amDel">Remove</button>' : '') + '</div></div>';
-    $('amWho').onchange = () => {
-      const o = $('amWho').selectedOptions[0];
-      if (o && !$('amRing').value) $('amRing').value = o.dataset.phone ? phone(o.dataset.phone) : '';
-      if (o && !$('amNotify').value) $('amNotify').value = o.dataset.email || '';
+    amPicker(box, l.am_user_id || '', (m) => {
+      if (!$('amRing').value && m.phone) $('amRing').value = phone(m.phone);
+      if (!$('amNotify').value) $('amNotify').value = m.email || '';
       const first = box.querySelector('.amOwn');
-      if (o && first && !first.value && o.dataset.cell) first.value = phone(o.dataset.cell);
-    };
+      if (first && !first.value && m.cell) first.value = phone(m.cell);
+    });
     $('amCancel').onclick = () => { box.hidden = true; };
     if ($('amDel')) $('amDel').onclick = async () => {
       if (!confirm('Remove ' + l.am_name + '’s NovaAI line? Past calls stay.')) return;

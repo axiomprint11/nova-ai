@@ -1822,21 +1822,30 @@ module.exports = function mountTalkAi(app, deps, bot) {
   });
 
   // ---- account manager lines
+  // CRM member photos are file names in the MemberImages folder on S3 (as the Members admin shows them).
+  const memberPhoto = (p) => !p ? '' : /^https:\/\//.test(String(p)) ? String(p)
+    : 'https://axiomprint.s3.us-west-1.amazonaws.com/MemberImages/' + encodeURIComponent(String(p).replace(/^\/+/, '')).replace(/%2F/g, '/');
   // The people who manage clients (CRM users with clients assigned), busiest first.
   app.get('/api/admin/talk/managers', auth, adminOnly, async (req, res) => {
     try {
-      const q = (cols) => runQuery('SELECT u.id, u.name, u.last_name, u.email, u.title, u.phone' + cols + ', COUNT(c.id) AS clients ' +
+      const q = (cols) => runQuery('SELECT u.id, u.name, u.last_name, u.email, u.title, u.phone, u.memberimage' + cols + ', COUNT(c.id) AS clients ' +
         'FROM user u JOIN customer c ON c.manager_id = u.id WHERE u.blocked_at IS NULL AND (u.status IS NULL OR u.status = 10) ' +
         'GROUP BY u.id ORDER BY clients DESC LIMIT 80');
       const rows = await q(', u.dialpad_phone').catch(() => q(''));      // dialpad_phone is newer than some copies of the DB
       res.json({ ok: true, managers: rows.map(r => ({ id: r.id, name: [r.name, r.last_name].filter(Boolean).join(' ').trim(), email: r.email || '',
-        title: r.title || '', phone: e164(r.dialpad_phone || r.phone || '') || '', cell: e164(r.phone || '') || '', clients: Number(r.clients) || 0 })) });
+        title: r.title || '', phone: e164(r.dialpad_phone || r.phone || '') || '', cell: e164(r.phone || '') || '', photo: memberPhoto(r.memberimage), clients: Number(r.clients) || 0 })) });
     } catch (e) { res.status(500).json({ ok: false, error: 'Could not load the account managers: ' + e.message }); }
   });
   app.get('/api/admin/talk/lines', auth, adminOnly, async (req, res) => {
     const lines = await dbAll('SELECT * FROM talk_lines ORDER BY active DESC, am_name');
     const counts = await dbAll("SELECT line_id, COUNT(*) AS n FROM talk_calls WHERE line_id IS NOT NULL AND source = 'phone' GROUP BY line_id").catch(() => []);
     lines.forEach(l => { const c = counts.find(x => x.line_id === l.id); l.calls = c ? c.n : 0; l.own_numbers = ownNums(l); l.has_pin = !!l.owner_pin; delete l.owner_pin; });
+    // Their CRM photo, live (it can change in the CRM).
+    const ids = [...new Set(lines.map(l => parseInt(l.am_user_id)).filter(Boolean))];
+    if (ids.length) {
+      const ph = await runQuery('SELECT id, memberimage FROM user WHERE id IN (' + ids.join(',') + ')').catch(() => []);
+      lines.forEach(l => { const u = ph.find(r => Number(r.id) === Number(l.am_user_id)); l.photo = u ? memberPhoto(u.memberimage) : ''; });
+    }
     res.json({ ok: true, lines: lines });
   });
   app.post('/api/admin/talk/lines', auth, adminOnly, async (req, res) => {
