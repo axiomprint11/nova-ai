@@ -13,6 +13,8 @@ for k in TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TALKAI_NUMBER ELEVENLABS_API_KEY E
   [ -n "$(v $k)" ] && echo "  ✓ $k" || echo "  · $k — not added yet"
 done
 
+# Nova takes a little while to come back after pm2 restart: wait for it (up to a minute).
+for i in $(seq 1 30); do curl -sf --max-time 5 "$URL/api/version" >/dev/null && break; [ $i = 1 ] && echo "   (waiting for Nova to finish starting…)"; sleep 2; done
 echo "2) Do they work?"
 SID=$(v TWILIO_ACCOUNT_SID); TOK=$(v TWILIO_AUTH_TOKEN)
 if [ -n "$SID" ] && [ -n "$TOK" ]; then
