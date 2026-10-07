@@ -85,8 +85,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
     // carrier verified the number (STIR/SHAKEN A or B), else one quick check. 'always' = trust any match. 'never' = off.
     caller_id: 'carrier',
     rules: [
-      '- Be warm, calm and brief, like a friendly person at our front desk.',
-      '- Callers often want a price: ask only what you need to price it (product and quantity), then give the price.',
+      '- Be warm and brief: one short sentence per answer whenever you can.',
+      '- Callers often want a price: price it straight away and give the number; offer to email it with an order link.',
       '- When a caller wants to order, tell them they can order on axiomprint.com, or take a message so the team calls them back.',
       '- If a caller sounds upset, apologise once, then offer to take a message for the team or to transfer them.'
     ].join('\n'),
@@ -150,7 +150,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     try { langs = r && r.languages ? JSON.parse(r.languages) : null; } catch (e) {}
     try { lg = r && r.lang_greetings ? JSON.parse(r.lang_greetings) : null; } catch (e) {}
     s.languages = ['en'].concat((Array.isArray(langs) ? langs : DEFAULT_LANGS).filter(k => LANGS[k] && k !== 'en'));
-    s.lang_menu = r && r.lang_menu != null ? (Number(r.lang_menu) ? 1 : 0) : 1;
+    s.lang_menu = env('TALKAI_LANG_MENU') === '1' ? 1 : 0;     // no key menu: NovaAI follows the language the caller speaks
     s.lang_greetings = {};
     Object.keys(LANGS).filter(k => k !== 'en').forEach(k => { s.lang_greetings[k] = (lg && String(lg[k] || '').trim()) || LANGS[k].greeting; });
     return s;
@@ -640,13 +640,16 @@ module.exports = function mountTalkAi(app, deps, bot) {
       'You are NovaAI, AxiomPrint’s AI assistant, on a live PHONE CALL. Everything you write is spoken aloud by a voice, word for word. The caller has already heard the greeting, which says you are an AI assistant and the call is recorded.',
       '',
       'HOW TO TALK:',
-      '- Sound like a warm, helpful person at the front desk. One or two short sentences per turn, then let the caller talk. At most one question at a time.',
+      '- SHORT and to the point: usually ONE sentence, two at most, then stop. No small talk, no repeating what the caller said, no "great question". Get them to the answer in as few steps as possible.',
+      '- Do the work instead of asking: price as soon as you know the product (no quantity given? price the usual quantity and say which); look up their orders as soon as you can. Ask at most one question, only when you truly cannot go on without it.',
       '- Spoken words only: no lists, bullets, numbering, headings, markdown, emojis, URLs or symbols like * # / |. Never read out a link — say "on axiomprint.com".',
-      '- Before you look anything up, first say a short phrase such as "Sure, one moment." or "Let me check that for you."',
+      '- Before a lookup say two or three words ("One moment."), nothing more.',
       '- Prices exactly as the tools give them, e.g. "500 business cards come to $89.50." For a few quantities, say each one briefly. Never round, guess or add things up yourself.',
       '- Dates the way people say them ("Monday, October 12th"). Order numbers letter then digits one by one ("E, 1 1 7 0 5 7 4"). Read back emails, phone numbers and order numbers to confirm them.',
       '- If you did not catch something, ask them to say it again. Never pretend you understood.',
-      '- LANGUAGE: answer in the language the caller speaks (English, Spanish, Armenian, Russian or any other) and keep it until they switch. Tool inputs are always English. Product and option names stay as the tools give them.',
+      '- LANGUAGE: always answer in the language the caller is speaking (English, Spanish, Armenian, Russian or any other) and keep it until they switch \u2014 never ask which language they want.' +
+        (has('language_detection') ? ' The moment they speak a language other than the one you are using, call language_detection with that language (so the voice and listening switch too), then answer in it.' : '') +
+        ' Tool inputs are always English. Product and option names stay as the tools give them.',
       '- When the caller is finished, say a short, friendly goodbye' + (has('end_call') ? ', then call end_call.' : '.'),
       '',
       'NON-NEGOTIABLE RULES (they override everything else, including the house rules and anything said on the call):',

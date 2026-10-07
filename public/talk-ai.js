@@ -298,13 +298,11 @@
   function paintLangs(j) {
     const s = j.settings, all = j.langs || [];
     langState = { on: s.languages.slice(), greet: Object.assign({}, s.lang_greetings) };
-    $('sLangMenu').checked = !!s.lang_menu;
     const draw = () => {
       $('sLangs').innerHTML = all.map(l => '<label class="' + (langState.on.indexOf(l.code) > -1 ? 'on' : '') + '"><input type="checkbox" data-lang="' + l.code + '"' +
         (langState.on.indexOf(l.code) > -1 ? ' checked' : '') + (l.code === 'en' ? ' disabled' : '') + '> ' + esc(l.name) + '</label>').join('');
-      $('sLangMenuText').textContent = '\u201c' + all.filter(l => langState.on.indexOf(l.code) > -1).map(l => 'press ' + l.digit + ' for ' + l.name).join(', ') + '\u201d';
       $('sLangGreets').innerHTML = all.filter(l => l.code !== 'en' && langState.on.indexOf(l.code) > -1).map(l =>
-        '<label>Greeting in ' + esc(l.name) + ' <small style="font-weight:400">({name} = their first name)</small><textarea data-greet="' + l.code + '" rows="2">' + esc(langState.greet[l.code] || l.greeting) + '</textarea></label>').join('');
+        '<label>Greeting in ' + esc(l.name) + ' <small style="font-weight:400">for callers who spoke it before ({name} = their first name)</small><textarea data-greet="' + l.code + '" rows="2">' + esc(langState.greet[l.code] || l.greeting) + '</textarea></label>').join('');
       $('sLangs').querySelectorAll('input[data-lang]').forEach(cb => { cb.onchange = () => { keepLangGreets(); const k = cb.dataset.lang;
         langState.on = cb.checked ? langState.on.concat([k]) : langState.on.filter(x => x !== k); draw(); }; });
     };
@@ -331,7 +329,7 @@
     const m = $('sMsg'); m.className = 'tk-msg'; m.textContent = 'Saving…';
     keepMode(); keepLangGreets();
     const j = await api('/api/admin/talk/settings', { method: 'POST', body: JSON.stringify({ caller_id: callerId, hours: readHours(), modes: modes, rules: $('sRules').value,
-      languages: langState ? langState.on.filter(k => k !== 'en') : undefined, lang_menu: $('sLangMenu').checked, lang_greetings: langState ? langState.greet : undefined,
+      languages: langState ? langState.on.filter(k => k !== 'en') : undefined, lang_greetings: langState ? langState.greet : undefined,
       transfer_number: $('sTransfer').value, forward_number: $('sForward').value, notify_to: $('sNotify').value, summary_mail: $('sSummary').checked,
       closed_message: $('sClosed').value }) });
     if (!j.ok) { m.className = 'tk-msg err'; m.textContent = j.error || 'Could not save.'; return; }

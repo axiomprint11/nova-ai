@@ -100,15 +100,15 @@ A call stores `line_id`; the Calls tab shows "<Name>'s line". Try it can test an
 
 ## Languages
 
-Training → **Languages**: English plus Spanish, Armenian, Russian (`talk_settings.languages`). With the **key menu** on
-(`lang_menu`, default on), a caller first hears "For English, press 1… Para español, oprima 2. For Armenian, press 3.
-Для русского языка нажмите 4." (Twilio `<Gather>`; no key = English) → `POST /api/talk/twilio/lang?call=<id>` (signed)
-stores `language` + `lang_pick` and connects NovaAI with that language: ElevenLabs `conversation_config_override.agent.language`
-(allow **Language** under the agent's Security → Overrides; if refused, Nova retries without it and logs it), a greeting in that
-language (`lang_greetings`, editable; the Armenian one should be checked by a native speaker), and a LANGUAGE line in the prompt.
-A number that chose a language before (a key pressed, or a non-English call) skips the menu (`rememberedLang()`).
-ElevenLabs must have the languages added to the agent (Additional languages, each with a voice; Eleven v3 for Armenian) —
-otherwise its speech recognition stays in English and does not understand Armenian.
+Training → **Languages**: English plus Spanish, Armenian, Russian (`talk_settings.languages`). There is **no key menu**:
+NovaAI answers in the language the caller speaks. The prompt tells it to call ElevenLabs' `language_detection` system
+tool the moment the caller switches (so ElevenLabs' listening and voice switch too), then answer in that language. A number
+that spoke one of these languages before (`rememberedLang()`: a non-English call, or a key picked when the old menu was on)
+starts in it: ElevenLabs `conversation_config_override.agent.language` (allow **Language** under the agent's Security →
+Overrides; if refused Nova retries without it) plus that language's greeting (`lang_greetings`; check the Armenian with a
+native speaker). The ElevenLabs agent needs the languages under **Additional languages** (each with a voice; Eleven v3
+for Armenian) and **Detect language** turned on under System tools. The press-a-key menu (`/api/talk/twilio/lang`)
+is still in the code, off unless `TALKAI_LANG_MENU=1`.
 
 ## Several calls at once
 
