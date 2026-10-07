@@ -72,6 +72,32 @@ asks which one; `order_status` then gives that job's full status and deadline se
 Nova keeps per-call memory between turns (what was looked up, verification tries), because ElevenLabs sends
 only the words back each turn.
 
+## Hours: regular and after hours
+
+Training → **Opening hours** (Los Angeles time, per weekday, plus closed days such as holidays) decides which setup
+answers: **Regular hours** inside them, **After hours** outside them. Each has its own **who answers** (NovaAI · ring the
+team first, then NovaAI · forward · closed message), greeting, greeting for callers we know, and rules for that time of
+day (`talk_settings.hours` / `modes`, JSON; `hoursNow()`, `weekText()`). NovaAI's prompt gets an HOURS line ("the team
+is IN until 6:00 PM" / "CLOSED now; we open again tomorrow at 9:00 AM") and the mode's rules; after hours there are no
+transfers. Each call stores `hours_mode`. The Phone rules box still applies at all hours.
+
+**Ring first** (`ring_ai`): Twilio `<Dial>`s the "Transfer to" number (or the account manager's phone) for
+`TALKAI_RING_SECONDS` (default 20); `POST /api/talk/twilio/after-dial?call=<id>` (signed) hangs up if someone answered,
+otherwise hands the call to NovaAI with "Hi {name}, {am} can't come to the phone right now…". Voicemail on the rung phone
+counts as answered — keep it longer than the ring time or turn it off.
+
+## Account managers (their own NovaAI)
+
+Tab **Account managers** (`talk_lines`): pick a CRM user who manages clients (`customer.manager_id` → `user`), then:
+- **Their own number** — a Twilio number (listed from the account; **Connect to Nova** sets its voice and status webhooks)
+  that always answers as their NovaAI; and/or
+- **Their clients on the main line** — a caller recognised by their number whose account's `manager_id` is this person
+  gets their NovaAI on the main number (`routeLine()`).
+- Their phone (rings first if ticked, and where transfers go), where messages go (default their email), an optional
+  greeting (`{name}`, `{am}`), **their notes for NovaAI** (added to the prompt as "<NAME>'S NOTES"), an optional
+  ElevenLabs voice ID (sent as a `tts.voice_id` override — allow **Voice** under the agent's Security → Overrides).
+A call stores `line_id`; the Calls tab shows "<Name>'s line". Try it can test any line, any time of day, as any caller.
+
 ## The caller's page
 
 `/talk/c/<token>` — the link in the quote email (32 random hex characters, no sign-in, expires after `TALKAI_PAGE_DAYS`,

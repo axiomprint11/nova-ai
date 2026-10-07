@@ -53,6 +53,15 @@ module.exports = function mountTalkAi(app, deps, bot) {
     // order number / email / ZIP, 'check+caller_id' = their number matched and they confirmed one detail).
     ['stir TEXT', 'caller_first TEXT', 'verified_by TEXT'].forEach(c => db.run('ALTER TABLE talk_calls ADD COLUMN ' + c, () => {}));
     ['caller_id TEXT', 'greeting_known TEXT'].forEach(c => db.run('ALTER TABLE talk_settings ADD COLUMN ' + c, () => {}));
+    // Opening hours (JSON) and what each part of the day does (JSON: regular / after).
+    ['hours TEXT', 'modes TEXT'].forEach(c => db.run('ALTER TABLE talk_settings ADD COLUMN ' + c, () => {}));
+    // Which account manager's line answered, and whether it was regular or after hours.
+    ['line_id INTEGER', 'hours_mode TEXT'].forEach(c => db.run('ALTER TABLE talk_calls ADD COLUMN ' + c, () => {}));
+    // An account manager's own answering NovaAI: their number (optional), their clients on the main line,
+    // ring them first, where messages go, a greeting and training of their own, a voice of their own.
+    db.run(`CREATE TABLE IF NOT EXISTS talk_lines (id INTEGER PRIMARY KEY AUTOINCREMENT, am_user_id INTEGER, am_name TEXT, am_title TEXT,
+      am_email TEXT, number TEXT, main_line INTEGER DEFAULT 1, ring_first INTEGER DEFAULT 0, ring_number TEXT, notify_to TEXT,
+      greeting TEXT, training TEXT, voice_id TEXT, active INTEGER DEFAULT 1, updated_at TEXT, updated_by TEXT)`);
     db.run('CREATE UNIQUE INDEX IF NOT EXISTS talk_calls_share ON talk_calls(share_token)', () => {});
     // What was said, turn by turn, as Nova answered (role: caller | agent | event).
     db.run(`CREATE TABLE IF NOT EXISTS talk_turns (id INTEGER PRIMARY KEY AUTOINCREMENT, call_id INTEGER NOT NULL,
@@ -84,6 +93,40 @@ module.exports = function mountTalkAi(app, deps, bot) {
     closed_message: 'Thanks for calling AxiomPrint. We can’t take your call right now. Please email order@axiomprint.com or visit axiomprint.com, and we’ll get back to you. Goodbye.',
     summary_mail: 0
   };
+  // Opening hours, Los Angeles time. Closed days (holidays) as YYYY-MM-DD.
+  const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const DAY_NAMES = { sun: 'Sunday', mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday' };
+  const DEFAULT_HOURS = { days: { mon: { open: true, from: '09:00', to: '18:00' }, tue: { open: true, from: '09:00', to: '18:00' },
+    wed: { open: true, from: '09:00', to: '18:00' }, thu: { open: true, from: '09:00', to: '18:00' }, fri: { open: true, from: '09:00', to: '18:00' },
+    sat: { open: true, from: '10:00', to: '14:00' }, sun: { open: false, from: '10:00', to: '14:00' } }, closed: [] };
+  // What each part of the day does. answer: ai | ring_ai (ring the team / account manager first, NovaAI if
+  // nobody picks up) | forward | message.
+  const MODE_DEFAULTS = {
+    regular: { answer: 'ai', greeting: DEFAULTS.greeting, greeting_known: DEFAULTS.greeting_known,
+      rules: '- Our team is in: when a caller wants a person, offer to transfer them (or take a message if transfers are off).' },
+    after: { answer: 'ai',
+      greeting: 'Hi, you\u2019ve reached AxiomPrint. Our team is out right now, but I\u2019m NovaAI, an AI assistant, and this call is recorded. How can I help you?',
+      greeting_known: 'Hi {name}, thanks for calling AxiomPrint! Our team is out right now, but I\u2019m NovaAI, an AI assistant, and this call is recorded. How can I help you?',
+      rules: '- The team is closed now: when the caller needs a person, say when we open again (the HOURS line) and take a message so the team calls back first thing.\n- Prices, products, turnaround and order status work as usual.' }
+  };
+  const ANSWERS = ['ai', 'ring_ai', 'forward', 'message'];
+  const hhmm = (v, d) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v || '')) ? String(v) : d;
+  function normHours(h) {
+    const out = { days: {}, closed: [] };
+    DAY_KEYS.forEach(k => {
+      const d = (h && h.days && h.days[k]) || DEFAULT_HOURS.days[k];
+      const from = hhmm(d.from, DEFAULT_HOURS.days[k].from), to = hhmm(d.to, DEFAULT_HOURS.days[k].to);
+      out.days[k] = { open: !!d.open && to > from, from: from, to: to };
+    });
+    out.closed = ((h && Array.isArray(h.closed)) ? h.closed : []).map(String).filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x)).slice(0, 60);
+    return out;
+  }
+  function normMode(m, def) {
+    m = m || {};
+    const t = (v, d, n) => (v == null || String(v).trim() === '') ? d : String(v).slice(0, n);
+    return { answer: ANSWERS.indexOf(m.answer) > -1 ? m.answer : def.answer, greeting: t(m.greeting, def.greeting, 600),
+      greeting_known: t(m.greeting_known, def.greeting_known, 600), rules: m.rules == null ? def.rules : String(m.rules).slice(0, 4000) };
+  }
   async function settings() {
     const r = await dbGet('SELECT * FROM talk_settings WHERE id = 1').catch(() => null);
     const s = Object.assign({}, DEFAULTS);
@@ -92,7 +135,79 @@ module.exports = function mountTalkAi(app, deps, bot) {
     if (r && r.forward_number === '') s.forward_number = '';
     s.summary_mail = Number(s.summary_mail) ? 1 : 0;
     if (['carrier', 'always', 'never'].indexOf(s.caller_id) === -1) s.caller_id = 'carrier';
+    let hours = null, modes = null;
+    try { hours = r && r.hours ? JSON.parse(r.hours) : null; } catch (e) {}
+    try { modes = r && r.modes ? JSON.parse(r.modes) : null; } catch (e) {}
+    s.hours = normHours(hours);
+    // Before hours existed there was one "who answers" and one greeting: they become regular hours'.
+    const legacyAnswer = r && ANSWERS.indexOf(r.mode) > -1 ? r.mode : 'ai';
+    const regDef = Object.assign({}, MODE_DEFAULTS.regular, { answer: legacyAnswer, greeting: s.greeting, greeting_known: s.greeting_known });
+    s.modes = { regular: normMode(modes && modes.regular, regDef),
+      after: normMode(modes && modes.after, Object.assign({}, MODE_DEFAULTS.after, { answer: legacyAnswer === 'ring_ai' ? 'ai' : legacyAnswer })) };
     return s;
+  }
+
+  // ---------------------------------------------------------------- hours
+  const toMin = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || '')); return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : null; };
+  const ampm = (t) => { const v = toMin(t); if (v == null) return t; const h = Math.floor(v / 60), mi = v % 60;
+    return ((h % 12) || 12) + ':' + String(mi).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM'); };
+  function laParts(d) {
+    const p = {};
+    new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(d).forEach(x => { p[x.type] = x.value; });
+    return { day: String(p.weekday || '').toLowerCase().slice(0, 3), date: p.year + '-' + p.month + '-' + p.day, min: parseInt(p.hour) * 60 + parseInt(p.minute) };
+  }
+  // Open now? Until when? When do we open next? (Los Angeles time; closed days count as closed.)
+  function hoursNow(s, at) {
+    at = at || new Date();
+    const h = s.hours, now = laParts(at);
+    const dayOf = (p) => { const d = h.days[p.day]; return d && d.open && h.closed.indexOf(p.date) === -1 ? d : null; };
+    const today = dayOf(now);
+    const open = !!(today && now.min >= toMin(today.from) && now.min < toMin(today.to));
+    let next = null;
+    for (let i = 0; i < 10 && !next; i++) {
+      const p = laParts(new Date(at.getTime() + i * 86400000 + (12 * 60 - now.min) * 60000));     // noon of that day
+      const d = dayOf(p);
+      if (!d || (i === 0 && now.min >= toMin(d.from))) continue;
+      next = (i === 0 ? 'today' : i === 1 ? 'tomorrow' : DAY_NAMES[p.day]) + ' at ' + ampm(d.from);
+    }
+    return { mode: open ? 'regular' : 'after', open: open, closes: open ? ampm(today.to) : null, next: next };
+  }
+  function weekText(h) {
+    const groups = [];
+    ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].forEach(k => {
+      const d = h.days[k], txt = d.open ? ampm(d.from) + '\u2013' + ampm(d.to) : 'closed', last = groups[groups.length - 1];
+      if (last && last.txt === txt) last.to = k; else groups.push({ from: k, to: k, txt: txt });
+    });
+    const nm = (k) => DAY_NAMES[k].slice(0, 3);
+    return groups.map(g => (g.from === g.to ? nm(g.from) : nm(g.from) + '\u2013' + nm(g.to)) + ' ' + g.txt).join(', ');
+  }
+
+  // ---------------------------------------------------------------- account manager lines
+  async function lineById(id) { return parseInt(id) ? await dbGet('SELECT * FROM talk_lines WHERE id = ? AND active = 1', [parseInt(id)]).catch(() => null) : null; }
+  // Which account manager answers: a call to their own number; otherwise, on the main number, a known
+  // caller whose account manager has a line with "their clients on the main line" switched on.
+  async function routeLine(to, match) {
+    const lines = await dbAll('SELECT * FROM talk_lines WHERE active = 1').catch(() => []);
+    if (!lines.length) return null;
+    const t = last10(to);
+    const own = lines.find(l => l.number && last10(l.number) === t);
+    if (own) return Object.assign({ why: 'number' }, own);
+    const top = match && match.accounts && match.accounts[0];
+    if (!top) return null;
+    const r = await runQuery('SELECT manager_id FROM customer WHERE id = ' + parseInt(top.id) + ' LIMIT 1').catch(() => []);
+    const mid = r[0] ? parseInt(r[0].manager_id) : 0;
+    const l = mid ? lines.find(x => Number(x.am_user_id) === mid && Number(x.main_line)) : null;
+    return l ? Object.assign({ why: 'client' }, l) : null;
+  }
+  const amFirst = (line) => line ? (String(line.am_name || '').trim().split(/\s+/)[0] || 'our team') : 'our team';
+  // This call's settings: the hours mode, and the line's transfer number / message address on top.
+  function forCall(s, call, line) {
+    const hn = hoursNow(s);
+    const modeKey = call && (call.hours_mode === 'regular' || call.hours_mode === 'after') ? call.hours_mode : hn.mode;
+    return Object.assign({}, s, { _line: line || null, _hours: hn, _modeKey: modeKey, _mode: s.modes[modeKey],
+      transfer_number: modeKey === 'after' ? '' : ((line && line.ring_number) || s.transfer_number),
+      notify_to: (line && line.notify_to) || s.notify_to });
   }
 
   // Recent webhook hits, newest first — shown on the Setup tab so a wrong URL or key is obvious.
@@ -166,7 +281,16 @@ module.exports = function mountTalkAi(app, deps, bot) {
       (match.accounts.length > 1 ? ' — ' + match.accounts.length + ' accounts use this number' : '') + (source === 'phone' ? ' · carrier check: ' + (stir || 'none') : ''));
     return { trusted: trusted, first: use ? use.first : '' };
   }
-  const greetingFor = (s, first) => first && s.caller_id !== 'never' ? String(s.greeting_known || DEFAULTS.greeting_known).replace(/\{name\}/gi, first) : s.greeting;
+  // The first thing the caller hears: the line's own greeting, else the hours mode's (the "callers we know"
+  // one when their number is on an account). {name} = their first name, {am} = the account manager's.
+  const MISSED = 'Hi {name}, {am} can\u2019t come to the phone right now. I\u2019m NovaAI, an AI assistant, and this call is recorded. How can I help you?';
+  function greetingFor(s, first, mode, line, missed) {
+    mode = mode || s.modes.regular;
+    if (s.caller_id === 'never') first = '';
+    const tpl = missed ? MISSED : (line && line.greeting) ? line.greeting : (first ? mode.greeting_known : mode.greeting);
+    return String(tpl || mode.greeting).replace(/\{am\}/gi, amFirst(line))
+      .replace(/\s*\{name\}/gi, first ? ' ' + first : '').replace(/^\s+/, '').replace(/\s+,/g, ',');
+  }
   async function lookupQuick(from) {
     try { return await Promise.race([lookupCaller(from), new Promise(r => setTimeout(() => r(null), 3000))]); }
     catch (e) { console.error('TALKAI caller lookup', e.message); return null; }
@@ -199,13 +323,15 @@ module.exports = function mountTalkAi(app, deps, bot) {
     return twiml('<Dial timeout="25"' + (cid ? ' callerId="' + xml(cid) + '"' : '') + '>' + xml(e164(number) || number) + '</Dial>' + sayTw(s.closed_message));
   }
 
-  async function registerCall(call, from, to, s, greeting) {
+  async function registerCall(call, from, to, s, greeting, line) {
     const key = env('ELEVENLABS_API_KEY'), agent = env('ELEVENLABS_AGENT_ID');
     if (!key || !agent) throw new Error('ElevenLabs is not set up (ELEVENLABS_API_KEY / ELEVENLABS_AGENT_ID missing)');
     const r = await fetch(EL_BASE + '/v1/convai/twilio/register-call', {
       method: 'POST', headers: { 'xi-api-key': key, 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify({ agent_id: agent, from_number: from, to_number: to, direction: 'inbound',
-        conversation_initiation_client_data: { dynamic_variables: { nova_call: String(call.id), greeting: greeting || s.greeting } } }),
+        conversation_initiation_client_data: Object.assign({ dynamic_variables: { nova_call: String(call.id), greeting: greeting || s.greeting } },
+          // An account manager's own voice (needs "Voice" allowed under the agent's Security \u2192 Overrides).
+          line && line.voice_id ? { conversation_config_override: { tts: { voice_id: String(line.voice_id) } } } : {}) }),
       signal: AbortSignal.timeout(8000) });
     const t = await r.text();
     if (!r.ok) throw new Error('ElevenLabs register-call ' + r.status + ': ' + t.slice(0, 200));
@@ -234,29 +360,75 @@ module.exports = function mountTalkAi(app, deps, bot) {
         [sid || 'tw-' + crypto.randomBytes(8).toString('hex'), from, to, 'phone', String(b.CallStatus || 'ringing').slice(0, 30)]);
       call = { id: r.lastID, call_sid: sid };
     }
-    // Who is calling (by number), before NovaAI says hello, so it can greet them by name.
-    const known = await applyMatch(call.id, await lookupQuick(from), String(b.StirVerstat || '').slice(0, 60), s, 'phone').catch(() => ({}));
-    const greeting = greetingFor(s, known.first);
+    // Who is calling (by number), before NovaAI says hello, so it can greet them by name; which account
+    // manager's line answers; and whether it is regular or after hours.
+    const match = await lookupQuick(from);
+    const known = await applyMatch(call.id, match, String(b.StirVerstat || '').slice(0, 60), s, 'phone').catch(() => ({}));
+    const line = await routeLine(to, match).catch(() => null);
+    const hn = hoursNow(s);
+    const mode = s.modes[hn.mode];
+    let answer = mode.answer;
+    if (line && Number(line.ring_first) && hn.open && answer === 'ai') answer = 'ring_ai';
+    const ringTo = (line && line.ring_number) || s.transfer_number;
+    await dbRun('UPDATE talk_calls SET line_id = ?, hours_mode = ? WHERE id = ?', [line ? line.id : null, hn.mode, call.id]).catch(() => {});
+    const who = 'Call ' + call.id + ' from ' + from + (line ? ' (' + amFirst(line) + '’s line' + (line.why === 'client' ? ', their client' : '') + ')' : '') + ' · ' + (hn.open ? 'regular' : 'after') + ' hours';
     const mark = (how, err) => dbRun("UPDATE talk_calls SET answered_by = ?, error = COALESCE(?, error), updated_at = datetime('now') WHERE id = ?", [how, err || null, call.id]).catch(() => {});
-    if (s.mode === 'forward' && s.forward_number) {
-      await mark('forward'); hit('twilio-voice', true, 'Call ' + call.id + ' from ' + from + ' forwarded to ' + s.forward_number);
+    if (answer === 'forward' && s.forward_number) {
+      await mark('forward'); hit('twilio-voice', true, who + ' → forwarded to ' + s.forward_number);
       return res.send(forwardTw(s.forward_number, from, s));
     }
-    if (s.mode === 'ai') {
+    if (answer === 'ring_ai' && ringTo) {
+      // Ring the person first; /after-dial hands the call to NovaAI if nobody picks up.
+      await mark('ring'); hit('twilio-voice', true, who + ' → ringing ' + ringTo + ' first');
+      const cid = e164(from);
+      return res.send(twiml('<Dial timeout="' + RING_SECONDS + '" action="' + xml(NOVA_URL + '/api/talk/twilio/after-dial?call=' + call.id) + '" method="POST"' +
+        (cid ? ' callerId="' + xml(cid) + '"' : '') + '>' + xml(e164(ringTo) || ringTo) + '</Dial>'));
+    }
+    if (answer === 'ai' || answer === 'ring_ai') {
       try {
-        const tw = await registerCall(call, from, to, s, greeting);
-        await mark('ai'); hit('twilio-voice', true, 'Call ' + call.id + ' from ' + from + ' → NovaAI (ElevenLabs)');
+        const tw = await registerCall(call, from, to, s, greetingFor(s, known.first, mode, line), line);
+        await mark('ai'); hit('twilio-voice', true, who + ' → NovaAI');
         return res.send(tw);
       } catch (e) {
         await mark(s.forward_number ? 'forward' : 'message', e.message);
-        hit('twilio-voice', false, 'Call ' + call.id + ': ' + e.message + ' — ' + (s.forward_number ? 'forwarded instead' : 'closed message played'));
+        hit('twilio-voice', false, who + ': ' + e.message + ' — ' + (s.forward_number ? 'forwarded instead' : 'closed message played'));
       }
     } else {
-      await mark(s.forward_number && s.mode !== 'message' ? 'forward' : 'message');
-      hit('twilio-voice', true, 'Call ' + call.id + ' from ' + from + ' (TalkAi is ' + (s.mode === 'message' ? 'off: message played' : 'forwarding') + ')');
+      await mark(answer === 'forward' && s.forward_number ? 'forward' : 'message');
+      hit('twilio-voice', true, who + ' (' + (answer === 'message' ? 'closed message' : 'forward — no forward number set, closed message') + ')');
     }
-    if (s.forward_number && s.mode !== 'message') return res.send(forwardTw(s.forward_number, from, s));
+    if (s.forward_number && answer !== 'message') return res.send(forwardTw(s.forward_number, from, s));
     res.send(twiml(sayTw(s.closed_message) + '<Hangup/>'));
+  });
+
+  // After "ring first": answered → done; nobody picked up (busy, no answer, failed) → NovaAI takes it.
+  // Voicemail on the rung phone counts as answered, so keep the ring time shorter than its voicemail.
+  const RING_SECONDS = Math.min(Math.max(parseInt(env('TALKAI_RING_SECONDS')) || 20, 8), 45);
+  app.post('/api/talk/twilio/after-dial', form, async (req, res) => {
+    res.type('text/xml');
+    if (!twilioOk(req)) { hit('after-dial', false, 'signature did not match'); return res.status(403).send(twiml('<Hangup/>')); }
+    const b = req.body || {};
+    const call = await dbGet('SELECT * FROM talk_calls WHERE id = ?', [parseInt(req.query.call) || 0]).catch(() => null);
+    if (!call) return res.send(twiml('<Hangup/>'));
+    const st = String(b.DialCallStatus || '');
+    const mark = (how) => dbRun("UPDATE talk_calls SET answered_by = ?, updated_at = datetime('now') WHERE id = ?", [how, call.id]).catch(() => {});
+    if (st === 'completed') {
+      await mark('person'); await addTurn(call.id, 'event', 'Answered by the team (' + (b.DialCallDuration ? b.DialCallDuration + ' s' : 'rang through') + ')');
+      hit('after-dial', true, 'Call ' + call.id + ': answered by the team');
+      return res.send(twiml('<Hangup/>'));
+    }
+    const s = await settings();
+    const line = await lineById(call.line_id);
+    const mode = s.modes[call.hours_mode === 'after' ? 'after' : 'regular'];
+    await addTurn(call.id, 'event', 'Nobody picked up (' + (st || 'no answer') + ') — NovaAI answered');
+    try {
+      const tw = await registerCall(call, call.from_number, call.to_number, s, greetingFor(s, call.caller_first, mode, line, true), line);
+      await mark('ai'); hit('after-dial', true, 'Call ' + call.id + ': ' + (st || 'no answer') + ' → NovaAI');
+      return res.send(tw);
+    } catch (e) {
+      await mark('message'); hit('after-dial', false, 'Call ' + call.id + ': ' + e.message);
+      return res.send(twiml(sayTw(s.closed_message) + '<Hangup/>'));
+    }
   });
 
   // Call status changes (set as the number's "Call status changes" URL in Twilio).
@@ -338,7 +510,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     });
     return list;
   }
-  const canTransfer = (s, call) => !!(s.transfer_number && call && call.call_sid && call.source === 'phone' && env('TWILIO_ACCOUNT_SID') && env('TWILIO_AUTH_TOKEN'));
+  const canTransfer = (s, call) => !!(s.transfer_number && s._modeKey !== 'after' && call && call.call_sid && call.source === 'phone' && env('TWILIO_ACCOUNT_SID') && env('TWILIO_AUTH_TOKEN'));
 
   function nowLA() {
     return new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -408,6 +580,14 @@ module.exports = function mountTalkAi(app, deps, bot) {
       'PHONE RULES (set by AxiomPrint — follow them unless they conflict with the rules above):',
       String(s.rules || '').slice(0, 4000),
       '',
+      (s._modeKey === 'after' ? 'AFTER-HOURS RULES (this call came in outside opening hours):' : 'REGULAR-HOURS RULES (this call came in during opening hours):'),
+      String((s._mode && s._mode.rules) || '').slice(0, 4000),
+      s._line ? '\nYOU ANSWER FOR ' + (s._line.am_name || 'an account manager') + (s._line.am_title ? ', ' + s._line.am_title : '') + ' at AxiomPrint. ' +
+        'This is ' + amFirst(s._line) + '\u2019s line: you are ' + amFirst(s._line) + '\u2019s assistant, NovaAI. Messages go to ' +
+        amFirst(s._line) + (s.transfer_number ? ' and transfers ring ' + amFirst(s._line) : '') + '. If the caller asks for ' + amFirst(s._line) + ', say they are not available right now and offer ' +
+        (s.transfer_number ? 'to try connecting them or ' : '') + 'to take a message for them.' +
+        (String(s._line.training || '').trim() ? '\n' + amFirst(s._line).toUpperCase() + '\u2019S NOTES (follow them unless they conflict with the rules above):\n' + String(s._line.training).slice(0, 4000) : '') : '',
+      '',
       turnaround ? 'TURNAROUND (from ' + bot.TURNAROUND_URL + '): turnaround is production time only; shipping is separate. For a caller’s own order the ready date comes from the order tools.\n' + String(turnaround).slice(0, 5000) + '\n' : '',
       'DESIGN SERVICES GUIDE:',
       String(rules.design || '').slice(0, 3000),
@@ -421,6 +601,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const c = who.customer;
     const live = [
       'NOW: ' + nowLA() + ' (Los Angeles time).',
+      'HOURS: ' + (s._hours && s._hours.open ? 'the team is IN until ' + s._hours.closes + ' today.' : 'the team is CLOSED now' + (s._hours && s._hours.next ? '; we open again ' + s._hours.next + '.' : '.')) +
+        ' Opening hours: ' + weekText(s.hours) + ' (Los Angeles).',
       'CALLER: calling from ' + (call.from_number || 'an unknown number') + '. ' + callerLine(call, c),
       m.facts.length ? '\nLOOKED UP EARLIER IN THIS CALL (use these; look up again only if something changed):\n' + m.facts.map(f => '- ' + f).join('\n').slice(-7000) : ''
     ].join('\n');
@@ -545,7 +727,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
       const rows = [['Caller', name || '(no name given)'], ['Call back', back], ['Email', email], ['Customer', c ? (c.name || '') + (c.company ? ' — ' + c.company : '') + ' (verified, #' + c.id + ')' : 'not verified'],
         ['Topic', topic], ['Message', msg]].filter(r => r[1]);
       try {
-        await deps.sendMail({ to: s.notify_to, subject: 'TalkAi message: ' + topic + (name ? ' — ' + name : '') + (back ? ' (' + back + ')' : ''),
+        await deps.sendMail({ to: s.notify_to, subject: 'TalkAi message' + (s._line ? ' for ' + amFirst(s._line) : '') + ': ' + topic + (name ? ' — ' + name : '') + (back ? ' (' + back + ')' : ''),
           text: 'NovaAI took a message on the phone.\n\n' + rows.map(r => r[0] + ': ' + r[1]).join('\n') + '\n\nCall: ' + callLink(ctx.call.id),
           html: '<div style="font:14px/1.5 Arial,sans-serif;color:#1f2937"><p><b>NovaAI took a message on the phone.</b></p><table style="border-collapse:collapse;font-size:13px">' +
             rows.map(r => '<tr><td style="padding:4px 12px 4px 0;color:#6b7280;vertical-align:top">' + r[0] + '</td><td style="padding:4px 0">' + htmlEsc(r[1]) + '</td></tr>').join('') +
@@ -756,7 +938,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
   // tools used, and an ElevenLabs tool call (end_call…) to pass back, if the model chose one.
   async function answer(call, history, extraTools, emit, opts) {
     opts = opts || {};
-    const s = await settings();
+    const s = forCall(await settings(), call, await lineById(call.line_id));
     const m = mem(call.id);
     const who = { source: 'phone', vid: 'phone:' + call.id,
       customer: call.verified && call.customer_id ? await bot.customerById(call.customer_id) : null };
@@ -1031,7 +1213,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
 
   app.get('/api/admin/talk/overview', auth, adminOnly, async (req, res) => {
     const s = await settings();
-    res.json({ ok: true, settings: s, defaults: DEFAULTS, model: MODEL, number: env('TALKAI_NUMBER') || null, keep_days: KEEP_DAYS,
+    res.json({ ok: true, settings: s, defaults: DEFAULTS, mode_defaults: MODE_DEFAULTS, hours_now: Object.assign(hoursNow(s), { week: weekText(s.hours) }), ring_seconds: RING_SECONDS, model: MODEL, number: env('TALKAI_NUMBER') || null, keep_days: KEEP_DAYS,
       keys: { TWILIO_AUTH_TOKEN: !!env('TWILIO_AUTH_TOKEN'), TWILIO_ACCOUNT_SID: !!env('TWILIO_ACCOUNT_SID'), ELEVENLABS_API_KEY: !!env('ELEVENLABS_API_KEY'),
         ELEVENLABS_AGENT_ID: !!env('ELEVENLABS_AGENT_ID'), TALKAI_LLM_KEY: !!env('TALKAI_LLM_KEY'), ELEVENLABS_WEBHOOK_SECRET: !!env('ELEVENLABS_WEBHOOK_SECRET'),
         email: !!deps.sendMail },
@@ -1060,11 +1242,17 @@ module.exports = function mountTalkAi(app, deps, bot) {
     if (notify && !/^[^\s@,]+@[^\s@,]+\.[^\s@,]+(\s*,\s*[^\s@,]+@[^\s@,]+\.[^\s@,]+)*$/.test(notify)) return res.status(400).json({ ok: false, error: 'Check the email address for messages.' });
     const txt = (v, k, n) => v == null ? cur[k] : String(v).slice(0, n);
     const callerId = ['carrier', 'always', 'never'].indexOf(b.caller_id) > -1 ? b.caller_id : cur.caller_id;
+    const hours = b.hours ? normHours(b.hours) : cur.hours;
+    const modes = b.modes ? { regular: normMode(b.modes.regular, cur.modes.regular), after: normMode(b.modes.after, cur.modes.after) } : cur.modes;
+    if ((modes.regular.answer === 'forward' || modes.after.answer === 'forward') && !forward) return res.status(400).json({ ok: false, error: 'Add the forward number first (Numbers and messages).' });
+    if (modes.regular.answer === 'ring_ai' && !transfer) return res.status(400).json({ ok: false, error: 'Add the "Transfer to" number first \u2014 that is the phone that rings before NovaAI answers.' });
     await dbRun('INSERT OR REPLACE INTO talk_settings (id, mode, greeting, rules, transfer_number, forward_number, notify_to, closed_message, summary_mail, caller_id, greeting_known, updated_at, updated_by) ' +
       "VALUES (1,?,?,?,?,?,?,?,?,?,?,datetime('now'),?)", [mode, txt(b.greeting, 'greeting', 600).trim() || DEFAULTS.greeting, txt(b.rules, 'rules', 6000),
       transfer, forward, notify, txt(b.closed_message, 'closed_message', 600).trim() || DEFAULTS.closed_message,
       b.summary_mail == null ? cur.summary_mail : (b.summary_mail ? 1 : 0), callerId,
       txt(b.greeting_known, 'greeting_known', 600).trim() || DEFAULTS.greeting_known, readerOf(req)]);
+    await dbRun('UPDATE talk_settings SET hours = ?, modes = ?, mode = ?, greeting = ?, greeting_known = ? WHERE id = 1',
+      [JSON.stringify(hours), JSON.stringify(modes), modes.regular.answer, modes.regular.greeting, modes.regular.greeting_known]);
     res.json({ ok: true, settings: await settings() });
   });
 
@@ -1090,7 +1278,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
       p.push(like, like, like, like, like, like);
     }
     const rows = await dbAll('SELECT c.id, c.from_number, c.source, c.status, c.answered_by, c.customer_id, c.customer_name, c.company, c.verified, c.caller_match, ' +
-      'c.language, c.summary, c.outcome, c.duration_sec, c.created_at, c.updated_at, c.audio_path IS NOT NULL AS has_audio, c.tried_by, c.verified_by, c.caller_first, ' +
+      'c.language, c.summary, c.outcome, c.duration_sec, c.created_at, c.updated_at, c.audio_path IS NOT NULL AS has_audio, c.tried_by, c.verified_by, c.caller_first, c.hours_mode, c.line_id, (SELECT am_name FROM talk_lines l WHERE l.id = c.line_id) AS line_name, ' +
       '(SELECT COUNT(*) FROM talk_turns t WHERE t.call_id = c.id AND t.role = \'caller\') AS turns, ' +
       '(SELECT content FROM talk_turns t WHERE t.call_id = c.id AND t.role = \'caller\' ORDER BY t.id LIMIT 1) AS first_said, ' +
       '(r.read_at IS NULL OR r.read_at < c.updated_at) AS unread ' +
@@ -1111,6 +1299,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
     c.has_audio = !!c.audio_path; delete c.audio_path;
     try { c.quotes = c.quotes ? JSON.parse(c.quotes) : []; } catch (e) { c.quotes = []; }
     c.page_url = c.share_token ? NOVA_URL + '/talk/c/' + c.share_token : null; delete c.share_token;
+    const ln = c.line_id ? await dbGet('SELECT am_name FROM talk_lines WHERE id = ?', [c.line_id]).catch(() => null) : null;
+    c.line_name = ln ? ln.am_name : null;
     await markRead(id, readerOf(req));
     res.json({ ok: true, call: c, turns: turns });
   });
@@ -1142,9 +1332,16 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const from = String((req.body && req.body.from) || '').trim().slice(0, 32);
     const r = await dbRun("INSERT INTO talk_calls (call_sid, from_number, source, status, answered_by, tried_by) VALUES (?,?,?,?,?,?)",
       ['try-' + crypto.randomBytes(8).toString('hex'), from ? (e164(from) || from) : null, 'try', 'in-progress', 'ai', readerOf(req)]);
-    const known = from ? await applyMatch(r.lastID, await lookupQuick(from), '', s, 'try').catch(() => ({})) : {};
+    const match = from ? await lookupQuick(from) : null;
+    const known = from ? await applyMatch(r.lastID, match, '', s, 'try').catch(() => ({})) : {};
+    // As if it came in on an account manager's number / at a chosen time of day.
+    const b = req.body || {};
+    const line = parseInt(b.line_id) ? await lineById(b.line_id) : (b.line_id === 'auto' ? await routeLine('', match).catch(() => null) : null);
+    const modeKey = b.hours === 'regular' || b.hours === 'after' ? b.hours : hoursNow(s).mode;
+    await dbRun('UPDATE talk_calls SET line_id = ?, hours_mode = ? WHERE id = ?', [line ? line.id : null, modeKey, r.lastID]);
     const c = await dbGet('SELECT customer_name, company FROM talk_calls WHERE id = ?', [r.lastID]);
-    res.json({ ok: true, call_id: r.lastID, greeting: greetingFor(s, known.first),
+    res.json({ ok: true, call_id: r.lastID, greeting: greetingFor(s, known.first, s.modes[modeKey], line), hours: modeKey,
+      line: line ? (line.am_name || 'Account manager') + '\u2019s line' : null,
       recognised: known.trusted ? (c.customer_name || '') + (c.company ? ' (' + c.company + ')' : '') : null });
   });
   app.post('/api/admin/talk/try', auth, adminOnly, async (req, res) => {
@@ -1169,6 +1366,86 @@ module.exports = function mountTalkAi(app, deps, bot) {
       console.error('TALKAI try', e.message);
       res.status(500).json({ ok: false, error: 'NovaAI could not answer: ' + e.message });
     }
+  });
+
+  // ---- account manager lines
+  // The people who manage clients (CRM users with clients assigned), busiest first.
+  app.get('/api/admin/talk/managers', auth, adminOnly, async (req, res) => {
+    try {
+      const q = (cols) => runQuery('SELECT u.id, u.name, u.last_name, u.email, u.title, u.phone' + cols + ', COUNT(c.id) AS clients ' +
+        'FROM user u JOIN customer c ON c.manager_id = u.id WHERE u.blocked_at IS NULL AND (u.status IS NULL OR u.status = 10) ' +
+        'GROUP BY u.id ORDER BY clients DESC LIMIT 80');
+      const rows = await q(', u.dialpad_phone').catch(() => q(''));      // dialpad_phone is newer than some copies of the DB
+      res.json({ ok: true, managers: rows.map(r => ({ id: r.id, name: [r.name, r.last_name].filter(Boolean).join(' ').trim(), email: r.email || '',
+        title: r.title || '', phone: e164(r.dialpad_phone || r.phone || '') || '', clients: Number(r.clients) || 0 })) });
+    } catch (e) { res.status(500).json({ ok: false, error: 'Could not load the account managers: ' + e.message }); }
+  });
+  app.get('/api/admin/talk/lines', auth, adminOnly, async (req, res) => {
+    const lines = await dbAll('SELECT * FROM talk_lines ORDER BY active DESC, am_name');
+    const counts = await dbAll("SELECT line_id, COUNT(*) AS n FROM talk_calls WHERE line_id IS NOT NULL AND source = 'phone' GROUP BY line_id").catch(() => []);
+    lines.forEach(l => { const c = counts.find(x => x.line_id === l.id); l.calls = c ? c.n : 0; });
+    res.json({ ok: true, lines: lines });
+  });
+  app.post('/api/admin/talk/lines', auth, adminOnly, async (req, res) => {
+    const b = req.body || {};
+    const id = parseInt(b.id) || null;
+    const am = parseInt(b.am_user_id);
+    if (!am) return res.status(400).json({ ok: false, error: 'Pick the account manager.' });
+    let u = null;
+    try { u = (await runQuery('SELECT id, name, last_name, email, title FROM user WHERE id = ' + am + ' LIMIT 1'))[0]; } catch (e) {}
+    if (!u) return res.status(400).json({ ok: false, error: 'That account manager was not found.' });
+    const num = (v, label) => { const t = String(v || '').trim(); if (!t) return ''; const e = e164(t); if (!e) throw new Error(label + ': "' + t + '" is not a phone number.'); return e; };
+    let number, ring;
+    try { number = num(b.number, 'Their number'); ring = num(b.ring_number, 'Ring / transfer number'); } catch (e) { return res.status(400).json({ ok: false, error: e.message }); }
+    if (number) {
+      const clash = await dbGet('SELECT id, am_name FROM talk_lines WHERE number = ? AND id <> ? AND active = 1', [number, id || 0]);
+      if (clash) return res.status(400).json({ ok: false, error: 'That number already answers for ' + clash.am_name + '.' });
+      if (last10(number) === last10(env('TALKAI_NUMBER'))) return res.status(400).json({ ok: false, error: 'That is the main TalkAi number. Leave "Their number" empty and tick "their clients on the main line" instead.' });
+    }
+    const notify = String(b.notify_to || '').trim().slice(0, 200) || u.email || '';
+    if (notify && !/^[^\s@,]+@[^\s@,]+\.[^\s@,]+(\s*,\s*[^\s@,]+@[^\s@,]+\.[^\s@,]+)*$/.test(notify)) return res.status(400).json({ ok: false, error: 'Check the email for messages.' });
+    if (Number(b.ring_first) && !ring) return res.status(400).json({ ok: false, error: 'Add the number to ring first.' });
+    const vals = [am, [u.name, u.last_name].filter(Boolean).join(' ').trim(), u.title || '', u.email || '', number || null, b.main_line ? 1 : 0, b.ring_first ? 1 : 0,
+      ring || null, notify || null, String(b.greeting || '').trim().slice(0, 600) || null, String(b.training || '').slice(0, 6000) || null,
+      String(b.voice_id || '').trim().replace(/[^A-Za-z0-9_\-]/g, '').slice(0, 60) || null, b.active === false || b.active === 0 ? 0 : 1, readerOf(req)];
+    if (id) await dbRun("UPDATE talk_lines SET am_user_id=?, am_name=?, am_title=?, am_email=?, number=?, main_line=?, ring_first=?, ring_number=?, notify_to=?, greeting=?, training=?, voice_id=?, active=?, updated_at=datetime('now'), updated_by=? WHERE id = ?", vals.concat([id]));
+    else await dbRun("INSERT INTO talk_lines (am_user_id, am_name, am_title, am_email, number, main_line, ring_first, ring_number, notify_to, greeting, training, voice_id, active, updated_at, updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),?)", vals);
+    res.json({ ok: true });
+  });
+  app.delete('/api/admin/talk/lines/:id', auth, adminOnly, async (req, res) => {
+    await dbRun('DELETE FROM talk_lines WHERE id = ?', [parseInt(req.params.id) || 0]).catch(() => {});
+    res.json({ ok: true });
+  });
+  // The Twilio account's numbers, and "connect" = point a number's voice + status webhooks at Nova.
+  async function twilioApi(method, pathPart, form) {
+    const sid = env('TWILIO_ACCOUNT_SID'), tok = env('TWILIO_AUTH_TOKEN');
+    if (!sid || !tok) throw new Error('TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN missing in .env');
+    const r = await fetch(TW_BASE + '/2010-04-01/Accounts/' + encodeURIComponent(sid) + pathPart, { method: method,
+      headers: { 'Authorization': 'Basic ' + Buffer.from(sid + ':' + tok).toString('base64'), 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form ? new URLSearchParams(form).toString() : undefined, signal: AbortSignal.timeout(10000) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error('Twilio ' + r.status + ': ' + (j.message || ''));
+    return j;
+  }
+  app.get('/api/admin/talk/twilio/numbers', auth, adminOnly, async (req, res) => {
+    try {
+      const j = await twilioApi('GET', '/IncomingPhoneNumbers.json?PageSize=100');
+      const lines = await dbAll('SELECT id, am_name, number FROM talk_lines WHERE active = 1');
+      res.json({ ok: true, numbers: (j.incoming_phone_numbers || []).map(n => {
+        const l = lines.find(x => x.number && last10(x.number) === last10(n.phone_number));
+        return { sid: n.sid, number: n.phone_number, name: n.friendly_name, connected: n.voice_url === NOVA_URL + '/api/talk/twilio/voice',
+          voice_url: n.voice_url || '', main: last10(n.phone_number) === last10(env('TALKAI_NUMBER')), line: l ? l.am_name : null };
+      }) });
+    } catch (e) { res.status(502).json({ ok: false, error: e.message }); }
+  });
+  app.post('/api/admin/talk/twilio/numbers/:sid/connect', auth, adminOnly, async (req, res) => {
+    const sid = String(req.params.sid || '');
+    if (!/^PN[0-9a-f]{32}$/i.test(sid)) return res.status(400).json({ ok: false, error: 'Unknown number.' });
+    try {
+      await twilioApi('POST', '/IncomingPhoneNumbers/' + sid + '.json', { VoiceUrl: NOVA_URL + '/api/talk/twilio/voice', VoiceMethod: 'POST',
+        StatusCallback: NOVA_URL + '/api/talk/twilio/status', StatusCallbackMethod: 'POST' });
+      res.json({ ok: true });
+    } catch (e) { res.status(502).json({ ok: false, error: e.message }); }
   });
 
   app.get('/talk-ai', (req, res, next) => { res.setHeader('Content-Security-Policy', "frame-ancestors 'self'"); next(); }, serveVersionedHtml('talk-ai.html'));

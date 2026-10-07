@@ -54,14 +54,15 @@
   }
 
   // ---- tabs ----
-  const views = { calls: 'vCalls', try: 'vTry', train: 'vTrain', setup: 'vSetup' };
+  const views = { calls: 'vCalls', try: 'vTry', train: 'vTrain', ams: 'vAms', setup: 'vSetup' };
   function show(v) {
     document.querySelectorAll('.tk-tabs button').forEach(x => x.classList.toggle('on', x.dataset.v === v));
     Object.keys(views).forEach(k => $(views[k]).classList.toggle('on', k === v));
     if (v === 'calls') loadCalls();
     if (v === 'train') paintTraining();
     if (v === 'setup') loadOverview().then(paintSetup);
-    if (v === 'try' && !tryState.msgs.length) newTry();
+    if (v === 'ams') loadAms();
+    if (v === 'try') { api('/api/admin/talk/lines').then(l => { lines = l.lines || []; fillTryLines(); }).catch(() => {}); if (!tryState.msgs.length) newTry(); }
   }
   document.querySelectorAll('.tk-tabs button').forEach(b => { b.onclick = () => show(b.dataset.v); });
 
@@ -94,6 +95,8 @@
         : phone(c.from_number) || 'Unknown number';
       const tags = [];
       if (c.verified) tags.push('<span class="tk-tag ok">' + (c.verified_by === 'caller_id' ? 'Recognised' : 'Verified') + '</span>');
+      if (c.line_name) tags.push('<span class="tk-tag tr">' + esc(String(c.line_name).split(' ')[0]) + '\u2019s line</span>');
+      if (c.hours_mode === 'after') tags.push('<span class="tk-tag">After hours</span>');
       if (c.source !== 'phone') tags.push('<span class="tk-tag test">Test</span>');
       if (c.outcome === 'message') tags.push('<span class="tk-tag msg">Message</span>');
       if (c.outcome === 'transferred' || c.answered_by === 'forward') tags.push('<span class="tk-tag tr">' + (c.outcome === 'transferred' ? 'Transferred' : 'Forwarded') + '</span>');
@@ -120,12 +123,14 @@
     const match = (c.caller_match || []).map(m => esc(m.name) + (m.company ? ' (' + esc(m.company) + ')' : '') + ' <i>#' + m.id + '</i>').join(', ');
     const chips = [];
     chips.push('<span class="tk-chip">' + esc(full(c.created_at)) + '</span>');
+    if (c.line_name) chips.push('<span class="tk-chip ok">' + esc(c.line_name) + '\u2019s line</span>');
+    if (c.hours_mode) chips.push('<span class="tk-chip">' + (c.hours_mode === 'after' ? 'After hours' : 'Regular hours') + '</span>');
     if (c.duration_sec != null) chips.push('<span class="tk-chip">' + esc(dur(c.duration_sec)) + '</span>');
     if (c.source === 'phone') chips.push(/passed-(a|b)\b/i.test(c.stir || '') ? '<span class="tk-chip ok" title="' + esc(c.stir) + '">Caller ID carrier-verified</span>'
       : '<span class="tk-chip" title="' + esc(c.stir || 'No STIR/SHAKEN result from the carrier') + '">Caller ID not carrier-verified</span>');
     if (c.caller_first) chips.push('<span class="tk-chip">Greeted as ' + esc(c.caller_first) + '</span>');
     if (c.language) chips.push('<span class="tk-chip">' + esc(lang(c.language)) + '</span>');
-    if (c.answered_by) chips.push('<span class="tk-chip">' + esc({ ai: 'Answered by NovaAI', forward: 'Forwarded to the team', message: 'Closed message' }[c.answered_by] || c.answered_by) + '</span>');
+    if (c.answered_by) chips.push('<span class="tk-chip">' + esc({ ai: 'Answered by NovaAI', forward: 'Forwarded to the team', message: 'Closed message', person: 'Answered by the team', ring: 'Ringing the team' }[c.answered_by] || c.answered_by) + '</span>');
     if (c.outcome === 'message') chips.push('<span class="tk-chip warn">Message taken</span>');
     if (c.outcome === 'transferred') chips.push('<span class="tk-chip ok">Transferred</span>');
     if (c.status && c.source === 'phone') chips.push('<span class="tk-chip">' + esc(c.status) + '</span>');
@@ -197,11 +202,11 @@
   async function newTry() {
     tryState.callId = null; tryState.msgs = []; tryState.busy = true;
     paintTry('<div class="tk-empty">Starting a test call\u2026</div>');
-    const j = await api('/api/admin/talk/try/start', { method: 'POST', body: JSON.stringify({ from: $('tryFrom').value.trim() }) }).catch(() => ({}));
+    const j = await api('/api/admin/talk/try/start', { method: 'POST', body: JSON.stringify({ from: $('tryFrom').value.trim(), line_id: $('tryLine').value, hours: $('tryHours').value }) }).catch(() => ({}));
     tryState.busy = false;
     tryState.callId = j.call_id || null;
     tryState.msgs.push({ role: 'assistant', content: j.greeting || (ov && ov.settings ? ov.settings.greeting : 'Hi! How can I help?'),
-      note: j.recognised ? 'Recognised by the number as ' + j.recognised : ($('tryFrom').value.trim() ? 'That number is not on a customer account.' : null) });
+      note: [j.line, j.hours === 'after' ? 'After hours' : 'Regular hours', j.recognised ? 'Recognised by the number as ' + j.recognised : ($('tryFrom').value.trim() ? 'That number is not on a customer account' : null)].filter(Boolean).join(' \u00b7 ') });
     paintTry();
     $('tryInput').focus();
   }
@@ -213,7 +218,8 @@
     $('tryLog').scrollTop = $('tryLog').scrollHeight;
   }
   $('tryNew').onclick = newTry;
-  $('tryFrom').onchange = newTry;            // a different number = a new test call as that caller
+  $('tryFrom').onchange = newTry;
+  $('tryLine').onchange = newTry; $('tryHours').onchange = newTry;            // a different number = a new test call as that caller
   $('tryForm').onsubmit = async (e) => {
     e.preventDefault();
     const t = $('tryInput').value.trim();
@@ -236,20 +242,65 @@
   };
 
   // ---- Training ----
-  let mode = 'ai', callerId = 'carrier';
-  document.querySelectorAll('#sMode button').forEach(b => { b.onclick = () => { mode = b.dataset.m; paintMode(); }; });
-  document.querySelectorAll('#sCallerId button').forEach(b => { b.onclick = () => { callerId = b.dataset.c; paintMode(); }; });
-  function paintMode() {
-    document.querySelectorAll('#sMode button').forEach(b => b.classList.toggle('on', b.dataset.m === mode));
+  // Opening hours + the Regular / After hours setups (who answers, greetings, rules for that time of day).
+  const DAYS = [['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'], ['fri', 'Friday'], ['sat', 'Saturday'], ['sun', 'Sunday']];
+  let callerId = 'carrier', modes = null, curMode = 'regular';
+  document.querySelectorAll('#sCallerId button').forEach(b => { b.onclick = () => { callerId = b.dataset.c; paintChoices(); }; });
+  document.querySelectorAll('#sMode button').forEach(b => { b.onclick = () => { if (modes) { modes[curMode].answer = b.dataset.m; paintChoices(); } }; });
+  document.querySelectorAll('#sModeTabs button').forEach(b => { b.onclick = () => { keepMode(); curMode = b.dataset.k; paintMode(); }; });
+  function paintChoices() {
     document.querySelectorAll('#sCallerId button').forEach(b => b.classList.toggle('on', b.dataset.c === callerId));
+    document.querySelectorAll('#sMode button').forEach(b => b.classList.toggle('on', !!modes && b.dataset.m === modes[curMode].answer));
+  }
+  function keepMode() {
+    if (!modes) return;
+    Object.assign(modes[curMode], { greeting: $('sGreeting').value, greeting_known: $('sGreetingKnown').value, rules: $('sModeRules').value });
+  }
+  function paintMode() {
+    document.querySelectorAll('#sModeTabs button').forEach(b => b.classList.toggle('on', b.dataset.k === curMode));
+    const md = modes[curMode];
+    $('sGreeting').value = md.greeting || ''; $('sGreetingKnown').value = md.greeting_known || ''; $('sModeRules').value = md.rules || '';
+    document.querySelectorAll('.tk-mname').forEach(x => { x.textContent = curMode === 'after' ? 'after hours' : 'regular hours'; });
+    paintChoices();
+  }
+  function paintHours(h) {
+    $('sHours').innerHTML = DAYS.map(([k, label]) => {
+      const d = h.days[k];
+      return '<label><input type="checkbox" data-day="' + k + '"' + (d.open ? ' checked' : '') + '> ' + label + '</label>' +
+        '<span class="' + (d.open ? '' : 'closed') + '" data-st="' + k + '">' + (d.open ? 'Open' : 'Closed') + '</span>' +
+        '<span class="t"><input type="time" data-from="' + k + '" value="' + esc(d.from) + '"' + (d.open ? '' : ' disabled') + '> to ' +
+        '<input type="time" data-to="' + k + '" value="' + esc(d.to) + '"' + (d.open ? '' : ' disabled') + '></span>';
+    }).join('');
+    $('sHours').querySelectorAll('input[data-day]').forEach(cb => {
+      cb.onchange = () => {
+        const k = cb.dataset.day, on = cb.checked;
+        $('sHours').querySelector('[data-from="' + k + '"]').disabled = !on; $('sHours').querySelector('[data-to="' + k + '"]').disabled = !on;
+        const st = $('sHours').querySelector('[data-st="' + k + '"]'); st.textContent = on ? 'Open' : 'Closed'; st.className = on ? '' : 'closed';
+      };
+    });
+    $('sClosedDays').value = (h.closed || []).join('\n');
+  }
+  function readHours() {
+    const days = {};
+    DAYS.forEach(([k]) => {
+      days[k] = { open: $('sHours').querySelector('[data-day="' + k + '"]').checked,
+        from: $('sHours').querySelector('[data-from="' + k + '"]').value, to: $('sHours').querySelector('[data-to="' + k + '"]').value };
+    });
+    return { days: days, closed: $('sClosedDays').value.split(/[\s,]+/).map(x => x.trim()).filter(Boolean) };
+  }
+  function paintNow(j) {
+    const h = j.hours_now || {};
+    $('sNow').innerHTML = 'Right now: ' + (h.open ? '<b class="reg">Regular hours</b> — open until ' + esc(h.closes) : '<b class="aft">After hours</b>' +
+      (h.next ? ' — opens ' + esc(h.next) : '')) + '<br><small style="color:var(--muted)">' + esc(h.week || '') + '</small>';
+    document.querySelectorAll('.tk-ring').forEach(x => { x.textContent = j.ring_seconds || 20; });
   }
   async function paintTraining() {
     const j = ov || await loadOverview();
     if (!j) return;
     const s = j.settings;
-    mode = s.mode; callerId = s.caller_id || 'carrier'; paintMode();
-    $('sGreetingKnown').value = s.greeting_known || '';
-    $('sGreeting').value = s.greeting || '';
+    callerId = s.caller_id || 'carrier';
+    modes = JSON.parse(JSON.stringify(s.modes));
+    paintHours(s.hours); paintNow(j); paintMode();
     $('sRules').value = s.rules || '';
     $('sTransfer').value = s.transfer_number ? phone(s.transfer_number) : '';
     $('sForward').value = s.forward_number ? phone(s.forward_number) : '';
@@ -260,13 +311,108 @@
   }
   $('sSave').onclick = async () => {
     const m = $('sMsg'); m.className = 'tk-msg'; m.textContent = 'Saving…';
-    const j = await api('/api/admin/talk/settings', { method: 'POST', body: JSON.stringify({ mode: mode, caller_id: callerId, greeting_known: $('sGreetingKnown').value, greeting: $('sGreeting').value, rules: $('sRules').value,
+    keepMode();
+    const j = await api('/api/admin/talk/settings', { method: 'POST', body: JSON.stringify({ caller_id: callerId, hours: readHours(), modes: modes, rules: $('sRules').value,
       transfer_number: $('sTransfer').value, forward_number: $('sForward').value, notify_to: $('sNotify').value, summary_mail: $('sSummary').checked,
       closed_message: $('sClosed').value }) });
     if (!j.ok) { m.className = 'tk-msg err'; m.textContent = j.error || 'Could not save.'; return; }
+    const keep = curMode;
+    await loadOverview(); await paintTraining(); curMode = keep; paintMode();
     m.textContent = 'Saved ✓ — the next call uses it.';
-    await loadOverview(); paintTraining(); m.textContent = 'Saved ✓ — the next call uses it.';
   };
+
+  // ---- Account managers ----
+  let managers = null, twNumbers = [], lines = [];
+  async function loadAms() {
+    const [l, mg, tn] = await Promise.all([api('/api/admin/talk/lines'), managers ? Promise.resolve({ ok: true, managers: managers }) : api('/api/admin/talk/managers'),
+      api('/api/admin/talk/twilio/numbers').catch(() => ({}))]);
+    lines = l.lines || []; managers = mg.managers || managers || []; twNumbers = tn.numbers || [];
+    paintLines(); paintNumbers(tn.ok ? null : (tn.error || 'Could not reach Twilio.'));
+    fillTryLines();
+  }
+  function paintLines() {
+    $('amList').innerHTML = lines.length ? lines.map(l => {
+      const tags = [];
+      if (l.number) tags.push('<span class="tk-chip ok">Own number ' + esc(phone(l.number)) + '</span>');
+      if (Number(l.main_line)) tags.push('<span class="tk-chip">Their clients on the main line</span>');
+      if (Number(l.ring_first)) tags.push('<span class="tk-chip">Rings ' + esc(phone(l.ring_number)) + ' first</span>');
+      if (l.voice_id) tags.push('<span class="tk-chip">Own voice</span>');
+      if (!l.number && !Number(l.main_line)) tags.push('<span class="tk-chip warn">Not answering yet — give it a number or tick "their clients"</span>');
+      return '<div class="tk-am' + (Number(l.active) ? '' : ' off') + '"><div class="av">' + esc(String(l.am_name || '?').charAt(0)) + '</div><div class="bd">' +
+        '<b>' + esc(l.am_name || 'Account manager') + '</b> <small>' + esc(l.am_title || '') + (l.calls ? ' · ' + l.calls + ' call' + (l.calls === 1 ? '' : 's') : '') + '</small>' +
+        '<div class="tags">' + tags.join('') + '</div>' +
+        (l.training ? '<div style="margin-top:6px;color:var(--ink-soft);font-size:12.5px;white-space:pre-wrap">' + esc(String(l.training).slice(0, 220)) + (l.training.length > 220 ? '…' : '') + '</div>' : '') +
+        '</div><button type="button" class="tk-btn ghost" data-edit="' + l.id + '">Edit</button></div>';
+    }).join('') : '<div class="tk-empty" style="padding:14px">No account managers set up yet.</div>';
+    $('amList').querySelectorAll('[data-edit]').forEach(b => { b.onclick = () => editLine(lines.find(x => x.id === parseInt(b.dataset.edit))); });
+  }
+  function paintNumbers(err) {
+    if (err) { $('twNums').innerHTML = '<div class="tk-msg err">' + esc(err) + '</div>'; return; }
+    $('twNums').innerHTML = twNumbers.length ? twNumbers.map(n => '<div class="tk-num"><div class="n"><b>' + esc(phone(n.number)) + '</b>' +
+      '<small>' + esc(n.main ? 'Main TalkAi number' : n.line ? n.line + '’s line' : (n.name && n.name !== n.number ? n.name : 'Not used by TalkAi')) + '</small></div>' +
+      (n.connected ? '<span class="tk-chip ok">Connected</span>' : '<button type="button" class="tk-btn ghost" data-connect="' + esc(n.sid) + '">Connect to Nova</button>') + '</div>').join('')
+      : '<div class="tk-empty" style="padding:10px">No numbers in the Twilio account.</div>';
+    $('twNums').querySelectorAll('[data-connect]').forEach(b => {
+      b.onclick = async () => {
+        b.disabled = true; b.textContent = 'Connecting…';
+        const j = await api('/api/admin/talk/twilio/numbers/' + b.dataset.connect + '/connect', { method: 'POST', body: '{}' });
+        if (!j.ok) { b.disabled = false; b.textContent = 'Connect to Nova'; alert(j.error || 'Could not connect it.'); return; }
+        loadAms();
+      };
+    });
+  }
+  function editLine(l) {
+    l = l || { main_line: 1, active: 1 };
+    const box = $('amEdit');
+    const used = lines.filter(x => x.id !== l.id).map(x => x.number).filter(Boolean);
+    const numOpts = '<option value="">None — main line only</option>' + twNumbers.filter(n => !n.main && (used.indexOf(n.number) === -1 || n.number === l.number))
+      .map(n => '<option value="' + esc(n.number) + '"' + (l.number === n.number ? ' selected' : '') + '>' + esc(phone(n.number)) + (n.connected ? '' : ' (not connected yet)') + '</option>').join('') +
+      (l.number && !twNumbers.some(n => n.number === l.number) ? '<option value="' + esc(l.number) + '" selected>' + esc(phone(l.number)) + '</option>' : '');
+    box.hidden = false;
+    box.innerHTML = '<h3>' + (l.id ? 'Edit ' + esc(l.am_name) : 'Add an account manager') + '</h3><div class="tk-form">' +
+      '<label>Account manager<select id="amWho" class="tk-select">' + (l.id ? '' : '<option value="">Pick one…</option>') +
+        (managers || []).map(m => '<option value="' + m.id + '"' + (Number(l.am_user_id) === m.id ? ' selected' : '') + ' data-phone="' + esc(m.phone) + '" data-email="' + esc(m.email) + '">' +
+          esc(m.name) + (m.title ? ' — ' + esc(m.title) : '') + ' (' + m.clients + ' clients)</option>').join('') + '</select></label>' +
+      '<label>Their own number <small>Calls to it always get this account manager’s NovaAI.</small><select id="amNum" class="tk-select">' + numOpts + '</select></label>' +
+      '<label class="chk"><input type="checkbox" id="amMain"' + (Number(l.main_line) ? ' checked' : '') + '> <span>Their clients on the main line too <small style="display:block;color:var(--muted)">A caller recognised by their number whose account manager this is.</small></span></label>' +
+      '<div class="row2"><label>Their phone <small>Rings first, and where transfers go.</small><input type="text" id="amRing" value="' + esc(l.ring_number ? phone(l.ring_number) : '') + '" placeholder="e.g. 747 400 4060"></label>' +
+      '<label>Messages go to<input type="text" id="amNotify" value="' + esc(l.notify_to || '') + '" placeholder="their email"></label></div>' +
+      '<label class="chk"><input type="checkbox" id="amRingFirst"' + (Number(l.ring_first) ? ' checked' : '') + '> <span>Ring their phone first during regular hours <small style="display:block;color:var(--muted)">NovaAI answers if they do not pick up within <span class="tk-ring">' + ((ov && ov.ring_seconds) || 20) + '</span> seconds.</small></span></label>' +
+      '<label>Greeting <small>Optional — otherwise the hours greeting is used. {name} = the caller’s first name, {am} = this account manager’s.</small>' +
+        '<textarea id="amGreeting" rows="2" placeholder="Hi {name}, you’ve reached {am}’s line at AxiomPrint. I’m NovaAI, {am}’s AI assistant, and this call is recorded. How can I help?">' + esc(l.greeting || '') + '</textarea></label>' +
+      '<label>Their notes for NovaAI <small>How they like things handled: their clients, products they focus on, what to promise, when to take a message.</small>' +
+        '<textarea id="amTraining" rows="6" placeholder="- Most of my clients are restaurants: menus, table tents, banners.\n- Rush jobs: always take a message, I call back within the hour.\n- Say I’m in the office Mon–Thu.">' + esc(l.training || '') + '</textarea></label>' +
+      '<label>Voice ID <small>Optional: an ElevenLabs voice ID for this line.</small><input type="text" id="amVoice" value="' + esc(l.voice_id || '') + '"></label>' +
+      '<label class="chk"><input type="checkbox" id="amActive"' + (Number(l.active) || !l.id ? ' checked' : '') + '> <span>On</span></label>' +
+      '<div class="acts"><button type="button" class="tk-btn" id="amSave">Save</button><button type="button" class="tk-btn ghost" id="amCancel">Cancel</button>' +
+        '<span class="tk-msg" id="amMsg"></span>' + (l.id ? '<button type="button" class="del" id="amDel">Remove</button>' : '') + '</div></div>';
+    $('amWho').onchange = () => {
+      const o = $('amWho').selectedOptions[0];
+      if (o && !$('amRing').value) $('amRing').value = o.dataset.phone ? phone(o.dataset.phone) : '';
+      if (o && !$('amNotify').value) $('amNotify').value = o.dataset.email || '';
+    };
+    $('amCancel').onclick = () => { box.hidden = true; };
+    if ($('amDel')) $('amDel').onclick = async () => {
+      if (!confirm('Remove ' + l.am_name + '’s NovaAI line? Past calls stay.')) return;
+      await api('/api/admin/talk/lines/' + l.id, { method: 'DELETE' }); box.hidden = true; loadAms();
+    };
+    $('amSave').onclick = async () => {
+      const msg = $('amMsg'); msg.className = 'tk-msg'; msg.textContent = 'Saving…';
+      const j = await api('/api/admin/talk/lines', { method: 'POST', body: JSON.stringify({ id: l.id, am_user_id: $('amWho').value, number: $('amNum').value,
+        main_line: $('amMain').checked, ring_first: $('amRingFirst').checked, ring_number: $('amRing').value, notify_to: $('amNotify').value,
+        greeting: $('amGreeting').value, training: $('amTraining').value, voice_id: $('amVoice').value, active: $('amActive').checked }) });
+      if (!j.ok) { msg.className = 'tk-msg err'; msg.textContent = j.error || 'Could not save.'; return; }
+      box.hidden = true; loadAms();
+    };
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  $('amAdd').onclick = () => editLine(null);
+  function fillTryLines() {
+    const sel = $('tryLine'), keep = sel.value;
+    sel.innerHTML = '<option value="">Main number</option><option value="auto">Main number — their account manager’s NovaAI if they have one</option>' +
+      lines.filter(l => Number(l.active)).map(l => '<option value="' + l.id + '">' + esc(l.am_name) + '’s line' + (l.number ? ' (' + esc(phone(l.number)) + ')' : '') + '</option>').join('');
+    sel.value = keep;
+  }
 
   // ---- Setup ----
   const copyRow = (label, value, multi) => '<div class="tk-copy">' + (label ? '<span class="l">' + esc(label) + '</span>' : '') +
