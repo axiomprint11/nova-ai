@@ -243,7 +243,7 @@
             esc(r.quantity) + '">' : Number(r.quantity || 0).toLocaleString()) +
             (r.versions && r.versions.length ? '<small>' + r.versions.length + ' versions</small>' : '') + '</td>' +
           '<td>' + (r.discount && r.list_price > r.price ? '<s>' + money(r.list_price) + '</s> ' : '') + '<b>' + money(r.price) + '</b>' +
-            '<small>' + money(r.each) + ' each' + (!sameReady && r.ready ? ' · ready ' + esc(r.ready) : '') + '</small></td>' +
+            '<small>' + money(r.each) + ' each' + (!sameReady && r.ready ? ' · estimated ready ' + esc(r.ready) : '') + '</small></td>' +
           '<td>' + (item.product_id ? (IN_CART.has(cartKey(item))
             ? '<a class="cc-cart done" href="' + esc(IN_CART.get(cartKey(item))) + '" title="Go to your cart" data-cart="' + esc(IN_CART.get(cartKey(item))) +
               '" data-item="' + esc(JSON.stringify(item)) + '">\u2713 In cart</a>'

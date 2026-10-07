@@ -777,6 +777,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
       '- Spoken words only: no lists, bullets, numbering, headings, markdown, emojis, URLs or symbols like * # / |. Never read out a link — say "on axiomprint.com".',
       '- Before a lookup say two or three words ("One moment."), nothing more.',
       '- Prices exactly as the tools give them, e.g. "500 business cards come to $89.50." For a few quantities, say each one briefly. Never round, guess or add things up yourself.',
+      '- Ready dates are ESTIMATES: always "estimated to be ready Monday, October 12th" (or "estimated ready today by 5 PM"), never "will be ready", "it\u2019ll be done" or "ready Monday" on its own.',
       '- Dates the way people say them ("Monday, October 12th"). Order numbers letter then digits one by one ("E, 1 1 7 0 5 7 4"). Read back emails, phone numbers and order numbers to confirm them.',
       '- If you did not catch something, ask them to say it again. Never pretend you understood.',
       '- LANGUAGE: always answer in the language the caller is speaking (English, Spanish, Armenian, Russian or any other) and keep it until they switch \u2014 never ask which language they want.' +
@@ -917,6 +918,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     if (!projects.length) return { live_projects: 0, say: 'Say you do not see any live projects on their account right now, and ask for the order number they are calling about (or offer my_orders for recent orders).' };
     return { live_projects: projects.length, jobs: rows.length, projects: projects,
       say: 'Say how many live projects you see ("I see ' + projects.length + ' live project' + (projects.length === 1 ? '' : 's') + ' under your account"), name each one in a few words ' +
+        '(with a date, say "estimated to be ready" on it, never "ready" or "will be ready") ' +
         '(the project or job name, not the order number), and ask which one they are calling about. Then order_status on that order for the full status and deadline sentence. Never read the whole list of details.' };
   }
   // The live jobs of these accounts, grouped by project.
@@ -932,7 +934,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
       const key = parseInt(r.pid) || ('job' + r.id);
       if (!byProject.has(key)) byProject.set(key, { project: r.projectname || r.job || 'Project', jobs: [] });
       byProject.get(key).jobs.push({ order: 'E' + r.id, job: r.job, product: r.product && r.product !== r.job ? r.product : undefined,
-        stage: (LIVE[r.sub] || [r.sub])[0], means: (LIVE[r.sub] || [])[1], ready: r.due_day ? r.due_day + (r.due_time ? ' by ' + String(r.due_time).trim() : '') : undefined });
+        stage: (LIVE[r.sub] || [r.sub])[0], means: (LIVE[r.sub] || [])[1], estimated_ready: r.due_day ? r.due_day + (r.due_time ? ' by ' + String(r.due_time).trim() : '') : undefined });
     });
     const projects = [...byProject.values()].slice(0, 12).map(pj => {
       const stages = [...new Set(pj.jobs.map(j => j.stage))];
@@ -1116,7 +1118,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     if (!cust) return { error: 'No such client.' };
     const { rows, projects } = await liveFor([id]);
     return { client: (cust.name || '') + (cust.company ? ' (' + cust.company + ')' : ''), live_projects: projects.length, jobs: rows.length, projects: projects,
-      say: projects.length ? 'Say how many live projects, then each one briefly: name, stage and ready date.' : 'Say they have no live projects right now.' };
+      say: projects.length ? 'Say how many live projects, then each one briefly: name, stage and estimated ready date ("estimated to be ready", never "will be ready").' : 'Say they have no live projects right now.' };
   }
   async function ownerJob(input, ctx) {
     const raw = String(input.order_number || '').trim(), n = parseInt(digits(raw));
@@ -1231,7 +1233,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
   function quoteEmailText(quotes, name, pageUrl) {
     return [(name ? 'Hi ' + name + ',' : 'Hi,'), '', 'Thanks for calling AxiomPrint. Here are the prices from our call:', '']
       .concat(quotes.map(q => [q.product, q.specs.filter(sp => sp.value).map(sp => sp.field + ': ' + sp.value).join(' | ')]
-        .concat(q.rows.map(r => '  ' + r.quantity + ' — ' + money(r.price) + (r.ready ? ' — ready ' + r.ready : '') +
+        .concat(q.rows.map(r => '  ' + r.quantity + ' — ' + money(r.price) + (r.ready ? ' — estimated ready ' + r.ready : '') +
           '\n  Order now: ' + (r.order_url || q.url || 'https://axiomprint.com'))).join('\n') + '\n'))
       .concat(['Prices as quoted on the call, before tax and shipping.', ''].concat(pageUrl ? ['Our conversation: ' + pageUrl, ''] : []).concat([
         'Questions or changes? Reply to this email' + (shownPhone() ? ' or call ' + shownPhone() : '') + '.', 'The AxiomPrint team'])).join('\n');
