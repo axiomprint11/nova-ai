@@ -89,13 +89,15 @@
     }
     $('callRows').innerHTML = j.calls.map(c => {
       const match = c.caller_match && c.caller_match[0];
-      const name = c.customer_name ? c.customer_name + (c.company ? ' · ' + c.company : '')
+      const name = Number(c.owner) === 1 && c.line_name ? c.line_name + ' (their own call)'
+        : c.customer_name ? c.customer_name + (c.company ? ' · ' + c.company : '')
         : c.source === 'try' ? 'Test in text' + (c.tried_by ? ' · ' + String(c.tried_by).replace(/^member:|^user:/, '') : '')
         : c.source === 'elevenlabs' ? 'ElevenLabs test call'
         : phone(c.from_number) || 'Unknown number';
       const tags = [];
       if (c.verified) tags.push('<span class="tk-tag ok">' + (c.verified_by === 'caller_id' ? 'Recognised' : 'Verified') + '</span>');
-      if (c.line_name) tags.push('<span class="tk-tag tr">' + esc(String(c.line_name).split(' ')[0]) + '\u2019s line</span>');
+      if (Number(c.owner) === 1) tags.push('<span class="tk-tag ok">Their assistant</span>');
+      else if (c.line_name) tags.push('<span class="tk-tag tr">' + esc(String(c.line_name).split(' ')[0]) + '\u2019s line</span>');
       if (c.hours_mode === 'after') tags.push('<span class="tk-tag">After hours</span>');
       if (c.source !== 'phone') tags.push('<span class="tk-tag test">Test</span>');
       if (c.outcome === 'message') tags.push('<span class="tk-tag msg">Message</span>');
@@ -123,7 +125,8 @@
     const match = (c.caller_match || []).map(m => esc(m.name) + (m.company ? ' (' + esc(m.company) + ')' : '') + ' <i>#' + m.id + '</i>').join(', ');
     const chips = [];
     chips.push('<span class="tk-chip">' + esc(full(c.created_at)) + '</span>');
-    if (c.line_name) chips.push('<span class="tk-chip ok">' + esc(c.line_name) + '\u2019s line</span>');
+    if (c.line_name) chips.push('<span class="tk-chip ok">' + esc(c.line_name) + (Number(c.owner) === 1 ? ' calling their assistant' : Number(c.owner) === 2 ? '\u2019s phone (not verified)' : '\u2019s line') + '</span>');
+    if (c.screen_ok != null) chips.push('<span class="tk-chip">' + (Number(c.screen_ok) === 1 ? 'They pressed 1 and took it' : 'Rang them first \u2014 not taken') + '</span>');
     if (c.hours_mode) chips.push('<span class="tk-chip">' + (c.hours_mode === 'after' ? 'After hours' : 'Regular hours') + '</span>');
     if (c.duration_sec != null) chips.push('<span class="tk-chip">' + esc(dur(c.duration_sec)) + '</span>');
     if (c.source === 'phone') chips.push(/passed-(a|b)\b/i.test(c.stir || '') ? '<span class="tk-chip ok" title="' + esc(c.stir) + '">Caller ID carrier-verified</span>'
@@ -352,7 +355,8 @@
       const tags = [];
       if (l.number) tags.push('<span class="tk-chip ok">Own number ' + esc(phone(l.number)) + '</span>');
       if (Number(l.main_line)) tags.push('<span class="tk-chip">Their clients on the main line</span>');
-      if (Number(l.ring_first)) tags.push('<span class="tk-chip">Rings ' + esc(phone(l.ring_number)) + ' first</span>');
+      if (l.own_numbers && l.own_numbers.length) tags.push('<span class="tk-chip ok">Their assistant from ' + l.own_numbers.map(phone).map(esc).join(', ') + (l.has_pin ? ' · PIN' : '') + '</span>');
+      if (Number(l.ring_first)) tags.push('<span class="tk-chip">Rings ' + esc(phone(l.ring_number)) + ' first' + (Number(l.screen) !== 0 ? ' · press 1' : '') + '</span>');
       if (l.voice_id) tags.push('<span class="tk-chip">Own voice</span>');
       if (!l.number && !Number(l.main_line)) tags.push('<span class="tk-chip warn">Not answering yet — give it a number or tick "their clients"</span>');
       return '<div class="tk-am' + (Number(l.active) ? '' : ' off') + '"><div class="av">' + esc(String(l.am_name || '?').charAt(0)) + '</div><div class="bd">' +
@@ -379,27 +383,40 @@
     });
   }
   function editLine(l) {
-    l = l || { main_line: 1, active: 1 };
+    l = l || { main_line: 1, active: 1, screen: 1, own_numbers: [] };
     const box = $('amEdit');
     const used = lines.filter(x => x.id !== l.id).map(x => x.number).filter(Boolean);
-    const numOpts = '<option value="">None — main line only</option>' + twNumbers.filter(n => !n.main && (used.indexOf(n.number) === -1 || n.number === l.number))
+    const numOpts = '<option value="">None — their clients on the main line only</option>' + twNumbers.filter(n => !n.main && (used.indexOf(n.number) === -1 || n.number === l.number))
       .map(n => '<option value="' + esc(n.number) + '"' + (l.number === n.number ? ' selected' : '') + '>' + esc(phone(n.number)) + (n.connected ? '' : ' (not connected yet)') + '</option>').join('') +
       (l.number && !twNumbers.some(n => n.number === l.number) ? '<option value="' + esc(l.number) + '" selected>' + esc(phone(l.number)) + '</option>' : '');
+    const own = (l.own_numbers || []).concat(['', '', '']).slice(0, 3);
+    const sec = (n, title, sub) => '<div class="tk-amsec"><div class="tk-sech"><i>' + n + '</i><div><b>' + title + '</b>' + (sub ? '<small>' + sub + '</small>' : '') + '</div></div>';
     box.hidden = false;
     box.innerHTML = '<h3>' + (l.id ? 'Edit ' + esc(l.am_name) : 'Add an account manager') + '</h3><div class="tk-form">' +
-      '<label>Account manager<select id="amWho" class="tk-select">' + (l.id ? '' : '<option value="">Pick one…</option>') +
-        (managers || []).map(m => '<option value="' + m.id + '"' + (Number(l.am_user_id) === m.id ? ' selected' : '') + ' data-phone="' + esc(m.phone) + '" data-email="' + esc(m.email) + '">' +
-          esc(m.name) + (m.title ? ' — ' + esc(m.title) : '') + ' (' + m.clients + ' clients)</option>').join('') + '</select></label>' +
-      '<label>Their own number <small>Calls to it always get this account manager’s NovaAI.</small><select id="amNum" class="tk-select">' + numOpts + '</select></label>' +
-      '<label class="chk"><input type="checkbox" id="amMain"' + (Number(l.main_line) ? ' checked' : '') + '> <span>Their clients on the main line too <small style="display:block;color:var(--muted)">A caller recognised by their number whose account manager this is.</small></span></label>' +
-      '<div class="row2"><label>Their phone <small>Rings first, and where transfers go.</small><input type="text" id="amRing" value="' + esc(l.ring_number ? phone(l.ring_number) : '') + '" placeholder="e.g. 747 400 4060"></label>' +
-      '<label>Messages go to<input type="text" id="amNotify" value="' + esc(l.notify_to || '') + '" placeholder="their email"></label></div>' +
-      '<label class="chk"><input type="checkbox" id="amRingFirst"' + (Number(l.ring_first) ? ' checked' : '') + '> <span>Ring their phone first during regular hours <small style="display:block;color:var(--muted)">NovaAI answers if they do not pick up within <span class="tk-ring">' + ((ov && ov.ring_seconds) || 20) + '</span> seconds.</small></span></label>' +
-      '<label>Greeting <small>Optional — otherwise the hours greeting is used. {name} = the caller’s first name, {am} = this account manager’s.</small>' +
-        '<textarea id="amGreeting" rows="2" placeholder="Hi {name}, you’ve reached {am}’s line at AxiomPrint. I’m NovaAI, {am}’s AI assistant, and this call is recorded. How can I help?">' + esc(l.greeting || '') + '</textarea></label>' +
-      '<label>Their notes for NovaAI <small>How they like things handled: their clients, products they focus on, what to promise, when to take a message.</small>' +
-        '<textarea id="amTraining" rows="6" placeholder="- Most of my clients are restaurants: menus, table tents, banners.\n- Rush jobs: always take a message, I call back within the hour.\n- Say I’m in the office Mon–Thu.">' + esc(l.training || '') + '</textarea></label>' +
-      '<label>Voice ID <small>Optional: an ElevenLabs voice ID for this line.</small><input type="text" id="amVoice" value="' + esc(l.voice_id || '') + '"></label>' +
+      sec(1, 'The person', 'Who this NovaAI works for.') +
+        '<label>Account manager<select id="amWho" class="tk-select">' + (l.id ? '' : '<option value="">Pick one…</option>') +
+          (managers || []).map(m => '<option value="' + m.id + '"' + (Number(l.am_user_id) === m.id ? ' selected' : '') + ' data-phone="' + esc(m.phone) + '" data-cell="' + esc(m.cell || '') + '" data-email="' + esc(m.email) + '">' +
+            esc(m.name) + (m.title ? ' — ' + esc(m.title) : '') + ' (' + m.clients + ' clients)</option>').join('') + '</select></label>' +
+        '<label>Their email <small>Messages, call summaries and anything they ask NovaAI to email them.</small><input type="text" id="amNotify" value="' + esc(l.notify_to || '') + '" placeholder="their email"></label></div>' +
+      sec(2, 'Their NovaAI number', 'A Twilio number that always answers for them. Give it to clients, or forward their missed calls to it.') +
+        '<label>Twilio number<select id="amNum" class="tk-select">' + numOpts + '</select></label>' +
+        '<label class="chk"><input type="checkbox" id="amMain"' + (Number(l.main_line) ? ' checked' : '') + '> <span>Their clients on the main line too <small style="display:block;color:var(--muted)">A caller recognised by their number whose account manager this is gets this NovaAI.</small></span></label></div>' +
+      sec(3, 'Their phones — NovaAI is their assistant', 'When they call their NovaAI number (or the main number) from one of these, NovaAI answers as their personal assistant: their missed calls and messages, client and job look-ups, prices, notes emailed to them.') +
+        '<div class="row3">' + own.map((n, i) => '<input type="text" class="amOwn" value="' + esc(n ? phone(n) : '') + '" placeholder="' + (i === 0 ? 'Cell, e.g. 818 555 1234' : i === 1 ? 'Another phone' : 'Another phone') + '">').join('') + '</div>' +
+        '<div class="row2"><label>PIN <small>' + (l.has_pin ? 'A PIN is set. Type a new one to change it.' : 'Optional, 4–8 digits, typed on the keypad.') + '</small>' +
+          '<input type="password" id="amPin" inputmode="numeric" autocomplete="new-password" maxlength="8" placeholder="' + (l.has_pin ? '••••  (unchanged)' : 'e.g. 482915') + '"></label>' +
+          '<label>Greeting for them <small>{am} = their first name, {new} = “You have 2 new calls.”</small><input type="text" id="amOwnerGreet" value="' + esc(l.owner_greeting || '') + '" placeholder="Hi {am}! {new}How can I help today?"></label></div>' +
+        '<label class="chk"><input type="checkbox" id="amPinAlways"' + (Number(l.owner_pin_always) ? ' checked' : '') + '> <span>Ask for the PIN on every call <small style="display:block;color:var(--muted)">Otherwise only when their carrier can’t confirm the number is really theirs. Without a PIN, an unconfirmed call is treated as an ordinary caller.</small></span></label>' +
+        (l.has_pin ? '<label class="chk"><input type="checkbox" id="amPinClear"> <span>Remove the PIN</span></label>' : '') + '</div>' +
+      sec(4, 'When they miss a call', 'Instead of voicemail, NovaAI greets the caller, tries to help, and takes a message for them.') +
+        '<label class="chk"><input type="checkbox" id="amRingFirst"' + (Number(l.ring_first) ? ' checked' : '') + '> <span>Ring their phone first during regular hours <small style="display:block;color:var(--muted)">NovaAI answers if they don’t take it within <span class="tk-ring">' + ((ov && ov.ring_seconds) || 20) + '</span> seconds. Leave it off if their own phone (e.g. Dialpad) already forwards missed calls to this NovaAI number.</small></span></label>' +
+        '<div class="row2"><label>Phone to ring <small>Also where transfers go.</small><input type="text" id="amRing" value="' + esc(l.ring_number ? phone(l.ring_number) : '') + '" placeholder="e.g. 747 400 4060"></label>' +
+          '<label class="chk" style="align-self:end"><input type="checkbox" id="amScreen"' + (Number(l.screen) !== 0 ? ' checked' : '') + '> <span>“Press 1 to take it” <small style="display:block;color:var(--muted)">So their voicemail can’t pick up instead of NovaAI.</small></span></label></div>' +
+        '<label>Greeting for callers <small>Optional. {name} = the caller’s first name, {am} = theirs.</small>' +
+          '<textarea id="amGreeting" rows="2" placeholder="Hi {name}, {am} can’t come to the phone right now. I’m NovaAI, an AI assistant, and this call is recorded. How can I help you?">' + esc(l.greeting || '') + '</textarea></label></div>' +
+      sec(5, 'Their training', 'How they like things handled. NovaAI follows it with their clients and when it works for them.') +
+        '<textarea id="amTraining" rows="6" placeholder="- Most of my clients are restaurants: menus, table tents, banners.\n- Rush jobs: always take a message, I call back within the hour.\n- Say I’m in the office Mon–Thu.">' + esc(l.training || '') + '</textarea>' +
+        '<label>Voice ID <small>Optional: an ElevenLabs voice ID for this line.</small><input type="text" id="amVoice" value="' + esc(l.voice_id || '') + '"></label></div>' +
       '<label class="chk"><input type="checkbox" id="amActive"' + (Number(l.active) || !l.id ? ' checked' : '') + '> <span>On</span></label>' +
       '<div class="acts"><button type="button" class="tk-btn" id="amSave">Save</button><button type="button" class="tk-btn ghost" id="amCancel">Cancel</button>' +
         '<span class="tk-msg" id="amMsg"></span>' + (l.id ? '<button type="button" class="del" id="amDel">Remove</button>' : '') + '</div></div>';
@@ -407,6 +424,8 @@
       const o = $('amWho').selectedOptions[0];
       if (o && !$('amRing').value) $('amRing').value = o.dataset.phone ? phone(o.dataset.phone) : '';
       if (o && !$('amNotify').value) $('amNotify').value = o.dataset.email || '';
+      const first = box.querySelector('.amOwn');
+      if (o && first && !first.value && o.dataset.cell) first.value = phone(o.dataset.cell);
     };
     $('amCancel').onclick = () => { box.hidden = true; };
     if ($('amDel')) $('amDel').onclick = async () => {
@@ -416,7 +435,9 @@
     $('amSave').onclick = async () => {
       const msg = $('amMsg'); msg.className = 'tk-msg'; msg.textContent = 'Saving…';
       const j = await api('/api/admin/talk/lines', { method: 'POST', body: JSON.stringify({ id: l.id, am_user_id: $('amWho').value, number: $('amNum').value,
-        main_line: $('amMain').checked, ring_first: $('amRingFirst').checked, ring_number: $('amRing').value, notify_to: $('amNotify').value,
+        main_line: $('amMain').checked, ring_first: $('amRingFirst').checked, ring_number: $('amRing').value, notify_to: $('amNotify').value, screen: $('amScreen').checked,
+        own_numbers: Array.from(box.querySelectorAll('.amOwn')).map(x => x.value.trim()).filter(Boolean), pin: $('amPin').value.trim(),
+        pin_always: $('amPinAlways').checked, clear_pin: $('amPinClear') ? $('amPinClear').checked : false, owner_greeting: $('amOwnerGreet').value,
         greeting: $('amGreeting').value, training: $('amTraining').value, voice_id: $('amVoice').value, active: $('amActive').checked }) });
       if (!j.ok) { msg.className = 'tk-msg err'; msg.textContent = j.error || 'Could not save.'; return; }
       box.hidden = true; loadAms();
@@ -426,6 +447,8 @@
   $('amAdd').onclick = () => editLine(null);
   function fillTryLines() {
     const sel = $('tryLine'), keep = sel.value;
+    const ownTip = lines.filter(l => Number(l.active) && l.own_numbers && l.own_numbers.length).map(l => phone(l.own_numbers[0]) + ' = ' + l.am_name);
+    $('tryOwnTip').textContent = ownTip.length ? 'Type an account manager’s phone to try their assistant: ' + ownTip.join(', ') + '.' : '';
     sel.innerHTML = '<option value="">Main number</option><option value="auto">Main number — their account manager’s NovaAI if they have one</option>' +
       lines.filter(l => Number(l.active)).map(l => '<option value="' + l.id + '">' + esc(l.am_name) + '’s line' + (l.number ? ' (' + esc(phone(l.number)) + ')' : '') + '</option>').join('');
     sel.value = keep;

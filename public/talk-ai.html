@@ -160,9 +160,17 @@
   .tk-form label small { font-weight: 400; }
   .tk-form .chk { flex-direction: row; align-items: flex-start; gap: 8px; color: var(--ink); font-size: 13px; font-weight: 500; }
   .tk-form .chk input { width: auto; margin: 2px 0 0; }
-  .tk-form input[type=text] { margin: 0; padding: 9px 11px; font-size: 13px; }
+  .tk-form input[type=text], .tk-form input[type=password] { margin: 0; padding: 9px 11px; font-size: 13px; }
   .tk-form textarea { min-height: 90px; }
   .tk-form .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .tk-form .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .tk-am .tags .tk-chip { white-space: normal; height: auto; min-height: 24px; padding-top: 3px; padding-bottom: 3px; }
+  .tk-amsec { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; background: #fcfcfe; }
+  .tk-sech { display: flex; gap: 10px; align-items: flex-start; }
+  .tk-sech i { font-style: normal; flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--indigo-light); color: var(--indigo-dark);
+    display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+  .tk-sech b { display: block; font-size: 13.5px; }
+  .tk-sech small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.45; margin-top: 2px; }
   .tk-form .acts { display: flex; gap: 8px; align-items: center; }
   .tk-form .acts .del { margin-left: auto; border: none; background: none; color: #b91c1c; font: 600 12.5px/1 inherit; cursor: pointer; }
   .tk-langs { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -206,10 +214,10 @@
     .tk-list { width: 100%; }
     .tk-view#vCalls.detail .tk-list { display: none; }
     .tk-view#vCalls:not(.detail) .tk-detail { display: none; }
-    .tk-grid { grid-template-columns: 1fr; }
+    .tk-grid { grid-template-columns: minmax(0, 1fr); }
     .tk-tryside { display: none; }
     .tk-fields { grid-template-columns: 1fr; }
-    .tk-form .row2 { grid-template-columns: 1fr; }
+    .tk-form .row2, .tk-form .row3 { grid-template-columns: 1fr; }
     .tk-hours { grid-template-columns: 90px 60px 1fr; }
     .tk-copy span.l { width: auto; }
     .tk-copy { flex-wrap: wrap; }
@@ -263,6 +271,7 @@
           Put a customer's phone number in <b>Calling from</b> to try it as that customer: NovaAI greets them by name and can look up their live projects.</p>
         <label class="tk-h" for="tryFrom" style="display:block">Calling from (optional)</label>
         <input type="text" id="tryFrom" placeholder="e.g. 818 555 1234">
+        <div id="tryOwnTip" style="font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.4"></div>
         <label class="tk-h" for="tryLine" style="display:block">Line</label>
         <select id="tryLine" class="tk-select"><option value="">Main number</option><option value="auto">Main number — their account manager's NovaAI if they have one</option></select>
         <label class="tk-h" for="tryLang" style="display:block;margin-top:8px">Language</label>
@@ -393,12 +402,12 @@
         <div>
           <div class="tk-card">
             <h3>Each account manager's own NovaAI</h3>
-            <p class="sub" style="margin:0">Give an account manager their own answering NovaAI — it introduces itself as their assistant, follows their notes,
-              takes messages for them and rings their phone. It answers in either (or both) of two ways:</p>
+            <p class="sub" style="margin:0">One NovaAI number per account manager, doing two jobs:</p>
             <ul class="tk-ul">
-              <li><b>Their clients on the main line</b> — a caller recognised by their number whose account belongs to this account manager gets their NovaAI. No extra number needed.</li>
-              <li><b>Their own number</b> — a Twilio number that always answers for them (about $1.15 a month in Twilio). Every call to it is theirs.</li>
+              <li><b>Their missed calls</b> — clients who call it (or whose calls they don't take) get NovaAI instead of voicemail: it greets them, tries to help, and takes a message for them.</li>
+              <li><b>Their assistant</b> — when they call it from their own phone: <i>“Hi Armine! You have 2 new calls. How can I help today?”</i> It reads out their calls and messages, looks up clients, projects and jobs, prices work and emails them notes.</li>
             </ul>
+            <p class="sub" style="margin:8px 0 0">Their clients on the main line can get their NovaAI too, with no extra number.</p>
           </div>
           <div id="amList"><div class="tk-empty">Loading…</div></div>
           <button type="button" class="tk-btn" id="amAdd">+ Add an account manager</button>
@@ -415,7 +424,9 @@
             <h3>Good to know</h3>
             <ul class="tk-ul" style="margin:0">
               <li>Hours, the shared rules and the caller check apply to every line.</li>
-              <li><b>Ring first</b> works during regular hours; turn off voicemail on that phone or keep it longer than <span class="tk-ring"></span> seconds, or voicemail answers instead of NovaAI.</li>
+              <li><b>Ring first</b> works during regular hours. With “press 1 to take it” on, their voicemail can’t take the call: if they don’t press 1, NovaAI answers.</li>
+              <li><b>Dialpad</b>: to send their unanswered Dialpad calls to NovaAI, set their Dialpad “unanswered calls” forwarding to their NovaAI number, and leave Ring first off.</li>
+              <li><b>Their assistant</b> trusts their phone when the carrier confirms the number (most cell phones). Set a PIN for the other times, or to always ask.</li>
               <li>A voice of their own needs <b>Voice</b> allowed under the ElevenLabs agent's Security → Overrides.</li>
               <li>Try it lets you test any line as any caller.</li>
             </ul>

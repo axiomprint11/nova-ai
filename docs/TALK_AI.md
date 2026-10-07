@@ -98,6 +98,36 @@ Tab **Account managers** (`talk_lines`): pick a CRM user who manages clients (`c
   ElevenLabs voice ID (sent as a `tts.voice_id` override — allow **Voice** under the agent's Security → Overrides).
 A call stores `line_id`; the Calls tab shows "<Name>'s line". Try it can test any line, any time of day, as any caller.
 
+### Missed calls → their NovaAI, not voicemail
+
+- A call to their own number greets with the missed-call greeting ("Hi Gus, Armine can't come to the phone right now…")
+  unless the line has its own greeting.
+- **Ring first** + **"Press 1 to take it"** (`talk_lines.screen`, on by default): their phone is dialled with
+  `<Number url=/api/talk/twilio/screen>`, which says "AxiomPrint call from <caller>. Press 1 to take it." Only a 1
+  (`/screen-ok`, sets `talk_calls.screen_ok = 1`) connects; voicemail or no key hangs up that leg, and `/after-dial`
+  sees `screen_ok = 0` and gives the call to NovaAI even though Twilio reports it `completed`.
+- Dialpad: set the person's unanswered-call forwarding to their NovaAI number and leave Ring first off.
+
+### Their own assistant (the account manager calls their NovaAI)
+
+Their phones (`talk_lines.own_numbers`, up to 3, unique across lines, never a TalkAi number). A call **from** one of
+them to their NovaAI number or the main number (`ownerLineFor()`) skips hours, ring first and the caller check:
+
+- **Trusted** when the carrier verified the number (STIR/SHAKEN `Passed-A`), unless "Ask for the PIN on every call".
+  Otherwise, when a PIN is set, Twilio asks for it on the keypad (`/api/talk/twilio/pin`, never spoken, so never in a
+  transcript; scrypt hash in `talk_lines.owner_pin`; 3 tries a call, 10 wrong in a day stops the PIN until the next day).
+  No PIN and no carrier check, or the PIN not given: an ordinary call on their line (`talk_calls.owner = 2`; the prompt
+  says the number is theirs but unverified, so no messages or client details).
+- Verified (`owner = 1`, `verified_by` `owner_carrier` / `owner_pin` / `owner_try`): greeting `owner_greeting`
+  (default "Hi {am}! {new}How can I help today?", `{new}` = "You have 2 new calls. " since `owner_seen_at`) and a
+  different prompt (`ownerPrompt()`) and tools (`ownerTools()`): `my_calls` (calls on their line with caller, time,
+  callback number, message taken, summary, prices given; hearing them moves `owner_seen_at`), `find_client` (name,
+  company, email or phone → accounts with account manager and live project count), `client_projects`, `job_status`
+  (any job, through the client bot's `order_status` as that job's customer), `email_me` (a note to their own email only,
+  optionally with this call's prices laid out ready to forward to a client), plus the product / price / design /
+  installation / delivery tools. Read-only: it never changes orders or contacts clients.
+- Try it: type one of their phones in "Calling from".
+
 ## Languages
 
 Training → **Languages**: English plus Spanish, Armenian, Russian (`talk_settings.languages`). There is **no key menu**:
