@@ -93,7 +93,7 @@
         : c.source === 'elevenlabs' ? 'ElevenLabs test call'
         : phone(c.from_number) || 'Unknown number';
       const tags = [];
-      if (c.verified) tags.push('<span class="tk-tag ok">Verified</span>');
+      if (c.verified) tags.push('<span class="tk-tag ok">' + (c.verified_by === 'caller_id' ? 'Recognised' : 'Verified') + '</span>');
       if (c.source !== 'phone') tags.push('<span class="tk-tag test">Test</span>');
       if (c.outcome === 'message') tags.push('<span class="tk-tag msg">Message</span>');
       if (c.outcome === 'transferred' || c.answered_by === 'forward') tags.push('<span class="tk-tag tr">' + (c.outcome === 'transferred' ? 'Transferred' : 'Forwarded') + '</span>');
@@ -121,6 +121,9 @@
     const chips = [];
     chips.push('<span class="tk-chip">' + esc(full(c.created_at)) + '</span>');
     if (c.duration_sec != null) chips.push('<span class="tk-chip">' + esc(dur(c.duration_sec)) + '</span>');
+    if (c.source === 'phone') chips.push(/passed-(a|b)\b/i.test(c.stir || '') ? '<span class="tk-chip ok" title="' + esc(c.stir) + '">Caller ID carrier-verified</span>'
+      : '<span class="tk-chip" title="' + esc(c.stir || 'No STIR/SHAKEN result from the carrier') + '">Caller ID not carrier-verified</span>');
+    if (c.caller_first) chips.push('<span class="tk-chip">Greeted as ' + esc(c.caller_first) + '</span>');
     if (c.language) chips.push('<span class="tk-chip">' + esc(lang(c.language)) + '</span>');
     if (c.answered_by) chips.push('<span class="tk-chip">' + esc({ ai: 'Answered by NovaAI', forward: 'Forwarded to the team', message: 'Closed message' }[c.answered_by] || c.answered_by) + '</span>');
     if (c.outcome === 'message') chips.push('<span class="tk-chip warn">Message taken</span>');
@@ -132,7 +135,7 @@
     let html = '<div class="tk-hd"><button type="button" class="tk-link" id="callBack" style="float:right">← All calls</button>' +
       '<b class="big">' + esc(c.source === 'try' ? 'Test in text' : phone(c.from_number) || 'Unknown number') + '</b>' +
       (c.source !== 'phone' ? ' <span class="tk-tag test">Test</span>' : '') +
-      '<div class="who">' + (c.verified ? '<b>Verified:</b> ' + esc(c.customer_name || '#' + c.customer_id) + (c.company ? ' (' + esc(c.company) + ')' : '') + ' <i>#' + esc(c.customer_id) + '</i>'
+      '<div class="who">' + (c.verified ? '<b>' + (c.verified_by === 'caller_id' ? 'Recognised by caller ID:' : c.verified_by === 'check+caller_id' ? 'Verified (number + email/ZIP):' : 'Verified:') + '</b> ' + esc(c.customer_name || '#' + c.customer_id) + (c.company ? ' (' + esc(c.company) + ')' : '') + ' <i>#' + esc(c.customer_id) + '</i>'
         : match ? '<b>Caller ID matches</b> ' + match + ' <i>— not verified on the call</i>' : '<i>Not verified' + (c.source === 'phone' ? '; the number is not on a customer account' : '') + '</i>') + '</div>' +
       '<div class="meta">' + chips.join('') + '</div>' +
       (c.has_audio ? '<div class="tk-audio" id="callAudio"><span class="tk-msg">Loading the recording…</span></div>' : '') +
@@ -191,10 +194,14 @@
 
   // ---- Try it ----
   const tryState = { callId: null, msgs: [], busy: false };
-  function newTry() {
-    tryState.callId = null; tryState.msgs = [];
-    const g = ov && ov.settings ? ov.settings.greeting : 'Hi, you’ve reached AxiomPrint. How can I help?';
-    tryState.msgs.push({ role: 'assistant', content: g });
+  async function newTry() {
+    tryState.callId = null; tryState.msgs = []; tryState.busy = true;
+    paintTry('<div class="tk-empty">Starting a test call\u2026</div>');
+    const j = await api('/api/admin/talk/try/start', { method: 'POST', body: JSON.stringify({ from: $('tryFrom').value.trim() }) }).catch(() => ({}));
+    tryState.busy = false;
+    tryState.callId = j.call_id || null;
+    tryState.msgs.push({ role: 'assistant', content: j.greeting || (ov && ov.settings ? ov.settings.greeting : 'Hi! How can I help?'),
+      note: j.recognised ? 'Recognised by the number as ' + j.recognised : ($('tryFrom').value.trim() ? 'That number is not on a customer account.' : null) });
     paintTry();
     $('tryInput').focus();
   }
@@ -206,6 +213,7 @@
     $('tryLog').scrollTop = $('tryLog').scrollHeight;
   }
   $('tryNew').onclick = newTry;
+  $('tryFrom').onchange = newTry;            // a different number = a new test call as that caller
   $('tryForm').onsubmit = async (e) => {
     e.preventDefault();
     const t = $('tryInput').value.trim();
@@ -228,14 +236,19 @@
   };
 
   // ---- Training ----
-  let mode = 'ai';
+  let mode = 'ai', callerId = 'carrier';
   document.querySelectorAll('#sMode button').forEach(b => { b.onclick = () => { mode = b.dataset.m; paintMode(); }; });
-  function paintMode() { document.querySelectorAll('#sMode button').forEach(b => b.classList.toggle('on', b.dataset.m === mode)); }
+  document.querySelectorAll('#sCallerId button').forEach(b => { b.onclick = () => { callerId = b.dataset.c; paintMode(); }; });
+  function paintMode() {
+    document.querySelectorAll('#sMode button').forEach(b => b.classList.toggle('on', b.dataset.m === mode));
+    document.querySelectorAll('#sCallerId button').forEach(b => b.classList.toggle('on', b.dataset.c === callerId));
+  }
   async function paintTraining() {
     const j = ov || await loadOverview();
     if (!j) return;
     const s = j.settings;
-    mode = s.mode; paintMode();
+    mode = s.mode; callerId = s.caller_id || 'carrier'; paintMode();
+    $('sGreetingKnown').value = s.greeting_known || '';
     $('sGreeting').value = s.greeting || '';
     $('sRules').value = s.rules || '';
     $('sTransfer').value = s.transfer_number ? phone(s.transfer_number) : '';
@@ -247,7 +260,7 @@
   }
   $('sSave').onclick = async () => {
     const m = $('sMsg'); m.className = 'tk-msg'; m.textContent = 'Saving…';
-    const j = await api('/api/admin/talk/settings', { method: 'POST', body: JSON.stringify({ mode: mode, greeting: $('sGreeting').value, rules: $('sRules').value,
+    const j = await api('/api/admin/talk/settings', { method: 'POST', body: JSON.stringify({ mode: mode, caller_id: callerId, greeting_known: $('sGreetingKnown').value, greeting: $('sGreeting').value, rules: $('sRules').value,
       transfer_number: $('sTransfer').value, forward_number: $('sForward').value, notify_to: $('sNotify').value, summary_mail: $('sSummary').checked,
       closed_message: $('sClosed').value }) });
     if (!j.ok) { m.className = 'tk-msg err'; m.textContent = j.error || 'Could not save.'; return; }

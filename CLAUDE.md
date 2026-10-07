@@ -246,7 +246,7 @@ order tools. Express 5 route syntax: optional segments are `{/:name}`, not `:nam
 ElevenLabs listens and speaks, and asks Nova for every answer as a **Custom LLM** (`POST /api/talk/llm/v1/chat/completions`,
 OpenAI-style SSE, `TALKAI_LLM_KEY`). Nova answers with Claude and the client bot's own tools and rules —
 `mountClientBot` returns `{ TOOLS, runTool, loadRules, turnaroundInfo, … }` for it — plus `verify_caller`
-(order number + account email / ZIP / phone; order tools refuse until it passes), `take_message` (emails the team) and
+(order number + account email / ZIP / phone, or just email / ZIP when the number is on an account; order tools refuse until it passes), caller ID recognition before answering (`lookupCaller()`: greets by first name; a STIR/SHAKEN-verified number — Twilio `StirVerstat` Passed-A/B — skips the check, setting `talk_settings.caller_id`), `live_projects` (jobs by project in the live `estimate_stage` substages, "Mixed" when they differ), `take_message` (emails the team) and
 `transfer_call` (Twilio REST redirect) and `email_quote` (the call's prices with Order now links + a link to the caller's page `/talk/c/<token>`, which shows the quotes and the conversation; prices kept in `talk_calls.quotes`). ElevenLabs system tools (end_call…) pass through as tool calls. After the call the
 ElevenLabs post-call webhook (`/api/talk/hook/elevenlabs`, HMAC `ELEVENLABS_WEBHOOK_SECRET`; server.js skips its JSON
 parser for `/api/talk/hook/`) stores the transcript, summary and MP3 (`talk-recordings/`, gitignored). SQLite `talk_settings`,

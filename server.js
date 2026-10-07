@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.7.1';
-const NOVA_BUILT = '10-06-2026 6:45pm';
+const NOVA_VERSION = '1.7.2';
+const NOVA_BUILT = '10-06-2026 7:15pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 app.use((req, res, next) => req.path.indexOf('/api/talk/hook/') === 0 ? next() : jsonBody(req, res, next));
@@ -2255,6 +2255,7 @@ qr_scan_history (THE SOURCE OF TRUTH for production progress):
 
 logs (detailed event history for an estimate/job):
 - estimate_id -> estimate.id, event_type, event (text), created_at
+- estimate_stage: ONE row per estimate (estimate_id) = the job's current board column: estimate_stage / estimate_substage. Live jobs: prepress (cad_template = CAD, design, tier_1, tier_2), processing (payment, imposition, production, packing = Dispatch), handling (pickup, shipping, delivery_install, job_merge). Not live: order (new_client, reorder, ongoing, follow_up) and complete (done, canceled, final_payment, ticket). A project (estimate.estimate_projectid -> project.projectname) whose live jobs sit in different columns shows as "Mixed".
 - Useful event_types for production: 'production_step_updated','qr_scanned','estimate_stage_updated'. Also tracks shipping: 'shipping_label_created','tracking_number_updated','product_shipped_email_sent','ready_for_pickup_email_sent'.
 - Use logs to answer "was this shipped?", "what happened with this order", or to build a full history.
 

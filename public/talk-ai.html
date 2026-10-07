@@ -218,7 +218,7 @@
       <aside class="tk-tryside">
         <div class="tk-h">Test the phone NovaAI in text</div>
         <p style="margin:0 0 10px;line-height:1.5">The same brain, rules and tools a caller gets — typed instead of spoken. Saved under Calls → Tests.
-          To check a caller's orders, give NovaAI an order number and the email, ZIP or phone on that account, as a caller would.</p>
+          Put a customer's phone number in <b>Calling from</b> to try it as that customer: NovaAI greets them by name and can look up their live projects.</p>
         <label class="tk-h" for="tryFrom" style="display:block">Calling from (optional)</label>
         <input type="text" id="tryFrom" placeholder="e.g. 818 555 1234">
         <button type="button" class="tk-btn ghost" id="tryNew" style="width:100%">Start a new test call</button>
@@ -252,6 +252,18 @@
             <h3>Greeting</h3>
             <p class="sub">The first thing every caller hears. Keep the two legal points: that NovaAI is an AI assistant, and that the call is recorded.</p>
             <textarea id="sGreeting" rows="3"></textarea>
+          </div>
+          <div class="tk-card">
+            <h3>Callers we know</h3>
+            <p class="sub">When the calling number is on a customer account, NovaAI greets them by first name with this instead. <b>{name}</b> is their first name.</p>
+            <textarea id="sGreetingKnown" rows="3"></textarea>
+            <h3 style="margin-top:14px">Order details for a known number</h3>
+            <p class="sub">When a known caller asks about their orders, NovaAI tells them how many live projects it sees and asks which one.</p>
+            <div class="tk-mode" id="sCallerId">
+              <button type="button" data-c="carrier"><b>When the number is carrier-verified</b><small>Straight to their orders when the phone company confirms the number is genuine (STIR/SHAKEN A or B, most mobile calls). Otherwise NovaAI first asks for the email or ZIP on the account. Recommended.</small></button>
+              <button type="button" data-c="always"><b>Whenever the number matches</b><small>Straight to their orders for any matching number. Easiest, but someone faking a customer's number could hear their order status.</small></button>
+              <button type="button" data-c="never"><b>Off</b><small>No name greeting. Every caller gives an order number plus the email, ZIP or phone on the account.</small></button>
+            </div>
           </div>
           <div class="tk-card">
             <h3>Phone rules</h3>
@@ -294,7 +306,7 @@
             <ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.6;color:var(--ink-soft)">
               <li>Short spoken sentences; no lists or links read out</li>
               <li>Answers in the caller's language</li>
-              <li>No order details until the caller gives the order number and the email, ZIP or phone on the account (three tries)</li>
+              <li>Order details only for a recognised number (see Callers we know), or after the caller confirms the email or ZIP on the account (with the order number if the number is unknown) — three tries</li>
               <li>Prices only from the website calculator</li>
               <li>Never takes card numbers or payments</li>
               <li>Past-due orders escalated by email, as in the chat</li>
