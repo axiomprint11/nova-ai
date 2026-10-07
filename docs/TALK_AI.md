@@ -37,6 +37,7 @@ After the call: ElevenLabs ─► POST /api/talk/hook/elevenlabs   transcript, s
 | `estimate_design`, `estimate_installation`, `estimate_delivery` | Same as the chat |
 | `verify_caller` | Order (E-number) or invoice number **plus** the account's email, ZIP (customerusers) or phone. Three tries per call. Never says which part failed. |
 | `my_orders`, `order_status` | Only after `verify_caller` succeeded. Same deadline sentence and past-due escalation as the chat (the email links to the call). |
+| `email_quote` | After a price, NovaAI offers to email it; it spells the address back and waits for a yes (a verified caller can use the account email). The email (from order@axiomprint.com) lists every product priced on the call with its options, each quantity's price and ready date, an **Order now** button (the same option-preselected link the chat uses) and **See our conversation**. Max 3 emails and 2 addresses per call. |
 | `take_message` | Emails the team (Training → Messages go to; default gary@axiomprint.com) and marks the call "Message". |
 | `transfer_call` | Only when a transfer number is set and `TWILIO_ACCOUNT_SID` is in .env. NovaAI says one sentence, then Nova redirects the live call with Twilio's REST API (`<Dial>` the number, caller ID passed through; closed message if no one answers). |
 | ElevenLabs system tools | `end_call`, language detection… are passed through to ElevenLabs as OpenAI tool calls. |
@@ -46,6 +47,14 @@ Caller ID is never trusted for order details (it can be faked). It is only match
 
 Nova keeps per-call memory between turns (what was looked up, verification tries), because ElevenLabs sends
 only the words back each turn.
+
+## The caller's page
+
+`/talk/c/<token>` — the link in the quote email (32 random hex characters, no sign-in, expires after `TALKAI_PAGE_DAYS`,
+default 90). It shows the prices given on the call with Order now buttons and the conversation (the ElevenLabs
+transcript once it arrives, else the live turns) — never Nova's lookups or internal events. `noindex`, `no-referrer`
+(so the token never leaks to axiomprint.com), strict CSP. Prices given on a call are kept in `talk_calls.quotes`
+(one entry per product + options, quantities merged); the Calls tab shows them, where they were emailed, and the page link.
 
 ## Admin page
 
@@ -96,5 +105,5 @@ Recordings: `talk-recordings/YYYY-MM/*.mp3` (gitignored, admin-only, deleted aft
 
 ## Not yet
 
-Texting quotes or links (needs Twilio A2P 10DLC registration), a language menu, 👍/👎 lessons for calls,
+Texting quotes or links (needs Twilio A2P 10DLC registration; quotes go by email for now), a language menu, 👍/👎 lessons for calls,
 outbound calls (need prior consent), business-hours rules.

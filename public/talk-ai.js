@@ -127,6 +127,7 @@
     if (c.outcome === 'transferred') chips.push('<span class="tk-chip ok">Transferred</span>');
     if (c.status && c.source === 'phone') chips.push('<span class="tk-chip">' + esc(c.status) + '</span>');
     if (c.cost != null) chips.push('<span class="tk-chip" title="ElevenLabs credits for this call">' + esc(c.cost) + ' credits</span>');
+    if (c.emailed_to) chips.push('<span class="tk-chip ok">Quote emailed to ' + esc(c.emailed_to) + '</span>');
     if (c.ended_reason) chips.push('<span class="tk-chip" title="How the call ended">' + esc(c.ended_reason) + '</span>');
     let html = '<div class="tk-hd"><button type="button" class="tk-link" id="callBack" style="float:right">← All calls</button>' +
       '<b class="big">' + esc(c.source === 'try' ? 'Test in text' : phone(c.from_number) || 'Unknown number') + '</b>' +
@@ -136,7 +137,12 @@
       '<div class="meta">' + chips.join('') + '</div>' +
       (c.has_audio ? '<div class="tk-audio" id="callAudio"><span class="tk-msg">Loading the recording…</span></div>' : '') +
       (c.error ? '<div class="tk-msg err" style="margin-top:8px">' + esc(c.error) + '</div>' : '') +
-      '<div style="margin-top:8px"><button type="button" class="tk-link" id="callUnread">Mark as unread</button></div></div>';
+      '<div style="margin-top:8px"><button type="button" class="tk-link" id="callUnread">Mark as unread</button>' +
+      (c.page_url ? ' \u00b7 <a class="tk-link" href="' + esc(c.page_url) + '" target="_blank" rel="noopener" style="text-decoration:none">Caller\u2019s page \u2197</a>' : '') + '</div></div>';
+    if (c.quotes && c.quotes.length) html += '<div class="tk-sum" style="background:#fff;border-color:var(--line)"><span>Prices given on this call</span>' +
+      c.quotes.map(q => '<div style="margin-top:4px"><b>' + esc(q.product) + '</b> \u2014 ' + q.rows.map(r => esc(Number(r.quantity).toLocaleString('en-US')) + ': $' +
+        esc(Number(r.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })) +
+        (r.order_url ? ' <a class="tk-link" style="text-decoration:none;padding:0" href="' + esc(r.order_url) + '" target="_blank" rel="noopener">order link</a>' : '')).join(' \u00b7 ') + '</div>').join('') + '</div>';
     if (c.summary) html += '<div class="tk-sum"><span>Summary</span>' + esc(c.summary) + '</div>';
     const events = turns.filter(t => t.role === 'event');
     const evClass = (t) => /verified as|Transferred to|saved/i.test(t) ? ' ok' : /failed/i.test(t) ? ' bad' : '';

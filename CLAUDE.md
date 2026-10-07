@@ -247,7 +247,7 @@ ElevenLabs listens and speaks, and asks Nova for every answer as a **Custom LLM*
 OpenAI-style SSE, `TALKAI_LLM_KEY`). Nova answers with Claude and the client bot's own tools and rules —
 `mountClientBot` returns `{ TOOLS, runTool, loadRules, turnaroundInfo, … }` for it — plus `verify_caller`
 (order number + account email / ZIP / phone; order tools refuse until it passes), `take_message` (emails the team) and
-`transfer_call` (Twilio REST redirect). ElevenLabs system tools (end_call…) pass through as tool calls. After the call the
+`transfer_call` (Twilio REST redirect) and `email_quote` (the call's prices with Order now links + a link to the caller's page `/talk/c/<token>`, which shows the quotes and the conversation; prices kept in `talk_calls.quotes`). ElevenLabs system tools (end_call…) pass through as tool calls. After the call the
 ElevenLabs post-call webhook (`/api/talk/hook/elevenlabs`, HMAC `ELEVENLABS_WEBHOOK_SECRET`; server.js skips its JSON
 parser for `/api/talk/hook/`) stores the transcript, summary and MP3 (`talk-recordings/`, gitignored). SQLite `talk_settings`,
 `talk_calls`, `talk_turns`, `talk_reads`. Admin page `/talk-ai` (Calls · Try it · Training · Setup), linked after Client ChatBot
