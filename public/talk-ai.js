@@ -130,7 +130,7 @@
       : '<span class="tk-chip" title="' + esc(c.stir || 'No STIR/SHAKEN result from the carrier') + '">Caller ID not carrier-verified</span>');
     if (c.caller_first) chips.push('<span class="tk-chip">Greeted as ' + esc(c.caller_first) + '</span>');
     if (c.language) chips.push('<span class="tk-chip">' + esc(lang(c.language)) + '</span>');
-    if (c.answered_by) chips.push('<span class="tk-chip">' + esc({ ai: 'Answered by NovaAI', forward: 'Forwarded to the team', message: 'Closed message', person: 'Answered by the team', ring: 'Ringing the team' }[c.answered_by] || c.answered_by) + '</span>');
+    if (c.answered_by) chips.push('<span class="tk-chip">' + esc({ ai: 'Answered by NovaAI', forward: 'Forwarded to the team', message: 'Closed message', person: 'Answered by the team', ring: 'Ringing the team', menu: 'At the language menu' }[c.answered_by] || c.answered_by) + '</span>');
     if (c.outcome === 'message') chips.push('<span class="tk-chip warn">Message taken</span>');
     if (c.outcome === 'transferred') chips.push('<span class="tk-chip ok">Transferred</span>');
     if (c.status && c.source === 'phone') chips.push('<span class="tk-chip">' + esc(c.status) + '</span>');
@@ -202,11 +202,11 @@
   async function newTry() {
     tryState.callId = null; tryState.msgs = []; tryState.busy = true;
     paintTry('<div class="tk-empty">Starting a test call\u2026</div>');
-    const j = await api('/api/admin/talk/try/start', { method: 'POST', body: JSON.stringify({ from: $('tryFrom').value.trim(), line_id: $('tryLine').value, hours: $('tryHours').value }) }).catch(() => ({}));
+    const j = await api('/api/admin/talk/try/start', { method: 'POST', body: JSON.stringify({ from: $('tryFrom').value.trim(), line_id: $('tryLine').value, hours: $('tryHours').value, lang: $('tryLang').value }) }).catch(() => ({}));
     tryState.busy = false;
     tryState.callId = j.call_id || null;
     tryState.msgs.push({ role: 'assistant', content: j.greeting || (ov && ov.settings ? ov.settings.greeting : 'Hi! How can I help?'),
-      note: [j.line, j.hours === 'after' ? 'After hours' : 'Regular hours', j.recognised ? 'Recognised by the number as ' + j.recognised : ($('tryFrom').value.trim() ? 'That number is not on a customer account' : null)].filter(Boolean).join(' \u00b7 ') });
+      note: [j.line, j.language, j.hours === 'after' ? 'After hours' : 'Regular hours', j.recognised ? 'Recognised by the number as ' + j.recognised : ($('tryFrom').value.trim() ? 'That number is not on a customer account' : null)].filter(Boolean).join(' \u00b7 ') });
     paintTry();
     $('tryInput').focus();
   }
@@ -219,7 +219,7 @@
   }
   $('tryNew').onclick = newTry;
   $('tryFrom').onchange = newTry;
-  $('tryLine').onchange = newTry; $('tryHours').onchange = newTry;            // a different number = a new test call as that caller
+  $('tryLine').onchange = newTry; $('tryHours').onchange = newTry; $('tryLang').onchange = newTry;            // a different number = a new test call as that caller
   $('tryForm').onsubmit = async (e) => {
     e.preventDefault();
     const t = $('tryInput').value.trim();
@@ -294,10 +294,28 @@
       (h.next ? ' — opens ' + esc(h.next) : '')) + '<br><small style="color:var(--muted)">' + esc(h.week || '') + '</small>';
     document.querySelectorAll('.tk-ring').forEach(x => { x.textContent = j.ring_seconds || 20; });
   }
+  let langState = null;
+  function paintLangs(j) {
+    const s = j.settings, all = j.langs || [];
+    langState = { on: s.languages.slice(), greet: Object.assign({}, s.lang_greetings) };
+    $('sLangMenu').checked = !!s.lang_menu;
+    const draw = () => {
+      $('sLangs').innerHTML = all.map(l => '<label class="' + (langState.on.indexOf(l.code) > -1 ? 'on' : '') + '"><input type="checkbox" data-lang="' + l.code + '"' +
+        (langState.on.indexOf(l.code) > -1 ? ' checked' : '') + (l.code === 'en' ? ' disabled' : '') + '> ' + esc(l.name) + '</label>').join('');
+      $('sLangMenuText').textContent = '\u201c' + all.filter(l => langState.on.indexOf(l.code) > -1).map(l => 'press ' + l.digit + ' for ' + l.name).join(', ') + '\u201d';
+      $('sLangGreets').innerHTML = all.filter(l => l.code !== 'en' && langState.on.indexOf(l.code) > -1).map(l =>
+        '<label>Greeting in ' + esc(l.name) + ' <small style="font-weight:400">({name} = their first name)</small><textarea data-greet="' + l.code + '" rows="2">' + esc(langState.greet[l.code] || l.greeting) + '</textarea></label>').join('');
+      $('sLangs').querySelectorAll('input[data-lang]').forEach(cb => { cb.onchange = () => { keepLangGreets(); const k = cb.dataset.lang;
+        langState.on = cb.checked ? langState.on.concat([k]) : langState.on.filter(x => x !== k); draw(); }; });
+    };
+    draw();
+  }
+  function keepLangGreets() { if (langState) $('sLangGreets').querySelectorAll('textarea[data-greet]').forEach(t => { langState.greet[t.dataset.greet] = t.value; }); }
   async function paintTraining() {
     const j = ov || await loadOverview();
     if (!j) return;
     const s = j.settings;
+    paintLangs(j);
     callerId = s.caller_id || 'carrier';
     modes = JSON.parse(JSON.stringify(s.modes));
     paintHours(s.hours); paintNow(j); paintMode();
@@ -311,8 +329,9 @@
   }
   $('sSave').onclick = async () => {
     const m = $('sMsg'); m.className = 'tk-msg'; m.textContent = 'Saving…';
-    keepMode();
+    keepMode(); keepLangGreets();
     const j = await api('/api/admin/talk/settings', { method: 'POST', body: JSON.stringify({ caller_id: callerId, hours: readHours(), modes: modes, rules: $('sRules').value,
+      languages: langState ? langState.on.filter(k => k !== 'en') : undefined, lang_menu: $('sLangMenu').checked, lang_greetings: langState ? langState.greet : undefined,
       transfer_number: $('sTransfer').value, forward_number: $('sForward').value, notify_to: $('sNotify').value, summary_mail: $('sSummary').checked,
       closed_message: $('sClosed').value }) });
     if (!j.ok) { m.className = 'tk-msg err'; m.textContent = j.error || 'Could not save.'; return; }
@@ -460,7 +479,8 @@
       '<li><b>Dynamic variables</b> (placeholders for test calls from the ElevenLabs page): <code>nova_call</code> = <code>0</code>, <code>greeting</code> =' + copyRow('', s.greeting) + '</li>' +
       '<li><b>LLM</b> → <b>Custom LLM</b>. Server URL:' + copyRow('', u.llm) + ' Model ID: <code>nova-talkai</code>. API key: add a secret with the same value as <code>TALKAI_LLM_KEY</code>.</li>' +
       '<li><b>Voice</b>: pick a warm voice. For English and Spanish the Flash / Turbo models are fastest; for Armenian use <b>Eleven v3 Conversational</b>. Turn on <b>interruptions</b>.</li>' +
-      '<li><b>Language</b>: English as default; add Spanish and Armenian as additional languages so NovaAI can switch with the caller.</li>' +
+      '<li><b>Languages</b> (Agent tab): default <b>English</b>; under <b>Additional languages</b> add <b>Spanish</b>, <b>Armenian</b> and <b>Russian</b>, and give each a voice that speaks it ' +
+        '(for Armenian use an <b>Eleven v3</b> voice). Then <b>Security \u2192 Overrides</b>: turn on <b>Language</b> \u2014 Nova tells ElevenLabs which language the caller chose.</li>' +
       '<li><b>Tools → System tools</b>: turn on <b>End conversation</b> and <b>Detect language</b>. Leave "Transfer to number" off — Nova does transfers (Training → Transfer to).</li>' +
       '<li><b>Advanced → audio</b>: user input audio format <b>μ-law 8000 Hz</b> and TTS output format <b>μ-law 8000 Hz</b> (needed because Nova hands the call over from Twilio).</li>' +
       '<li>Leave the phone number out of ElevenLabs — Nova connects each call itself, so it can forward or play the closed message when needed.</li></ol></div>' +

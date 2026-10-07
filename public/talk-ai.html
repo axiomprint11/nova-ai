@@ -165,6 +165,12 @@
   .tk-form .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .tk-form .acts { display: flex; gap: 8px; align-items: center; }
   .tk-form .acts .del { margin-left: auto; border: none; background: none; color: #b91c1c; font: 600 12.5px/1 inherit; cursor: pointer; }
+  .tk-langs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .tk-langs label { display: flex; align-items: center; gap: 6px; padding: 7px 11px; border: 1.5px solid var(--line); border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; margin: 0; }
+  .tk-langs label.on { border-color: var(--indigo); background: var(--indigo-light); }
+  .tk-langs input { width: auto; margin: 0; }
+  #sLangGreets label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-top: 10px; }
+  #sLangGreets textarea { min-height: 56px; margin-top: 4px; }
   /* Setup */
   .tk-setup { flex: 1; overflow-y: auto; padding: 20px 24px; }
   .tk-setup-in { max-width: 920px; font-size: 13.5px; line-height: 1.6; }
@@ -259,6 +265,8 @@
         <input type="text" id="tryFrom" placeholder="e.g. 818 555 1234">
         <label class="tk-h" for="tryLine" style="display:block">Line</label>
         <select id="tryLine" class="tk-select"><option value="">Main number</option><option value="auto">Main number — their account manager's NovaAI if they have one</option></select>
+        <label class="tk-h" for="tryLang" style="display:block;margin-top:8px">Language</label>
+        <select id="tryLang" class="tk-select"><option value="">English</option><option value="es">Spanish</option><option value="hy">Armenian</option><option value="ru">Russian</option></select>
         <label class="tk-h" for="tryHours" style="display:block;margin-top:8px">Time of day</label>
         <select id="tryHours" class="tk-select"><option value="">Now</option><option value="regular">Regular hours</option><option value="after">After hours</option></select>
         <button type="button" class="tk-btn ghost" id="tryNew" style="width:100%;margin-top:12px">Start a new test call</button>
@@ -308,6 +316,14 @@
             <h3 style="margin-top:12px">Rules for this time of day</h3>
             <p class="sub">On top of the phone rules below, only during <span class="tk-mname">regular hours</span>.</p>
             <textarea id="sModeRules" rows="4"></textarea>
+          </div>
+          <div class="tk-card">
+            <h3>Languages</h3>
+            <p class="sub">English is always on. NovaAI understands and answers in the languages you turn on here (they also have to be added to the ElevenLabs agent — see Setup).</p>
+            <div class="tk-langs" id="sLangs"></div>
+            <label class="tk-check"><input type="checkbox" id="sLangMenu"> Ask callers to choose first: <i id="sLangMenuText"></i></label>
+            <p class="sub" style="margin-top:6px">A caller who chose a language before goes straight to it next time. Without the menu, callers start in English and NovaAI switches when they speak another language — less reliable for Armenian.</p>
+            <div id="sLangGreets"></div>
           </div>
           <div class="tk-card">
             <h3>Order details for a known number</h3>

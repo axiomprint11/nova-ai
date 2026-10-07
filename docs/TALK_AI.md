@@ -98,6 +98,24 @@ Tab **Account managers** (`talk_lines`): pick a CRM user who manages clients (`c
   ElevenLabs voice ID (sent as a `tts.voice_id` override — allow **Voice** under the agent's Security → Overrides).
 A call stores `line_id`; the Calls tab shows "<Name>'s line". Try it can test any line, any time of day, as any caller.
 
+## Languages
+
+Training → **Languages**: English plus Spanish, Armenian, Russian (`talk_settings.languages`). With the **key menu** on
+(`lang_menu`, default on), a caller first hears "For English, press 1… Para español, oprima 2. For Armenian, press 3.
+Для русского языка нажмите 4." (Twilio `<Gather>`; no key = English) → `POST /api/talk/twilio/lang?call=<id>` (signed)
+stores `language` + `lang_pick` and connects NovaAI with that language: ElevenLabs `conversation_config_override.agent.language`
+(allow **Language** under the agent's Security → Overrides; if refused, Nova retries without it and logs it), a greeting in that
+language (`lang_greetings`, editable; the Armenian one should be checked by a native speaker), and a LANGUAGE line in the prompt.
+A number that chose a language before (a key pressed, or a non-English call) skips the menu (`rememberedLang()`).
+ElevenLabs must have the languages added to the agent (Additional languages, each with a voice; Eleven v3 for Armenian) —
+otherwise its speech recognition stays in English and does not understand Armenian.
+
+## Several calls at once
+
+Every call is its own ElevenLabs conversation and its own set of Nova requests, so calls are answered in parallel up to the
+ElevenLabs plan's concurrency (Free 4, Starter 6, Creator 10, Pro 20, Scale 30, Business 40 at the time of writing). A call
+over the limit makes `register-call` fail, and Nova falls back to the forward number (or the closed message).
+
 ## The caller's page
 
 `/talk/c/<token>` — the link in the quote email (32 random hex characters, no sign-in, expires after `TALKAI_PAGE_DAYS`,

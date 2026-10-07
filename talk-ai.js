@@ -55,8 +55,10 @@ module.exports = function mountTalkAi(app, deps, bot) {
     ['caller_id TEXT', 'greeting_known TEXT'].forEach(c => db.run('ALTER TABLE talk_settings ADD COLUMN ' + c, () => {}));
     // Opening hours (JSON) and what each part of the day does (JSON: regular / after).
     ['hours TEXT', 'modes TEXT'].forEach(c => db.run('ALTER TABLE talk_settings ADD COLUMN ' + c, () => {}));
+    // Languages callers can pick (JSON list), the press-a-key menu on/off, greetings per language (JSON).
+    ['languages TEXT', 'lang_menu INTEGER', 'lang_greetings TEXT'].forEach(c => db.run('ALTER TABLE talk_settings ADD COLUMN ' + c, () => {}));
     // Which account manager's line answered, and whether it was regular or after hours.
-    ['line_id INTEGER', 'hours_mode TEXT'].forEach(c => db.run('ALTER TABLE talk_calls ADD COLUMN ' + c, () => {}));
+    ['line_id INTEGER', 'hours_mode TEXT', 'lang_pick TEXT'].forEach(c => db.run('ALTER TABLE talk_calls ADD COLUMN ' + c, () => {}));
     // An account manager's own answering NovaAI: their number (optional), their clients on the main line,
     // ring them first, where messages go, a greeting and training of their own, a voice of their own.
     db.run(`CREATE TABLE IF NOT EXISTS talk_lines (id INTEGER PRIMARY KEY AUTOINCREMENT, am_user_id INTEGER, am_name TEXT, am_title TEXT,
@@ -144,7 +146,44 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const regDef = Object.assign({}, MODE_DEFAULTS.regular, { answer: legacyAnswer, greeting: s.greeting, greeting_known: s.greeting_known });
     s.modes = { regular: normMode(modes && modes.regular, regDef),
       after: normMode(modes && modes.after, Object.assign({}, MODE_DEFAULTS.after, { answer: legacyAnswer === 'ring_ai' ? 'ai' : legacyAnswer })) };
+    let langs = null, lg = null;
+    try { langs = r && r.languages ? JSON.parse(r.languages) : null; } catch (e) {}
+    try { lg = r && r.lang_greetings ? JSON.parse(r.lang_greetings) : null; } catch (e) {}
+    s.languages = ['en'].concat((Array.isArray(langs) ? langs : DEFAULT_LANGS).filter(k => LANGS[k] && k !== 'en'));
+    s.lang_menu = r && r.lang_menu != null ? (Number(r.lang_menu) ? 1 : 0) : 1;
+    s.lang_greetings = {};
+    Object.keys(LANGS).filter(k => k !== 'en').forEach(k => { s.lang_greetings[k] = (lg && String(lg[k] || '').trim()) || LANGS[k].greeting; });
     return s;
+  }
+
+  // ---------------------------------------------------------------- languages
+  // ElevenLabs language codes. The key menu: 1 English, 2 Spanish, 3 Armenian, 4 Russian. Twilio can say the
+  // Spanish and Russian lines in those languages; it has no Armenian voice, so that line is said in English.
+  const LANGS = {
+    en: { name: 'English', digit: '1', menu: 'For English, press 1, or just stay on the line.', voice: 'Polly.Joanna-Neural', tw: 'en-US' },
+    es: { name: 'Spanish', digit: '2', menu: 'Para español, oprima 2.', voice: 'Polly.Lupe-Neural', tw: 'es-US',
+      greeting: 'Hola {name}, gracias por llamar a AxiomPrint. Soy NovaAI, un asistente de inteligencia artificial, y esta llamada se graba. ¿En qué puedo ayudarle?' },
+    hy: { name: 'Armenian', digit: '3', menu: 'For Armenian, press 3.', voice: 'Polly.Joanna-Neural', tw: 'en-US',
+      greeting: 'Բարև {name}, շնորհակալություն AxiomPrint զանգահարելու համար։ Ես NovaAI-ն եմ՝ արհեստական բանականության օգնական, և այս զանգը ձայնագրվում է։ Ինչո՞վ կարող եմ օգնել։' },
+    ru: { name: 'Russian', digit: '4', menu: 'Для русского языка нажмите 4.', voice: 'Polly.Tatyana', tw: 'ru-RU',
+      greeting: 'Здравствуйте {name}! Спасибо, что позвонили в AxiomPrint. Я NovaAI, ИИ-ассистент, и этот звонок записывается. Чем могу помочь?' }
+  };
+  const DEFAULT_LANGS = ['es', 'hy', 'ru'];
+  const langCode = (v) => { const k = String(v || '').toLowerCase().slice(0, 2); return LANGS[k] ? k : null; };
+  // The language a caller chose last time (their number: a key they pressed, or a language other than English
+  // they spoke), so a returning caller skips the menu. Not pressing anything is not a choice.
+  async function rememberedLang(from, s) {
+    const d = last10(from);
+    if (d.length !== 10) return null;
+    const r = await dbGet("SELECT language FROM talk_calls WHERE source = 'phone' AND from_number LIKE ? AND (lang_pick IS NOT NULL OR " +
+      "(language IS NOT NULL AND language NOT LIKE 'en%')) ORDER BY id DESC LIMIT 1", ['%' + d]).catch(() => null);
+    const k = r && langCode(r.language);
+    return k && s.languages.indexOf(k) > -1 ? k : null;
+  }
+  function langMenu(s, callId) {
+    const url = xml(NOVA_URL + '/api/talk/twilio/lang?call=' + callId);
+    const say = s.languages.map(k => '<Say voice="' + LANGS[k].voice + '" language="' + LANGS[k].tw + '">' + xml(LANGS[k].menu) + '</Say>').join('');
+    return twiml('<Gather numDigits="1" timeout="5" action="' + url + '" method="POST">' + say + '</Gather><Redirect method="POST">' + url + '</Redirect>');
   }
 
   // ---------------------------------------------------------------- hours
@@ -284,10 +323,11 @@ module.exports = function mountTalkAi(app, deps, bot) {
   // The first thing the caller hears: the line's own greeting, else the hours mode's (the "callers we know"
   // one when their number is on an account). {name} = their first name, {am} = the account manager's.
   const MISSED = 'Hi {name}, {am} can\u2019t come to the phone right now. I\u2019m NovaAI, an AI assistant, and this call is recorded. How can I help you?';
-  function greetingFor(s, first, mode, line, missed) {
+  function greetingFor(s, first, mode, line, missed, lang) {
     mode = mode || s.modes.regular;
     if (s.caller_id === 'never') first = '';
-    const tpl = missed ? MISSED : (line && line.greeting) ? line.greeting : (first ? mode.greeting_known : mode.greeting);
+    const tpl = lang && lang !== 'en' && s.lang_greetings[lang] ? s.lang_greetings[lang]
+      : missed ? MISSED : (line && line.greeting) ? line.greeting : (first ? mode.greeting_known : mode.greeting);
     return String(tpl || mode.greeting).replace(/\{am\}/gi, amFirst(line))
       .replace(/\s*\{name\}/gi, first ? ' ' + first : '').replace(/^\s+/, '').replace(/\s+,/g, ',');
   }
@@ -323,22 +363,35 @@ module.exports = function mountTalkAi(app, deps, bot) {
     return twiml('<Dial timeout="25"' + (cid ? ' callerId="' + xml(cid) + '"' : '') + '>' + xml(e164(number) || number) + '</Dial>' + sayTw(s.closed_message));
   }
 
-  async function registerCall(call, from, to, s, greeting, line) {
+  async function registerCall(call, from, to, s, greeting, line, lang) {
     const key = env('ELEVENLABS_API_KEY'), agent = env('ELEVENLABS_AGENT_ID');
     if (!key || !agent) throw new Error('ElevenLabs is not set up (ELEVENLABS_API_KEY / ELEVENLABS_AGENT_ID missing)');
-    const r = await fetch(EL_BASE + '/v1/convai/twilio/register-call', {
-      method: 'POST', headers: { 'xi-api-key': key, 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({ agent_id: agent, from_number: from, to_number: to, direction: 'inbound',
-        conversation_initiation_client_data: Object.assign({ dynamic_variables: { nova_call: String(call.id), greeting: greeting || s.greeting } },
-          // An account manager's own voice (needs "Voice" allowed under the agent's Security \u2192 Overrides).
-          line && line.voice_id ? { conversation_config_override: { tts: { voice_id: String(line.voice_id) } } } : {}) }),
-      signal: AbortSignal.timeout(8000) });
-    const t = await r.text();
-    if (!r.ok) throw new Error('ElevenLabs register-call ' + r.status + ': ' + t.slice(0, 200));
-    let out = t;
-    try { const j = JSON.parse(t); out = typeof j === 'string' ? j : (j && (j.twiml || j.TwiML)) || t; } catch (e) {}
-    if (!/<Response[\s>]/i.test(out)) throw new Error('ElevenLabs register-call did not return TwiML');
-    return out;
+    const send = async (withOverrides) => {
+      // Overrides need the matching switches under the agent's Security → Overrides: Language, Voice.
+      const over = {};
+      if (withOverrides && lang && lang !== 'en') over.agent = { language: lang };
+      if (withOverrides && line && line.voice_id) over.tts = { voice_id: String(line.voice_id) };
+      const r = await fetch(EL_BASE + '/v1/convai/twilio/register-call', {
+        method: 'POST', headers: { 'xi-api-key': key, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ agent_id: agent, from_number: from, to_number: to, direction: 'inbound',
+          conversation_initiation_client_data: Object.assign({ dynamic_variables: { nova_call: String(call.id), greeting: greeting || s.greeting } },
+            Object.keys(over).length ? { conversation_config_override: over } : {}) }),
+        signal: AbortSignal.timeout(8000) });
+      const t = await r.text();
+      if (!r.ok) { const e = new Error('ElevenLabs register-call ' + r.status + ': ' + t.slice(0, 200)); e.status = r.status; e.over = Object.keys(over).length > 0; throw e; }
+      let out = t;
+      try { const j = JSON.parse(t); out = typeof j === 'string' ? j : (j && (j.twiml || j.TwiML)) || t; } catch (e) {}
+      if (!/<Response[\s>]/i.test(out)) throw new Error('ElevenLabs register-call did not return TwiML');
+      return out;
+    };
+    try { return await send(true); }
+    catch (e) {
+      // A language / voice the agent does not allow to be overridden: still answer, with its own settings.
+      if (!e.over || !(e.status >= 400 && e.status < 500)) throw e;
+      hit('twilio-voice', false, 'ElevenLabs refused the ' + (lang && lang !== 'en' ? LANGS[lang].name + ' language' : '') + (line && line.voice_id ? ' voice' : '') +
+        ' override — allow Language / Voice under the agent’s Security → Overrides. Answered without it.');
+      return await send(false);
+    }
   }
 
   app.post('/api/talk/twilio/voice', form, async (req, res) => {
@@ -385,8 +438,15 @@ module.exports = function mountTalkAi(app, deps, bot) {
         (cid ? ' callerId="' + xml(cid) + '"' : '') + '>' + xml(e164(ringTo) || ringTo) + '</Dial>'));
     }
     if (answer === 'ai' || answer === 'ring_ai') {
+      // Language: the one this number used last time, else a one-key menu (when more than English is on).
+      const lang = s.languages.length > 1 ? await rememberedLang(from, s) : null;
+      if (lang) await dbRun('UPDATE talk_calls SET language = ? WHERE id = ?', [lang, call.id]).catch(() => {});
+      else if (s.lang_menu && s.languages.length > 1) {
+        await mark('menu'); hit('twilio-voice', true, who + ' → language menu');
+        return res.send(langMenu(s, call.id));
+      }
       try {
-        const tw = await registerCall(call, from, to, s, greetingFor(s, known.first, mode, line), line);
+        const tw = await registerCall(call, from, to, s, greetingFor(s, known.first, mode, line, false, lang), line, lang);
         await mark('ai'); hit('twilio-voice', true, who + ' → NovaAI');
         return res.send(tw);
       } catch (e) {
@@ -399,6 +459,30 @@ module.exports = function mountTalkAi(app, deps, bot) {
     }
     if (s.forward_number && answer !== 'message') return res.send(forwardTw(s.forward_number, from, s));
     res.send(twiml(sayTw(s.closed_message) + '<Hangup/>'));
+  });
+
+  // The language menu's answer (or no key pressed): remember it on the call and hand the call to NovaAI.
+  app.post('/api/talk/twilio/lang', form, async (req, res) => {
+    res.type('text/xml');
+    if (!twilioOk(req)) { hit('lang', false, 'signature did not match'); return res.status(403).send(twiml('<Hangup/>')); }
+    const call = await dbGet('SELECT * FROM talk_calls WHERE id = ?', [parseInt(req.query.call) || 0]).catch(() => null);
+    if (!call) return res.send(twiml('<Hangup/>'));
+    const s = await settings();
+    const digit = String((req.body || {}).Digits || '').slice(0, 1);
+    const lang = s.languages.find(k => LANGS[k].digit === digit) || 'en';
+    await dbRun("UPDATE talk_calls SET language = ?, lang_pick = ?, updated_at = datetime('now') WHERE id = ?", [lang, digit && LANGS[lang].digit === digit ? digit : null, call.id]).catch(() => {});
+    const line = await lineById(call.line_id);
+    const mode = s.modes[call.hours_mode === 'after' ? 'after' : 'regular'];
+    try {
+      const tw = await registerCall(call, call.from_number, call.to_number, s, greetingFor(s, call.caller_first, mode, line, false, lang), line, lang);
+      await dbRun("UPDATE talk_calls SET answered_by = 'ai' WHERE id = ?", [call.id]).catch(() => {});
+      hit('lang', true, 'Call ' + call.id + ': ' + LANGS[lang].name + (digit ? ' (pressed ' + digit + ')' : ' (no key)') + ' → NovaAI');
+      return res.send(tw);
+    } catch (e) {
+      hit('lang', false, 'Call ' + call.id + ': ' + e.message);
+      if (s.forward_number) return res.send(forwardTw(s.forward_number, call.from_number, s));
+      return res.send(twiml(sayTw(s.closed_message) + '<Hangup/>'));
+    }
   });
 
   // After "ring first": answered → done; nobody picked up (busy, no answer, failed) → NovaAI takes it.
@@ -422,7 +506,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const mode = s.modes[call.hours_mode === 'after' ? 'after' : 'regular'];
     await addTurn(call.id, 'event', 'Nobody picked up (' + (st || 'no answer') + ') — NovaAI answered');
     try {
-      const tw = await registerCall(call, call.from_number, call.to_number, s, greetingFor(s, call.caller_first, mode, line, true), line);
+      const lang = langCode(call.language);
+      const tw = await registerCall(call, call.from_number, call.to_number, s, greetingFor(s, call.caller_first, mode, line, true, lang), line, lang);
       await mark('ai'); hit('after-dial', true, 'Call ' + call.id + ': ' + (st || 'no answer') + ' → NovaAI');
       return res.send(tw);
     } catch (e) {
@@ -601,6 +686,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const c = who.customer;
     const live = [
       'NOW: ' + nowLA() + ' (Los Angeles time).',
+      langCode(call.language) && langCode(call.language) !== 'en' ? 'LANGUAGE: the caller chose ' + LANGS[langCode(call.language)].name + ' — speak ' + LANGS[langCode(call.language)].name +
+        ' for the whole call unless they switch. Product names and prices stay as the tools give them.' : '',
       'HOURS: ' + (s._hours && s._hours.open ? 'the team is IN until ' + s._hours.closes + ' today.' : 'the team is CLOSED now' + (s._hours && s._hours.next ? '; we open again ' + s._hours.next + '.' : '.')) +
         ' Opening hours: ' + weekText(s.hours) + ' (Los Angeles).',
       'CALLER: calling from ' + (call.from_number || 'an unknown number') + '. ' + callerLine(call, c),
@@ -1213,7 +1300,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
 
   app.get('/api/admin/talk/overview', auth, adminOnly, async (req, res) => {
     const s = await settings();
-    res.json({ ok: true, settings: s, defaults: DEFAULTS, mode_defaults: MODE_DEFAULTS, hours_now: Object.assign(hoursNow(s), { week: weekText(s.hours) }), ring_seconds: RING_SECONDS, model: MODEL, number: env('TALKAI_NUMBER') || null, keep_days: KEEP_DAYS,
+    res.json({ ok: true, settings: s, defaults: DEFAULTS, mode_defaults: MODE_DEFAULTS, langs: Object.keys(LANGS).map(k => ({ code: k, name: LANGS[k].name, digit: LANGS[k].digit, greeting: LANGS[k].greeting || '' })), hours_now: Object.assign(hoursNow(s), { week: weekText(s.hours) }), ring_seconds: RING_SECONDS, model: MODEL, number: env('TALKAI_NUMBER') || null, keep_days: KEEP_DAYS,
       keys: { TWILIO_AUTH_TOKEN: !!env('TWILIO_AUTH_TOKEN'), TWILIO_ACCOUNT_SID: !!env('TWILIO_ACCOUNT_SID'), ELEVENLABS_API_KEY: !!env('ELEVENLABS_API_KEY'),
         ELEVENLABS_AGENT_ID: !!env('ELEVENLABS_AGENT_ID'), TALKAI_LLM_KEY: !!env('TALKAI_LLM_KEY'), ELEVENLABS_WEBHOOK_SECRET: !!env('ELEVENLABS_WEBHOOK_SECRET'),
         email: !!deps.sendMail },
@@ -1253,6 +1340,11 @@ module.exports = function mountTalkAi(app, deps, bot) {
       txt(b.greeting_known, 'greeting_known', 600).trim() || DEFAULTS.greeting_known, readerOf(req)]);
     await dbRun('UPDATE talk_settings SET hours = ?, modes = ?, mode = ?, greeting = ?, greeting_known = ? WHERE id = 1',
       [JSON.stringify(hours), JSON.stringify(modes), modes.regular.answer, modes.regular.greeting, modes.regular.greeting_known]);
+    const langs = Array.isArray(b.languages) ? b.languages.map(String).filter(k => LANGS[k] && k !== 'en') : cur.languages.filter(k => k !== 'en');
+    const lg = {};
+    Object.keys(LANGS).filter(k => k !== 'en').forEach(k => { const v = b.lang_greetings && b.lang_greetings[k]; lg[k] = v == null ? cur.lang_greetings[k] : String(v).slice(0, 600); });
+    await dbRun('UPDATE talk_settings SET languages = ?, lang_menu = ?, lang_greetings = ? WHERE id = 1',
+      [JSON.stringify(langs), b.lang_menu == null ? cur.lang_menu : (b.lang_menu ? 1 : 0), JSON.stringify(lg)]);
     res.json({ ok: true, settings: await settings() });
   });
 
@@ -1338,9 +1430,10 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const b = req.body || {};
     const line = parseInt(b.line_id) ? await lineById(b.line_id) : (b.line_id === 'auto' ? await routeLine('', match).catch(() => null) : null);
     const modeKey = b.hours === 'regular' || b.hours === 'after' ? b.hours : hoursNow(s).mode;
-    await dbRun('UPDATE talk_calls SET line_id = ?, hours_mode = ? WHERE id = ?', [line ? line.id : null, modeKey, r.lastID]);
+    const tlang = langCode(b.lang) && s.languages.indexOf(langCode(b.lang)) > -1 ? langCode(b.lang) : null;
+    await dbRun('UPDATE talk_calls SET line_id = ?, hours_mode = ?, language = ? WHERE id = ?', [line ? line.id : null, modeKey, tlang, r.lastID]);
     const c = await dbGet('SELECT customer_name, company FROM talk_calls WHERE id = ?', [r.lastID]);
-    res.json({ ok: true, call_id: r.lastID, greeting: greetingFor(s, known.first, s.modes[modeKey], line), hours: modeKey,
+    res.json({ ok: true, call_id: r.lastID, greeting: greetingFor(s, known.first, s.modes[modeKey], line, false, tlang), hours: modeKey, language: tlang ? LANGS[tlang].name : null,
       line: line ? (line.am_name || 'Account manager') + '\u2019s line' : null,
       recognised: known.trusted ? (c.customer_name || '') + (c.company ? ' (' + c.company + ')' : '') : null });
   });
