@@ -36,6 +36,19 @@
   const dur = (s) => s == null ? '' : s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + String(s % 60).padStart(2, '0') + ' s';
   const LANG = { en: 'English', es: 'Spanish', hy: 'Armenian', ru: 'Russian', fa: 'Farsi', ar: 'Arabic', ko: 'Korean', zh: 'Chinese', fr: 'French' };
   const lang = (l) => l ? (LANG[String(l).slice(0, 2).toLowerCase()] || l) : '';
+  // The call's language as a small flag (drawn, since Windows shows flag emoji as letters); the name is the tooltip.
+  // Languages without a flag here show their name.
+  const FLAGS = {
+    en: '<rect width="21" height="15" fill="#fff"/><g fill="#b22234"><rect width="21" height="1.15"/><rect y="2.3" width="21" height="1.15"/><rect y="4.6" width="21" height="1.15"/><rect y="6.9" width="21" height="1.15"/><rect y="9.2" width="21" height="1.15"/><rect y="11.5" width="21" height="1.15"/><rect y="13.85" width="21" height="1.15"/></g><rect width="9" height="8.05" fill="#3c3b6e"/>',
+    es: '<rect width="21" height="15" fill="#aa151b"/><rect y="3.75" width="21" height="7.5" fill="#f1bf00"/>',
+    hy: '<rect width="21" height="5" fill="#d90012"/><rect y="5" width="21" height="5" fill="#0033a0"/><rect y="10" width="21" height="5" fill="#f2a800"/>',
+    ru: '<rect width="21" height="5" fill="#fff"/><rect y="5" width="21" height="5" fill="#0039a6"/><rect y="10" width="21" height="5" fill="#d52b1e"/>'
+  };
+  const flagChip = (l) => {
+    const k = String(l || '').slice(0, 2).toLowerCase(), name = lang(l);
+    return FLAGS[k] ? '<span class="tk-chip tk-flag" title="' + esc(name) + '" aria-label="' + esc(name) + '"><svg viewBox="0 0 21 15" width="21" height="15" aria-hidden="true">' + FLAGS[k] + '</svg></span>'
+      : '<span class="tk-chip">' + esc(name) + '</span>';
+  };
 
   let ov = null;
   async function loadOverview() {
@@ -133,15 +146,13 @@
     if (c.duration_sec != null) chips.push('<span class="tk-chip">' + esc(dur(c.duration_sec)) + '</span>');
     if (c.source === 'phone') chips.push(/passed-(a|b)\b/i.test(c.stir || '') ? '<span class="tk-chip ok" title="' + esc(c.stir) + '">Caller ID carrier-verified</span>'
       : '<span class="tk-chip" title="' + esc(c.stir || 'No STIR/SHAKEN result from the carrier') + '">Caller ID not carrier-verified</span>');
-    if (c.caller_first) chips.push('<span class="tk-chip">Greeted as ' + esc(c.caller_first) + '</span>');
     if (Number(c.returning) === 1) chips.push('<span class="tk-chip">Talked to NovaAI before \u2014 short greeting</span>');
-    if (c.language) chips.push('<span class="tk-chip">' + esc(lang(c.language)) + '</span>');
+    if (c.language) chips.push(flagChip(c.language));
     // The usual case (NovaAI answered, call completed) needs no chip; only the exceptions are shown.
     if (c.answered_by && c.answered_by !== 'ai') chips.push('<span class="tk-chip">' + esc({ ai: 'Answered by NovaAI', forward: 'Forwarded to the team', message: 'Closed message', person: 'Answered by the team', ring: 'Ringing the team', menu: 'At the language menu' }[c.answered_by] || c.answered_by) + '</span>');
     if (c.outcome === 'message') chips.push('<span class="tk-chip warn">Message taken</span>');
     if (c.outcome === 'transferred') chips.push('<span class="tk-chip ok">Transferred</span>');
     if (c.status && c.source === 'phone' && !/^(completed|in-progress)$/.test(c.status)) chips.push('<span class="tk-chip">' + esc(c.status) + '</span>');
-    if (c.cost != null) chips.push('<span class="tk-chip" title="ElevenLabs credits for this call">' + esc(c.cost) + ' credits</span>');
     // Emails NovaAI sent on this call: click to see exactly what went out.
     (c.emails || []).forEach((m, i) => chips.push('<button type="button" class="tk-mailbtn' + (m.ok ? '' : ' bad') + '" data-mail="' + i + '" title="Show the email">' +
       '\u2709 ' + (m.ok ? 'Email sent' : 'Email failed') + ' \u00b7 ' + esc(m.to_addr) + '</button>'));
