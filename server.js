@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.9.8';
-const NOVA_BUILT = '10-08-2026 12:50pm';
+const NOVA_VERSION = '1.9.9';
+const NOVA_BUILT = '10-08-2026 3:55pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 app.use((req, res, next) => req.path.indexOf('/api/talk/hook/') === 0 ? next() : jsonBody(req, res, next));
@@ -331,7 +331,10 @@ db.serialize(() => {
     ['resolve-issues', 'Resolve Issues', 'Handles client problems, reprints, and complaint resolution.', 'coming_soon', 'all', 3],
     ['prepress-ai', 'PrepressAI', 'Reviews artwork and prepress requirements before production.', 'coming_soon', 'all', 4],
     ['business-analyst', 'Business Analyst', 'Revenue, sales, and operational analytics. Admin and selected users only.', 'coming_soon', 'restricted', 5],
-    ['agent-five', 'Agent (Unassigned)', 'Reserved for a future agent.', 'coming_soon', 'all', 6]
+    ['agent-five', 'Agent (Unassigned)', 'Reserved for a future agent.', 'coming_soon', 'all', 6],
+    // NovaAI on the phone. A training target only (role / rules / knowledge, Domain Knowledge docs shared with
+    // it): access 'system' keeps it out of every staff chat's agent menu.
+    ['talk-ai', 'TalkAi', 'NovaAI on the phone. Training and documents for calls; call settings are on the TalkAi page.', 'active', 'system', 7]
   ];
   SEED_AGENTS.forEach(a => {
     db.run('INSERT OR IGNORE INTO agents (slug, name, description, status, access, sort_order) VALUES (?,?,?,?,?,?)', a);
@@ -339,6 +342,7 @@ db.serialize(() => {
   // ChatBot must be available to everyone. If an older row exists (or someone flipped
   // it), force it back to active/all so it never silently disappears for members.
   db.run("UPDATE agents SET status = 'active', access = 'all' WHERE slug = 'chatbot'");
+  db.run("UPDATE agents SET status = 'active', access = 'system' WHERE slug = 'talk-ai'");
   // Per-member agent access. If a member has NO rows here, they get ALL active agents
   // (default-allow). If they have rows, they get ONLY those agents (allow-list).
   db.run(`CREATE TABLE IF NOT EXISTS member_agents (
@@ -929,6 +933,8 @@ async function extractFileText(buffer, mimetype, filename) {
       const result = await mammoth.extractRawText({ buffer });
       return (result.value || '').slice(0, 6000);
     }
+    // Plain text, Markdown, CSV: read as is.
+    if (mt.startsWith('text/') || /\.(txt|md|csv)$/.test(name)) return buffer.toString('utf8').replace(/\u0000/g, '').slice(0, 20000);
   } catch (e) { return ''; }
   return '';
 }
@@ -5240,7 +5246,29 @@ function loadProductGuides(text, limitChars) {
   });
 }
 
-function loadAgentKnowledge(slug) {
+// TalkAi's training for the phone: its own agent row (role / rules / how to answer / knowledge), the Domain
+// Knowledge docs shared with TalkAi BY NAME (not "All agents" ones — those are written for staff and can hold
+// internal details callers must not hear), and its approved / rejected example answers. Capped.
+async function loadTalkTraining() {
+  const docs = await loadAgentKnowledge('talk-ai', { explicitOnly: true }).catch(() => '');
+  const ag = await new Promise(ok => db.get('SELECT role, rules, workflow, knowledge FROM agents WHERE slug = ?', ['talk-ai'], (e, r) => ok(e ? null : r)));
+  const ex = await new Promise(ok => db.all("SELECT kind, question, answer FROM training_examples WHERE agent_slug = 'talk-ai' AND kind IN ('good','bad') ORDER BY created_at DESC LIMIT 20", [], (e, r) => ok(e ? [] : (r || []))));
+  let s = '';
+  if (ag) {
+    if (String(ag.role || '').trim()) s += '\nROLE:\n' + ag.role.trim();
+    if (String(ag.rules || '').trim()) s += '\nRULES:\n' + ag.rules.trim();
+    if (String(ag.workflow || '').trim()) s += '\nHOW TO ANSWER:\n' + ag.workflow.trim();
+    if (String(ag.knowledge || '').trim()) s += '\nKNOWLEDGE:\n' + ag.knowledge.trim();
+  }
+  if (docs) s += '\nDOCUMENTS:\n' + String(docs).slice(0, 16000);
+  const good = ex.filter(e => e.kind === 'good').slice(0, 8), bad = ex.filter(e => e.kind === 'bad').slice(0, 4);
+  if (good.length) s += '\nANSWERS THE TEAM APPROVED (answer close questions the same way):' + good.map(g => '\nQ: ' + String(g.question || '').slice(0, 300) + '\nA: ' + String(g.answer || '').slice(0, 600)).join('');
+  if (bad.length) s += '\nANSWERS THE TEAM REJECTED (never answer like this):' + bad.map(b => '\nQ: ' + String(b.question || '').slice(0, 300) + '\nBAD: ' + String(b.answer || '').slice(0, 400)).join('');
+  return s.trim().slice(0, 24000);
+}
+
+function loadAgentKnowledge(slug, opts) {
+  const explicitOnly = !!(opts && opts.explicitOnly);
   return new Promise((resolve) => {
     // Product guides are excluded here and injected per-conversation instead —
     // loading all of them every time would be tens of KB of irrelevant catalogue.
@@ -5248,7 +5276,7 @@ function loadAgentKnowledge(slug) {
            "WHERE COALESCE(kind,'doc') <> 'product_guide'", [], (err, rows) => {
       if (err || !rows) return resolve('');
       const applicable = rows.filter(r => {
-        if (!r.agents || r.agents === 'all') return true;
+        if (!r.agents || r.agents === 'all') return !explicitOnly;
         try { const arr = JSON.parse(r.agents); return Array.isArray(arr) && arr.includes(slug); }
         catch (e) { return false; }
       });
@@ -5407,7 +5435,8 @@ app.get('/api/chats', auth, (req, res) => {
 app.get('/api/agents', auth, (req, res) => {
   db.all('SELECT slug, name, description, status, access FROM agents ORDER BY sort_order', [], (err, rows) => {
     if (err) return res.json({ success: false, error: err.message });
-    let list = rows || [];
+    // 'system' agents (TalkAi) are training targets, never something to chat with.
+    let list = (rows || []).filter(a => a.access !== 'system');
     // Admins see everything.
     if (req.user.is_admin) return res.json({ success: true, agents: list });
     // Non-admins never see 'restricted' agents.
@@ -5581,9 +5610,29 @@ app.get('/api/admin/history', auth, (req, res) => {
 });
 
 // ===== Admin: Agents =====
+// Usage per agent: questions people asked (user messages), chats and people in the last 30 days, last 7 days,
+// and when it was last used. TalkAi counts phone calls instead.
+function agentUsage() {
+  const all = (sql, p) => new Promise(ok => db.all(sql, p || [], (e, r) => ok(e ? [] : (r || []))));
+  return Promise.all([
+    all("SELECT c.agent_slug AS slug, SUM(m.created_at > datetime('now','-30 days')) AS q30, SUM(m.created_at > datetime('now','-7 days')) AS q7, " +
+      "COUNT(DISTINCT CASE WHEN m.created_at > datetime('now','-30 days') THEN c.id END) AS chats30, " +
+      "COUNT(DISTINCT CASE WHEN m.created_at > datetime('now','-30 days') THEN c.user_key END) AS people30, MAX(m.created_at) AS last " +
+      "FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.role = 'user' GROUP BY c.agent_slug"),
+    all("SELECT 'talk-ai' AS slug, SUM(created_at > datetime('now','-30 days')) AS q30, SUM(created_at > datetime('now','-7 days')) AS q7, " +
+      "SUM(created_at > datetime('now','-30 days')) AS chats30, COUNT(DISTINCT CASE WHEN created_at > datetime('now','-30 days') THEN from_number END) AS people30, " +
+      "MAX(created_at) AS last FROM talk_calls WHERE source = 'phone'")
+  ]).then(([chat, talk]) => {
+    const out = {};
+    chat.concat(talk).forEach(r => { if (r && r.slug) out[r.slug] = { q30: r.q30 || 0, q7: r.q7 || 0, chats30: r.chats30 || 0, people30: r.people30 || 0, last: r.last || null }; });
+    return out;
+  });
+}
 app.get('/api/admin/agents', auth, adminOnly, (req, res) => {
-  db.all('SELECT slug, name, description, status, access, sort_order, updated_at FROM agents ORDER BY sort_order', [], (err, rows) => {
+  db.all('SELECT slug, name, description, status, access, sort_order, updated_at FROM agents ORDER BY sort_order', [], async (err, rows) => {
     if (err) return res.json({ success: false, error: err.message });
+    const usage = await agentUsage().catch(() => ({}));
+    (rows || []).forEach(a => { a.usage = usage[a.slug] || { q30: 0, q7: 0, chats30: 0, people30: 0, last: null }; a.unit = a.slug === 'talk-ai' ? 'calls' : 'questions'; });
     res.json({ success: true, agents: rows || [] });
   });
 });
@@ -8867,7 +8916,7 @@ const clientBot = require('./client-bot')(app, { db, runQuery, mysql, jwt, crypt
   extractAttachmentText, relatedRules, sendMail, dataDir: __dirname });
 // TalkAi — NovaAI on the phone (Twilio + ElevenLabs), sharing the client bot's tools and rules (talk-ai.js).
 require('./talk-ai')(app, { db, runQuery, mysql, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly, serveVersionedHtml,
-  sendMail, dataDir: __dirname }, clientBot);
+  sendMail, dataDir: __dirname, loadTalkTraining }, clientBot);
 
 app.get(/^(?!\/api).*/, serveVersionedHtml('index.html'));
 

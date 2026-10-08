@@ -72,6 +72,12 @@ tr:last-child td { border-bottom: none; }
 .agent-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
 .agent-card-title { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
 .agent-card-desc { font-size: 13px; color: var(--ink-soft); line-height: 1.5; margin-bottom: 14px; }
+.agent-usage { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: -4px 0 14px; padding: 9px 11px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); font-size: 12px; color: var(--ink-soft); }
+.agent-usage .n { font-size: 20px; font-weight: 700; color: var(--ink); line-height: 1; }
+.agent-usage .u { font-weight: 600; color: var(--ink); }
+.agent-usage .s { width: 100%; color: var(--muted); font-size: 11.5px; }
+.agent-usage.idle { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+.agent-usage.idle .s { color: #a16207; }
 .agent-soon { display: inline-block; font-size: 11px; font-weight: 600; color: var(--muted); background: var(--bg); border: 1px solid var(--line); padding: 3px 10px; border-radius: 12px; }
 .conn-list { display: flex; flex-direction: column; gap: 12px; max-width: 640px; }
 .conn-row { display: flex; align-items: center; gap: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
@@ -511,7 +517,12 @@ async function checkAccess() {
     // History is visible to every role (members see only their own chats), so it
     // is the landing tab for everyone — reviewing conversations is the main reason
     // people open Admin.
-    tab('history');
+    // Deep links: /admin?tab=agents&agent=talk-ai, /admin?tab=knowledge.
+    const q = new URLSearchParams(location.search);
+    const want = q.get('tab');
+    if (want && ['history', 'users', 'agents', 'knowledge', 'pricing', 'connections'].indexOf(want) > -1 && document.getElementById('nav' + want.charAt(0).toUpperCase() + want.slice(1)).style.display !== 'none') tab(want);
+    else tab('history');
+    if (want === 'agents' && q.get('agent') && IS_ADMIN) openAgent(q.get('agent'));
   } catch (e) { showGate('Connection error. <a href="/">Back</a>'); }
 }
 
@@ -584,6 +595,7 @@ async function loadAgents() {
       card.innerHTML =
         '<div class="agent-card-title">' + esc(a.name) + '</div>' +
         '<div class="agent-card-desc">' + esc(a.description || '') + '</div>' +
+        (IS_ADMIN && active && a.usage ? usageHtml(a) : '') +
         (active
           ? (IS_ADMIN
               ? '<button class="btn-solid" onclick="openAgent(\'' + a.slug + '\')">Train / Edit</button>'
@@ -593,6 +605,20 @@ async function loadAgents() {
       box.appendChild(card);
     });
   } catch (e) { box.innerHTML = '<div class="feedback err">Connection error</div>'; }
+}
+
+// How much an agent is used: questions (or calls) in the last 30 days, chats, people, last use.
+function usageHtml(a) {
+  const u = a.usage || {}, calls = a.unit === 'calls', n = Number(u.q30) || 0;
+  const ago = (s) => {
+    if (!s) return 'never';
+    const m = Math.round((Date.now() - new Date(String(s).replace(' ', 'T') + 'Z').getTime()) / 60000);
+    return m < 60 ? (m <= 1 ? 'just now' : m + ' min ago') : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' days ago';
+  };
+  if (!n) return '<div class="agent-usage idle" title="Last 30 days"><span class="u">Not used in the last 30 days</span><span class="s">Last ' + (calls ? 'call' : 'used') + ': ' + esc(ago(u.last)) + '</span></div>';
+  return '<div class="agent-usage" title="Last 30 days"><span class="n">' + n.toLocaleString() + '</span><span class="u">' + (calls ? (n === 1 ? 'call' : 'calls') : (n === 1 ? 'question' : 'questions')) + ' · 30 days</span>' +
+    '<span>' + (calls ? '' : Number(u.chats30 || 0).toLocaleString() + ' chats · ') + Number(u.people30 || 0).toLocaleString() + (calls ? ' callers' : ' people') + '</span>' +
+    '<span class="s">' + Number(u.q7 || 0).toLocaleString() + ' this week · last ' + (calls ? 'call' : 'used') + ' ' + esc(ago(u.last)) + '</span></div>';
 }
 
 async function openAgent(slug) {
@@ -609,6 +635,11 @@ async function openAgent(slug) {
     ed.innerHTML =
       '<button class="btn-ghost" onclick="loadAgents()">&larr; All agents</button>' +
       '<h2 class="h2" style="margin-top:14px">' + esc(a.name) + '</h2>' +
+      (slug === 'talk-ai' ? '<div style="max-width:760px;margin:6px 0 14px;padding:10px 13px;border-radius:10px;background:#eef2ff;border:1px solid #c7d2fe;font-size:13px;line-height:1.55;color:#3730a3">' +
+        'Training for <b>NovaAI on the phone</b> — callers hear the result, so write it for customers. Everything here, plus the ' +
+        '<a href="#" onclick="tab(\'knowledge\');return false" style="color:#4338ca;font-weight:600">Domain Knowledge</a> documents shared with <b>TalkAi</b> by name ' +
+        '(not “All agents” ones, which are written for staff), reaches the next call. Call settings, greetings and hours are on the ' +
+        '<a href="/talk-ai" style="color:#4338ca;font-weight:600">TalkAi page</a>.</div>' : '') +
       '<div class="agent-edit-grid">' +
         fieldBlock('Role', 'agentRole', a.role, 'Who this agent is and its tone. E.g. "You are Order Assist, a fast, friendly print-order specialist..."') +
         fieldBlock('Rules', 'agentRules', a.rules, 'Hard rules the agent must follow. One per line.') +
@@ -1354,7 +1385,7 @@ function openKnowledgeEditor(id) {
       '<textarea id="knowBody" rows="10" placeholder="Write the knowledge here…" style="width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;line-height:1.5;box-sizing:border-box;resize:vertical;">' + (doc ? esc(doc.body || '') : '') + '</textarea>' +
       '<label style="display:block;font-size:13px;font-weight:600;color:#333;margin:14px 0 4px;">Attachments (Word / PDF)</label>' +
       (existingFiles ? '<div style="margin-bottom:8px;">' + existingFiles + '</div>' : '') +
-      '<input type="file" id="knowFileInput" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple onchange="onKnowFilePick(event)" style="font-size:13px;">' +
+      '<input type="file" id="knowFileInput" accept=".pdf,.doc,.docx,.txt,.md,.csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv" multiple onchange="onKnowFilePick(event)" style="font-size:13px;">' +
       '<div id="knowPendingList" style="margin-top:6px;"></div>' +
       agentSection +
       '<div id="knowEditMsg" class="feedback"></div>' +

@@ -140,6 +140,17 @@ native speaker). The ElevenLabs agent needs the languages under **Additional lan
 for Armenian) and **Detect language** turned on under System tools. The press-a-key menu (`/api/talk/twilio/lang`)
 is still in the code, off unless `TALKAI_LANG_MENU=1`.
 
+## Training and documents for calls
+
+TalkAi is an agent row (`agents.slug = 'talk-ai'`, access `system` — never listed in a staff chat's agent menu by
+`/api/agents`). Admin → Agents → TalkAi edits its role / rules / how to answer / knowledge and example answers;
+Admin → Domain Knowledge documents (PDF, Word, text) can be shared with TalkAi. `loadTalkTraining()` (server.js, passed in
+`deps`) joins them for the phone prompt (TALKAI TRAINING AND DOCUMENTS, cached a minute in talk-ai.js), using ONLY documents
+shared with TalkAi by name (`loadAgentKnowledge(slug, { explicitOnly: true })`) — "All agents" documents are written for staff
+and may hold internal details. The AM-assistant prompt gets the same block. Agents cards show usage (questions / chats /
+people in 30 days, this week, last used; TalkAi: calls and callers) from `agentUsage()`. Deep links:
+`/admin?tab=agents&agent=talk-ai`, `/admin?tab=knowledge`.
+
 ## Returning callers and price first
 
 - **Short greeting** for callers who talked to NovaAI before (`isReturning()`: an earlier phone call from the number
