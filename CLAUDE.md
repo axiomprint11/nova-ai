@@ -297,6 +297,10 @@ pattern for any new report over a large log table. To add a report, add an entry
 
 ## Known quirks worth respecting
 
+- **Canceled jobs** are `estimate_stage` = `complete` + `estimate_substage` = `canceled`. They keep their old prepress /
+  production status, lose `estimate_invoiceid`, and their invoice stays only on the project (`invoice_projectid`, total 0,
+  `payment_status` may still say paid). The client bot's `projectCards()` marks them CANCELED, `my_orders` returns
+  `latest_order` = newest job that is neither canceled nor a quote, and the staff job card / hover use `boardStatus()`.
 - **`estimate.production_status` is stale.** True production state is the newest `qr_scan_history` row
   for that `estimate_id`. This is stated in DATA_DICTIONARY and enforced in the `get_job` MCP tool.
 - **"Related to" rules** (`product_variable_filters`) decide when a field or option exists at all — Scoring on Book

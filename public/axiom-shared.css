@@ -380,6 +380,9 @@ textarea { flex: 1; border: none; background: transparent; font-size: 14.5px; re
 .jb-ready .jb-status { background: var(--indigo-light); color: var(--indigo-dark); border-color: #ddd6fe; }
 .jb-production .jb-status { background: #dbeafe; color: #1e40af; border-color: #bfdbfe; }
 .jb-done .jb-status { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+/* A canceled job (estimate_stage 'complete' / substage 'canceled'). */
+.jp-peek.jp-canceled, .jb-card.jb-canceled { border-left-color: #dc2626; }
+.jp-canceled .jp-status, .jb-canceled .jb-status { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
 .jb-name { font-size: 13.5px; font-weight: 600; color: var(--ink); margin-top: 3px; }
 .jb-meta { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
 .jb-total { margin-left: auto; font-size: 16px; font-weight: 700; color: var(--ink); }
@@ -2049,6 +2052,7 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .cc-pay { padding: 2px 7px; border-radius: 6px; font-weight: 700; font-size: 9.5px; letter-spacing: .04em; }
 .cc-pay.paid { background: #dcfce7; color: #15803d; }
 .cc-pay.unpaid { background: #fee2e2; color: #b91c1c; }
+.cc-pay.canceled { background: #3f3f46; color: #fff; }
 .cc-proj-main { display: flex; gap: 10px; padding: 10px 11px 4px; align-items: flex-start; }
 .cc-proj-img { flex: none; width: 54px; height: 54px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); background: #f4f4f9; display: block; }
 .cc-proj-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -2074,6 +2078,12 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .cc-step.action span { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
 .cc-step.problem span { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
 .cc-step.todo span { background: #f4f4f7; color: #9a9aae; border-color: #e7e7ef; }
+/* A canceled job (like the website's red CANCEL step). */
+.cc-step.canceled i { background: #dc2626; border-color: #dc2626; }
+.cc-step.canceled i::after { content: '\2715'; position: absolute; inset: 0; color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; font-style: normal; }
+.cc-step.canceled b { color: #dc2626; }
+.cc-step.canceled span { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+.cc-proj.canceled .cc-proj-main { opacity: .7; }
 .cc-step small { font-size: 9.5px; color: var(--muted); line-height: 1.3; }
 .cc-proj-foot { padding: 4px 11px 9px; text-align: right; }
 .cc-proj-foot a { font-size: 11px; font-weight: 600; color: var(--indigo-dark) !important; text-decoration: none; }

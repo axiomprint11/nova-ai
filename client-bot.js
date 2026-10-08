@@ -741,7 +741,13 @@ module.exports = function mountClientBot(app, deps) {
     // production_started_at = when the job was approved AND paid and the system set the deadline. It is stored
     // in UTC (complete_by is Los Angeles time), so it is converted before it is shown.
     "DATE_FORMAT(COALESCE(CONVERT_TZ(e.production_started_at, '+00:00', 'America/Los_Angeles'), CONVERT_TZ(e.production_started_at, '+00:00', '-07:00')), '%a, %b %e') AS started_day, " +
-    "DATE_FORMAT(e.complete_by, '%a, %b %e') AS due_day, DATE_FORMAT(e.complete_by, '%l:%i %p') AS due_time " +
+    "DATE_FORMAT(e.complete_by, '%a, %b %e') AS due_day, DATE_FORMAT(e.complete_by, '%l:%i %p') AS due_time, " +
+    // The board column (one row per job). A CANCELED job sits in stage 'complete' with substage 'canceled'; its
+    // estimate_invoiceid is cleared, and its invoice stays only on the project (total 0, payment_status may still
+    // read 'paid'), so the substage is the one reliable sign.
+    '(SELECT s.estimate_stage FROM estimate_stage s WHERE s.estimate_id = e.id ORDER BY s.id DESC LIMIT 1) AS stage, ' +
+    '(SELECT s.estimate_substage FROM estimate_stage s WHERE s.estimate_id = e.id ORDER BY s.id DESC LIMIT 1) AS substage, ' +
+    '(SELECT MAX(i2.id) FROM invoice i2 WHERE e.estimate_invoiceid IS NULL AND i2.invoice_projectid = e.estimate_projectid AND i2.invoice_clientid = ' + parseInt(cid) + ') AS project_invoice_id ' +
     'FROM estimate e LEFT JOIN product p ON p.id = e.estimate_productid ' +
     'LEFT JOIN invoice i ON i.id = e.estimate_invoiceid ' +
     'WHERE e.estimate_clientid = ' + parseInt(cid) + ' AND (i.id IS NULL OR (i.invoice_clientid = ' + parseInt(cid) +
@@ -1244,6 +1250,7 @@ module.exports = function mountClientBot(app, deps) {
       const s = st[r.id] || {};
       const h = handles.find(x => x.estimate_id === r.id) || {};
       const stg = stages.filter(x => x.estimate_id === r.id).pop() || {};
+      const canceled = String(r.substage || stg.estimate_substage || '').toLowerCase() === 'canceled';
       const opt = (f) => { const o = opts.find(x => x.estimate_id === r.id && (f === 'Turnaround' ? /^Turnaround/i.test(x.f) : x.f === f)); return o ? String(o.v).trim() : null; };
       // 1. Preflight check (files and proof)
       const pf = PREFLIGHT[r.prepress_status] || ['todo', 'Not started'];
@@ -1260,30 +1267,35 @@ module.exports = function mountClientBot(app, deps) {
       // 2. Production: done once the job is complete or on its way; otherwise the
       // latest scan on the floor (the estimate's own status can lag).
       let pr = ['todo', 'Not Started'];
-      if (stg.estimate_stage === 'complete' || r.production_status === 'complete' || dv[0] === 'done' || dv[0] === 'current' || s.shipped || s.pickup) pr = ['done', 'Complete'];
+      // The 'complete' column also holds CANCELED jobs: those are never "Complete".
+      if (canceled) pr = ['todo', s.last_scan ? s.last_scan.step : 'Not Started'];
+      else if (stg.estimate_stage === 'complete' || r.production_status === 'complete' || dv[0] === 'done' || dv[0] === 'current' || s.shipped || s.pickup) pr = ['done', 'Complete'];
       else if (s.last_scan) pr = ['current', s.last_scan.step];
       else if (r.production_status === 'in_production' || r.production_status === 'reprint' || r.production_status === 'hard_copy') pr = ['current', 'In production'];
       const tracking = h.shipping_tracking_number ? ((h.shipping_company ? String(h.shipping_company).toUpperCase() + ' ' : '') + h.shipping_tracking_number) : null;
       // Past due: the due time has passed and the job is neither finished nor on its way (quotes and
       // cancelled jobs never are). When it waits on the customer (files, proof), that is said instead.
-      const isQuote = !r.invoice_id || r.invoice_type === 'estimate';
-      const late = Number(r.past_due_raw) === 1 && !isQuote && pr[0] !== 'done' && dv[0] !== 'done' &&
+      const isQuote = !canceled && (!r.invoice_id || r.invoice_type === 'estimate');
+      const late = !canceled && Number(r.past_due_raw) === 1 && !isQuote && pr[0] !== 'done' && dv[0] !== 'done' &&
         !/cancel|void/i.test(String(r.production_status || '') + ' ' + String(stg.estimate_stage || ''));
       const waiting = late && (pf[0] === 'action' || pf[0] === 'problem');
-      const deadline = deadlineFacts(r, h, opt('Turnaround'), { finished: pr[0] === 'done' || dv[0] === 'done', late: late, quote: isQuote });
+      const deadline = canceled ? null : deadlineFacts(r, h, opt('Turnaround'), { finished: pr[0] === 'done' || dv[0] === 'done', late: late, quote: isQuote });
+      const invId = r.invoice_id || (canceled ? r.project_invoice_id : null);
       return Object.assign({
         order: 'E' + r.id, name: r.job_name || null, product: r.product || null,
         size: opt('Size'), quantity: opt('Quantity') || s.quantity || null,
-        placed: r.placed_label || day(r.created), due: r.due_label || null,
-        invoice: r.invoice_id ? 'INV' + r.invoice_id : null,
-        total: r.invoice_total != null ? Number(r.invoice_total) : (r.total != null ? Number(r.total) : null),
-        paid: r.payment_status || null, quote: !r.invoice_id || r.invoice_type === 'estimate',
+        placed: r.placed_label || day(r.created), due: canceled ? null : (r.due_label || null),
+        invoice: invId ? 'INV' + invId : null,
+        total: canceled ? null : (r.invoice_total != null ? Number(r.invoice_total) : (r.total != null ? Number(r.total) : null)),
+        paid: canceled ? null : (r.payment_status || null), quote: isQuote, canceled: canceled || undefined,
+        finished: !canceled && (pr[0] === 'done' && (dv[0] === 'done' || String(r.substage || stg.estimate_substage || '') === 'done')) || undefined,
         past_due: late || undefined, days_late: late ? Math.max(1, Number(r.days_late) || 1) : undefined, waiting_on_customer: waiting || undefined,
         deadline: deadline,
         steps: [
           { label: 'Preflight check', state: pf[0], status: pf[1] },
           { label: 'Production', state: pr[0], status: pr[1], note: pr[0] !== 'done' && r.due_label ? (late ? 'Past due \u00b7 was due ' : 'Due ') + r.due_label : null, late: late || undefined },
-          { label: method, state: dv[0], status: dv[1], note: tracking ? 'Tracking ' + tracking : (s.shipped ? 'on ' + s.shipped : null) }
+          canceled ? { label: 'Canceled', state: 'canceled', status: 'Canceled' }
+            : { label: method, state: dv[0], status: dv[1], note: tracking ? 'Tracking ' + tracking : (s.shipped ? 'on ' + s.shipped : null) }
         ]
       }, orderImage(r));
     });
@@ -1310,7 +1322,9 @@ module.exports = function mountClientBot(app, deps) {
     'the products again in your text. Write one short sentence and at most one question. If you want to describe a product, write ' +
     'it as a list line "- **Name** — a few words"; such lines are moved into the list under that product.';
   // What the model reads about the same projects (short).
-  const projectsForModel = (list) => list.map(p => ({ order: p.order, job_name: p.name, product: p.product, size: p.size, quantity: p.quantity,
+  const projectsForModel = (list) => list.map(p => ({ order: p.order,
+    status: p.canceled ? 'CANCELED \u2014 not an active order' : p.finished ? 'FINISHED' : p.quote ? 'QUOTE (not ordered)' : 'ACTIVE',
+    job_name: p.name, product: p.product, size: p.size, quantity: p.quantity,
     placed: p.placed, invoice: p.invoice, total: p.total, payment: p.paid,
     preflight: p.steps[0].status, production: p.steps[1].status, [p.steps[2].label.toLowerCase()]: p.steps[2].status,
     due: p.due, tracking: p.steps[2].note || undefined,
@@ -1605,14 +1619,26 @@ module.exports = function mountClientBot(app, deps) {
     if (name === 'my_orders' || name === 'order_status') {
       if (!cid) return { error: 'The visitor is not signed in. Give the sign-in message: ' + SITE_URLS.login + ' then refresh the page.' };
       if (name === 'my_orders') {
+        // Always look at the newest 10, so "my last order" can skip canceled jobs and quotes: the latest
+        // order is the newest job that is neither canceled nor a quote. A newer canceled job is shown with it.
         const n = Math.min(Math.max(parseInt(input.limit) || 6, 1), 10);
-        const rows = await runQuery(ownOrdersSql(cid) + ' ORDER BY e.id DESC LIMIT ' + n);
-        const projects = await projectCards(rows);
+        const rows = await runQuery(ownOrdersSql(cid) + ' ORDER BY e.id DESC LIMIT 10');
+        const all = await projectCards(rows);
+        const latest = all.find(p => !p.canceled && !p.quote) || null;
+        let projects = all.slice(0, n);
+        if (latest && projects.indexOf(latest) === -1) {
+          const li = all.indexOf(latest);
+          projects = all.slice(0, li + 1).filter(p => p === latest || p.canceled).slice(-Math.max(n, 2));
+        }
         if (projects.length) cards.push({ type: 'projects', projects: projects });
         const esc1 = await escalatePastDue(projects, who, ctx || {});
         return { past_due: esc1 ? PAST_DUE_SAY + ' Past-due orders: ' + esc1.orders.join(', ') + '.' : undefined,
           waiting_on_customer: projects.some(p => p.waiting_on_customer) ? WAITING_SAY : undefined,
-          orders: projectsForModel(projects), shown: projects.length ? PROJECTS_SHOWN : undefined };
+          latest_order: latest ? latest.order : null,
+          orders: projectsForModel(projects), shown: projects.length ? PROJECTS_SHOWN : undefined,
+          read_this: 'Their LAST / LATEST / CURRENT order is latest_order (the newest job that is not canceled and not a quote). A job with status ' +
+            'CANCELED is never their last or current order: mention it only as canceled (e.g. "your newer X-Frame Banner order was canceled"), ' +
+            'never describe its proof or production as in progress. FINISHED = done (picked up / shipped / delivered).' };
       }
       const raw = String(input.order_number || '').trim();
       const n = parseInt(raw.replace(/[^0-9]/g, ''));

@@ -125,9 +125,10 @@
     const steps = p.steps || [];
     const needs = steps.some(s => s.state === 'action' || s.state === 'problem');
     const unpaid = p.paid && p.paid !== 'paid' && !p.quote;
-    return '<div class="cc-proj">' +
+    return '<div class="cc-proj' + (p.canceled ? ' canceled' : '') + '">' +
       '<div class="cc-proj-top"><span>' + esc(p.placed || '') + '</span>' +
-        (p.invoice ? '<span>INVOICE: <b>' + esc(p.invoice) + '</b></span>' : '<span>QUOTE</span>') +
+        (p.invoice ? '<span>INVOICE: <b>' + esc(p.invoice) + '</b></span>' : p.canceled ? '' : '<span>QUOTE</span>') +
+        (p.canceled ? '<span class="cc-pay canceled">CANCELED</span>' : '') +
         (p.total != null ? '<span>TOTAL: <b>' + money(p.total) + '</b></span>' : '') +
         (p.paid && p.invoice ? '<span class="cc-pay ' + (p.paid === 'paid' ? 'paid' : 'unpaid') + '">' + esc(String(p.paid).toUpperCase()) + '</span>' : '') +
       '</div>' +
