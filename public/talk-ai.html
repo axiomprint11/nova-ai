@@ -185,6 +185,18 @@
   .tk-form .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .tk-form .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
   .tk-am .tags .tk-chip { white-space: normal; height: auto; min-height: 24px; padding-top: 3px; padding-bottom: 3px; }
+  .tk-mailbtn { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font: 600 12px/1 inherit;
+    border: 1px solid #a7e3c0; background: #ecfdf3; color: #067647; cursor: pointer; }
+  .tk-mailbtn.bad { border-color: #fecaca; background: #fef2f2; color: #b42318; }
+  .tk-mailbtn:hover { filter: brightness(.97); }
+  .tk-mailpop { position: fixed; inset: 0; z-index: 90; background: rgba(17, 24, 39, .45); display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .tk-mailbox { background: #fff; border-radius: 14px; width: min(760px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column; overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, .25); }
+  .tk-mailhd { padding: 14px 16px; border-bottom: 1px solid var(--line); font-size: 13px; line-height: 1.6; position: relative; }
+  .tk-mailhd b.s { display: block; font-size: 15px; margin-bottom: 4px; padding-right: 40px; }
+  .tk-mailhd span { color: var(--muted); display: inline-block; min-width: 56px; }
+  .tk-mailhd .x { position: absolute; top: 10px; right: 10px; border: 0; background: #f3f4f8; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; font-size: 16px; }
+  .tk-mailbox iframe { border: 0; width: 100%; flex: 1; min-height: 420px; background: #f5f5fa; }
   .tk-amsec { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; background: #fcfcfe; }
   .tk-sech { display: flex; gap: 10px; align-items: flex-start; }
   .tk-sech i { font-style: normal; flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--indigo-light); color: var(--indigo-dark);
@@ -377,7 +389,8 @@
                 <input type="text" id="sForward" placeholder="e.g. 818 555 1234"></label>
               <label>Messages go to <small>Messages NovaAI takes and call summaries (comma for several).</small>
                 <input type="text" id="sNotify" placeholder="gary@axiomprint.com"></label>
-              <div></div>
+              <label>Copy of every email to callers (BCC) <small>Quotes NovaAI emails to callers, for quality checks. Empty = no copy.</small>
+                <input type="text" id="sBcc" placeholder="gary@axiomprint.com"></label>
             </div>
             <label class="tk-check"><input type="checkbox" id="sSummary"> Email a summary and transcript of every call to that address</label>
             <h3 style="margin-top:14px">Closed message</h3>

@@ -99,6 +99,7 @@
       if (Number(c.owner) === 1) tags.push('<span class="tk-tag ok">Their assistant</span>');
       else if (c.line_name) tags.push('<span class="tk-tag tr">' + esc(String(c.line_name).split(' ')[0]) + '\u2019s line</span>');
       if (c.hours_mode === 'after') tags.push('<span class="tk-tag">After hours</span>');
+      if (c.emails_n) tags.push('<span class="tk-tag ok">\u2709 Email sent</span>');
       if (c.source !== 'phone') tags.push('<span class="tk-tag test">Test</span>');
       if (c.outcome === 'message') tags.push('<span class="tk-tag msg">Message</span>');
       if (c.outcome === 'transferred' || c.answered_by === 'forward') tags.push('<span class="tk-tag tr">' + (c.outcome === 'transferred' ? 'Transferred' : 'Forwarded') + '</span>');
@@ -133,12 +134,16 @@
       : '<span class="tk-chip" title="' + esc(c.stir || 'No STIR/SHAKEN result from the carrier') + '">Caller ID not carrier-verified</span>');
     if (c.caller_first) chips.push('<span class="tk-chip">Greeted as ' + esc(c.caller_first) + '</span>');
     if (c.language) chips.push('<span class="tk-chip">' + esc(lang(c.language)) + '</span>');
-    if (c.answered_by) chips.push('<span class="tk-chip">' + esc({ ai: 'Answered by NovaAI', forward: 'Forwarded to the team', message: 'Closed message', person: 'Answered by the team', ring: 'Ringing the team', menu: 'At the language menu' }[c.answered_by] || c.answered_by) + '</span>');
+    // The usual case (NovaAI answered, call completed) needs no chip; only the exceptions are shown.
+    if (c.answered_by && c.answered_by !== 'ai') chips.push('<span class="tk-chip">' + esc({ ai: 'Answered by NovaAI', forward: 'Forwarded to the team', message: 'Closed message', person: 'Answered by the team', ring: 'Ringing the team', menu: 'At the language menu' }[c.answered_by] || c.answered_by) + '</span>');
     if (c.outcome === 'message') chips.push('<span class="tk-chip warn">Message taken</span>');
     if (c.outcome === 'transferred') chips.push('<span class="tk-chip ok">Transferred</span>');
-    if (c.status && c.source === 'phone') chips.push('<span class="tk-chip">' + esc(c.status) + '</span>');
+    if (c.status && c.source === 'phone' && !/^(completed|in-progress)$/.test(c.status)) chips.push('<span class="tk-chip">' + esc(c.status) + '</span>');
     if (c.cost != null) chips.push('<span class="tk-chip" title="ElevenLabs credits for this call">' + esc(c.cost) + ' credits</span>');
-    if (c.emailed_to) chips.push('<span class="tk-chip ok">Quote emailed to ' + esc(c.emailed_to) + '</span>');
+    // Emails NovaAI sent on this call: click to see exactly what went out.
+    (c.emails || []).forEach((m, i) => chips.push('<button type="button" class="tk-mailbtn' + (m.ok ? '' : ' bad') + '" data-mail="' + i + '" title="Show the email">' +
+      '\u2709 ' + (m.ok ? 'Email sent' : 'Email failed') + ' \u00b7 ' + esc(m.to_addr) + '</button>'));
+    if (c.emailed_to && !(c.emails || []).length) chips.push('<span class="tk-chip ok">Quote emailed to ' + esc(c.emailed_to) + '</span>');
     if (c.ended_reason) chips.push('<span class="tk-chip" title="How the call ended">' + esc(c.ended_reason) + '</span>');
     let html = '<div class="tk-hd"><button type="button" class="tk-link" id="callBack" style="float:right">← All calls</button>' +
       '<b class="big">' + esc(c.source === 'try' ? 'Test in text' : phone(c.from_number) || 'Unknown number') + '</b>' +
@@ -146,7 +151,7 @@
       '<div class="who">' + (c.verified ? '<b>' + (c.verified_by === 'caller_id' ? 'Recognised by caller ID:' : c.verified_by === 'check+caller_id' ? 'Verified (number + email/ZIP):' : 'Verified:') + '</b> ' + esc(c.customer_name || '#' + c.customer_id) + (c.company ? ' (' + esc(c.company) + ')' : '') + ' <i>#' + esc(c.customer_id) + '</i>'
         : match ? '<b>Caller ID matches</b> ' + match + ' <i>— not verified on the call</i>' : '<i>Not verified' + (c.source === 'phone' ? '; the number is not on a customer account' : '') + '</i>') + '</div>' +
       '<div class="meta">' + chips.join('') + '</div>' +
-      (c.has_audio ? '<div class="tk-audio" id="callAudio"><span class="tk-msg">Loading the recording…</span></div>' : '') +
+      (c.has_audio || c.can_fetch_audio ? '<div class="tk-audio" id="callAudio"><span class="tk-msg">Loading the recording…</span></div>' : '') +
       (c.error ? '<div class="tk-msg err" style="margin-top:8px">' + esc(c.error) + '</div>' : '') +
       '<div style="margin-top:8px"><button type="button" class="tk-link" id="callUnread">Mark as unread</button>' +
       (c.page_url ? ' \u00b7 <a class="tk-link" href="' + esc(c.page_url) + '" target="_blank" rel="noopener" style="text-decoration:none">Caller\u2019s page \u2197</a>' : '') + '</div></div>';
@@ -174,8 +179,27 @@
     $('callBack').onclick = () => { $('vCalls').classList.remove('detail'); current = null; history.replaceState(null, '', '/talk-ai'); };
     $('callUnread').onclick = async () => { await api('/api/admin/talk/calls/' + id + '/unread', { method: 'POST', body: '{}' }); current = null; loadCalls(); $('vCalls').classList.remove('detail'); v.innerHTML = '<div class="tk-empty">Marked as unread.</div>'; };
     if ($('showLog')) $('showLog').onclick = () => { const l = $('turnLog'); l.hidden = !l.hidden; $('showLog').textContent = l.hidden ? 'Show NovaAI’s lookups' : 'Hide NovaAI’s lookups'; };
-    if (c.has_audio) loadAudio(id);
+    if (c.has_audio || c.can_fetch_audio) loadAudio(id);
+    v.querySelectorAll('[data-mail]').forEach(b => { b.onclick = () => showMail(c.emails[parseInt(b.dataset.mail)]); });
     loadCalls();
+  }
+  // An email exactly as it went out, in a sandboxed frame (no scripts; links open in a new tab).
+  function showMail(m) {
+    if (!m) return;
+    const pop = document.createElement('div');
+    pop.className = 'tk-mailpop';
+    pop.innerHTML = '<div class="tk-mailbox" role="dialog" aria-label="Email"><div class="tk-mailhd"><button type="button" class="x" aria-label="Close">\u2715</button>' +
+      '<b class="s">' + esc(m.subject || '(no subject)') + '</b>' +
+      '<div><span>To</span> ' + esc(m.to_addr) + '</div>' + (m.bcc ? '<div><span>Bcc</span> ' + esc(m.bcc) + '</div>' : '') +
+      '<div><span>Sent</span> ' + esc(full(m.created_at)) + ' from order@axiomprint.com' + (m.ok ? '' : ' \u2014 <b style="color:#b42318">failed: ' + esc(m.error || '') + '</b>') + '</div></div>' +
+      '<iframe sandbox="allow-popups allow-popups-to-escape-sandbox" title="Email"></iframe></div>';
+    document.body.appendChild(pop);
+    pop.querySelector('iframe').srcdoc = '<base target="_blank">' + (m.html || '<pre style="white-space:pre-wrap;font:14px/1.5 Arial;padding:16px">' + esc(m.text || '') + '</pre>');
+    const close = () => { pop.remove(); document.removeEventListener('keydown', key); };
+    const key = (e) => { if (e.key === 'Escape') close(); };
+    pop.onclick = (e) => { if (e.target === pop) close(); };
+    pop.querySelector('.x').onclick = close;
+    document.addEventListener('keydown', key);
   }
   function turnsHtml(turns, evClass) {
     return turns.map(t => {
@@ -191,13 +215,13 @@
     const box = $('callAudio'); if (!box) return;
     try {
       const r = await fetch('/api/admin/talk/audio/' + id, { headers: { 'Authorization': 'Bearer ' + token } });
-      if (!r.ok) throw new Error();
+      if (!r.ok) { const t = await r.text().catch(() => ''); throw new Error(r.status === 404 && t ? t : ''); }
       const b = await r.blob();
       if (current !== id || !$('callAudio')) return;
       if (audioUrl) URL.revokeObjectURL(audioUrl);
       audioUrl = URL.createObjectURL(b);
       box.innerHTML = '<audio controls preload="metadata" src="' + audioUrl + '"></audio><a class="tk-link" href="' + audioUrl + '" download="call-' + id + '.mp3">Download</a>';
-    } catch (e) { box.innerHTML = '<span class="tk-msg">The recording could not be loaded.</span>'; }
+    } catch (e) { if ($('callAudio')) $('callAudio').innerHTML = '<span class="tk-msg">' + esc(e.message || 'The recording could not be loaded.') + '</span>'; }
   }
 
   // ---- Try it ----
@@ -324,6 +348,7 @@
     $('sTransfer').value = s.transfer_number ? phone(s.transfer_number) : '';
     $('sForward').value = s.forward_number ? phone(s.forward_number) : '';
     $('sNotify').value = s.notify_to || '';
+    $('sBcc').value = s.email_bcc || '';
     $('sSummary').checked = !!s.summary_mail;
     $('sClosed').value = s.closed_message || '';
     $('sMsg').textContent = ''; $('sMsg').className = 'tk-msg';
@@ -333,7 +358,7 @@
     keepMode(); keepLangGreets();
     const j = await api('/api/admin/talk/settings', { method: 'POST', body: JSON.stringify({ caller_id: callerId, hours: readHours(), modes: modes, rules: $('sRules').value,
       languages: langState ? langState.on.filter(k => k !== 'en') : undefined, lang_greetings: langState ? langState.greet : undefined,
-      transfer_number: $('sTransfer').value, forward_number: $('sForward').value, notify_to: $('sNotify').value, summary_mail: $('sSummary').checked,
+      transfer_number: $('sTransfer').value, forward_number: $('sForward').value, notify_to: $('sNotify').value, email_bcc: $('sBcc').value, summary_mail: $('sSummary').checked,
       closed_message: $('sClosed').value }) });
     if (!j.ok) { m.className = 'tk-msg err'; m.textContent = j.error || 'Could not save.'; return; }
     const keep = curMode;

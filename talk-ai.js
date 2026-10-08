@@ -79,6 +79,13 @@ module.exports = function mountTalkAi(app, deps, bot) {
     db.run('CREATE INDEX IF NOT EXISTS talk_turns_call ON talk_turns(call_id)');
     db.run(`CREATE TABLE IF NOT EXISTS talk_reads (call_id INTEGER NOT NULL, reader TEXT NOT NULL, read_at TEXT NOT NULL,
       PRIMARY KEY (call_id, reader))`);
+    // Every email NovaAI sent to a caller, exactly as sent (for QC: shown on the call, and BCC'd).
+    db.run(`CREATE TABLE IF NOT EXISTS talk_emails (id INTEGER PRIMARY KEY AUTOINCREMENT, call_id INTEGER NOT NULL, kind TEXT,
+      to_addr TEXT, bcc TEXT, subject TEXT, html TEXT, text TEXT, ok INTEGER, error TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`);
+    db.run('CREATE INDEX IF NOT EXISTS talk_emails_call ON talk_emails(call_id)');
+    // Who gets a blind copy of every email to a caller. Recordings fetched from ElevenLabs: tries so far.
+    db.run('ALTER TABLE talk_settings ADD COLUMN email_bcc TEXT', () => {});
+    db.run('ALTER TABLE talk_calls ADD COLUMN audio_tries INTEGER DEFAULT 0', () => {});
   });
   const dbGet = (sql, p) => new Promise((ok, no) => db.get(sql, p || [], (e, r) => e ? no(e) : ok(r)));
   const dbAll = (sql, p) => new Promise((ok, no) => db.all(sql, p || [], (e, r) => e ? no(e) : ok(r)));
@@ -100,6 +107,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     ].join('\n'),
     transfer_number: '', forward_number: '',
     notify_to: bot.ESCALATE_TO || 'gary@axiomprint.com',
+    email_bcc: env('TALKAI_EMAIL_BCC') || 'gary@axiomprint.com',
     closed_message: 'Thanks for calling AxiomPrint. We can’t take your call right now. Please email order@axiomprint.com or visit axiomprint.com, and we’ll get back to you. Goodbye.',
     summary_mail: 0
   };
@@ -143,6 +151,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     if (r) Object.keys(DEFAULTS).forEach(k => { if (r[k] != null && r[k] !== '') s[k] = r[k]; });
     if (r && r.transfer_number === '') s.transfer_number = '';
     if (r && r.forward_number === '') s.forward_number = '';
+    if (r && r.email_bcc === '') s.email_bcc = '';                     // turned off on purpose
     s.summary_mail = Number(s.summary_mail) ? 1 : 0;
     if (['carrier', 'always', 'never'].indexOf(s.caller_id) === -1) s.caller_id = 'carrier';
     let hours = null, modes = null;
@@ -778,6 +787,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
       '- Before a lookup say two or three words ("One moment."), nothing more.',
       '- Prices exactly as the tools give them, e.g. "500 business cards come to $89.50." For a few quantities, say each one briefly. Never round, guess or add things up yourself.',
       '- Ready dates are ESTIMATES: always "estimated to be ready Monday, October 12th" (or "estimated ready today by 5 PM"), never "will be ready", "it\u2019ll be done" or "ready Monday" on its own.',
+      '- SIZES: pass width / height to price_product exactly as the caller said them, with size_unit. Banners, signs, backdrops and flags are said in FEET ("8 by 10" for a banner = 8 by 10 feet). Always say the size back with its unit ("an 8 by 10 foot vinyl banner"), and use the size_used line from the tool.',
       '- Dates the way people say them ("Monday, October 12th"). Order numbers letter then digits one by one ("E, 1 1 7 0 5 7 4"). Read back emails, phone numbers and order numbers to confirm them.',
       '- If you did not catch something, ask them to say it again. Never pretend you understood.',
       '- LANGUAGE: always answer in the language the caller is speaking (English, Spanish, Armenian, Russian or any other) and keep it until they switch \u2014 never ask which language they want.' +
@@ -1128,7 +1138,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     if (!cid) return { not_found: 'No job with that number. Ask them to say it again.' };
     const cust = await bot.customerById(cid);
     const out = await bot.runTool('order_status', { order_number: raw }, { source: 'phone', vid: 'phone:' + ctx.call.id, customer: cust }, [],
-      { chatId: null, text: ctx.lastCaller, link: callLink(ctx.call.id), via: 'on a call with ' + (ctx.s._line.am_name || 'an account manager') + ' (TalkAi)' });
+      { chatId: null, text: ctx.lastCaller, said: ctx.said, link: callLink(ctx.call.id), via: 'on a call with ' + (ctx.s._line.am_name || 'an account manager') + ' (TalkAi)' });
     const o = forVoice(out);
     if (o && typeof o === 'object') { o.client = cust ? (cust.name || '') + (cust.company ? ' (' + cust.company + ')' : '') : undefined; o.phone = 'Say the key facts (client, stage, deadline) in one or two short sentences.'; }
     return o;
@@ -1170,7 +1180,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     if (name === 'email_me') return ownerEmail(input, ctx);
     if (OWNER_SHARED.indexOf(name) === -1) return { error: 'Unknown tool.' };
     const cards = [];
-    const out = await bot.runTool(name, input, ctx.who, cards, { chatId: null, text: ctx.lastCaller, link: callLink(ctx.call.id), via: 'TalkAi' });
+    const out = await bot.runTool(name, input, ctx.who, cards, { chatId: null, text: ctx.lastCaller, said: ctx.said, link: callLink(ctx.call.id), via: 'TalkAi' });
     const priced = cards.filter(c => c && c.type === 'price');
     if (priced.length) { await saveQuotes(ctx.call.id, priced).catch(e => console.error('TALKAI quotes', e.message)); if (out && typeof out === 'object') out.email_offer = 'They can have it emailed, ready to forward (email_me with include_quotes).'; }
     return forVoice(out);
@@ -1239,6 +1249,11 @@ module.exports = function mountTalkAi(app, deps, bot) {
         'Questions or changes? Reply to this email' + (shownPhone() ? ' or call ' + shownPhone() : '') + '.', 'The AxiomPrint team'])).join('\n');
   }
 
+  async function saveEmail(callId, kind, mail, error) {
+    await dbRun('INSERT INTO talk_emails (call_id, kind, to_addr, bcc, subject, html, text, ok, error) VALUES (?,?,?,?,?,?,?,?,?)',
+      [callId, kind, mail.to, mail.bcc || null, mail.subject, String(mail.html || '').slice(0, 400000), String(mail.text || '').slice(0, 100000), error ? 0 : 1,
+       error ? String(error).slice(0, 300) : null]).catch(e => console.error('TALKAI save email', e.message));
+  }
   async function emailQuote(input, ctx) {
     const m = ctx.mem;
     m.emails = m.emails || [];
@@ -1267,11 +1282,15 @@ module.exports = function mountTalkAi(app, deps, bot) {
     if (!row || !row.share_token) await dbRun('UPDATE talk_calls SET share_token = ? WHERE id = ?', [token, ctx.call.id]);
     const pageUrl = NOVA_URL + '/talk/c/' + token;
     const name = String(input.name || '').trim().slice(0, 40) || (ctx.who.customer && (ctx.who.customer.first || String(ctx.who.customer.name || '').split(' ')[0])) || '';
+    const mail = { to: to, subject: 'Your AxiomPrint quote' + (quotes.length === 1 ? ' — ' + quotes[0].product : ''),
+      text: quoteEmailText(quotes, name, pageUrl), html: quoteEmailHtml(quotes, name, pageUrl),
+      bcc: ctx.call.source === 'try' ? undefined : (ctx.s.email_bcc || undefined) };
     try {
-      await deps.sendMail({ to: to, subject: 'Your AxiomPrint quote' + (quotes.length === 1 ? ' — ' + quotes[0].product : ''),
-        text: quoteEmailText(quotes, name, pageUrl), html: quoteEmailHtml(quotes, name, pageUrl) });
+      await deps.sendMail(mail);
+      await saveEmail(ctx.call.id, 'quote', mail, null);
     } catch (e) {
       console.error('TALKAI quote email', e.message);
+      await saveEmail(ctx.call.id, 'quote', mail, String(e.message || e));
       await addTurn(ctx.call.id, 'event', 'Quote email to ' + to + ' failed: ' + String(e.message || e).slice(0, 160));
       return { sent: false, error: 'The email could not be sent. Apologise and offer to take a message so the team emails the quote.' };
     }
@@ -1358,7 +1377,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
       }
     }
     const cards = [];
-    const out = await bot.runTool(name, input, who, cards, { chatId: null, text: ctx.lastCaller, link: callLink(ctx.call.id), via: 'on a phone call (TalkAi)' });
+    const out = await bot.runTool(name, input, who, cards, { chatId: null, text: ctx.lastCaller, said: ctx.said, link: callLink(ctx.call.id), via: 'on a phone call (TalkAi)' });
     const priced = cards.filter(c => c && c.type === 'price');
     if (priced.length) { await saveQuotes(ctx.call.id, priced).catch(e => console.error('TALKAI quotes', e.message)); if (out && typeof out === 'object') out.email_offer = 'You can offer to email this quote (email_quote).'; }
     if (out && out.past_due) await addTurn(ctx.call.id, 'event', 'Past-due order escalated by email: ' + String(out.past_due).split('Past-due orders: ').pop());
@@ -1380,7 +1399,9 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const who = { source: 'phone', vid: 'phone:' + call.id,
       customer: call.verified && call.customer_id ? await bot.customerById(call.customer_id) : null };
     const lastCaller = (() => { for (let i = history.length - 1; i >= 0; i--) if (history[i].role === 'user') return String(history[i].content || ''); return ''; })();
-    const ctx = { s: s, call: call, who: who, mem: m, lastCaller: lastCaller, transfer: null };
+    // The caller's last few turns (a size said two turns ago still tells its unit).
+    const saidLately = history.filter(x => x.role === 'user' && typeof x.content === 'string').slice(-5).map(x => x.content).join('\n').slice(-3000);
+    const ctx = { s: s, call: call, who: who, mem: m, lastCaller: lastCaller, said: saidLately, transfer: null };
     // The account manager on their own line, verified: their personal assistant (other tools and prompt).
     const owner = Number(call.owner) === 1 && !!s._line;
     if (owner) { s.transfer_number = ''; who.customer = null; }
@@ -1621,6 +1642,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
        an.call_successful ? String(an.call_successful).slice(0, 30) : null, Number(md.call_duration_secs) >= 0 ? Math.round(Number(md.call_duration_secs)) : null,
        md.cost != null ? Number(md.cost) : null, md.termination_reason ? String(md.termination_reason).slice(0, 200) : null, lang ? String(lang).slice(0, 20) : null, call.id]);
     hit('elevenlabs-webhook', true, 'Call ' + call.id + ': transcript saved (' + transcript.length + ' turns)');
+    fetchAudioSoon(call.id);
     const s = await settings();
     if (s.summary_mail && s.notify_to && deps.sendMail && call.source === 'phone') {
       const fresh = await dbGet('SELECT * FROM talk_calls WHERE id = ?', [call.id]);
@@ -1632,6 +1654,47 @@ module.exports = function mountTalkAi(app, deps, bot) {
           (fresh.summary ? '<p>' + htmlEsc(fresh.summary) + '</p>' : '') + '<p style="color:#6b7280;font-size:13px">' + lines.map(htmlEsc).join('<br>') + '</p>' +
           '<p><a href="' + callLink(call.id) + '">Open the call in Nova</a></p></div>' }).catch(e => console.error('TALKAI summary email', e.message));
     }
+  }
+
+  // The recording, straight from ElevenLabs (GET /v1/convai/conversations/:id/audio). The post-call audio
+  // webhook is the fast path, but it is big (base64 MP3) and a proxy limit or a missed delivery loses it, so
+  // Nova also asks for it itself: after the transcript arrives, again later, when an admin opens the call,
+  // and in the sweep for recent calls still without one.
+  const audioBusy = new Set();
+  async function fetchAudio(callId, why) {
+    const key = env('ELEVENLABS_API_KEY');
+    const c = await dbGet('SELECT id, conversation_id, audio_path, audio_tries, source FROM talk_calls WHERE id = ?', [callId]).catch(() => null);
+    if (!c || c.audio_path) return { ok: !!(c && c.audio_path) };
+    if (!key) return { ok: false, error: 'ELEVENLABS_API_KEY is not in .env' };
+    if (!c.conversation_id || c.source === 'try') return { ok: false, error: 'This call has no ElevenLabs conversation, so there is no recording.' };
+    if (audioBusy.has(c.id)) return { ok: false, error: 'The recording is being fetched — try again in a moment.' };
+    audioBusy.add(c.id);
+    try {
+      await dbRun('UPDATE talk_calls SET audio_tries = COALESCE(audio_tries, 0) + 1 WHERE id = ?', [c.id]).catch(() => {});
+      const r = await fetch(EL_BASE + '/v1/convai/conversations/' + encodeURIComponent(c.conversation_id) + '/audio',
+        { headers: { 'xi-api-key': key }, signal: AbortSignal.timeout(60000) });
+      if (!r.ok) {
+        const t = (await r.text().catch(() => '')).slice(0, 160);
+        hit('recording', false, 'Call ' + c.id + ' (' + why + '): ElevenLabs ' + r.status + ' ' + t);
+        return { ok: false, error: r.status === 404 ? 'ElevenLabs has no recording for this call (yet). Check that Store Call Audio is on for the agent.' : 'ElevenLabs refused the recording (' + r.status + ').' };
+      }
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length < 1000) return { ok: false, error: 'ElevenLabs returned an empty recording.' };
+      const month = new Date().toISOString().slice(0, 7);
+      fs.mkdirSync(path.join(AUDIO_DIR, month), { recursive: true });
+      const rel = path.join(month, 'call-' + c.id + '-' + crypto.randomBytes(6).toString('hex') + '.mp3');
+      fs.writeFileSync(path.join(AUDIO_DIR, rel), buf);
+      const upd = await dbRun('UPDATE talk_calls SET audio_path = ? WHERE id = ? AND audio_path IS NULL', [rel, c.id]);
+      if (!upd.changes) { try { fs.unlinkSync(path.join(AUDIO_DIR, rel)); } catch (e) {} }       // the webhook won the race
+      hit('recording', true, 'Call ' + c.id + ': recording saved from ElevenLabs (' + why + ', ' + Math.round(buf.length / 1024) + ' KB)');
+      return { ok: true };
+    } catch (e) {
+      hit('recording', false, 'Call ' + c.id + ' (' + why + '): ' + e.message);
+      return { ok: false, error: 'The recording could not be fetched right now.' };
+    } finally { audioBusy.delete(c.id); }
+  }
+  function fetchAudioSoon(callId) {
+    [20, 120, 600].forEach(sec => setTimeout(() => fetchAudio(callId, 'after the call').catch(() => {}), sec * 1000).unref());
   }
 
   // Recordings are kept KEEP_DAYS (TALKAI_KEEP_DAYS, default 90).
@@ -1646,6 +1709,14 @@ module.exports = function mountTalkAi(app, deps, bot) {
   }
   setTimeout(sweep, 90 * 1000);
   setInterval(sweep, 12 * 3600 * 1000).unref();
+  // Recent calls still without a recording (up to 6 tries each).
+  async function audioSweep() {
+    const rows = await dbAll("SELECT id FROM talk_calls WHERE audio_path IS NULL AND conversation_id IS NOT NULL AND source <> 'try' " +
+      "AND COALESCE(audio_tries, 0) < 6 AND created_at > datetime('now', '-3 days') AND created_at < datetime('now', '-3 minutes') ORDER BY id DESC LIMIT 10").catch(() => []);
+    for (const r of rows) await fetchAudio(r.id, 'sweep').catch(() => {});
+  }
+  setTimeout(audioSweep, 60 * 1000);
+  setInterval(audioSweep, 15 * 60 * 1000).unref();
 
   // ---------------------------------------------------------------- admin
   const readerOf = (req) => String(req.user && (req.user.key || req.user.username) || 'admin').slice(0, 120);
@@ -1681,6 +1752,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const notify = b.notify_to == null ? cur.notify_to : String(b.notify_to).trim().slice(0, 200);
     if (notify && !/^[^\s@,]+@[^\s@,]+\.[^\s@,]+(\s*,\s*[^\s@,]+@[^\s@,]+\.[^\s@,]+)*$/.test(notify)) return res.status(400).json({ ok: false, error: 'Check the email address for messages.' });
     const txt = (v, k, n) => v == null ? cur[k] : String(v).slice(0, n);
+    const bcc = b.email_bcc == null ? cur.email_bcc : String(b.email_bcc).trim().slice(0, 200);
+    if (bcc && !/^[^\s@,]+@[^\s@,]+\.[^\s@,]+(\s*,\s*[^\s@,]+@[^\s@,]+\.[^\s@,]+)*$/.test(bcc)) return res.status(400).json({ ok: false, error: 'Check the email for copies (BCC).' });
     const callerId = ['carrier', 'always', 'never'].indexOf(b.caller_id) > -1 ? b.caller_id : cur.caller_id;
     const hours = b.hours ? normHours(b.hours) : cur.hours;
     const modes = b.modes ? { regular: normMode(b.modes.regular, cur.modes.regular), after: normMode(b.modes.after, cur.modes.after) } : cur.modes;
@@ -1696,6 +1769,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const langs = Array.isArray(b.languages) ? b.languages.map(String).filter(k => LANGS[k] && k !== 'en') : cur.languages.filter(k => k !== 'en');
     const lg = {};
     Object.keys(LANGS).filter(k => k !== 'en').forEach(k => { const v = b.lang_greetings && b.lang_greetings[k]; lg[k] = v == null ? cur.lang_greetings[k] : String(v).slice(0, 600); });
+    await dbRun('UPDATE talk_settings SET email_bcc = ? WHERE id = 1', [bcc]);
     await dbRun('UPDATE talk_settings SET languages = ?, lang_menu = ?, lang_greetings = ? WHERE id = 1',
       [JSON.stringify(langs), b.lang_menu == null ? cur.lang_menu : (b.lang_menu ? 1 : 0), JSON.stringify(lg)]);
     res.json({ ok: true, settings: await settings() });
@@ -1725,6 +1799,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const rows = await dbAll('SELECT c.id, c.from_number, c.source, c.status, c.answered_by, c.customer_id, c.customer_name, c.company, c.verified, c.caller_match, c.owner, ' +
       'c.language, c.summary, c.outcome, c.duration_sec, c.created_at, c.updated_at, c.audio_path IS NOT NULL AS has_audio, c.tried_by, c.verified_by, c.caller_first, c.hours_mode, c.line_id, (SELECT am_name FROM talk_lines l WHERE l.id = c.line_id) AS line_name, ' +
       '(SELECT COUNT(*) FROM talk_turns t WHERE t.call_id = c.id AND t.role = \'caller\') AS turns, ' +
+      '(SELECT COUNT(*) FROM talk_emails m WHERE m.call_id = c.id AND m.ok = 1) AS emails_n, ' +
       '(SELECT content FROM talk_turns t WHERE t.call_id = c.id AND t.role = \'caller\' ORDER BY t.id LIMIT 1) AS first_said, ' +
       '(r.read_at IS NULL OR r.read_at < c.updated_at) AS unread ' +
       'FROM talk_calls c LEFT JOIN talk_reads r ON r.call_id = c.id AND r.reader = ? ' + (where.length ? 'WHERE ' + where.join(' AND ') : '') +
@@ -1742,6 +1817,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
     try { c.transcript = c.transcript ? JSON.parse(c.transcript) : null; } catch (e) { c.transcript = null; }
     try { c.caller_match = c.caller_match ? JSON.parse(c.caller_match) : null; } catch (e) { c.caller_match = null; }
     c.has_audio = !!c.audio_path; delete c.audio_path;
+    c.can_fetch_audio = !c.has_audio && !!c.conversation_id && c.source !== 'try' && !!env('ELEVENLABS_API_KEY');
+    c.emails = await dbAll('SELECT id, kind, to_addr, bcc, subject, html, text, ok, error, created_at FROM talk_emails WHERE call_id = ? ORDER BY id', [id]).catch(() => []);
     try { c.quotes = c.quotes ? JSON.parse(c.quotes) : []; } catch (e) { c.quotes = []; }
     c.page_url = c.share_token ? NOVA_URL + '/talk/c/' + c.share_token : null; delete c.share_token;
     const ln = c.line_id ? await dbGet('SELECT am_name FROM talk_lines WHERE id = ?', [c.line_id]).catch(() => null) : null;
@@ -1758,8 +1835,14 @@ module.exports = function mountTalkAi(app, deps, bot) {
     res.json({ ok: true });
   });
   app.get('/api/admin/talk/audio/:id', auth, adminOnly, async (req, res) => {
-    const c = await dbGet('SELECT audio_path FROM talk_calls WHERE id = ?', [parseInt(req.params.id) || 0]);
-    if (!c || !c.audio_path) return res.status(404).send('No recording');
+    const id = parseInt(req.params.id) || 0;
+    let c = await dbGet('SELECT audio_path FROM talk_calls WHERE id = ?', [id]);
+    if (c && !c.audio_path) {
+      const f = await fetchAudio(id, 'opened by an admin');
+      if (!f.ok) return res.status(404).type('text/plain').send(f.error || 'No recording');
+      c = await dbGet('SELECT audio_path FROM talk_calls WHERE id = ?', [id]);
+    }
+    if (!c || !c.audio_path) return res.status(404).type('text/plain').send('No recording');
     const full = path.resolve(AUDIO_DIR, c.audio_path);
     if (full.indexOf(path.resolve(AUDIO_DIR) + path.sep) !== 0 || !fs.existsSync(full)) return res.status(404).send('Gone');
     res.setHeader('Content-Type', 'audio/mpeg');

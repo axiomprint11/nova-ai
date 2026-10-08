@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.9.2';
-const NOVA_BUILT = '10-07-2026 2:30pm';
+const NOVA_VERSION = '1.9.3';
+const NOVA_BUILT = '10-07-2026 6:20pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 app.use((req, res, next) => req.path.indexOf('/api/talk/hook/') === 0 ? next() : jsonBody(req, res, next));
@@ -712,13 +712,14 @@ function getGmailSend() {
   gmailSendClient = google.gmail({ version: 'v1', auth });
   return gmailSendClient;
 }
-async function sendMail({ to, subject, text, html, replyTo }) {
+async function sendMail({ to, subject, text, html, replyTo, bcc }) {
   const clean = (v) => String(v || '').replace(/[\r\n]+/g, ' ').trim();
   const from = clean(process.env.MAIL_FROM || GMAIL_USER);
   const b64 = (t) => Buffer.from(String(t || ''), 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n');
   const boundary = 'nova-' + require('crypto').randomBytes(8).toString('hex');
   const lines = ['From: NovaAI <' + from + '>', 'To: ' + clean(to),
     'Subject: =?UTF-8?B?' + Buffer.from(clean(subject), 'utf8').toString('base64') + '?=',
+    bcc ? 'Bcc: ' + clean(bcc) : null,                     // Gmail delivers to it and strips the header
     replyTo ? 'Reply-To: ' + clean(replyTo) : null, 'MIME-Version: 1.0',
     'Content-Type: multipart/alternative; boundary="' + boundary + '"', '',
     '--' + boundary, 'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', b64(text),

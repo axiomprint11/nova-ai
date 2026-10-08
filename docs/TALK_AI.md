@@ -140,6 +140,29 @@ native speaker). The ElevenLabs agent needs the languages under **Additional lan
 for Armenian) and **Detect language** turned on under System tools. The press-a-key menu (`/api/talk/twilio/lang`)
 is still in the code, off unless `TALKAI_LANG_MENU=1`.
 
+## Recordings
+
+The post-call audio webhook (base64 MP3) is the fast path, but it is large and can be lost (a proxy body limit,
+a missed delivery). So Nova also fetches the MP3 itself from ElevenLabs (`GET /v1/convai/conversations/:id/audio`,
+`fetchAudio()`): 20 s, 2 min and 10 min after the transcript arrives, when an admin opens a call without one, and
+every 15 minutes for calls of the last 3 days still missing it (`talk_calls.audio_tries`, up to 6). Needs
+**Store Call Audio** on for the agent. Setup → Recent activity shows `recording` lines.
+
+## Emails to callers
+
+Every email NovaAI sends a caller (`email_quote`) is BCC'd to `talk_settings.email_bcc` (Training → Numbers and
+messages; default `TALKAI_EMAIL_BCC` or gary@axiomprint.com; empty = no copy; tests are not copied) and saved exactly as
+sent in SQLite `talk_emails` (to, bcc, subject, HTML, text, ok/error). The call shows an **Email sent** button that
+opens it (sandboxed frame); the Calls list tags those calls "Email sent". `sendMail()` takes `bcc`.
+
+## Sizes in feet
+
+`price_product` takes `width` / `height` as the customer said them plus `size_unit` (`ft` / `in`); `sizeFromCustomer()`
+in client-bot.js converts to inches (the size fields store inches even when the website shows feet, `configs.metric`
+is only the display unit). With no unit: feet when the caller's last turns say feet/ft/foot, or the product is shown in
+feet and the numbers are small; and whatever the unit, numbers below the product's minimum in inches that fit in feet
+are feet (an "8 by 10" vinyl banner is 96 x 120 in). The result's `size_used` tells the model the size to say back.
+
 ## Several calls at once
 
 Every call is its own ElevenLabs conversation and its own set of Nova requests, so calls are answered in parallel up to the

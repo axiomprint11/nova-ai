@@ -623,8 +623,9 @@ module.exports = function mountClientBot(app, deps) {
       versions: { type: 'array', description: 'Several DESIGNS of the same size and options in one order, e.g. [{"name":"Design 1","quantity":100},{"name":"Design 2","quantity":150}]. Priced together as ONE order with versions (cheaper than separate orders). Use instead of quantity / quantities.',
         items: { type: 'object', properties: { name: { type: 'string' }, quantity: { type: 'integer' } }, required: ['quantity'] } },
       options: { type: 'object', additionalProperties: { type: 'string' }, description: 'Option name -> choice title, using names from product_details. Omitted options use the default.' },
-      width: { type: 'number', description: 'Custom width in inches, if a size was given.' },
-      height: { type: 'number', description: 'Custom height in inches.' },
+      width: { type: 'number', description: 'Width EXACTLY as the customer said it, in size_unit — do NOT convert ("8 feet by 10 feet" → width 8, height 10, size_unit "ft").' },
+      height: { type: 'number', description: 'Height exactly as the customer said it, in size_unit.' },
+      size_unit: { type: 'string', enum: ['ft', 'in'], description: 'The unit of width / height as the customer said it. Banners, signs, backdrops, flags and large displays are usually said in FEET ("an 8 by 10 banner" = feet); cards, flyers, posters and stickers in inches. When they did not say the unit, use the one that is normal for the product. Required whenever width / height are given.' },
       job_name: { type: 'string', description: 'A short job name for the cart, in English, made from what the customer told you: the event, purpose, design, business or place (e.g. "Grand Opening Cards", "Dr. Kim Office Cards", "Spring Menu"). 2–5 words, no quantity. Make it different from earlier items in this chat. Leave it out if they said nothing specific.' }
     }, required: ['product_id'] }
   }, {
@@ -666,7 +667,8 @@ module.exports = function mountClientBot(app, deps) {
       quantity: { type: 'integer', description: 'ONE quantity.' },
       versions: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, quantity: { type: 'integer' } } },
         description: 'For designs priced as versions.' },
-      width: { type: 'number' }, height: { type: 'number' },
+      width: { type: 'number', description: 'As the customer said it, in size_unit.' }, height: { type: 'number' },
+      size_unit: { type: 'string', enum: ['ft', 'in'] },
       job_name: { type: 'string', description: 'Required by checkout. Suggest one from what the customer told you, with the quantity, e.g. "Grand Opening Cards - 500x"; different from earlier items in this chat. If they do not care, the product name and quantity.' },
       notes: { type: 'string' }
     }, required: ['product_id', 'job_name'] }
@@ -751,7 +753,40 @@ module.exports = function mountClientBot(app, deps) {
   //   card.specs[].tag: 'specified' (the customer chose it), 'default' (the website
   //   default), 'questionable' (left on the default although it matters for the
   //   price — the customer should check it).
-  async function priceCard(input, cid) {
+  // Sizes from the model come as the customer said them (width, height, size_unit); the calculator wants
+  // inches. Feet are used when: the model says so; no unit was given and the customer's words say feet, or
+  // the product is sized in feet on the website and the numbers are small; or the numbers are below the
+  // product's minimum in inches but fit in feet (an "8 by 10" banner is never 8 by 10 inches). The size
+  // fields store inches whatever unit the website shows (configs.metric is only the display unit).
+  const FEET_WORDS = /\d\s*(?:'|\u2032|ft\b|foot\b|feet\b)|\b(?:feet|foot|ft)\b/i;
+  async function sizeFromCustomer(pid, input, ctx) {
+    const num = (x) => { const n = Number(x); return isFinite(n) && n > 0 && n < 100000 ? n : undefined; };
+    let w = num(input.width), h = num(input.height);
+    if (!w || !h) return { width: w, height: h };
+    if (!ctx || !ctx.fromModel) return { width: w, height: h };          // card Edit / buttons: already inches
+    let cfg = {};
+    try {
+      const r = await runQuery("SELECT configs FROM product_variables WHERE product_id = " + parseInt(pid) +
+        " AND type IN ('size_new','size_3D') ORDER BY id LIMIT 1");
+      cfg = r[0] && r[0].configs ? JSON.parse(r[0].configs) || {} : {};
+    } catch (e) {}
+    const lim = { minW: Number(cfg.minWidth) || 0, minH: Number(cfg.minHeight) || 0, maxW: Number(cfg.maxWidth) || 0, maxH: Number(cfg.maxHeight) || 0 };
+    const fits = (a, b) => [[a, b], [b, a]].some(([x, y]) => (!lim.minW || x >= lim.minW) && (!lim.minH || y >= lim.minH) &&
+      (!lim.maxW || x <= lim.maxW) && (!lim.maxH || y <= lim.maxH));
+    let unit = input.size_unit === 'ft' || input.size_unit === 'in' ? input.size_unit : null, why = unit ? 'as given' : '';
+    if (!unit && FEET_WORDS.test(String(ctx.said || ctx.text || ''))) { unit = 'ft'; why = 'the customer said feet'; }
+    if (!unit && /^f/i.test(String(cfg.metric || '')) && w <= 40 && h <= 40) { unit = 'ft'; why = 'the product is sized in feet'; }
+    if (unit !== 'ft' && (lim.minW || lim.minH) && !fits(w, h) && fits(w * 12, h * 12)) { unit = 'ft'; why = 'too small in inches for this product, so feet'; }
+    unit = unit || 'in';
+    const k = unit === 'ft' ? 12 : 1;
+    const fmt = (n) => String(Math.round(n * 100) / 100);
+    return { width: w * k, height: h * k,
+      said: fmt(w) + ' x ' + fmt(h) + (unit === 'ft' ? ' ft' : ' in') + (unit === 'ft' ? ' = ' + fmt(w * k) + ' x ' + fmt(h * k) + ' in' : '') + (why && why !== 'as given' ? ' (' + why + ')' : ''),
+      // Already in inches but the customer spoke in feet: say it back in feet.
+      spoken: unit === 'in' && w % 12 === 0 && h % 12 === 0 && FEET_WORDS.test(String(ctx.said || ctx.text || '')) ? fmt(w / 12) + ' by ' + fmt(h / 12) + ' feet'
+        : fmt(w) + ' by ' + fmt(h) + (unit === 'ft' ? ' feet' : ' inches') };
+  }
+  async function priceCard(input, cid, ctx) {
     const p = await publicProduct(input.product_id, cid);
     if (!p) return { error: 'No such product on axiomprint.com.' };
     // Only options a customer can see on the website: fields that are neither
@@ -766,8 +801,8 @@ module.exports = function mountClientBot(app, deps) {
       if (v && v.choices.some(c => norm(c) === norm(want))) options[v.title] = want;
       else ignored.push(k);
     });
-    const num = (x) => { const n = Number(x); return isFinite(n) && n > 0 && n < 100000 ? n : undefined; };
-    const width = num(input.width), height = num(input.height);
+    const sz = await sizeFromCustomer(p.id, input, ctx);
+    const width = sz.width, height = sz.height;
     // One quote per quantity, same options. Several quantities make one card:
     // the options once, then Qty · Price · Add to Cart for each.
     const asked = (Array.isArray(input.quantities) && input.quantities.length ? input.quantities : [input.quantity])
@@ -860,6 +895,7 @@ module.exports = function mountClientBot(app, deps) {
           ? versions.length + ' versions priced together as ONE order of ' + rows[0].quantity + ' (' + versions.map(v => v.name + ': ' + v.quantity).join(', ') + '). This is the total for all of them.'
           : 'This product does not take versions, so the designs were priced as one run of ' + rows[0].quantity + '. Say so.') : undefined,
         product: head.product, options_used: head.specs.map(sp => ({ field: sp.field, value: sp.value, how: sp.tag })), prices: forModel,
+        size_used: sz.said ? sz.said + '. Say the size the way the customer did: "' + sz.spoken + '". If that is not what they meant, re-price with the right size_unit.' : undefined,
         ignored_options: ignored.length ? ignored : undefined,
         left_on_default: (head.edit.fields || []).filter(f => !head.specs.some(sp => sp.field === f.field && sp.tag === 'specified'))
           .map(f => ({ field: f.field, now: f.value, choices: f.choices.slice(0, 12) })),
@@ -1055,7 +1091,7 @@ module.exports = function mountClientBot(app, deps) {
   }
   // Price it again and add it. input: product_id, options, quantity | versions,
   // width, height, job_name, notes.
-  async function addToCart(input, who) {
+  async function addToCart(input, who, ctx) {
     if (!who.customer) return { needs_signin: true };
     const cid = parseInt(who.customer.id);
     const vs = Array.isArray(input.versions) ? input.versions : [];
@@ -1063,7 +1099,7 @@ module.exports = function mountClientBot(app, deps) {
       quantity: vs.length > 1 ? undefined : (parseInt(input.quantity) || (vs[0] && parseInt(vs[0].quantity)) || undefined),
       versions: vs.length > 1 ? vs : undefined });
     if (!one.versions && !one.quantity) return { error: 'Which quantity should go in the cart?' };
-    const priced = await priceCard(one, cid);
+    const priced = await priceCard(one, cid, ctx);
     if (priced.error) return { error: priced.error };
     const card = priced.card, row = card.rows[0];
     const jobName = String(input.job_name || '').trim().slice(0, 120) || card.product;
@@ -1473,7 +1509,7 @@ module.exports = function mountClientBot(app, deps) {
       };
     }
     if (name === 'price_product') {
-      const r = await priceCard(input, cid);
+      const r = await priceCard(input, cid, Object.assign({}, ctx, { fromModel: true }));
       if (r.error) return { error: r.error };
       // The suggested job name rides on the card; the Add to Cart box starts from it (+ " - 50x").
       const hint = String(input.job_name || '').replace(/[\u0000-\u001f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
@@ -1551,7 +1587,7 @@ module.exports = function mountClientBot(app, deps) {
     }
     if (name === 'add_to_cart') {
       if (!who.customer) return { needs_signin: 'The visitor is not signed in. Give the sign-in message: ' + SITE_URLS.login + ' then refresh the page.' };
-      const r = await addToCart(input, who);
+      const r = await addToCart(input, who, Object.assign({}, ctx, { fromModel: true }));
       if (r.needs_signin) return { needs_signin: 'Not signed in. Sign in at ' + SITE_URLS.login + ' and refresh the page.' };
       if (r.error) return { error: r.error, fallback: 'Apologise and point to the Add to Cart button on the quote, or the product page. Retry at most once.' };
       if (r.preview) {
@@ -2096,7 +2132,10 @@ module.exports = function mountClientBot(app, deps) {
         const results = [];
         for (const tu of toolUses) {
           let out;
-          try { out = await runTool(tu.name, tu.input, who, cards, { chatId: chat.id, text: text }); }
+          // What the customer wrote lately (for the size unit: "8x10 ft" said a message earlier still counts).
+          const saidLately = messages.filter(m => m.role === 'user').slice(-4).map(m => typeof m.content === 'string' ? m.content
+            : (m.content || []).filter(b => b && b.type === 'text').map(b => b.text).join(' ')).join('\n').slice(-3000);
+          try { out = await runTool(tu.name, tu.input, who, cards, { chatId: chat.id, text: text, said: saidLately }); }
           catch (e) { out = { error: 'That lookup failed.' }; console.error('CLIENT_BOT tool', tu.name, e.message); }
           used.push({ tool: tu.name, input: tu.input, found: out && (out.error || out.not_found) ? (out.error || out.not_found) :
             (out && out.orders ? out.orders.length + ' order(s)' : out && out.results ? out.results.length + ' product(s)' : 'ok') });
