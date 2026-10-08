@@ -222,9 +222,11 @@ posts it to `POST /api/client-bot/transcribe` → `speech-to-text.js` (OpenAI wi
 Order status answers use the deadline sentence from `deadlineFacts()` (approved date, turnaround, ready date, pick-up or shipping method — no payment, no transit time); turnaround questions are answered from axiomprint.com/pages/turnaround (`turnaroundInfo()`, daily, with a built-in fallback). Past-due jobs (`complete_by` < NOW(), not finished, not waiting on the customer) are escalated by the order tools:
 NovaAI tells the customer, `escalatePastDue()` emails CLIENT_BOT_ESCALATE_TO (default gary@axiomprint.com) via `sendMail()`
 (Gmail API, needs the `gmail.send` delegation scope), once per job per day (`client_escalations`). Graphic design: prompt rule 19 + `estimate_design` (hours from the editable guide × the hourly range, Training →
-Graphic design services; `client_bot_rules.design / design_min / design_max`). First-order coupon: prompt rule 18 from `couponRule()` — SavewithNova10, 10% off (`CLIENT_BOT_WELCOME_CODE`), terms read
-live from `promo_code`; given to anyone who asks, pitched to guests and signed-in customers with no invoiced estimate
-(`hasOrdered()`) after a quote / on hesitation / when ready to order, at most twice.
+Graphic design services; `client_bot_rules.design / design_min / design_max`). Save with Nova coupon: prompt rule 18 from `couponRule(who, channel)` — SavewithNova10, 10% off (`CLIENT_BOT_WELCOME_CODE`), terms read
+live from `promo_code`; ONE use per customer (`multiple_use = 0` means once per customer, not once overall — the website records a use as
+`invoice.invoice_promo_code_id`, checked by `usedCoupon()`). It is the answer when a customer negotiates or asks for a discount; pitched
+after a quote to guests and customers with no invoiced estimate (`hasOrdered()`); never offered to an account that used it ("you've already
+used the Save with Nova coupon"). The phone prompt gets the same rule as its COUPON line.
 It also has `get_template` (die lines of visible options; customer-specific dies only for that customer; PDFs streamed
 by Nova through a signed `/api/client-bot/template/...` link) and `estimate_installation` / `estimate_delivery` (the
 shared `InstallPricing` engine and live admin config via `getInstallPricing()`; customers see totals and line names,
