@@ -881,7 +881,9 @@ module.exports = function mountTalkAi(app, deps, bot) {
     ].join('\n');
     const c = who.customer;
     // The Save with Nova coupon: offered when they negotiate, unless their account already used it.
-    const coupon = bot.couponRule ? String(await bot.couponRule(who, 'phone').catch(() => '') || '').replace(/^18\.\s*/, '') : '';
+    let numIds = [];
+    try { numIds = (JSON.parse(call.caller_match || '[]') || []).map(a => parseInt(a.id)).filter(Boolean); } catch (e) {}
+    const coupon = bot.couponRule ? String(await bot.couponRule(who, 'phone', who.customer ? null : numIds).catch(() => '') || '').replace(/^18\.\s*/, '') : '';
     const live = [
       'NOW: ' + nowLA() + ' (Los Angeles time).',
       langCode(call.language) && langCode(call.language) !== 'en' ? 'LANGUAGE: the caller chose ' + LANGS[langCode(call.language)].name + ' — speak ' + LANGS[langCode(call.language)].name +

@@ -1682,27 +1682,40 @@ module.exports = function mountClientBot(app, deps) {
   }
   // Has this customer's account already used the code? (One use per customer: the website records it on the
   // invoice, invoice.invoice_promo_code_id; any invoice counts, so we never offer a code the checkout refuses.)
+  // A person often has more than one customer record: every account with the same email counts as theirs.
   const usedCache = new Map();
-  async function usedCoupon(cid, promoId) {
-    cid = parseInt(cid); promoId = parseInt(promoId);
-    if (!cid || !promoId) return false;
-    const k = cid + ':' + promoId, hit = usedCache.get(k);
+  async function usedCoupon(cids, promoId) {
+    const ids = [...new Set((Array.isArray(cids) ? cids : [cids]).map(x => parseInt(x)).filter(Boolean))].slice(0, 10);
+    promoId = parseInt(promoId);
+    if (!ids.length || !promoId) return false;
+    const k = ids.join(',') + ':' + promoId, hit = usedCache.get(k);
     if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.yes;
     let yes = false;
-    try { yes = !!(await runQuery('SELECT 1 AS x FROM invoice WHERE invoice_clientid = ' + cid + ' AND invoice_promo_code_id = ' + promoId + ' LIMIT 1')).length; }
-    catch (e) { console.error('CLIENT_BOT usedCoupon', e.message); yes = true; }       // unsure = do not offer
+    try {
+      const same = await runQuery("SELECT c2.id FROM customer c JOIN customer c2 ON c2.email = c.email AND c.email IS NOT NULL AND c.email <> '' " +
+        'WHERE c.id IN (' + ids.join(',') + ') LIMIT 20').catch(() => []);
+      const all = [...new Set(ids.concat(same.map(r => parseInt(r.id)).filter(Boolean)))];
+      yes = !!(await runQuery('SELECT 1 AS x FROM invoice WHERE invoice_clientid IN (' + all.join(',') + ') AND invoice_promo_code_id = ' + promoId + ' LIMIT 1')).length;
+    } catch (e) { console.error('CLIENT_BOT usedCoupon', e.message); yes = true; }       // unsure = do not offer
     usedCache.set(k, { at: Date.now(), yes: yes });
     if (usedCache.size > 5000) usedCache.delete(usedCache.keys().next().value);
     return yes;
   }
   // The coupon rule for the prompt. channel 'phone' = said aloud on a call.
-  async function couponRule(who, channel) {
+  // maybeIds: accounts the caller's phone number is on, when they are not verified (phone only).
+  async function couponRule(who, channel, maybeIds) {
     const o = await welcomeOffer();
     if (!o) return '';
     const phone = channel === 'phone';
     const cid = who && who.customer ? who.customer.id : null;
     const isNew = !cid || !(await hasOrdered(cid));
     const used = cid ? await usedCoupon(cid, o.id) : false;
+    // Not verified, but their number is on an account that already used it: do not offer it, and do not
+    // confirm anything about the account either.
+    if (!cid && Array.isArray(maybeIds) && maybeIds.length && await usedCoupon(maybeIds, o.id)) {
+      return '18. SAVE WITH NOVA COUPON: do NOT offer or share code ' + o.code + ' on this call. If they ask for a discount or a coupon, say prices are set by the website and ' +
+        'coupons are one use per customer; if they want to check their account, they can sign in at axiomprint.com or you take a message for the team. Never invent any other code.';
+    }
     const said = phone ? o.code + ' (say it as "Save with Nova 10", one word, and offer to spell it)' : o.code;
     const example = (isNew ? 'First order with us? ' : '') + 'Use code ' + o.code + ' at checkout for ' + o.amount + (o.min ? ' orders of $' + o.min + '+' : ' your order') + '.';
     const contact = phone ? 'the team (take a message)' : 'the AxiomPrint team';
