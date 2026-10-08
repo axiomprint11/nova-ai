@@ -99,6 +99,7 @@
       if (Number(c.owner) === 1) tags.push('<span class="tk-tag ok">Their assistant</span>');
       else if (c.line_name) tags.push('<span class="tk-tag tr">' + esc(String(c.line_name).split(' ')[0]) + '\u2019s line</span>');
       if (c.hours_mode === 'after') tags.push('<span class="tk-tag">After hours</span>');
+      if (c.hours_mode === 'missed') tags.push('<span class="tk-tag msg">Missed call</span>');
       if (c.emails_n) tags.push('<span class="tk-tag ok">\u2709 Email sent</span>');
       if (c.source !== 'phone') tags.push('<span class="tk-tag test">Test</span>');
       if (c.outcome === 'message') tags.push('<span class="tk-tag msg">Message</span>');
@@ -128,7 +129,7 @@
     chips.push('<span class="tk-chip">' + esc(full(c.created_at)) + '</span>');
     if (c.line_name) chips.push('<span class="tk-chip ok">' + esc(c.line_name) + (Number(c.owner) === 1 ? ' calling their assistant' : Number(c.owner) === 2 ? '\u2019s phone (not verified)' : '\u2019s line') + '</span>');
     if (c.screen_ok != null) chips.push('<span class="tk-chip">' + (Number(c.screen_ok) === 1 ? 'They pressed 1 and took it' : 'Rang them first \u2014 not taken') + '</span>');
-    if (c.hours_mode) chips.push('<span class="tk-chip">' + (c.hours_mode === 'after' ? 'After hours' : 'Regular hours') + '</span>');
+    if (c.hours_mode) chips.push('<span class="tk-chip' + (c.hours_mode === 'missed' ? ' warn' : '') + '">' + (c.hours_mode === 'after' ? 'After hours' : c.hours_mode === 'missed' ? 'Missed call \u2014 the team didn\u2019t pick up' : 'Regular hours') + '</span>');
     if (c.duration_sec != null) chips.push('<span class="tk-chip">' + esc(dur(c.duration_sec)) + '</span>');
     if (c.source === 'phone') chips.push(/passed-(a|b)\b/i.test(c.stir || '') ? '<span class="tk-chip ok" title="' + esc(c.stir) + '">Caller ID carrier-verified</span>'
       : '<span class="tk-chip" title="' + esc(c.stir || 'No STIR/SHAKEN result from the carrier') + '">Caller ID not carrier-verified</span>');
@@ -287,7 +288,8 @@
     document.querySelectorAll('#sModeTabs button').forEach(b => b.classList.toggle('on', b.dataset.k === curMode));
     const md = modes[curMode];
     $('sGreeting').value = md.greeting || ''; $('sGreetingKnown').value = md.greeting_known || ''; $('sModeRules').value = md.rules || '';
-    document.querySelectorAll('.tk-mname').forEach(x => { x.textContent = curMode === 'after' ? 'after hours' : 'regular hours'; });
+    document.querySelectorAll('.tk-mname').forEach(x => { x.textContent = curMode === 'after' ? 'after hours' : curMode === 'missed' ? 'missed calls' : 'regular hours'; });
+    $('sMissedBox').hidden = curMode !== 'missed'; $('sWhoBox').hidden = curMode === 'missed';
     paintChoices();
   }
   function paintHours(h) {
@@ -349,6 +351,9 @@
     $('sForward').value = s.forward_number ? phone(s.forward_number) : '';
     $('sNotify').value = s.notify_to || '';
     $('sBcc').value = s.email_bcc || '';
+    $('sMissedNum').value = s.missed_number ? phone(s.missed_number) : '';
+    $('sMissedState').innerHTML = s.missed_number ? 'Calls to ' + esc(phone(s.missed_number)) + ' get this setup. Make sure it shows <b>Connected</b> under Account managers → Twilio numbers.'
+      : 'No number yet: buy one in Twilio, connect it under Account managers → Twilio numbers, then enter it here.';
     $('sSummary').checked = !!s.summary_mail;
     $('sClosed').value = s.closed_message || '';
     $('sMsg').textContent = ''; $('sMsg').className = 'tk-msg';
@@ -358,7 +363,7 @@
     keepMode(); keepLangGreets();
     const j = await api('/api/admin/talk/settings', { method: 'POST', body: JSON.stringify({ caller_id: callerId, hours: readHours(), modes: modes, rules: $('sRules').value,
       languages: langState ? langState.on.filter(k => k !== 'en') : undefined, lang_greetings: langState ? langState.greet : undefined,
-      transfer_number: $('sTransfer').value, forward_number: $('sForward').value, notify_to: $('sNotify').value, email_bcc: $('sBcc').value, summary_mail: $('sSummary').checked,
+      transfer_number: $('sTransfer').value, forward_number: $('sForward').value, notify_to: $('sNotify').value, email_bcc: $('sBcc').value, missed_number: $('sMissedNum').value, summary_mail: $('sSummary').checked,
       closed_message: $('sClosed').value }) });
     if (!j.ok) { m.className = 'tk-msg err'; m.textContent = j.error || 'Could not save.'; return; }
     const keep = curMode;
@@ -395,7 +400,7 @@
   function paintNumbers(err) {
     if (err) { $('twNums').innerHTML = '<div class="tk-msg err">' + esc(err) + '</div>'; return; }
     $('twNums').innerHTML = twNumbers.length ? twNumbers.map(n => '<div class="tk-num"><div class="n"><b>' + esc(phone(n.number)) + '</b>' +
-      '<small>' + esc(n.main ? 'Main TalkAi number' : n.line ? n.line + '’s line' : (n.name && n.name !== n.number ? n.name : 'Not used by TalkAi')) + '</small></div>' +
+      '<small>' + esc(n.main ? 'Main TalkAi number' : n.missed ? 'Business hours missed calls' : n.line ? n.line + '’s line' : (n.name && n.name !== n.number ? n.name : 'Not used by TalkAi')) + '</small></div>' +
       (n.connected ? '<span class="tk-chip ok">Connected</span>' : '<button type="button" class="tk-btn ghost" data-connect="' + esc(n.sid) + '">Connect to Nova</button>') + '</div>').join('')
       : '<div class="tk-empty" style="padding:10px">No numbers in the Twilio account.</div>';
     $('twNums').querySelectorAll('[data-connect]').forEach(b => {
@@ -458,7 +463,7 @@
     l = l || { main_line: 1, active: 1, screen: 1, own_numbers: [] };
     const box = $('amEdit');
     const used = lines.filter(x => x.id !== l.id).map(x => x.number).filter(Boolean);
-    const numOpts = '<option value="">None — their clients on the main line only</option>' + twNumbers.filter(n => !n.main && (used.indexOf(n.number) === -1 || n.number === l.number))
+    const numOpts = '<option value="">None — their clients on the main line only</option>' + twNumbers.filter(n => !n.main && !n.missed && (used.indexOf(n.number) === -1 || n.number === l.number))
       .map(n => '<option value="' + esc(n.number) + '"' + (l.number === n.number ? ' selected' : '') + '>' + esc(phone(n.number)) + (n.connected ? '' : ' (not connected yet)') + '</option>').join('') +
       (l.number && !twNumbers.some(n => n.number === l.number) ? '<option value="' + esc(l.number) + '" selected>' + esc(phone(l.number)) + '</option>' : '');
     const own = (l.own_numbers || []).concat(['', '', '']).slice(0, 3);

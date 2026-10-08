@@ -309,7 +309,7 @@
         <label class="tk-h" for="tryLang" style="display:block;margin-top:8px">Language</label>
         <select id="tryLang" class="tk-select"><option value="">English</option><option value="es">Spanish</option><option value="hy">Armenian</option><option value="ru">Russian</option></select>
         <label class="tk-h" for="tryHours" style="display:block;margin-top:8px">Time of day</label>
-        <select id="tryHours" class="tk-select"><option value="">Now</option><option value="regular">Regular hours</option><option value="after">After hours</option></select>
+        <select id="tryHours" class="tk-select"><option value="">Now</option><option value="regular">Regular hours</option><option value="after">After hours</option><option value="missed">Missed call (team didn’t answer)</option></select>
         <button type="button" class="tk-btn ghost" id="tryNew" style="width:100%;margin-top:12px">Start a new test call</button>
         <div style="margin-top:14px" class="tk-hint">Prices, order details, escalations and quote emails are real (they really go out). Transfers are not made on a test.</div>
       </aside>
@@ -340,13 +340,25 @@
             <div class="tk-mtabs" id="sModeTabs">
               <button type="button" data-k="regular" class="on">Regular hours</button>
               <button type="button" data-k="after">After hours</button>
+              <button type="button" data-k="missed">Business hours missed calls</button>
             </div>
+            <div id="sMissedBox" hidden>
+              <h3 style="margin-top:12px">Business Hours Missed Call Agent</h3>
+              <p class="sub">A separate Twilio number for calls your team doesn't pick up during business hours. In Dialpad, send unanswered calls
+                (after 20 seconds) to this number: NovaAI picks up with the greeting and rules below — apologising for the wait, helping straight away,
+                and taking a message when the caller needs a person. It never transfers back to the team.</p>
+              <label class="tk-h" for="sMissedNum" style="display:block">Missed-call number (Twilio)</label>
+              <input type="text" id="sMissedNum" placeholder="e.g. 747 555 0199" style="max-width:280px">
+              <div id="sMissedState" style="margin-top:6px;font-size:12px;color:var(--muted);line-height:1.45"></div>
+            </div>
+            <div id="sWhoBox">
             <h3 style="margin-top:12px">Who answers</h3>
             <div class="tk-mode" id="sMode">
               <button type="button" data-m="ai" class="ai"><b>NovaAI answers</b><small>Prices, products, turnaround and order status. Falls back to the forward number (or the closed message) if the voice service is down.</small></button>
               <button type="button" data-m="ring_ai"><b>Ring the team first</b><small>Rings the "Transfer to" number (or the account manager's phone) for <span class="tk-ring"></span> seconds; NovaAI answers if nobody picks up.</small></button>
               <button type="button" data-m="forward"><b>Forward to the team</b><small>Every call rings the forward number. NovaAI stays quiet.</small></button>
               <button type="button" data-m="message"><b>Closed message</b><small>Callers hear the closed message and the call ends.</small></button>
+            </div>
             </div>
             <h3 style="margin-top:14px">Greeting</h3>
             <p class="sub">The first thing callers hear. Keep the two legal points: that NovaAI is an AI assistant, and that the call is recorded.</p>

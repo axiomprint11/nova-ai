@@ -140,6 +140,17 @@ native speaker). The ElevenLabs agent needs the languages under **Additional lan
 for Armenian) and **Detect language** turned on under System tools. The press-a-key menu (`/api/talk/twilio/lang`)
 is still in the code, off unless `TALKAI_LANG_MENU=1`.
 
+## Business hours missed calls
+
+A third setup next to Regular and After hours (Training → "Business hours missed calls", `talk_settings.modes.missed`,
+number in `talk_settings.missed_number`). A separate Twilio number, connected to Nova like the others; Dialpad sends
+calls the team doesn't answer within 20 seconds to it. Every call to that number gets the missed setup whatever the
+time: its own greeting ("sorry for the wait…", `{name}` for callers we know), its own rules (help at once, take a message
+when a person is needed), always NovaAI, never rings anyone first, no transfers (the team just didn't pick up). A
+known caller's account manager notes still apply, but not their line's greeting. Calls are tagged "Missed call"
+(`talk_calls.hours_mode = 'missed'`). Dialpad must pass the caller's own number on forwarded calls, or caller ID
+recognition can't work.
+
 ## Recordings
 
 The post-call audio webhook (base64 MP3) is the fast path, but it is large and can be lost (a proxy body limit,

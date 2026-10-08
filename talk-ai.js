@@ -85,6 +85,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
     db.run('CREATE INDEX IF NOT EXISTS talk_emails_call ON talk_emails(call_id)');
     // Who gets a blind copy of every email to a caller. Recordings fetched from ElevenLabs: tries so far.
     db.run('ALTER TABLE talk_settings ADD COLUMN email_bcc TEXT', () => {});
+    // The business-hours missed-call number: Dialpad sends calls the team didn't pick up to it.
+    db.run('ALTER TABLE talk_settings ADD COLUMN missed_number TEXT', () => {});
     db.run('ALTER TABLE talk_calls ADD COLUMN audio_tries INTEGER DEFAULT 0', () => {});
   });
   const dbGet = (sql, p) => new Promise((ok, no) => db.get(sql, p || [], (e, r) => e ? no(e) : ok(r)));
@@ -125,7 +127,12 @@ module.exports = function mountTalkAi(app, deps, bot) {
     after: { answer: 'ai',
       greeting: 'Hi, you\u2019ve reached AxiomPrint. Our team is out right now, but I\u2019m NovaAI, an AI assistant, and this call is recorded. How can I help you?',
       greeting_known: 'Hi {name}, thanks for calling AxiomPrint! Our team is out right now, but I\u2019m NovaAI, an AI assistant, and this call is recorded. How can I help you?',
-      rules: '- The team is closed now: when the caller needs a person, say when we open again (the HOURS line) and take a message so the team calls back first thing.\n- Prices, products, turnaround and order status work as usual.' }
+      rules: '- The team is closed now: when the caller needs a person, say when we open again (the HOURS line) and take a message so the team calls back first thing.\n- Prices, products, turnaround and order status work as usual.' },
+    // A call the team didn't pick up in business hours (Dialpad forwards it to the missed-call number).
+    missed: { answer: 'ai',
+      greeting: 'Hi, thanks for calling AxiomPrint, and sorry for the wait. Our team is with other customers right now. I\u2019m NovaAI, an AI assistant, and this call is recorded. I can help you right away, or take a message so the team calls you back. What can I do for you?',
+      greeting_known: 'Hi {name}, thanks for calling AxiomPrint, and sorry for the wait. Our team is with other customers right now. I\u2019m NovaAI, an AI assistant, and this call is recorded. I can help you right away, or take a message so the team calls you back. What can I do for you?',
+      rules: '- The caller just waited for the team and nobody picked up: be warm and quick, never make them repeat themselves.\n- Answer what you can straight away (prices, products, turnaround, order status).\n- If they need a person (artwork, changes to an order, a complaint, anything you cannot do), take a message with their name, callback number and what it is about, and say the team will call them back shortly, today.\n- Do not offer to transfer them: the team could not pick up.' }
   };
   const ANSWERS = ['ai', 'ring_ai', 'forward', 'message'];
   const hhmm = (v, d) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v || '')) ? String(v) : d;
@@ -162,7 +169,9 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const legacyAnswer = r && ANSWERS.indexOf(r.mode) > -1 ? r.mode : 'ai';
     const regDef = Object.assign({}, MODE_DEFAULTS.regular, { answer: legacyAnswer, greeting: s.greeting, greeting_known: s.greeting_known });
     s.modes = { regular: normMode(modes && modes.regular, regDef),
-      after: normMode(modes && modes.after, Object.assign({}, MODE_DEFAULTS.after, { answer: legacyAnswer === 'ring_ai' ? 'ai' : legacyAnswer })) };
+      after: normMode(modes && modes.after, Object.assign({}, MODE_DEFAULTS.after, { answer: legacyAnswer === 'ring_ai' ? 'ai' : legacyAnswer })),
+      missed: Object.assign(normMode(modes && modes.missed, MODE_DEFAULTS.missed), { answer: 'ai' }) };       // always NovaAI
+    s.missed_number = (r && r.missed_number) || '';
     let langs = null, lg = null;
     try { langs = r && r.languages ? JSON.parse(r.languages) : null; } catch (e) {}
     try { lg = r && r.lang_greetings ? JSON.parse(r.lang_greetings) : null; } catch (e) {}
@@ -299,9 +308,10 @@ module.exports = function mountTalkAi(app, deps, bot) {
   // This call's settings: the hours mode, and the line's transfer number / message address on top.
   function forCall(s, call, line) {
     const hn = hoursNow(s);
-    const modeKey = call && (call.hours_mode === 'regular' || call.hours_mode === 'after') ? call.hours_mode : hn.mode;
+    const modeKey = call && (call.hours_mode === 'regular' || call.hours_mode === 'after' || call.hours_mode === 'missed') ? call.hours_mode : hn.mode;
     return Object.assign({}, s, { _line: line || null, _hours: hn, _modeKey: modeKey, _mode: s.modes[modeKey],
-      transfer_number: modeKey === 'after' ? '' : ((line && line.ring_number) || s.transfer_number),
+      // No transfers after hours, nor on a missed call (the team just didn't pick up).
+      transfer_number: modeKey === 'after' || modeKey === 'missed' ? '' : ((line && line.ring_number) || s.transfer_number),
       notify_to: (line && line.notify_to) || s.notify_to });
   }
 
@@ -478,14 +488,20 @@ module.exports = function mountTalkAi(app, deps, bot) {
     // manager's line answers; and whether it is regular or after hours.
     const match = await lookupQuick(from);
     const known = await applyMatch(call.id, match, String(b.StirVerstat || '').slice(0, 60), s, 'phone').catch(() => ({}));
-    const line = await routeLine(to, match).catch(() => null);
     const hn = hoursNow(s);
-    const mode = s.modes[hn.mode];
+    // The missed-call number: the team didn't pick up (Dialpad passed the call on). Its own greeting and
+    // rules, always NovaAI, never ringing anyone first. Their account manager's notes still apply.
+    const missedCall = !!(s.missed_number && last10(to) === last10(s.missed_number));
+    let line = await routeLine(missedCall ? '' : to, match).catch(() => null);
+    if (missedCall && line) line = Object.assign({}, line, { greeting: null, why: 'client' });
+    const modeKey = missedCall ? 'missed' : hn.mode;
+    const mode = s.modes[modeKey];
     let answer = mode.answer;
-    if (line && Number(line.ring_first) && hn.open && answer === 'ai') answer = 'ring_ai';
+    if (!missedCall && line && Number(line.ring_first) && hn.open && answer === 'ai') answer = 'ring_ai';
     const ringTo = (line && line.ring_number) || s.transfer_number;
-    await dbRun('UPDATE talk_calls SET line_id = ?, hours_mode = ? WHERE id = ?', [line ? line.id : null, hn.mode, call.id]).catch(() => {});
-    const who = 'Call ' + call.id + ' from ' + from + (line ? ' (' + amFirst(line) + '’s line' + (line.why === 'client' ? ', their client' : '') + ')' : '') + ' · ' + (hn.open ? 'regular' : 'after') + ' hours';
+    await dbRun('UPDATE talk_calls SET line_id = ?, hours_mode = ? WHERE id = ?', [line ? line.id : null, modeKey, call.id]).catch(() => {});
+    const who = 'Call ' + call.id + ' from ' + from + (line ? ' (' + amFirst(line) + '’s line' + (line.why === 'client' ? ', their client' : '') + ')' : '') + ' · ' +
+      (missedCall ? 'missed call (the team didn\u2019t pick up)' : (hn.open ? 'regular' : 'after') + ' hours');
     const mark = (how, err) => dbRun("UPDATE talk_calls SET answered_by = ?, error = COALESCE(?, error), updated_at = datetime('now') WHERE id = ?", [how, err || null, call.id]).catch(() => {});
     if (answer === 'forward' && s.forward_number) {
       await mark('forward'); hit('twilio-voice', true, who + ' → forwarded to ' + s.forward_number);
@@ -537,9 +553,9 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const lang = s.languages.find(k => LANGS[k].digit === digit) || 'en';
     await dbRun("UPDATE talk_calls SET language = ?, lang_pick = ?, updated_at = datetime('now') WHERE id = ?", [lang, digit && LANGS[lang].digit === digit ? digit : null, call.id]).catch(() => {});
     const line = await lineById(call.line_id);
-    const mode = s.modes[call.hours_mode === 'after' ? 'after' : 'regular'];
+    const mode = s.modes[s.modes[call.hours_mode] ? call.hours_mode : 'regular'];
     try {
-      const tw = await registerCall(call, call.from_number, call.to_number, s, greetingFor(s, call.caller_first, mode, line, false, lang), line, lang);
+      const tw = await registerCall(call, call.from_number, call.to_number, s, greetingFor(s, call.caller_first, mode, call.hours_mode === 'missed' && line ? Object.assign({}, line, { greeting: null }) : line, false, lang), line, lang);
       await dbRun("UPDATE talk_calls SET answered_by = 'ai' WHERE id = ?", [call.id]).catch(() => {});
       hit('lang', true, 'Call ' + call.id + ': ' + LANGS[lang].name + (digit ? ' (pressed ' + digit + ')' : ' (no key)') + ' → NovaAI');
       return res.send(tw);
@@ -811,7 +827,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
       'PHONE RULES (set by AxiomPrint — follow them unless they conflict with the rules above):',
       String(s.rules || '').slice(0, 4000),
       '',
-      (s._modeKey === 'after' ? 'AFTER-HOURS RULES (this call came in outside opening hours):' : 'REGULAR-HOURS RULES (this call came in during opening hours):'),
+      (s._modeKey === 'missed' ? 'MISSED-CALL RULES (the team did not pick up this call, so it was passed to you; the caller has been waiting):'
+        : s._modeKey === 'after' ? 'AFTER-HOURS RULES (this call came in outside opening hours):' : 'REGULAR-HOURS RULES (this call came in during opening hours):'),
       String((s._mode && s._mode.rules) || '').slice(0, 4000),
       s._line ? '\nYOU ANSWER FOR ' + (s._line.am_name || 'an account manager') + (s._line.am_title ? ', ' + s._line.am_title : '') + ' at AxiomPrint. ' +
         'This is ' + amFirst(s._line) + '\u2019s line: you are ' + amFirst(s._line) + '\u2019s assistant, NovaAI. Messages go to ' +
@@ -1756,7 +1773,15 @@ module.exports = function mountTalkAi(app, deps, bot) {
     if (bcc && !/^[^\s@,]+@[^\s@,]+\.[^\s@,]+(\s*,\s*[^\s@,]+@[^\s@,]+\.[^\s@,]+)*$/.test(bcc)) return res.status(400).json({ ok: false, error: 'Check the email for copies (BCC).' });
     const callerId = ['carrier', 'always', 'never'].indexOf(b.caller_id) > -1 ? b.caller_id : cur.caller_id;
     const hours = b.hours ? normHours(b.hours) : cur.hours;
-    const modes = b.modes ? { regular: normMode(b.modes.regular, cur.modes.regular), after: normMode(b.modes.after, cur.modes.after) } : cur.modes;
+    const modes = b.modes ? { regular: normMode(b.modes.regular, cur.modes.regular), after: normMode(b.modes.after, cur.modes.after),
+      missed: Object.assign(normMode(b.modes.missed, cur.modes.missed), { answer: 'ai' }) } : cur.modes;
+    let missedNum;
+    try { missedNum = num(b.missed_number, 'missed_number'); } catch (e) { return res.status(400).json({ ok: false, error: 'Missed-call number: ' + e.message }); }
+    if (missedNum) {
+      if (last10(missedNum) === last10(env('TALKAI_NUMBER'))) return res.status(400).json({ ok: false, error: 'The missed-call number has to be a different Twilio number from the main TalkAi number.' });
+      const clash = await dbGet('SELECT am_name FROM talk_lines WHERE number = ? AND active = 1', [missedNum]).catch(() => null);
+      if (clash) return res.status(400).json({ ok: false, error: 'That number already answers for ' + clash.am_name + '.' });
+    }
     if ((modes.regular.answer === 'forward' || modes.after.answer === 'forward') && !forward) return res.status(400).json({ ok: false, error: 'Add the forward number first (Numbers and messages).' });
     if (modes.regular.answer === 'ring_ai' && !transfer) return res.status(400).json({ ok: false, error: 'Add the "Transfer to" number first \u2014 that is the phone that rings before NovaAI answers.' });
     await dbRun('INSERT OR REPLACE INTO talk_settings (id, mode, greeting, rules, transfer_number, forward_number, notify_to, closed_message, summary_mail, caller_id, greeting_known, updated_at, updated_by) ' +
@@ -1769,7 +1794,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const langs = Array.isArray(b.languages) ? b.languages.map(String).filter(k => LANGS[k] && k !== 'en') : cur.languages.filter(k => k !== 'en');
     const lg = {};
     Object.keys(LANGS).filter(k => k !== 'en').forEach(k => { const v = b.lang_greetings && b.lang_greetings[k]; lg[k] = v == null ? cur.lang_greetings[k] : String(v).slice(0, 600); });
-    await dbRun('UPDATE talk_settings SET email_bcc = ? WHERE id = 1', [bcc]);
+    await dbRun('UPDATE talk_settings SET email_bcc = ?, missed_number = ? WHERE id = 1', [bcc, missedNum || null]);
     await dbRun('UPDATE talk_settings SET languages = ?, lang_menu = ?, lang_greetings = ? WHERE id = 1',
       [JSON.stringify(langs), b.lang_menu == null ? cur.lang_menu : (b.lang_menu ? 1 : 0), JSON.stringify(lg)]);
     res.json({ ok: true, settings: await settings() });
@@ -1874,11 +1899,11 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const known = from ? await applyMatch(r.lastID, match, '', s, 'try').catch(() => ({})) : {};
     // As if it came in on an account manager's number / at a chosen time of day.
     const line = picked ? Object.assign({}, picked, picked.number ? { why: 'number' } : {}) : (b.line_id === 'auto' ? await routeLine('', match).catch(() => null) : null);
-    const modeKey = b.hours === 'regular' || b.hours === 'after' ? b.hours : hoursNow(s).mode;
+    const modeKey = b.hours === 'regular' || b.hours === 'after' || b.hours === 'missed' ? b.hours : hoursNow(s).mode;
     const tlang = langCode(b.lang) && s.languages.indexOf(langCode(b.lang)) > -1 ? langCode(b.lang) : null;
     await dbRun('UPDATE talk_calls SET line_id = ?, hours_mode = ?, language = ? WHERE id = ?', [line ? line.id : null, modeKey, tlang, r.lastID]);
     const c = await dbGet('SELECT customer_name, company FROM talk_calls WHERE id = ?', [r.lastID]);
-    res.json({ ok: true, call_id: r.lastID, greeting: greetingFor(s, known.first, s.modes[modeKey], line, false, tlang), hours: modeKey, language: tlang ? LANGS[tlang].name : null,
+    res.json({ ok: true, call_id: r.lastID, greeting: greetingFor(s, known.first, s.modes[modeKey], modeKey === 'missed' && line ? Object.assign({}, line, { greeting: null, why: 'client' }) : line, false, tlang), hours: modeKey, language: tlang ? LANGS[tlang].name : null,
       line: line ? (line.am_name || 'Account manager') + '\u2019s line' : null,
       recognised: known.trusted ? (c.customer_name || '') + (c.company ? ' (' + c.company + ')' : '') : null });
   });
@@ -1993,11 +2018,13 @@ module.exports = function mountTalkAi(app, deps, bot) {
   app.get('/api/admin/talk/twilio/numbers', auth, adminOnly, async (req, res) => {
     try {
       const j = await twilioApi('GET', '/IncomingPhoneNumbers.json?PageSize=100');
+      const s = await settings();
       const lines = await dbAll('SELECT id, am_name, number FROM talk_lines WHERE active = 1');
       res.json({ ok: true, numbers: (j.incoming_phone_numbers || []).map(n => {
         const l = lines.find(x => x.number && last10(x.number) === last10(n.phone_number));
         return { sid: n.sid, number: n.phone_number, name: n.friendly_name, connected: n.voice_url === NOVA_URL + '/api/talk/twilio/voice',
-          voice_url: n.voice_url || '', main: last10(n.phone_number) === last10(env('TALKAI_NUMBER')), line: l ? l.am_name : null };
+          voice_url: n.voice_url || '', main: last10(n.phone_number) === last10(env('TALKAI_NUMBER')), line: l ? l.am_name : null,
+          missed: !!(s.missed_number && last10(n.phone_number) === last10(s.missed_number)) };
       }) });
     } catch (e) { res.status(502).json({ ok: false, error: e.message }); }
   });
