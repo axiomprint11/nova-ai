@@ -134,6 +134,7 @@
     if (c.source === 'phone') chips.push(/passed-(a|b)\b/i.test(c.stir || '') ? '<span class="tk-chip ok" title="' + esc(c.stir) + '">Caller ID carrier-verified</span>'
       : '<span class="tk-chip" title="' + esc(c.stir || 'No STIR/SHAKEN result from the carrier') + '">Caller ID not carrier-verified</span>');
     if (c.caller_first) chips.push('<span class="tk-chip">Greeted as ' + esc(c.caller_first) + '</span>');
+    if (Number(c.returning) === 1) chips.push('<span class="tk-chip">Talked to NovaAI before \u2014 short greeting</span>');
     if (c.language) chips.push('<span class="tk-chip">' + esc(lang(c.language)) + '</span>');
     // The usual case (NovaAI answered, call completed) needs no chip; only the exceptions are shown.
     if (c.answered_by && c.answered_by !== 'ai') chips.push('<span class="tk-chip">' + esc({ ai: 'Answered by NovaAI', forward: 'Forwarded to the team', message: 'Closed message', person: 'Answered by the team', ring: 'Ringing the team', menu: 'At the language menu' }[c.answered_by] || c.answered_by) + '</span>');
@@ -234,7 +235,7 @@
     tryState.busy = false;
     tryState.callId = j.call_id || null;
     tryState.msgs.push({ role: 'assistant', content: j.greeting || (ov && ov.settings ? ov.settings.greeting : 'Hi! How can I help?'),
-      note: [j.line, j.language, j.hours === 'after' ? 'After hours' : 'Regular hours', j.recognised ? 'Recognised by the number as ' + j.recognised : ($('tryFrom').value.trim() ? 'That number is not on a customer account' : null)].filter(Boolean).join(' \u00b7 ') });
+      note: [j.line, j.language, j.hours === 'after' ? 'After hours' : j.hours === 'missed' ? 'Missed call' : 'Regular hours', j.returning ? 'Talked to NovaAI before' : null, j.recognised ? 'Recognised by the number as ' + j.recognised : ($('tryFrom').value.trim() ? 'That number is not on a customer account' : null)].filter(Boolean).join(' \u00b7 ') });
     paintTry();
     $('tryInput').focus();
   }
@@ -282,12 +283,12 @@
   }
   function keepMode() {
     if (!modes) return;
-    Object.assign(modes[curMode], { greeting: $('sGreeting').value, greeting_known: $('sGreetingKnown').value, rules: $('sModeRules').value });
+    Object.assign(modes[curMode], { greeting: $('sGreeting').value, greeting_known: $('sGreetingKnown').value, greeting_returning: $('sGreetingReturning').value, rules: $('sModeRules').value });
   }
   function paintMode() {
     document.querySelectorAll('#sModeTabs button').forEach(b => b.classList.toggle('on', b.dataset.k === curMode));
     const md = modes[curMode];
-    $('sGreeting').value = md.greeting || ''; $('sGreetingKnown').value = md.greeting_known || ''; $('sModeRules').value = md.rules || '';
+    $('sGreeting').value = md.greeting || ''; $('sGreetingKnown').value = md.greeting_known || ''; $('sGreetingReturning').value = md.greeting_returning || ''; $('sModeRules').value = md.rules || '';
     document.querySelectorAll('.tk-mname').forEach(x => { x.textContent = curMode === 'after' ? 'after hours' : curMode === 'missed' ? 'missed calls' : 'regular hours'; });
     $('sMissedBox').hidden = curMode !== 'missed'; $('sWhoBox').hidden = curMode === 'missed';
     paintChoices();
@@ -351,6 +352,7 @@
     $('sForward').value = s.forward_number ? phone(s.forward_number) : '';
     $('sNotify').value = s.notify_to || '';
     $('sBcc').value = s.email_bcc || '';
+    $('sReturningShort').checked = !!s.returning_short;
     $('sMissedNum').value = s.missed_number ? phone(s.missed_number) : '';
     $('sMissedState').innerHTML = s.missed_number ? 'Calls to ' + esc(phone(s.missed_number)) + ' get this setup. Make sure it shows <b>Connected</b> under Account managers → Twilio numbers.'
       : 'No number yet: buy one in Twilio, connect it under Account managers → Twilio numbers, then enter it here.';
@@ -363,7 +365,7 @@
     keepMode(); keepLangGreets();
     const j = await api('/api/admin/talk/settings', { method: 'POST', body: JSON.stringify({ caller_id: callerId, hours: readHours(), modes: modes, rules: $('sRules').value,
       languages: langState ? langState.on.filter(k => k !== 'en') : undefined, lang_greetings: langState ? langState.greet : undefined,
-      transfer_number: $('sTransfer').value, forward_number: $('sForward').value, notify_to: $('sNotify').value, email_bcc: $('sBcc').value, missed_number: $('sMissedNum').value, summary_mail: $('sSummary').checked,
+      transfer_number: $('sTransfer').value, forward_number: $('sForward').value, notify_to: $('sNotify').value, email_bcc: $('sBcc').value, returning_short: $('sReturningShort').checked, missed_number: $('sMissedNum').value, summary_mail: $('sSummary').checked,
       closed_message: $('sClosed').value }) });
     if (!j.ok) { m.className = 'tk-msg err'; m.textContent = j.error || 'Could not save.'; return; }
     const keep = curMode;

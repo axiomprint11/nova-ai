@@ -366,6 +366,11 @@
             <h3 style="margin-top:12px">Greeting for callers we know</h3>
             <p class="sub">When the calling number is on a customer account. <b>{name}</b> is their first name.</p>
             <textarea id="sGreetingKnown" rows="3"></textarea>
+            <h3 style="margin-top:12px">Short greeting for callers who talked to NovaAI before</h3>
+            <p class="sub">They already know NovaAI, so no long introduction — used when their number called NovaAI before, or their account used the
+              website chat. <b>{name}</b> is their first name (left out when unknown). Keep “recorded line” — California needs it on every call.</p>
+            <textarea id="sGreetingReturning" rows="2"></textarea>
+            <label class="tk-check"><input type="checkbox" id="sReturningShort"> Use the short greeting for returning callers (all setups and languages)</label>
             <h3 style="margin-top:12px">Rules for this time of day</h3>
             <p class="sub">On top of the phone rules below, only during <span class="tk-mname">regular hours</span>.</p>
             <textarea id="sModeRules" rows="4"></textarea>

@@ -87,6 +87,9 @@ module.exports = function mountTalkAi(app, deps, bot) {
     db.run('ALTER TABLE talk_settings ADD COLUMN email_bcc TEXT', () => {});
     // The business-hours missed-call number: Dialpad sends calls the team didn't pick up to it.
     db.run('ALTER TABLE talk_settings ADD COLUMN missed_number TEXT', () => {});
+    // Shorter greeting for callers who have talked to NovaAI before (phone or website chat): on/off, and per call.
+    db.run('ALTER TABLE talk_settings ADD COLUMN returning_short INTEGER', () => {});
+    db.run('ALTER TABLE talk_calls ADD COLUMN returning INTEGER', () => {});
     db.run('ALTER TABLE talk_calls ADD COLUMN audio_tries INTEGER DEFAULT 0', () => {});
   });
   const dbGet = (sql, p) => new Promise((ok, no) => db.get(sql, p || [], (e, r) => e ? no(e) : ok(r)));
@@ -123,13 +126,16 @@ module.exports = function mountTalkAi(app, deps, bot) {
   // nobody picks up) | forward | message.
   const MODE_DEFAULTS = {
     regular: { answer: 'ai', greeting: DEFAULTS.greeting, greeting_known: DEFAULTS.greeting_known,
+      greeting_returning: 'Hi {name}, NovaAI here, on a recorded line. Happy to help \u2014 what can I do for you?',
       rules: '- Our team is in: when a caller wants a person, offer to transfer them (or take a message if transfers are off).' },
     after: { answer: 'ai',
+      greeting_returning: 'Hi {name}, NovaAI here, on a recorded line. The team is out, but I\u2019m happy to help \u2014 what can I do for you?',
       greeting: 'Hi, you\u2019ve reached AxiomPrint. Our team is out right now, but I\u2019m NovaAI, an AI assistant, and this call is recorded. How can I help you?',
       greeting_known: 'Hi {name}, thanks for calling AxiomPrint! Our team is out right now, but I\u2019m NovaAI, an AI assistant, and this call is recorded. How can I help you?',
       rules: '- The team is closed now: when the caller needs a person, say when we open again (the HOURS line) and take a message so the team calls back first thing.\n- Prices, products, turnaround and order status work as usual.' },
     // A call the team didn't pick up in business hours (Dialpad forwards it to the missed-call number).
     missed: { answer: 'ai',
+      greeting_returning: 'Hi {name}, sorry for the wait \u2014 NovaAI here, on a recorded line. Happy to help!',
       greeting: 'Hi, thanks for calling AxiomPrint, and sorry for the wait. Our team is with other customers right now. I\u2019m NovaAI, an AI assistant, and this call is recorded. I can help you right away, or take a message so the team calls you back. What can I do for you?',
       greeting_known: 'Hi {name}, thanks for calling AxiomPrint, and sorry for the wait. Our team is with other customers right now. I\u2019m NovaAI, an AI assistant, and this call is recorded. I can help you right away, or take a message so the team calls you back. What can I do for you?',
       rules: '- The caller just waited for the team and nobody picked up: be warm and quick, never make them repeat themselves.\n- Answer what you can straight away (prices, products, turnaround, order status).\n- If they need a person (artwork, changes to an order, a complaint, anything you cannot do), take a message with their name, callback number and what it is about, and say the team will call them back shortly, today.\n- Do not offer to transfer them: the team could not pick up.' }
@@ -150,7 +156,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
     m = m || {};
     const t = (v, d, n) => (v == null || String(v).trim() === '') ? d : String(v).slice(0, n);
     return { answer: ANSWERS.indexOf(m.answer) > -1 ? m.answer : def.answer, greeting: t(m.greeting, def.greeting, 600),
-      greeting_known: t(m.greeting_known, def.greeting_known, 600), rules: m.rules == null ? def.rules : String(m.rules).slice(0, 4000) };
+      greeting_known: t(m.greeting_known, def.greeting_known, 600), greeting_returning: t(m.greeting_returning, def.greeting_returning, 400),
+      rules: m.rules == null ? def.rules : String(m.rules).slice(0, 4000) };
   }
   async function settings() {
     const r = await dbGet('SELECT * FROM talk_settings WHERE id = 1').catch(() => null);
@@ -172,6 +179,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
       after: normMode(modes && modes.after, Object.assign({}, MODE_DEFAULTS.after, { answer: legacyAnswer === 'ring_ai' ? 'ai' : legacyAnswer })),
       missed: Object.assign(normMode(modes && modes.missed, MODE_DEFAULTS.missed), { answer: 'ai' }) };       // always NovaAI
     s.missed_number = (r && r.missed_number) || '';
+    s.returning_short = r && r.returning_short != null ? (Number(r.returning_short) ? 1 : 0) : 1;
     let langs = null, lg = null;
     try { langs = r && r.languages ? JSON.parse(r.languages) : null; } catch (e) {}
     try { lg = r && r.lang_greetings ? JSON.parse(r.lang_greetings) : null; } catch (e) {}
@@ -389,15 +397,38 @@ module.exports = function mountTalkAi(app, deps, bot) {
   // The first thing the caller hears: the line's own greeting, else the hours mode's (the "callers we know"
   // one when their number is on an account). {name} = their first name, {am} = the account manager's.
   const MISSED = 'Hi {name}, {am} can\u2019t come to the phone right now. I\u2019m NovaAI, an AI assistant, and this call is recorded. How can I help you?';
-  function greetingFor(s, first, mode, line, missed, lang) {
+  // Short versions for callers who have talked to NovaAI before (they already know it is an AI assistant;
+  // the recorded line is still said).
+  const RETURNING_LANG = {
+    es: 'Hola {name}, habla NovaAI, en una línea grabada. ¿En qué puedo ayudarle?',
+    hy: 'Բարև {name}, NovaAI-ն է, զանգը ձայնագրվում է։ Ինչո՞վ կարող եմ օգնել։',
+    ru: 'Здравствуйте {name}, это NovaAI, звонок записывается. Чем могу помочь?' };
+  const RETURNING_LINE = 'Hi {name}, NovaAI here for {am}, on a recorded line. Happy to help \u2014 what can I do for you?';
+  function greetingFor(s, first, mode, line, missed, lang, returning) {
     mode = mode || s.modes.regular;
     if (s.caller_id === 'never') first = '';
-    const tpl = lang && lang !== 'en' && s.lang_greetings[lang] ? s.lang_greetings[lang]
+    const back = !!(returning && s.returning_short);
+    const tpl = back ? (lang && lang !== 'en' && RETURNING_LANG[lang] ? RETURNING_LANG[lang]
+        : line && (missed || line.why === 'number') ? RETURNING_LINE : mode.greeting_returning)
+      : lang && lang !== 'en' && s.lang_greetings[lang] ? s.lang_greetings[lang]
       : missed ? MISSED : (line && line.greeting) ? line.greeting
       : (line && line.why === 'number') ? MISSED                       // their own number: NovaAI picks up their calls
       : (first ? mode.greeting_known : mode.greeting);
     return String(tpl || mode.greeting).replace(/\{am\}/gi, amFirst(line))
       .replace(/\s*\{name\}/gi, first ? ' ' + first : '').replace(/^\s+/, '').replace(/\s+,/g, ',');
+  }
+  // Has this caller talked to NovaAI before? A past call from the number that NovaAI answered and the caller
+  // spoke on, or a website chat by an account the number belongs to.
+  async function isReturning(from, callId, match) {
+    const d = last10(from);
+    if (d.length !== 10) return false;
+    const r = await dbGet("SELECT 1 AS y FROM talk_calls c WHERE c.from_number LIKE ? AND c.id < ? AND c.source = 'phone' AND COALESCE(c.owner, 0) = 0 " +
+      "AND (c.transcript IS NOT NULL OR EXISTS (SELECT 1 FROM talk_turns t WHERE t.call_id = c.id AND t.role = 'caller')) LIMIT 1", ['%' + d, callId]).catch(() => null);
+    if (r) return true;
+    const ids = ((match && match.accounts) || []).map(a => parseInt(a.id)).filter(Boolean).slice(0, 8);
+    if (!ids.length) return false;
+    const c = await dbGet("SELECT 1 AS y FROM client_chats ch WHERE ch.customer_id IN (" + ids.join(',') + ") AND EXISTS (SELECT 1 FROM client_messages m WHERE m.chat_id = ch.id AND m.role = 'user') LIMIT 1").catch(() => null);
+    return !!c;
   }
   async function lookupQuick(from) {
     try { return await Promise.race([lookupCaller(from), new Promise(r => setTimeout(() => r(null), 3000))]); }
@@ -489,6 +520,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const match = await lookupQuick(from);
     const known = await applyMatch(call.id, match, String(b.StirVerstat || '').slice(0, 60), s, 'phone').catch(() => ({}));
     const hn = hoursNow(s);
+    const back = s.returning_short ? await isReturning(from, call.id, match).catch(() => false) : false;
+    if (back) await dbRun('UPDATE talk_calls SET returning = 1 WHERE id = ?', [call.id]).catch(() => {});
     // The missed-call number: the team didn't pick up (Dialpad passed the call on). Its own greeting and
     // rules, always NovaAI, never ringing anyone first. Their account manager's notes still apply.
     const missedCall = !!(s.missed_number && last10(to) === last10(s.missed_number));
@@ -527,8 +560,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
         return res.send(langMenu(s, call.id));
       }
       try {
-        const tw = await registerCall(call, from, to, s, greetingFor(s, known.first, mode, line, false, lang), line, lang);
-        await mark('ai'); hit('twilio-voice', true, who + ' → NovaAI');
+        const tw = await registerCall(call, from, to, s, greetingFor(s, known.first, mode, line, false, lang, back), line, lang);
+        await mark('ai'); hit('twilio-voice', true, who + ' → NovaAI' + (back ? ' (returning caller, short greeting)' : ''));
         return res.send(tw);
       } catch (e) {
         await mark(s.forward_number ? 'forward' : 'message', e.message);
@@ -555,7 +588,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const line = await lineById(call.line_id);
     const mode = s.modes[s.modes[call.hours_mode] ? call.hours_mode : 'regular'];
     try {
-      const tw = await registerCall(call, call.from_number, call.to_number, s, greetingFor(s, call.caller_first, mode, call.hours_mode === 'missed' && line ? Object.assign({}, line, { greeting: null }) : line, false, lang), line, lang);
+      const tw = await registerCall(call, call.from_number, call.to_number, s, greetingFor(s, call.caller_first, mode, call.hours_mode === 'missed' && line ? Object.assign({}, line, { greeting: null }) : line, false, lang, Number(call.returning) === 1), line, lang);
       await dbRun("UPDATE talk_calls SET answered_by = 'ai' WHERE id = ?", [call.id]).catch(() => {});
       hit('lang', true, 'Call ' + call.id + ': ' + LANGS[lang].name + (digit ? ' (pressed ' + digit + ')' : ' (no key)') + ' → NovaAI');
       return res.send(tw);
@@ -586,11 +619,11 @@ module.exports = function mountTalkAi(app, deps, bot) {
     }
     const s = await settings();
     const line = await lineById(call.line_id);
-    const mode = s.modes[call.hours_mode === 'after' ? 'after' : 'regular'];
+    const mode = s.modes[s.modes[call.hours_mode] ? call.hours_mode : 'regular'];
     await addTurn(call.id, 'event', (st === 'completed' && unscreened ? 'Their phone did not take it (no one pressed 1 \u2014 voicemail or declined)' : 'Nobody picked up (' + (st || 'no answer') + ')') + ' — NovaAI answered');
     try {
       const lang = langCode(call.language);
-      const tw = await registerCall(call, call.from_number, call.to_number, s, greetingFor(s, call.caller_first, mode, line, true, lang), line, lang);
+      const tw = await registerCall(call, call.from_number, call.to_number, s, greetingFor(s, call.caller_first, mode, line, true, lang, Number(call.returning) === 1), line, lang);
       await mark('ai'); hit('after-dial', true, 'Call ' + call.id + ': ' + (st || 'no answer') + ' → NovaAI');
       return res.send(tw);
     } catch (e) {
@@ -798,7 +831,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
       '',
       'HOW TO TALK:',
       '- SHORT and to the point: usually ONE sentence, two at most, then stop. No small talk, no repeating what the caller said, no "great question". Get them to the answer in as few steps as possible.',
-      '- Do the work instead of asking: price as soon as you know the product (no quantity given? price the usual quantity and say which); look up their orders as soon as you can. Ask at most one question, only when you truly cannot go on without it.',
+      '- PRICE FIRST: as soon as you know which product, call price_product with what they said and the DEFAULTS for everything else (no quantity? price 1 for banners and signs, the usual quantity otherwise). At most ONE round of questions before the first price, and only to tell which product. Then say the price, name one or two defaults in a few words ("that\u2019s 13 ounce vinyl with hems and grommets") and ask if they want anything different. Look up their orders as soon as you can.',
       '- Spoken words only: no lists, bullets, numbering, headings, markdown, emojis, URLs or symbols like * # / |. Never read out a link — say "on axiomprint.com".',
       '- Before a lookup say two or three words ("One moment."), nothing more.',
       '- Prices exactly as the tools give them, e.g. "500 business cards come to $89.50." For a few quantities, say each one briefly. Never round, guess or add things up yourself.',
@@ -1427,10 +1460,17 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const apiTools = tools.map(t => ({ name: t.name, description: t.description, input_schema: t.input_schema }));
     const messages = history.slice();
     let said = '', used = [], pass = null;
+    // Price after the first round of questions (as the website chat does): a product has been looked up and
+    // not priced yet, NovaAI asked a question last turn and the caller answered — this turn prices it with the
+    // defaults for anything not said. Not when the caller is on about an order.
+    const lastAgent = (() => { for (let i = history.length - 1; i >= 0; i--) if (history[i].role === 'assistant') return String(history[i].content || ''); return ''; })();
+    const forcePrice = !owner && !!m.productPending && /\?\s*$/.test(lastAgent.trim()) && toolNames.indexOf('price_product') > -1 &&
+      !/\b(order|status|ready|ship|pick ?up|invoice|tracking|E ?\d{4,})\b/i.test(lastCaller) && !/^\(The (call connected|caller has not)/.test(lastCaller);
     for (let i = 0; i < 5; i++) {
       const system = owner ? await ownerPrompt(s, call, m, toolNames) : await phonePrompt(s, call, who, m, toolNames);
       let started = false;
-      const stream = anthropic.messages.stream({ model: MODEL, max_tokens: 400, system: system, tools: apiTools, messages: messages });
+      const stream = anthropic.messages.stream(Object.assign({ model: MODEL, max_tokens: 400, system: system, tools: apiTools, messages: messages },
+        forcePrice && i === 0 ? { tool_choice: { type: 'tool', name: 'price_product' } } : {}));
       stream.on('text', (d) => {
         if (!d) return;
         if (!started) { started = true; if (said && !/\s$/.test(said)) d = ' ' + d.replace(/^\s+/, ''); }
@@ -1453,6 +1493,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
         if (['verify_caller', 'take_message', 'transfer_call', 'email_quote', 'email_me'].indexOf(tu.name) === -1) {
           m.facts.push(factOf(tu.name, tu.input, out)); if (m.facts.length > 10) m.facts.shift();
         }
+        if (tu.name === 'search_products' || tu.name === 'product_details') m.productPending = true;
+        if (tu.name === 'price_product' && out && !out.error) m.productPending = false;
         results.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(out).slice(0, 12000) });
       }
       messages.push({ role: 'user', content: results });
@@ -1794,7 +1836,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const langs = Array.isArray(b.languages) ? b.languages.map(String).filter(k => LANGS[k] && k !== 'en') : cur.languages.filter(k => k !== 'en');
     const lg = {};
     Object.keys(LANGS).filter(k => k !== 'en').forEach(k => { const v = b.lang_greetings && b.lang_greetings[k]; lg[k] = v == null ? cur.lang_greetings[k] : String(v).slice(0, 600); });
-    await dbRun('UPDATE talk_settings SET email_bcc = ?, missed_number = ? WHERE id = 1', [bcc, missedNum || null]);
+    await dbRun('UPDATE talk_settings SET email_bcc = ?, missed_number = ?, returning_short = ? WHERE id = 1',
+      [bcc, missedNum || null, b.returning_short == null ? cur.returning_short : (b.returning_short ? 1 : 0)]);
     await dbRun('UPDATE talk_settings SET languages = ?, lang_menu = ?, lang_greetings = ? WHERE id = 1',
       [JSON.stringify(langs), b.lang_menu == null ? cur.lang_menu : (b.lang_menu ? 1 : 0), JSON.stringify(lg)]);
     res.json({ ok: true, settings: await settings() });
@@ -1903,7 +1946,9 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const tlang = langCode(b.lang) && s.languages.indexOf(langCode(b.lang)) > -1 ? langCode(b.lang) : null;
     await dbRun('UPDATE talk_calls SET line_id = ?, hours_mode = ?, language = ? WHERE id = ?', [line ? line.id : null, modeKey, tlang, r.lastID]);
     const c = await dbGet('SELECT customer_name, company FROM talk_calls WHERE id = ?', [r.lastID]);
-    res.json({ ok: true, call_id: r.lastID, greeting: greetingFor(s, known.first, s.modes[modeKey], modeKey === 'missed' && line ? Object.assign({}, line, { greeting: null, why: 'client' }) : line, false, tlang), hours: modeKey, language: tlang ? LANGS[tlang].name : null,
+    const back = from && s.returning_short ? await isReturning(e164(from) || from, r.lastID, match).catch(() => false) : false;
+    if (back) await dbRun('UPDATE talk_calls SET returning = 1 WHERE id = ?', [r.lastID]).catch(() => {});
+    res.json({ ok: true, call_id: r.lastID, returning: back, greeting: greetingFor(s, known.first, s.modes[modeKey], modeKey === 'missed' && line ? Object.assign({}, line, { greeting: null, why: 'client' }) : line, false, tlang, back), hours: modeKey, language: tlang ? LANGS[tlang].name : null,
       line: line ? (line.am_name || 'Account manager') + '\u2019s line' : null,
       recognised: known.trusted ? (c.customer_name || '') + (c.company ? ' (' + c.company + ')' : '') : null });
   });

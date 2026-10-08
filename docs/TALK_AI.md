@@ -140,6 +140,17 @@ native speaker). The ElevenLabs agent needs the languages under **Additional lan
 for Armenian) and **Detect language** turned on under System tools. The press-a-key menu (`/api/talk/twilio/lang`)
 is still in the code, off unless `TALKAI_LANG_MENU=1`.
 
+## Returning callers and price first
+
+- **Short greeting** for callers who talked to NovaAI before (`isReturning()`: an earlier phone call from the number
+  that the caller spoke on, or a website chat by an account the number belongs to). Each setup has its own
+  `greeting_returning` (Training, under the greetings); AM lines and non-English callers get built-in short ones.
+  On/off: `talk_settings.returning_short` (default on). The call is marked `talk_calls.returning = 1`.
+- **Price first**: the prompt allows one round of questions (to tell the product) before the first price, with the
+  defaults for everything not said. Enforced like the website chat: once a product was looked up and not priced,
+  and the caller answered NovaAI's question, that turn is forced to `price_product` (`tool_choice`), unless the caller
+  is talking about an order.
+
 ## Business hours missed calls
 
 A third setup next to Regular and After hours (Training → "Business hours missed calls", `talk_settings.modes.missed`,
