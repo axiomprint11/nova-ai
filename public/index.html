@@ -595,7 +595,10 @@ const AGENT_PAGE_ROUTES = {
 
 // After login, find the first agent that is active AND has a built page, and go there.
 // Prefer Order Assist. Falls back to the launcher UI if nothing is available.
+// Everyone lands on their own chat History (one agent now: ChatBot, opened from there).
 async function redirectToFirstAgent() {
+  window.location.href = '/admin?tab=history&mine=1';
+  return;
   let list = [];
   try {
     const res = await fetch('/api/agents', { headers: { 'Authorization': 'Bearer ' + token } });

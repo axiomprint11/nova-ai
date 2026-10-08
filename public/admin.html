@@ -232,8 +232,8 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
 
 <div id="admin">
   <div class="topbar">
-    <div class="topbar-logo">Axiom <span>AI</span> · Admin</div>
-    <a class="btn-ghost" href="/">&larr; Back to chat</a>
+    <div class="topbar-logo">Axiom <span>AI</span><b id="logoAdmin" style="font-weight:inherit"> · Admin</b></div>
+    <a class="btn-ghost" href="/chatbot">ChatBot &rarr;</a>
   </div>
   <div class="main">
     <aside class="nav">
@@ -260,7 +260,11 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
         </table>
       </div>
       <div id="tabHistory" style="display:none">
-        <h2 class="h2">Chat History</h2>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px">
+          <h2 class="h2" style="margin:0">Chat History</h2>
+          <a class="btn-solid" href="/chatbot" style="text-decoration:none;margin-left:auto;padding:8px 16px;font-size:13px;border-radius:9px">+ New chat</a>
+        </div>
+        <div style="height:10px"></div>
         <div class="filters">
           <select id="fRating" onchange="loadHistory()">
             <option value="all">All ratings</option>
@@ -268,7 +272,7 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
             <option value="down">👎 Disliked</option>
           </select>
           <select id="fUser" onchange="loadHistory()"><option value="">All users</option></select>
-          <select id="fAgent" onchange="loadHistory()"><option value="">All agents</option></select>
+          <select id="fAgent" onchange="loadHistory()" style="display:none"><option value="">All agents</option></select>
           <select id="fClient" onchange="loadHistory()"><option value="">All clients</option></select>
         </div>
         <table>
@@ -498,6 +502,7 @@ function photoUrl(p) {
 
 let IS_ADMIN = false;
 let MY_KNOWLEDGE_LEVEL = 'none';
+let MY_KEY = '';
 
 // Gate using /api/me (works for everyone). Admins get the full panel; regular
 // members get a limited view: Agents (read), their own History, and Domain
@@ -511,6 +516,7 @@ async function checkAccess() {
     if (!me.success) { showGate('Could not load your access. <a href="/">Back</a>'); return; }
     IS_ADMIN = !!me.is_admin;
     MY_KNOWLEDGE_LEVEL = me.knowledge_access || 'none';
+    MY_KEY = String(me.key || '');
     document.getElementById('gate').style.display = 'none';
     document.getElementById('admin').style.display = 'flex';
     applyRoleVisibility();
@@ -520,6 +526,8 @@ async function checkAccess() {
     // Deep links: /admin?tab=agents&agent=talk-ai, /admin?tab=knowledge.
     const q = new URLSearchParams(location.search);
     const want = q.get('tab');
+    // Landing from the main page (?mine=1): everyone starts on their OWN chats (admins can pick another user).
+    if (q.get('mine') === '1' && MY_KEY) pendingHistoryUser = MY_KEY;
     if (want && ['history', 'users', 'agents', 'knowledge', 'pricing', 'connections'].indexOf(want) > -1 && document.getElementById('nav' + want.charAt(0).toUpperCase() + want.slice(1)).style.display !== 'none') tab(want);
     else tab('history');
     if (want === 'agents' && q.get('agent') && IS_ADMIN) openAgent(q.get('agent'));
@@ -537,7 +545,9 @@ function applyRoleVisibility() {
     show('navConnections', false);
     show('navPricing', false);
     show('navHistory', true);
-    show('navAgents', true);
+    show('navAgents', false);                      // one agent (ChatBot): nothing to choose or train
+    show('logoAdmin', false);
+    document.title = 'Axiom AI \u00b7 History';
     show('navKnowledge', MY_KNOWLEDGE_LEVEL !== 'none');
   }
 }
@@ -564,7 +574,13 @@ function tab(t) {
       // If we arrived by clicking a user's History count, apply that filter now.
       if (pendingHistoryUser !== null) {
         const sel = document.getElementById('fUser');
-        if (sel) sel.value = pendingHistoryUser;
+        if (sel) {
+          // Someone with no chats yet is not in the list: add them so the filter still means "mine".
+          if (!Array.from(sel.options).some(o => o.value === pendingHistoryUser)) {
+            const o = document.createElement('option'); o.value = pendingHistoryUser; o.textContent = 'Me'; sel.appendChild(o);
+          }
+          sel.value = pendingHistoryUser;
+        }
         pendingHistoryUser = null;
       }
       loadHistory();
@@ -1561,16 +1577,24 @@ async function loadHistory() {
           (h.source === 'crm-widget' ? ' <span class="src-tag">CRM</span>' : '') + '</td>' +
         '<td>' + esc(h.title || '-') + '</td>' +
         '<td>' + r + '</td>';
-      tr.onclick = () => openChat(h.id, h.title);
+      tr.onclick = () => openChat(h.id, h.title, h.user_key);
       tb.appendChild(tr);
     });
   } catch (e) { tb.innerHTML = '<tr><td colspan="6" class="feedback err">Connection error</td></tr>'; }
 }
 
-async function openChat(id, title) {
+async function openChat(id, title, userKey) {
   const panel = document.getElementById('panel');
   const body = document.getElementById('panelBody');
   document.getElementById('panelTitle').textContent = title || 'Chat';
+  // Your own conversation: pick it up again in ChatBot.
+  const old = document.getElementById('panelContinue'); if (old) old.remove();
+  if (userKey && userKey === MY_KEY) {
+    const a = document.createElement('a');
+    a.id = 'panelContinue'; a.className = 'btn-solid'; a.href = '/chatbot?chat=' + encodeURIComponent(id);
+    a.textContent = 'Continue in ChatBot'; a.style.cssText = 'text-decoration:none;margin-left:auto;margin-right:10px;font-size:12px;padding:6px 12px';
+    const head = document.querySelector('#panel .panel-head'); head.insertBefore(a, head.querySelector('.close'));
+  }
   body.innerHTML = 'Loading...';
   panel.style.display = 'flex';
   try {

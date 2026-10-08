@@ -165,6 +165,14 @@ order-assist.js and index.html), never `'$' + n.toFixed(2)`. The prompts tell th
 The stepped flow is the default; `sendMessage(forceClassic)` or the `steppedToggle` checkbox falls back
 to `/api/chat` for debugging.
 
+**One chat agent.** Since 1.9.11 only `chatbot` (and `talk-ai`, a training target with access `system`) are live:
+every other `agents` row is set to status `retired` at boot (rows kept so old chats keep their agent's name), hidden
+from `/api/agents` and `/api/admin/agents`, and `/order-assist` / `/prepress` redirect to `/chatbot`. The main page
+(`/`, after sign-in) lands on `/admin?tab=history&mine=1`: everyone's own chats (members only ever see their own;
+admins can switch the user filter), "+ New chat" opens ChatBot, and a row of your own has "Continue in ChatBot"
+(`/chatbot?chat=<id>`). The ChatBot page has no agent dropdown, just "← History" and the title; members see no
+Agents tab.
+
 ## Nova for clients (customer-facing bot)
 
 `client-bot.js` mounts a **separate** bot for axiomprint.com customers: its own SQLite tables (`client_chats`,

@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.9.10';
-const NOVA_BUILT = '10-08-2026 4:40pm';
+const NOVA_VERSION = '1.9.11';
+const NOVA_BUILT = '10-08-2026 5:15pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 app.use((req, res, next) => req.path.indexOf('/api/talk/hook/') === 0 ? next() : jsonBody(req, res, next));
@@ -196,6 +196,8 @@ app.get('/widget.html', allowFraming, serveVersionedHtml('widget.html'));
 app.get('/client-chat.html', (req, res) => res.redirect(301, '/client-chat'));
 app.get('/client-bot.html', (req, res) => res.redirect(301, '/client-bot'));
 app.get('/chatbot', serveVersionedHtml('chatbot.html'));
+// Retired agent pages: everything is ChatBot now.
+['/order-assist', '/order-assist.html', '/prepress', '/prepress.html'].forEach(p => app.get(p, (req, res) => res.redirect(302, '/chatbot')));
 app.get('/chatbot.html', serveVersionedHtml('chatbot.html'));
 app.get('/admin', serveVersionedHtml('admin.html'));
 app.get('/admin.html', serveVersionedHtml('admin.html'));
@@ -343,6 +345,9 @@ db.serialize(() => {
   // it), force it back to active/all so it never silently disappears for members.
   db.run("UPDATE agents SET status = 'active', access = 'all' WHERE slug = 'chatbot'");
   db.run("UPDATE agents SET status = 'active', access = 'system' WHERE slug = 'talk-ai'");
+  // One chat agent (ChatBot) and TalkAi. The others are retired: their rows stay so old chats keep their
+  // agent's name, but they are never listed, chosen or routed to.
+  db.run("UPDATE agents SET status = 'retired' WHERE slug NOT IN ('chatbot', 'talk-ai')");
   // Per-member agent access. If a member has NO rows here, they get ALL active agents
   // (default-allow). If they have rows, they get ONLY those agents (allow-list).
   db.run(`CREATE TABLE IF NOT EXISTS member_agents (
@@ -5457,7 +5462,7 @@ app.get('/api/agents', auth, (req, res) => {
   db.all('SELECT slug, name, description, status, access FROM agents ORDER BY sort_order', [], (err, rows) => {
     if (err) return res.json({ success: false, error: err.message });
     // 'system' agents (TalkAi) are training targets, never something to chat with.
-    let list = (rows || []).filter(a => a.access !== 'system');
+    let list = (rows || []).filter(a => a.access !== 'system' && a.status !== 'retired');
     // Admins see everything.
     if (req.user.is_admin) return res.json({ success: true, agents: list });
     // Non-admins never see 'restricted' agents.
@@ -5650,7 +5655,7 @@ function agentUsage() {
   });
 }
 app.get('/api/admin/agents', auth, adminOnly, (req, res) => {
-  db.all('SELECT slug, name, description, status, access, sort_order, updated_at FROM agents ORDER BY sort_order', [], async (err, rows) => {
+  db.all("SELECT slug, name, description, status, access, sort_order, updated_at FROM agents WHERE status <> 'retired' ORDER BY sort_order", [], async (err, rows) => {
     if (err) return res.json({ success: false, error: err.message });
     const usage = await agentUsage().catch(() => ({}));
     (rows || []).forEach(a => { a.usage = usage[a.slug] || { q30: 0, q7: 0, chats30: 0, people30: 0, last: null }; a.unit = a.slug === 'talk-ai' ? 'calls' : 'questions'; });

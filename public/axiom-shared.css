@@ -244,6 +244,7 @@ tbody td:not(:first-child) { font-variant-numeric: tabular-nums; }
 .suggestions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .agent-picker { margin-bottom: 16px; }
 .agent-picker-label { display: block; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 5px; }
+.agent-title { font-size: 15px; font-weight: 700; color: var(--ink); padding: 0 4px; }
 .agent-select { width: 100%; font-family: inherit; font-size: 13px; font-weight: 500; color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; cursor: pointer; }
 .agent-select:hover { border-color: var(--indigo); }
 .agent-select:focus { outline: none; border-color: var(--indigo); box-shadow: 0 0 0 3px var(--indigo-light); }

@@ -228,6 +228,9 @@ async function loadAgents() {
     sel.value = currentAgent;
   }
   loadChatList();
+  // /chatbot?chat=123 (from History → Continue): open that conversation.
+  const want = parseInt(new URLSearchParams(location.search).get('chat'));
+  if (want && await openChat(want) !== false) { history.replaceState(null, '', '/chatbot'); return; }
   if (!document.getElementById('messagesInner').children.length) greet();
 }
 
