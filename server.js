@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.9.12';
-const NOVA_BUILT = '10-08-2026 4:55pm';
+const NOVA_VERSION = '1.10.0';
+const NOVA_BUILT = '10-08-2026 5:35pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 app.use((req, res, next) => req.path.indexOf('/api/talk/hook/') === 0 ? next() : jsonBody(req, res, next));
@@ -5636,6 +5636,31 @@ app.get('/api/admin/history', auth, (req, res) => {
 });
 
 // ===== Admin: Agents =====
+// ---- Overview for the CRM Chat (History) tab: chats started by day / week / month. Members see their own.
+const usageStats = require('./usage-stats');
+// Overview tiles: today / this week / this month, each with the period before.
+function statTiles(now, unit) {
+  return [
+    { label: 'Today', value: now.today, sub: 'yesterday ' + now.yesterday },
+    { label: 'This week', value: now.week, sub: 'last week ' + now.last_week },
+    { label: 'This month', value: now.month, sub: 'last month ' + now.last_month }];
+}
+app.get('/api/stats/crm', auth, async (req, res) => {
+  const all = (sql, p) => new Promise(ok => db.all(sql, p || [], (e, r) => ok(e ? [] : (r || []))));
+  const mine = !req.user.is_admin || req.query.user === 'me';
+  const who = mine ? ' AND user_key = ?' : (req.query.user ? ' AND user_key = ?' : '');
+  const wp = mine ? [req.user.key] : (req.query.user ? [String(req.query.user)] : []);
+  const rows = await all('SELECT created_at FROM chats WHERE created_at > ' + usageStats.SINCE + who, wp);
+  const s = usageStats.series(rows.map(r => r.created_at));
+  const m0 = usageStats.startOf('month');
+  const q = await all("SELECT COUNT(*) AS n, COUNT(DISTINCT c.user_key) AS people FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.role = 'user' AND m.created_at >= ?" +
+    (who ? who.replace('user_key', 'c.user_key') : ''), [m0].concat(wp));
+  const tiles = statTiles(s.now).map(t => Object.assign(t, { label: 'Chats ' + t.label.toLowerCase() }));
+  tiles.push({ label: 'Questions this month', value: (q[0] && q[0].n) || 0, sub: 'messages people sent' });
+  if (!mine && !req.query.user) tiles.push({ label: 'People this month', value: (q[0] && q[0].people) || 0, sub: 'staff who chatted' });
+  res.json({ ok: true, title: mine ? 'Your chats' : 'Chats started', unit: 'chats', unit1: 'chat', series: s, tiles: tiles });
+});
+
 // Usage per agent: questions people asked (user messages), chats and people in the last 30 days, last 7 days,
 // and when it was last used. TalkAi counts phone calls instead.
 function agentUsage() {
@@ -8521,6 +8546,11 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
               discount: q.discount
                 ? (q.discount.percent + '% ' + q.discount.name + ' (' + q.discount.basis + ') - saves $' + usd2(q.discount.saved))
                 : undefined,
+              // Say it outright when there is no discount: otherwise the model has been known to call a connected
+              // client's regular price "trade pricing" or "client pricing applied".
+              account_pricing: q.discount ? undefined : (q.client_id
+                ? 'NO account discount: this client has no discount on this product, so this is the regular website price. Never say a discount, trade or client pricing was applied.'
+                : 'Regular website price (no client connected).'),
               specs_used: q.specs.map(u => ({ field: u.field, value: u.value, source: u.source })),
               custom_size: q.size,
               auto_adjusted: adjusted.length ? adjusted : undefined,

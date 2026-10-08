@@ -114,6 +114,13 @@ tr:last-child td { border-bottom: none; }
 .btn-mini:hover { border-color: var(--indigo); color: var(--indigo); }
 .btn-mini-ignore:hover { border-color: #ef4444; color: #ef4444; }
 @media (max-width: 700px) { .agent-edit-grid { grid-template-columns: 1fr; } }
+/* Phones: the menu becomes a strip across the top, so the page gets the full width. */
+@media (max-width: 760px) {
+  .main { flex-direction: column; }
+  .nav { width: auto; flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px 10px; gap: 4px; flex: none; }
+  .nav-item { white-space: nowrap; padding: 8px 12px; font-size: 13px; }
+  .nav > * { flex: none; }
+}
 
 /* Installation Pricing */
 .ip-top { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; flex-wrap:wrap; position:sticky; top:-26px; background:var(--bg); padding:26px 0 10px; margin-top:-26px; z-index:5; }
@@ -237,9 +244,9 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
   </div>
   <div class="main">
     <aside class="nav">
-      <button class="nav-item active" id="navHistory" onclick="tab('history')">History</button>
+      <button class="nav-item active" id="navHistory" onclick="tab('history')">CRM Chat</button>
       <button class="nav-item" id="navUsers" onclick="tab('users')">Users</button>
-      <button class="nav-item" id="navAgents" onclick="tab('agents')">Agents</button>
+      <button class="nav-item" id="navAgents" onclick="tab('agents')" style="display:none">Agents</button>
       <button class="nav-item" id="navKnowledge" onclick="tab('knowledge')">Domain Knowledge</button>
       <button class="nav-item" id="navPricing" onclick="tab('pricing')">Installation Pricing</button>
       <button class="nav-item" id="navConnections" onclick="tab('connections')">Connections</button>
@@ -255,16 +262,18 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
         </div>
         <div id="msg" class="feedback"></div>
         <table>
-          <thead><tr><th></th><th>Name</th><th>Username</th><th>Email</th><th>Last login</th><th>History</th><th>Agents</th><th>Knowledge</th><th>Admin</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th></th><th>Name</th><th>Username</th><th>Email</th><th>Last login</th><th>History</th><th>Knowledge</th><th>Admin</th><th>Status</th><th></th></tr></thead>
           <tbody id="usersBody"></tbody>
         </table>
       </div>
       <div id="tabHistory" style="display:none">
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px">
-          <h2 class="h2" style="margin:0">Chat History</h2>
-          <a class="btn-solid" href="/chatbot" style="text-decoration:none;margin-left:auto;padding:8px 16px;font-size:13px;border-radius:9px">+ New chat</a>
+          <h2 class="h2" style="margin:0">CRM Chat</h2>
+          <button type="button" class="btn-ghost" id="trainChatBot" onclick="trainAgent('chatbot')" style="margin-left:auto;display:none">Train ChatBot</button>
+          <a class="btn-solid" href="/chatbot" style="text-decoration:none;padding:8px 16px;font-size:13px;border-radius:9px">+ New chat</a>
         </div>
         <div style="height:10px"></div>
+        <div id="crmStats"></div>
         <div class="filters">
           <select id="fRating" onchange="loadHistory()">
             <option value="all">All ratings</option>
@@ -441,6 +450,7 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
 </div>
 
 <script src="/install-pricing.js"></script>
+<script src="/nova-stats.js"></script>
 <script>
 const token = localStorage.getItem('axiom_token');
 let currentAgentSlug = null;
@@ -528,9 +538,9 @@ async function checkAccess() {
     const want = q.get('tab');
     // Landing from the main page (?mine=1): everyone starts on their OWN chats (admins can pick another user).
     if (q.get('mine') === '1' && MY_KEY) pendingHistoryUser = MY_KEY;
-    if (want && ['history', 'users', 'agents', 'knowledge', 'pricing', 'connections'].indexOf(want) > -1 && document.getElementById('nav' + want.charAt(0).toUpperCase() + want.slice(1)).style.display !== 'none') tab(want);
+    if (want === 'agents' && q.get('agent') && IS_ADMIN) { trainAgent(q.get('agent')); }
+    else if (want && ['history', 'users', 'knowledge', 'pricing', 'connections'].indexOf(want) > -1 && document.getElementById('nav' + want.charAt(0).toUpperCase() + want.slice(1)).style.display !== 'none') tab(want);
     else tab('history');
-    if (want === 'agents' && q.get('agent') && IS_ADMIN) openAgent(q.get('agent'));
   } catch (e) { showGate('Connection error. <a href="/">Back</a>'); }
 }
 
@@ -538,7 +548,9 @@ async function checkAccess() {
 function applyRoleVisibility() {
   const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
   if (IS_ADMIN) {
-    ['navUsers','navHistory','navAgents','navKnowledge','navPricing','navConnections'].forEach(id => show(id, true));
+    ['navUsers','navHistory','navKnowledge','navPricing','navConnections'].forEach(id => show(id, true));
+    show('navAgents', false);                      // one chat agent: its training opens from CRM Chat ("Train ChatBot")
+    show('trainChatBot', true);
   } else {
     // Regular member: no Users, no Connections. Agents (view) + History (own) always.
     show('navUsers', false);
@@ -637,6 +649,16 @@ function usageHtml(a) {
     '<span class="s">' + Number(u.q7 || 0).toLocaleString() + ' this week · last ' + (calls ? 'call' : 'used') + ' ' + esc(ago(u.last)) + '</span></div>';
 }
 
+// Training for ChatBot (from CRM Chat) or TalkAi (from the TalkAi page): the agent editor, without the Agents list.
+function trainAgent(slug) {
+  tab('agents');
+  openAgent(slug);
+}
+function leaveAgent(slug) {
+  if (slug === 'talk-ai') { location.href = '/talk-ai'; return; }
+  tab('history');
+}
+
 async function openAgent(slug) {
   currentAgentSlug = slug;
   const ed = document.getElementById('agentEditor');
@@ -649,7 +671,7 @@ async function openAgent(slug) {
     if (!j.success) { ed.innerHTML = '<div class="feedback err">' + (j.error||'Error') + '</div>'; return; }
     const a = j.agent;
     ed.innerHTML =
-      '<button class="btn-ghost" onclick="loadAgents()">&larr; All agents</button>' +
+      '<button class="btn-ghost" onclick="leaveAgent(\'' + slug + '\')">&larr; ' + (slug === 'talk-ai' ? 'TalkAi' : 'CRM Chat') + '</button>' +
       '<h2 class="h2" style="margin-top:14px">' + esc(a.name) + '</h2>' +
       (slug === 'talk-ai' ? '<div style="max-width:760px;margin:6px 0 14px;padding:10px 13px;border-radius:10px;background:#eef2ff;border:1px solid #c7d2fe;font-size:13px;line-height:1.55;color:#3730a3">' +
         'Training for <b>NovaAI on the phone</b> — callers hear the result, so write it for customers. Everything here, plus the ' +
@@ -788,13 +810,13 @@ async function loadConnections() {
 
 async function loadUsers() {
   const tb = document.getElementById('usersBody');
-  tb.innerHTML = '<tr><td colspan="11" style="color:var(--muted)">Loading...</td></tr>';
+  tb.innerHTML = '<tr><td colspan="10" style="color:var(--muted)">Loading...</td></tr>';
   try {
     const res = await fetch('/api/admin/users-activity', { headers: { 'Authorization': 'Bearer ' + token } });
     const j = await res.json();
-    if (!j.success) { tb.innerHTML = '<tr><td colspan="11" class="feedback err">' + (j.error||'Error') + '</td></tr>'; return; }
+    if (!j.success) { tb.innerHTML = '<tr><td colspan="10" class="feedback err">' + (j.error||'Error') + '</td></tr>'; return; }
     tb.innerHTML = '';
-    if (!j.members.length) { tb.innerHTML = '<tr><td colspan="11" style="color:var(--muted)">No members yet.</td></tr>'; return; }
+    if (!j.members.length) { tb.innerHTML = '<tr><td colspan="10" style="color:var(--muted)">No members yet.</td></tr>'; return; }
     j.members.forEach(m => {
       const tr = document.createElement('tr');
       const initial = (m.display_name || m.email || '?').charAt(0).toUpperCase();
@@ -820,14 +842,13 @@ async function loadUsers() {
         '<td>' + esc(m.email) + '</td>' +
         '<td>' + (m.last_login ? fmtDate(m.last_login) : '<span style="color:var(--muted)">never</span>') + '</td>' +
         '<td>' + hist + '</td>' +
-        agentCell +
         knowCell +
         adminCell +
         '<td>' + (m.enabled ? '<span class="badge on">Enabled</span>' : '<span class="badge off">Disabled</span>') + '</td>' +
         '<td class="row-actions"><button class="toggle ' + (m.enabled?'on':'') + '" onclick="toggleMember(' + m.id + ',' + (m.enabled?0:1) + ')"></button></td>';
       tb.appendChild(tr);
     });
-  } catch (e) { tb.innerHTML = '<tr><td colspan="11" class="feedback err">Connection error</td></tr>'; }
+  } catch (e) { tb.innerHTML = '<tr><td colspan="10" class="feedback err">Connection error</td></tr>'; }
 }
 
 async function addMember() {
@@ -1537,8 +1558,16 @@ async function loadHistoryAgents() {
   } catch (e) {}
 }
 
+// The overview on top of CRM Chat follows the user filter: everyone, or one person (members: themselves).
+let crmStatsFor = null;
+function loadCrmStats(user) {
+  if (!window.NovaStats || crmStatsFor === user) return;
+  crmStatsFor = user;
+  NovaStats.mount(document.getElementById('crmStats'), { url: '/api/stats/crm' + (user ? '?user=' + encodeURIComponent(user) : ''), token: token, key: 'crm' });
+}
 async function loadHistory() {
   const tb = document.getElementById('histBody');
+  loadCrmStats(document.getElementById('fUser').value || '');
   tb.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">Loading...</td></tr>';
   const rating = document.getElementById('fRating').value;
   const user = document.getElementById('fUser').value;

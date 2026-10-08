@@ -2446,6 +2446,23 @@ module.exports = function mountClientBot(app, deps) {
       res.json({ ok: true, unread: (r && r.n) || 0 });
     } catch (e) { res.json({ ok: false, unread: 0 }); }
   });
+  // Overview: website conversations (someone wrote at least one message) by day / week / month.
+  const usageStats = require('./usage-stats');
+  app.get('/api/admin/client-bot/stats', auth, adminOnly, async (req, res) => {
+    const rows = await dbAll("SELECT created_at FROM client_chats WHERE source = 'website' AND message_count > 0 AND created_at > " + usageStats.SINCE).catch(() => []);
+    const s = usageStats.series(rows.map(r => r.created_at));
+    const m0 = usageStats.startOf('month');
+    const m = await dbGet("SELECT SUM(customer_id IS NOT NULL) AS signed, COUNT(DISTINCT visitor_id) AS visitors FROM client_chats " +
+      "WHERE source = 'website' AND message_count > 0 AND created_at >= ?", [m0]).catch(() => ({})) || {};
+    const cart = await dbGet("SELECT COUNT(*) AS n FROM client_messages cm JOIN client_chats c ON c.id = cm.chat_id WHERE c.source = 'website' AND cm.role = 'event' " +
+      "AND cm.content LIKE 'Add to Cart:%added it to their cart%' AND cm.created_at >= ?", [m0]).catch(() => ({})) || {};
+    const t = (label, value, sub) => ({ label: label, value: value || 0, sub: sub });
+    res.json({ ok: true, title: 'Website conversations', unit: 'conversations', unit1: 'conversation', series: s, tiles: [
+      t('Conversations today', s.now.today, 'yesterday ' + s.now.yesterday), t('This week', s.now.week, 'last week ' + s.now.last_week),
+      t('This month', s.now.month, 'last month ' + s.now.last_month),
+      t('Signed-in customers', m.signed, 'this month \u00b7 ' + (m.visitors || 0) + ' visitors'),
+      t('Added to cart', cart.n, 'items, this month')] });
+  });
   app.get('/api/admin/client-bot/chats', auth, adminOnly, async (req, res) => {
     const reader = readerOf(req);
     await initReads(reader);

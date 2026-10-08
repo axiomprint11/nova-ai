@@ -179,6 +179,15 @@
   // A link like /client-bot?chat=123 (the escalation email) opens that conversation.
   const deepChat = parseInt(new URLSearchParams(location.search).get('chat'));
   if (deepChat) setTimeout(() => { openConvo(deepChat); }, 500);
+  // The overview (website conversations by day / week / month) fills the right side until a conversation is picked.
+  function showConvosOverview() {
+    openId = null;
+    document.querySelectorAll('#convRows .on').forEach(b => b.classList.remove('on'));
+    $('convView').innerHTML = '<div style="padding:16px 18px"><div id="cbStats"></div><div class="cb-empty" style="padding:4px 0">Pick a conversation on the left to read it.</div></div>';
+    if (window.NovaStats) NovaStats.mount($('cbStats'), { url: '/api/admin/client-bot/stats', token: token, key: 'clientbot' });
+  }
+  if (!deepChat) showConvosOverview();
+  $('convOverview').onclick = showConvosOverview;
   $('convReadAll').onclick = async () => {
     await fetch('/api/admin/client-bot/chats/read-all', { method: 'POST', headers: H() }).catch(() => {});
     loadConvos();

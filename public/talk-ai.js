@@ -201,7 +201,7 @@
       html += '<div class="tk-empty">' + (c.answered_by === 'forward' ? 'This call was forwarded to the team.' : c.answered_by === 'message' ? 'The caller heard the closed message.' : 'Nothing was said on this call yet.') + '</div>';
     }
     v.innerHTML = html;
-    $('callBack').onclick = () => { $('vCalls').classList.remove('detail'); current = null; history.replaceState(null, '', '/talk-ai'); };
+    $('callBack').onclick = () => { $('vCalls').classList.remove('detail'); current = null; history.replaceState(null, '', '/talk-ai'); showCallsOverview(); };
     $('callUnread').onclick = async () => { await api('/api/admin/talk/calls/' + id + '/unread', { method: 'POST', body: '{}' }); current = null; loadCalls(); $('vCalls').classList.remove('detail'); v.innerHTML = '<div class="tk-empty">Marked as unread.</div>'; };
     if ($('showLog')) $('showLog').onclick = () => { const l = $('turnLog'); l.hidden = !l.hidden; $('showLog').textContent = l.hidden ? 'Show NovaAI’s lookups' : 'Hide NovaAI’s lookups'; };
     if (c.has_audio || c.can_fetch_audio) loadAudio(id);
@@ -644,11 +644,20 @@
     $('hitsRefresh').onclick = () => loadOverview().then(paintSetup);
   }
 
+  // The overview (calls by day / week / month and this month's outcomes) fills the right side until a call is picked.
+  function showCallsOverview() {
+    current = null;
+    document.querySelectorAll('.tk-row.on').forEach(b => b.classList.remove('on'));
+    $('callView').innerHTML = '<div id="talkStats"></div><div class="tk-empty" style="padding:4px 0">Pick a call on the left to see it.</div>';
+    if (window.NovaStats) NovaStats.mount($('talkStats'), { url: '/api/admin/talk/stats', token: token, key: 'talk' });
+  }
+  $('callOverview').onclick = () => { $('vCalls').classList.remove('detail'); history.replaceState(null, '', '/talk-ai'); showCallsOverview(); };
+
   // ---- start ----
   loadOverview().then(() => {
     const id = parseInt(new URLSearchParams(location.search).get('call'));
     show('calls');
-    if (id) openCall(id);
+    if (id) openCall(id); else showCallsOverview();
   });
   setInterval(() => { if (!document.hidden && $('vCalls').classList.contains('on')) loadCalls(); }, 30000);
 })();

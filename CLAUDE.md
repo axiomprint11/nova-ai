@@ -170,8 +170,16 @@ every other `agents` row is set to status `retired` at boot (rows kept so old ch
 from `/api/agents` and `/api/admin/agents`, and `/order-assist` / `/prepress` redirect to `/chatbot`. The main page
 (`/`, after sign-in) lands on `/admin?tab=history&mine=1`: everyone's own chats (members only ever see their own;
 admins can switch the user filter), "+ New chat" opens ChatBot, and a row of your own has "Continue in ChatBot"
-(`/chatbot?chat=<id>`). The ChatBot page has no agent dropdown, just "← History" and the title; members see no
-Agents tab.
+(`/chatbot?chat=<id>`). The ChatBot page has no agent dropdown, just "← History" and the title. The Admin menu
+has no Agents tab and Users has no per-member agents column: ChatBot's training opens from CRM Chat ("Train ChatBot",
+`trainAgent('chatbot')`) and TalkAi's from its page (`/admin?tab=agents&agent=talk-ai`).
+
+**Usage overviews.** CRM Chat (the History tab, renamed), TalkAi (Calls, right pane until a call is picked) and Client
+ChatBot (Conversations, likewise) open with tiles (today / this week / this month vs the period before, plus a few of
+the month's outcomes) and a Daily / Weekly / Monthly bar chart: `public/nova-stats.js` (`NovaStats.mount`) draws what
+`GET /api/stats/crm` (chats started; members their own, admins all or the user filter), `GET /api/admin/talk/stats`
+(phone calls) and `GET /api/admin/client-bot/stats` (website conversations with a message) return. `usage-stats.js`
+buckets timestamps by Los Angeles day / Monday week / month.
 
 ## Nova for clients (customer-facing bot)
 

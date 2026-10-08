@@ -1861,6 +1861,23 @@ module.exports = function mountTalkAi(app, deps, bot) {
     res.json({ ok: true, settings: await settings() });
   });
 
+  // Overview: calls by day / week / month (real phone calls only), and this month's outcomes.
+  const usageStats = require('./usage-stats');
+  app.get('/api/admin/talk/stats', auth, adminOnly, async (req, res) => {
+    const rows = await dbAll("SELECT created_at FROM talk_calls WHERE source = 'phone' AND created_at > " + usageStats.SINCE).catch(() => []);
+    const s = usageStats.series(rows.map(r => r.created_at));
+    const m0 = usageStats.startOf('month');
+    const m = await dbGet("SELECT SUM(answered_by = 'ai') AS ai, SUM(hours_mode = 'missed') AS missed, SUM(outcome = 'message') AS msgs, " +
+      "SUM(COALESCE(owner, 0) = 1) AS own, COUNT(DISTINCT from_number) AS callers FROM talk_calls WHERE source = 'phone' AND created_at >= ?", [m0]).catch(() => ({})) || {};
+    const e = await dbGet('SELECT COUNT(*) AS n FROM talk_emails m JOIN talk_calls c ON c.id = m.call_id WHERE m.ok = 1 AND c.source = ? AND m.created_at >= ?', ['phone', m0]).catch(() => ({})) || {};
+    const t = (label, value, sub) => ({ label: label, value: value || 0, sub: sub });
+    res.json({ ok: true, title: 'Calls', unit: 'calls', unit1: 'call', series: s, tiles: [
+      t('Calls today', s.now.today, 'yesterday ' + s.now.yesterday), t('Calls this week', s.now.week, 'last week ' + s.now.last_week),
+      t('Calls this month', s.now.month, 'last month ' + s.now.last_month),
+      t('Answered by AI', m.ai, (m.callers || 0) + ' callers'),
+      t('Missed calls', m.missed, 'picked up by AI'),
+      t('Messages taken', m.msgs, 'this month'), t('Quotes emailed', e.n, 'this month')] });
+  });
   app.get('/api/admin/talk/unread-count', auth, adminOnly, async (req, res) => {
     try {
       const r = await dbGet("SELECT COUNT(*) AS n FROM talk_calls c LEFT JOIN talk_reads r ON r.call_id = c.id AND r.reader = ? " +
