@@ -163,16 +163,28 @@
         (r.order_url ? ' <a class="tk-link" style="text-decoration:none;padding:0" href="' + esc(r.order_url) + '" target="_blank" rel="noopener">order link</a>' : '')).join(' \u00b7 ') + '</div>').join('') + '</div>';
     if (c.summary) html += '<div class="tk-sum"><span>Summary</span>' + esc(c.summary) + '</div>';
     const events = turns.filter(t => t.role === 'event');
+    // "Quote emailed to X" events → the saved email to X (in order); none saved → rebuilt on click.
+    const used = {}, mailKey = new Map();
+    events.forEach(t => {
+      const m = /^Quote emailed to (\S+)/.exec(String(t.content || ''));
+      if (!m) return;
+      const to = m[1].toLowerCase();
+      const list = (c.emails || []).map((e, i) => ({ e: e, i: i })).filter(x => String(x.e.to_addr).toLowerCase() === to);
+      const n = used[to] = (used[to] || 0) + 1;
+      const hit = list[Math.min(n, list.length) - 1];
+      mailKey.set(t.id, hit ? 'saved:' + hit.i : 'rebuild:' + to);
+    });
+    const mailFor = (t) => mailKey.get(t.id) || null;
     const evClass = (t) => /verified as|Transferred to|saved/i.test(t) ? ' ok' : /failed/i.test(t) ? ' bad' : '';
     if (c.transcript && c.transcript.length) {
       html += '<div class="tk-sec"><span>Transcript</span><button type="button" class="tk-link" id="showLog">Show NovaAI’s lookups</button></div><div class="tk-tx">' +
         c.transcript.map(t => '<div class="tk-say ' + (t.role === 'caller' ? 'caller' : 'agent') + '"><div class="who">' + (t.role === 'caller' ? 'Caller' : 'NovaAI') +
           '<small>' + (t.at != null ? Math.floor(t.at / 60) + ':' + String(Math.round(t.at % 60)).padStart(2, '0') : '') + '</small></div><div class="b">' + esc(t.text || '') + '</div></div>' +
           (t.tools && t.tools.length ? '<div class="tk-used">' + t.tools.map(x => '<span>' + esc(x) + '</span>').join('') + '</div>' : '')).join('') +
-        events.map(t => '<div class="tk-evt' + evClass(t.content) + '">' + esc(t.content) + '</div>').join('') + '</div>' +
-        '<div id="turnLog" hidden>' + turnsHtml(turns, evClass) + '</div>';
+        events.map(t => evtHtml(t, evClass, mailFor)).join('') + '</div>' +
+        '<div id="turnLog" hidden>' + turnsHtml(turns, evClass, mailFor) + '</div>';
     } else if (turns.length) {
-      html += '<div class="tk-sec"><span>' + (c.source === 'try' ? 'Conversation' : 'As it happened') + '</span></div><div class="tk-tx">' + turnsHtml(turns, evClass) + '</div>';
+      html += '<div class="tk-sec"><span>' + (c.source === 'try' ? 'Conversation' : 'As it happened') + '</span></div><div class="tk-tx">' + turnsHtml(turns, evClass, mailFor) + '</div>';
       if (c.source === 'phone' && !/completed|failed|busy|no-answer|canceled/.test(c.status || '')) html += '<div class="tk-msg">The full transcript, summary and recording arrive from ElevenLabs a minute after the call ends.</div>';
     } else {
       html += '<div class="tk-empty">' + (c.answered_by === 'forward' ? 'This call was forwarded to the team.' : c.answered_by === 'message' ? 'The caller heard the closed message.' : 'Nothing was said on this call yet.') + '</div>';
@@ -183,6 +195,15 @@
     if ($('showLog')) $('showLog').onclick = () => { const l = $('turnLog'); l.hidden = !l.hidden; $('showLog').textContent = l.hidden ? 'Show NovaAI’s lookups' : 'Hide NovaAI’s lookups'; };
     if (c.has_audio || c.can_fetch_audio) loadAudio(id);
     v.querySelectorAll('[data-mail]').forEach(b => { b.onclick = () => showMail(c.emails[parseInt(b.dataset.mail)]); });
+    v.querySelectorAll('[data-evmail]').forEach(b => {
+      b.onclick = async () => {
+        const k = b.dataset.evmail;
+        if (k.indexOf('saved:') === 0) return showMail(c.emails[parseInt(k.slice(6))]);
+        const j = await api('/api/admin/talk/calls/' + id + '/email-rebuild?to=' + encodeURIComponent(k.slice(8)));
+        if (!j.ok) return alert(j.error || 'The email could not be shown.');
+        showMail(j.email);
+      };
+    });
     loadCalls();
   }
   // An email exactly as it went out, in a sandboxed frame (no scripts; links open in a new tab).
@@ -193,7 +214,8 @@
     pop.innerHTML = '<div class="tk-mailbox" role="dialog" aria-label="Email"><div class="tk-mailhd"><button type="button" class="x" aria-label="Close">\u2715</button>' +
       '<b class="s">' + esc(m.subject || '(no subject)') + '</b>' +
       '<div><span>To</span> ' + esc(m.to_addr) + '</div>' + (m.bcc ? '<div><span>Bcc</span> ' + esc(m.bcc) + '</div>' : '') +
-      '<div><span>Sent</span> ' + esc(full(m.created_at)) + ' from order@axiomprint.com' + (m.ok ? '' : ' \u2014 <b style="color:#b42318">failed: ' + esc(m.error || '') + '</b>') + '</div></div>' +
+      '<div><span>Sent</span> ' + esc(full(m.created_at)) + ' from order@axiomprint.com' + (m.ok ? '' : ' \u2014 <b style="color:#b42318">failed: ' + esc(m.error || '') + '</b>') + '</div>' +
+      (m.rebuilt ? '<div style="margin-top:6px;padding:6px 9px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:12px">Sent before emails were saved \u2014 rebuilt from the prices given on this call, so it may include prices quoted after it was sent.</div>' : '') + '</div>' +
       '<iframe sandbox="allow-popups allow-popups-to-escape-sandbox" title="Email"></iframe></div>';
     document.body.appendChild(pop);
     pop.querySelector('iframe').srcdoc = '<base target="_blank">' + (m.html || '<pre style="white-space:pre-wrap;font:14px/1.5 Arial;padding:16px">' + esc(m.text || '') + '</pre>');
@@ -203,9 +225,17 @@
     pop.querySelector('.x').onclick = close;
     document.addEventListener('keydown', key);
   }
-  function turnsHtml(turns, evClass) {
+  // An event line; a quote email gets a small envelope that opens it.
+  function evtHtml(t, evClass, mailFor) {
+    const k = mailFor ? mailFor(t) : null;
+    return '<div class="tk-evt' + evClass(t.content) + '">' + esc(t.content) +
+      (k ? ' <button type="button" class="tk-evmail" data-evmail="' + esc(k) + '" title="Show the email" aria-label="Show the email">' +
+        '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button>' : '') + '</div>';
+  }
+  function turnsHtml(turns, evClass, mailFor) {
     return turns.map(t => {
-      if (t.role === 'event') return '<div class="tk-evt' + evClass(t.content) + '">' + esc(t.content) + '</div>';
+      if (t.role === 'event') return evtHtml(t, evClass, mailFor);
       const used = (t.tools || []).map(x => '<span title="' + esc(JSON.stringify(x.input || {})) + '">' + esc(x.tool) + (x.found && x.found !== 'ok' ? ': ' + esc(x.found) : '') + '</span>').join('');
       return '<div class="tk-say ' + (t.role === 'caller' ? 'caller' : 'agent') + '"><div class="who">' + (t.role === 'caller' ? 'Caller' : 'NovaAI') +
         '<small>' + esc(new Date(toDate(t.created_at)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })) + '</small></div><div class="b">' + esc(t.content || '…') + '</div></div>' +

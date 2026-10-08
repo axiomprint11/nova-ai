@@ -1894,6 +1894,20 @@ module.exports = function mountTalkAi(app, deps, bot) {
     await markRead(id, readerOf(req));
     res.json({ ok: true, call: c, turns: turns });
   });
+  // An email sent before emails were saved: rebuilt from the call's prices (the same template), and marked so.
+  app.get('/api/admin/talk/calls/:id/email-rebuild', auth, adminOnly, async (req, res) => {
+    const c = await dbGet('SELECT * FROM talk_calls WHERE id = ?', [parseInt(req.params.id) || 0]);
+    if (!c) return res.status(404).json({ ok: false, error: 'No such call.' });
+    let quotes = [];
+    try { quotes = JSON.parse(c.quotes || '[]') || []; } catch (e) {}
+    if (!quotes.length) return res.json({ ok: false, error: 'This call has no prices saved, so the email can\u2019t be rebuilt.' });
+    const to = String(req.query.to || c.emailed_to || '').split(',')[0].trim();
+    const pageUrl = c.share_token ? NOVA_URL + '/talk/c/' + c.share_token : null;
+    const name = c.caller_first || String(c.customer_name || '').split(' ')[0] || '';
+    res.json({ ok: true, email: { rebuilt: true, ok: 1, to_addr: to, bcc: null, created_at: c.created_at,
+      subject: 'Your AxiomPrint quote' + (quotes.length === 1 ? ' \u2014 ' + quotes[0].product : ''),
+      html: quoteEmailHtml(quotes, name, pageUrl), text: quoteEmailText(quotes, name, pageUrl) } });
+  });
   app.post('/api/admin/talk/calls/:id/unread', auth, adminOnly, async (req, res) => {
     await dbRun('DELETE FROM talk_reads WHERE call_id = ? AND reader = ?', [parseInt(req.params.id) || 0, readerOf(req)]).catch(() => {});
     res.json({ ok: true });
