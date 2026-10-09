@@ -190,8 +190,6 @@
     // Emails to the caller: one chip each. CSR summaries: one chip for all of them (opens the history).
     (c.emails || []).forEach((m, i) => { if (m.kind !== 'csr') chips.push('<button type="button" class="tk-mailbtn' + (m.ok ? '' : ' bad') + '" data-mail="' + i + '" title="Show the email">' +
       '✉ ' + (m.ok ? 'Email sent \u00b7 ' + esc(m.to_addr) : 'Email failed \u00b7 ' + esc(m.to_addr)) + '</button>'); });
-    const nCsr = (c.emails || []).filter(m => m.kind === 'csr').length;
-    if (nCsr) chips.push('<button type="button" class="tk-mailbtn" data-ho="hist" title="What was sent to the CSR team">✉ CSR team notified' + (nCsr > 1 ? ' · ' + nCsr : '') + '</button>');
     if (c.emailed_to && !(c.emails || []).length) chips.push('<span class="tk-chip ok">Quote emailed to ' + esc(c.emailed_to) + '</span>');
     // Same avatar as the list: initials = a customer, dashed phone = a number on no account (no words needed).
     const who = c.verified ? '<b>' + (c.verified_by === 'caller_id' ? 'Recognised by caller ID:' : c.verified_by === 'check+caller_id' ? 'Verified (number + email/ZIP):' : 'Verified:') + '</b> ' + esc(c.customer_name || '#' + c.customer_id) + (c.company ? ' (' + esc(c.company) + ')' : '') + ' <i>#' + esc(c.customer_id) + '</i>'
@@ -217,16 +215,17 @@
     // at the bottom of the call (foot), with an envelope that lists every summary email sent to the team.
     let foot = '';
     const csrMails = (c.emails || []).map((m, i) => ({ m: m, i: i })).filter(x => x.m.kind === 'csr');
-    const envBtn = '<button type="button" class="tk-hist" data-ho="hist" title="' + (csrMails.length ? 'What was sent to the CSR team (' + csrMails.length + ')' : 'Nothing sent to the CSR team yet') + '"' + (csrMails.length ? '' : ' disabled') + '>' +
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>' +
-      (csrMails.length ? '<b>' + csrMails.length + '</b>' : '') + '</button>';
+    // One CSR control at the bottom: "CSR team notified · N" opens what was sent; "Notify again" sends the summary again.
+    const csrCtl = (csrMails.length ? '<button type="button" class="tk-mailbtn" data-ho="hist" title="What was sent to the CSR team">' +
+      '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>' +
+      'CSR team notified ' + esc(rel(csrMails[csrMails.length - 1].m.created_at)) + (csrMails.length > 1 ? ' · ' + csrMails.length + ' emails' : '') + '</button>' : '<span class="tk-foot-st">Not emailed to the CSR team yet</span>') +
+      '<button type="button" class="tk-notify" data-ho="csr">' + (csrMails.length ? 'Notify again' : 'Notify the CSR team') + '</button>';
     if (c.ai_summary) {
       const cb = Number(c.callback) === 1;
       html += '<div class="tk-sum ai"><span>AI summary <em class="' + (cb ? 'cb' : 'ok') + '">' + (cb ? 'Call back' + (c.callback_reason ? ': ' + esc(c.callback_reason) : '') : 'No callback needed') + '</em></span>' + esc(c.ai_summary) + '</div>';
-      foot = '<div class="tk-foot"><span class="tk-foot-st">' + (c.csr_sent_at ? 'Emailed to the CSR team ' + esc(rel(c.csr_sent_at)) : 'Not emailed to the CSR team yet') +
-        (c.hook_status ? ' · CRM webhook: ' + esc(c.hook_status) : '') + '</span>' +
+      foot = '<div class="tk-foot"><span class="tk-foot-csr">' + csrCtl + '</span>' +
+        (c.hook_status ? '<span class="tk-foot-st">CRM webhook: ' + esc(c.hook_status) + '</span>' : '<span class="tk-foot-st"></span>') +
         '<button type="button" class="tk-link" data-ho="summary">Write it again</button>' +
-        '<span class="tk-foot-csr"><button type="button" class="tk-link" data-ho="csr">' + (c.csr_sent_at ? 'Send to CSR again' : 'Send to CSR team') + '</button>' + envBtn + '</span>' +
         '<button type="button" class="tk-link" data-ho="data">Webhook data</button></div>';
     } else if (c.source === 'phone' && (c.transcript || []).length) {
       html += '<div class="tk-sum"><span>Summary' + (c.summary ? ' (ElevenLabs)' : '') + '</span>' + esc(c.summary || 'No AI summary yet.') + '</div>';
@@ -293,13 +292,13 @@
     v.querySelectorAll('[data-ho]').forEach(b => {
       b.onclick = async () => {
         const k = b.dataset.ho;
-        if (k === 'hist') return csrHistory(b, csrMails);
+        if (k === 'hist') return csrHistory(b, csrMails, () => v.querySelector('[data-ho="csr"]').click());
         if (k === 'data') {
           const j = await api('/api/admin/talk/calls/' + id + '/handoff');
           if (!j.ok) return alert(j.error || 'Could not build it.');
           return showJson('What the CRM webhook gets for this call', j.payload);
         }
-        if (k === 'csr' && !confirm('Email this call\u2019s summary to the CSR team now?')) return;
+        if (k === 'csr' && !confirm('Email this call\u2019s summary to the CSR team again now?')) return;
         b.disabled = true; b.textContent = k === 'csr' ? 'Sending\u2026' : 'Writing\u2026';
         const j = await api('/api/admin/talk/calls/' + id + '/handoff', { method: 'POST', body: JSON.stringify(k === 'csr' ? { csr: true } : { summary: true }) });
         if (k === 'csr' && j.csr && !j.csr.sent) alert(j.csr.error || 'Not sent.');
@@ -318,10 +317,10 @@
     loadCalls();
   }
   // Every summary email sent to the CSR team for a call: one opens straight away, several give a short list to pick from.
-  function csrHistory(btn, list) {
+  function csrHistory(btn, list, notify) {
     document.querySelectorAll('.tk-histpop').forEach(x => x.remove());
     if (!list.length) return;
-    if (list.length === 1) return showMail(list[0].m);
+    if (list.length === 1) return showMail(list[0].m, notify ? { label: 'Notify again', run: notify } : null);
     const pop = document.createElement('div');
     pop.className = 'tk-histpop';
     pop.setAttribute('role', 'menu');
@@ -333,7 +332,7 @@
     pop.style.top = (r.top - pop.offsetHeight - 6 > 8 ? r.top - pop.offsetHeight - 6 : r.bottom + 6) + 'px';
     const close = (e) => { if (!pop.contains(e.target) && e.target !== btn) { pop.remove(); document.removeEventListener('mousedown', close); } };
     setTimeout(() => document.addEventListener('mousedown', close), 0);
-    pop.querySelectorAll('button[data-k]').forEach(b => { b.onclick = () => { const it = list.find(x => String(x.i) === b.dataset.k); pop.remove(); if (it) showMail(it.m); }; });
+    pop.querySelectorAll('button[data-k]').forEach(b => { b.onclick = () => { const it = list.find(x => String(x.i) === b.dataset.k); pop.remove(); if (it) showMail(it.m, notify ? { label: 'Notify again', run: notify } : null); }; });
   }
   // Data as the CRM receives it, with Copy.
   function showJson(title, obj) {
@@ -350,11 +349,11 @@
     pop.querySelector('[data-copy]').onclick = (e) => { navigator.clipboard.writeText(txt).then(() => { e.target.textContent = 'Copied'; }).catch(() => {}); };
   }
   // An email exactly as it went out, in a sandboxed frame (no scripts; links open in a new tab).
-  function showMail(m) {
+  function showMail(m, action) {
     if (!m) return;
     const pop = document.createElement('div');
     pop.className = 'tk-mailpop';
-    pop.innerHTML = '<div class="tk-mailbox" role="dialog" aria-label="Email"><div class="tk-mailhd"><button type="button" class="x" aria-label="Close">\u2715</button>' +
+    pop.innerHTML = '<div class="tk-mailbox" role="dialog" aria-label="Email"><div class="tk-mailhd">' + (action ? '<button type="button" class="tk-notify act">' + esc(action.label) + '</button>' : '') + '<button type="button" class="x" aria-label="Close">\u2715</button>' +
       '<b class="s">' + esc(m.subject || '(no subject)') + '</b>' +
       '<div><span>To</span> ' + esc(m.to_addr) + '</div>' + (m.bcc ? '<div><span>Bcc</span> ' + esc(m.bcc) + '</div>' : '') +
       '<div><span>Sent</span> ' + esc(full(m.created_at)) + ' from order@axiomprint.com' + (m.ok ? '' : ' \u2014 <b style="color:#b42318">failed: ' + esc(m.error || '') + '</b>') + '</div>' +
@@ -366,6 +365,7 @@
     const key = (e) => { if (e.key === 'Escape') close(); };
     pop.onclick = (e) => { if (e.target === pop) close(); };
     pop.querySelector('.x').onclick = close;
+    if (action) pop.querySelector('.act').onclick = () => { close(); action.run(); };
     document.addEventListener('keydown', key);
   }
   // An event line; a quote email gets a small envelope that opens it.

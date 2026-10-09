@@ -143,7 +143,13 @@
   .tk-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 16px; padding: 12px 0 2px; border-top: 1px dashed #dfe3f3; font-size: 12.5px; }
   .tk-foot .tk-link { padding: 0; font-size: 12.5px; }
   .tk-foot-st { color: var(--muted); margin-right: auto; }
-  .tk-foot-csr { display: inline-flex; align-items: center; gap: 6px; }
+  .tk-foot-csr { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .tk-foot .tk-foot-st:empty { display: none; }
+  .tk-foot .tk-mailbtn svg { flex: none; }
+  .tk-notify { height: 26px; padding: 0 11px; border: 1px solid var(--indigo); border-radius: 7px; background: #fff; color: var(--indigo-dark); font: 600 12px/1 inherit; cursor: pointer; white-space: nowrap; }
+  .tk-notify:hover { background: var(--indigo-light); }
+  .tk-notify:focus-visible { outline: 2px solid var(--indigo); outline-offset: 1px; }
+  .tk-mailhd .tk-notify.act { float: right; margin: 2px 40px 0 12px; height: 30px; }
   .tk-hist { display: inline-flex; align-items: center; gap: 3px; height: 26px; padding: 0 7px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--ink-soft); cursor: pointer; font: 700 11px/1 inherit; }
   .tk-hist svg { width: 15px; height: 15px; }
   .tk-hist:hover:not(:disabled) { border-color: var(--indigo); color: var(--indigo-dark); }
