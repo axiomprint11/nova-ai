@@ -50,14 +50,14 @@
   .tk-rows { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
   .tk-row { position: relative; text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 10px 10px 10px 20px; font: 12px/1.35 inherit; cursor: pointer;
     display: flex; gap: 10px; align-items: flex-start; }
-  .tk-av { flex: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; letter-spacing: .02em; }
+  .tk-row .tk-av { flex: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 600; letter-spacing: .02em; overflow: visible; }
   .tk-av svg { width: 16px; height: 16px; }
-  .tk-av.t0 { background: #fde7d9; color: #b45309; } .tk-av.t1 { background: #ede4fb; color: #6d28d9; } .tk-av.t2 { background: #dcf5e7; color: #15803d; }
-  .tk-av.t3 { background: #dbeafe; color: #1d4ed8; } .tk-av.t4 { background: #fce4ec; color: #be185d; } .tk-av.t5 { background: #e0f2f1; color: #0f766e; }
-  .tk-av.t6 { background: #fef3c7; color: #a16207; } .tk-av.t7 { background: #e5e7f5; color: #3f3f9e; }
-  .tk-av.own { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px #6366f1; }
-  .tk-av.unk { background: #fff; color: #a3a8b8; border: 1.5px dashed #cfd3df; }
-  .tk-av.test { background: #fffbeb; color: #b45309; border: 1.5px solid #fde68a; }
+  .tk-row .tk-av.t0 { background: #fde7d9; color: #b45309; } .tk-row .tk-av.t1 { background: #ede4fb; color: #6d28d9; } .tk-row .tk-av.t2 { background: #dcf5e7; color: #15803d; }
+  .tk-row .tk-av.t3 { background: #dbeafe; color: #1d4ed8; } .tk-row .tk-av.t4 { background: #fce4ec; color: #be185d; } .tk-row .tk-av.t5 { background: #e0f2f1; color: #0f766e; }
+  .tk-row .tk-av.t6 { background: #fef3c7; color: #a16207; } .tk-row .tk-av.t7 { background: #e5e7f5; color: #3f3f9e; }
+  .tk-row .tk-av.own { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px #6366f1; }
+  .tk-row .tk-av.unk { background: #fff; color: #a3a8b8; border: 1.5px dashed #cfd3df; }
+  .tk-row .tk-av.test { background: #fffbeb; color: #b45309; border: 1.5px solid #fde68a; }
   .tk-rb { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
   .tk-r1 { display: flex; align-items: baseline; gap: 8px; }
   .tk-r1 .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -69,10 +69,10 @@
   .tk-row:hover { border-color: var(--indigo); background: #f8f7ff; }
   .tk-row.on { border-color: var(--indigo); background: var(--indigo-light); }
   .tk-row.unread::before { content: ''; position: absolute; left: 6px; top: 24px; width: 8px; height: 8px; border-radius: 50%; background: #0a84ff; }
-  .tk-row.unread .t { font-weight: 800; }
+  .tk-row.unread .t { font-weight: 600; color: #1f2333; }
   .tk-row .w { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 700; color: var(--indigo-dark); margin-bottom: 3px; }
   .tk-row .w span { font-weight: 500; color: var(--muted); white-space: nowrap; }
-  .tk-row .t { font-weight: 600; font-size: 13.5px; color: var(--ink); }
+  .tk-row .t { font-weight: 500; font-size: 13.5px; color: #2f3345; }
   .tk-row small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tk-tag { font-size: 9.5px; font-weight: 700; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; background: #eef1f5; color: #475569; }
   .tk-tag.ok { background: #dcfce7; color: #166534; } .tk-tag.test { background: #fef3c7; color: #92400e; } .tk-tag.msg { background: #fff7ed; color: #9a3412; }
