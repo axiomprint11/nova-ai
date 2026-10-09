@@ -190,8 +190,13 @@
     if (c.status && c.source === 'phone' && !/^(completed|in-progress)$/.test(c.status)) chips.push('<span class="tk-chip">' + esc(c.status) + '</span>');
     // Emails NovaAI sent on this call: click to see exactly what went out.
     // Emails to the caller: one chip each. CSR summaries: one chip for all of them (opens the history).
+    // The person the caller asked for: "Relayed to Lulu Alba" once their email went out (opens it).
+    const staff = c.for_staff || null, relayed = (c.emails || []).some(m => m.kind === 'relay' && m.ok);
     (c.emails || []).forEach((m, i) => { if (m.kind !== 'csr') chips.push('<button type="button" class="tk-mailbtn' + (m.ok ? '' : ' bad') + '" data-mail="' + i + '" title="Show the email">' +
-      '✉ ' + (m.ok ? 'Email sent \u00b7 ' + esc(m.to_addr) : 'Email failed \u00b7 ' + esc(m.to_addr)) + '</button>'); });
+      '✉ ' + (m.kind === 'relay' ? (m.ok ? 'Relayed to ' : 'Relay failed \u00b7 ') + esc((staff && staff.name) || m.to_addr)
+        : m.ok ? 'Email sent \u00b7 ' + esc(m.to_addr) : 'Email failed \u00b7 ' + esc(m.to_addr)) + '</button>'); });
+    if (staff && !relayed) chips.push('<span class="tk-chip warn" title="' + esc(staff.name ? staff.email : 'Not found on the team list') + '">Asked for ' +
+      esc(staff.name || '\u201c' + staff.asked + '\u201d') + (staff.name ? (c.source === 'phone' ? ' \u00b7 relayed after the call' : ' \u00b7 test, not emailed') : ' \u00b7 not on the team list') + '</span>');
     if (c.emailed_to && !(c.emails || []).length) chips.push('<span class="tk-chip ok">Quote emailed to ' + esc(c.emailed_to) + '</span>');
     // Same avatar as the list: initials = a customer, dashed phone = a number on no account (no words needed).
     const who = c.verified ? '<b>' + (c.verified_by === 'caller_id' ? 'Recognised by caller ID:' : c.verified_by === 'check+caller_id' ? 'Verified (number + email/ZIP):' : 'Verified:') + '</b> ' + esc(c.customer_name || '#' + c.customer_id) + (c.company ? ' (' + esc(c.company) + ')' : '') + ' <i>#' + esc(c.customer_id) + '</i>'

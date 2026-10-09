@@ -121,6 +121,7 @@ function verify(rawBody, header, secret) {
   "outcome": {
     "result": "handled",
     "message": null,
+    "asked_for": null,
     "quotes": [
       {
         "product_id": 184,
@@ -176,6 +177,7 @@ function verify(rawBody, header, secret) {
 | `summary.callback_reason` | string \| null | One line on what to do, e.g. "Wants artwork reviewed before ordering — call back today". |
 | `outcome.result` | `handled` \| `message_taken` \| `needs_callback` \| `transferred` | |
 | `outcome.message` | object \| null | When NovaAI took a message: `{topic, caller_name, callback_number, email, text}`. |
+| `outcome.asked_for` | object \| null | When the caller asked for a team member by name: `{said, user_id, name, email, relayed_at}`. `user_id` is the CRM `user.id`; `user_id`/`name`/`email` are null when nobody on the team matched what they said. `relayed_at` = when NovaAI emailed that person the call summary (null until then). |
 | `outcome.quotes` | array | Every price NovaAI gave, with options, quantities, prices, the estimated ready date and the Order now link. |
 | `outcome.emails_sent` | array | Emails NovaAI sent the caller on this call (for example their quote). |
 | `outcome.jobs_mentioned` | string[] | Job numbers (`E1234567`) mentioned on the call. JOB column. Strip the `E` for `estimate.id`. |

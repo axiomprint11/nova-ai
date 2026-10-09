@@ -9,6 +9,10 @@
  *                         Kept in talk_calls.ai_summary / callback / callback_reason.
  *   2. CSR email        — to talk_settings.csr_to (Training → Numbers and messages → "CSR team"), straight after the
  *                         call: "no callback needed" or "CALL BACK: <why>", the summary, caller, quotes, message.
+ *   2b. Relay           — when the caller asked for someone by name ("Can I speak to Lulu?"), take_message found them in
+ *                         the production user table (talk_calls.for_staff); they get their own email: who called, what
+ *                         they want, the AI summary, the recording. Sent after the call, or 12 min after the message
+ *                         if the post-call webhook never comes. talk_emails kind 'relay'.
  *   3. CRM webhook      — POST to talk_settings.webhook_url, signed with TALKAI_WEBHOOK_SECRET (.env), ~90 s after the
  *                         call so the recording is usually in. Retried 1 / 5 / 30 / 120 min. One stable delivery per call
  *                         (X-Nova-Delivery: talkai-call-<id>), so the CRM can upsert. Spec: docs/TALKAI_CRM_WEBHOOK.md.
@@ -93,7 +97,9 @@ module.exports = function talkHandoff(o) {
       } catch (e) {}
     }
     const person = c.customer_name || (top && (top.person || top.name)) || (account && account.name) || null;
-    return { c, transcript, quotes, events, message, emails, jobs, account, person,
+    let staff = null;
+    try { staff = c.for_staff ? JSON.parse(c.for_staff) : null; } catch (e) {}
+    return { c, staff, transcript, quotes, events, message, emails, jobs, account, person,
       company: c.company || (top && top.company) || (account && account.company) || null,
       recognised: c.verified ? (String(c.verified_by || '').indexOf('check') > -1 ? 'verified' : 'caller_id') : top ? 'number_on_account' : 'unknown' };
   }
@@ -126,6 +132,7 @@ module.exports = function talkHandoff(o) {
         (q.specs && q.specs.length ? ' (' + q.specs.slice(0, 6).map(sp => sp.field + ': ' + sp.value).join('; ') + ')' : '')).join(' | ') : '',
       f.emails.filter(e => e.ok).length ? 'Emails sent: ' + f.emails.filter(e => e.ok).map(e => (e.kind || 'email') + ' to ' + e.to_addr).join('; ') : '',
       f.message ? 'Message taken for the team: ' + [f.message.topic, f.message.text, f.message.callback_number ? 'call back on ' + pretty(f.message.callback_number) : ''].filter(Boolean).join(' — ') : '',
+      f.staff ? 'The caller asked for ' + (f.staff.name || '"' + f.staff.asked + '"') + (f.staff.name ? '; the message is relayed to them' : ' (not found on the team list)') + '.' : '',
       c.outcome === 'transferred' ? 'The call was transferred to the team.' : '',
       f.events.length ? 'Events: ' + f.events.slice(-8).join(' | ').slice(0, 1500) : '',
       c.ended_reason ? 'Ended: ' + c.ended_reason : ''
@@ -160,7 +167,7 @@ module.exports = function talkHandoff(o) {
     const subject = 'NovaAI answered: ' + who + (f.person ? ' · ' + pretty(c.from_number) : '') + ' — ' + (cb ? 'CALL BACK' : 'no callback needed');
     const row = (k, v) => v ? '<tr><td style="padding:4px 14px 4px 0;color:#6b7280;white-space:nowrap;vertical-align:top">' + htmlEsc(k) + '</td><td style="padding:4px 0">' + v + '</td></tr>' : '';
     const quotes = f.quotes.map(q => '<div style="margin:2px 0"><b>' + htmlEsc(q.product) + '</b> — ' + (q.rows || []).map(r => htmlEsc(r.quantity) + ' for $' + htmlEsc(usd2(r.price))).join(', ') + '</div>').join('');
-    const sentTo = f.emails.filter(e => e.ok && e.kind !== 'notes').map(e => htmlEsc(e.to_addr)).join(', ');
+    const sentTo = f.emails.filter(e => e.ok && ['notes', 'csr', 'relay'].indexOf(e.kind) === -1).map(e => htmlEsc(e.to_addr)).join(', ');
     const banner = cb
       ? '<div style="background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:10px;padding:10px 14px;font-weight:700">Call back: ' + htmlEsc(c.callback_reason || 'see below') + '</div>'
       : '<div style="background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;border-radius:10px;padding:10px 14px;font-weight:700">Handled by NovaAI — no callback needed</div>';
@@ -176,6 +183,7 @@ module.exports = function talkHandoff(o) {
         row('Prices given', quotes) +
         row('Quote emailed to', sentTo) +
         row('Jobs mentioned', htmlEsc(f.jobs.join(', '))) +
+        row('Asked for', f.staff ? htmlEsc(f.staff.name || '"' + f.staff.asked + '" (not found on the team list)') + (f.staff.name ? ' <span style="color:#9ca3af">— relayed to ' + htmlEsc(f.staff.email) + '</span>' : '') : '') +
         row('Message', f.message ? htmlEsc([f.message.topic, f.message.text].filter(Boolean).join(' — ')) + (f.message.callback_number ? '<br>Call back on ' + htmlEsc(pretty(f.message.callback_number)) : '') : '') +
       '</table>' +
       '<p style="margin:16px 0 0"><a href="' + callLink(c.id) + '" style="color:#4f46e5;font-weight:700">Open the call in Nova</a> <span style="color:#6b7280">(recording and transcript)</span></p>' +
@@ -200,6 +208,68 @@ module.exports = function talkHandoff(o) {
       return { sent: true, to: s.csr_to };
     } catch (e) {
       hit('csr-summary', false, 'Call ' + callId + ': ' + e.message);
+      return { sent: false, error: e.message };
+    }
+  }
+
+  // ---------------------------------------------------------------- relay to the person the caller asked for
+  function relayEmail(f) {
+    const c = f.c, st = f.staff;
+    const who = f.person ? f.person + (f.company ? ' (' + f.company + ')' : '') : 'A caller';
+    const ph = pretty((f.message && f.message.callback_number) || c.from_number);
+    const subject = 'Call back: ' + who + (ph ? ' · ' + ph : '') + (f.message && f.message.topic ? ' — ' + f.message.topic : '');
+    const row = (k, v) => v ? '<tr><td style="padding:4px 14px 4px 0;color:#6b7280;white-space:nowrap;vertical-align:top">' + htmlEsc(k) + '</td><td style="padding:4px 0">' + v + '</td></tr>' : '';
+    const quotes = f.quotes.map(q => '<div style="margin:2px 0"><b>' + htmlEsc(q.product) + '</b> — ' + (q.rows || []).map(r => htmlEsc(r.quantity) + ' for $' + htmlEsc(usd2(r.price))).join(', ') + '</div>').join('');
+    const rec = c.audio_path || c.conversation_id ? recordingUrl(c.id).url : '';
+    const recog = { caller_id: 'Existing client (recognised by caller ID)', verified: 'Existing client (verified on the call)', number_on_account: 'Number is on a client account', unknown: 'Not a client yet' }[f.recognised];
+    const wants = f.message ? [/^call ?back request/i.test(f.message.topic || '') ? '' : f.message.topic, f.message.text].filter(Boolean).join(' — ') : '';
+    const html = '<div style="font:14px/1.55 Arial,sans-serif;color:#1f2937;max-width:640px">' +
+      '<p style="margin:0 0 12px">Hi ' + htmlEsc(st.first || '') + ',</p>' +
+      '<div style="background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;border-radius:10px;padding:10px 14px;font-weight:700">' +
+        htmlEsc(who) + ' called and asked for you. Please call them back' + (ph ? ' at ' + htmlEsc(ph) : '') + '.</div>' +
+      (wants ? '<p style="margin:14px 0 4px;font-size:12px;font-weight:700;letter-spacing:.04em;color:#6b7280">WHAT THEY NEED</p><p style="margin:0">' + htmlEsc(wants) + '</p>' : '') +
+      (c.ai_summary ? '<p style="margin:14px 0 4px;font-size:12px;font-weight:700;letter-spacing:.04em;color:#6b7280">CALL SUMMARY</p><p style="margin:0 0 14px">' + htmlEsc(c.ai_summary) + '</p>' : '') +
+      '<table style="border-collapse:collapse;font-size:13.5px;margin-top:10px">' +
+        row('Caller', htmlEsc(who)) +
+        row('Call back on', htmlEsc(ph)) +
+        row('Client', htmlEsc(recog) + (f.account ? ' · account #' + htmlEsc(f.account.id) + (f.account.email ? ' · ' + htmlEsc(f.account.email) : '') +
+          (f.account.manager && f.account.manager.name ? ' · AM ' + htmlEsc(f.account.manager.name) : '') : '')) +
+        row('Called', htmlEsc(laTime(c.created_at) + (c.duration_sec ? ' · ' + dur(c.duration_sec) : ''))) +
+        row('Prices NovaAI gave', quotes) +
+        row('Jobs mentioned', htmlEsc(f.jobs.join(', '))) +
+      '</table>' +
+      '<p style="margin:16px 0 0"><a href="' + callLink(c.id) + '" style="color:#4f46e5;font-weight:700">Open the call in Nova</a>' +
+        (rec ? ' · <a href="' + rec + '" style="color:#4f46e5">Listen to the recording</a>' : '') + '</p>' +
+      '<p style="margin:14px 0 0;color:#9ca3af;font-size:12px">NovaAI answered this call and told the caller it would pass the message to you. The CSR team gets the call summary too.</p></div>';
+    const text = 'Hi ' + (st.first || '') + ',\n\n' + who + ' called and asked for you. Please call them back' + (ph ? ' at ' + ph : '') + '.\n\n' +
+      (wants ? 'What they need: ' + wants + '\n\n' : '') + (c.ai_summary ? 'Call summary: ' + c.ai_summary + '\n\n' : '') +
+      ['Caller: ' + who, 'Call back on: ' + ph, 'Client: ' + recog + (f.account ? ' (account #' + f.account.id + ')' : ''), 'Called: ' + laTime(c.created_at)].join('\n') +
+      '\n\nOpen the call: ' + callLink(c.id) + (rec ? '\nRecording: ' + rec : '');
+    return { subject, html, text };
+  }
+  // opts.fallback: the safety-net timer — the summary is written from the turns so far and NOT saved, so the real
+  // post-call summary still replaces it. opts.force: send again (admin).
+  async function relayStaff(callId, opts) {
+    opts = opts || {};
+    let f = await facts(callId);
+    if (!f || !f.staff || !f.staff.email) return { sent: false, error: 'Nobody to relay to.' };
+    if (!deps.sendMail) return { sent: false, error: 'Email is not available.' };
+    if (f.c.source !== 'phone' && !opts.force) return { sent: false, error: 'Test call.' };
+    if (f.c.staff_sent_at && !opts.force) return { sent: false, already: f.c.staff_sent_at };
+    if (opts.fallback && !f.c.ai_summary) {
+      const sm = await aiSummary(f).catch(() => null);
+      if (sm && sm.by !== 'rule') f.c = Object.assign({}, f.c, { ai_summary: sm.summary });
+    } else f = (await ensureSummary(callId)) || f;
+    const m = relayEmail(f);
+    try {
+      await deps.sendMail({ to: f.staff.email, subject: m.subject, html: m.html, text: m.text });
+      await dbRun("UPDATE talk_calls SET staff_sent_at = datetime('now'), staff_to = ? WHERE id = ?", [f.staff.email, callId]);
+      await dbRun('INSERT INTO talk_emails (call_id, kind, to_addr, bcc, subject, html, text, ok) VALUES (?,?,?,?,?,?,?,1)', [callId, 'relay', f.staff.email, null, m.subject, m.html, m.text]).catch(() => {});
+      hit('staff-relay', true, 'Call ' + callId + ' → ' + f.staff.email + (opts.fallback ? ' (no post-call webhook yet)' : ''));
+      return { sent: true, to: f.staff.email };
+    } catch (e) {
+      await dbRun('INSERT INTO talk_emails (call_id, kind, to_addr, bcc, subject, html, text, ok, error) VALUES (?,?,?,?,?,?,?,0,?)', [callId, 'relay', f.staff.email, null, m.subject, m.html, m.text, String(e.message).slice(0, 300)]).catch(() => {});
+      hit('staff-relay', false, 'Call ' + callId + ': ' + e.message);
       return { sent: false, error: e.message };
     }
   }
@@ -232,10 +302,12 @@ module.exports = function talkHandoff(o) {
       outcome: {
         result: c.outcome === 'transferred' ? 'transferred' : f.message ? 'message_taken' : Number(c.callback) === 1 ? 'needs_callback' : 'handled',
         message: f.message,
+        asked_for: f.staff ? { said: f.staff.asked, user_id: f.staff.id || null, name: f.staff.name || null, email: f.staff.email || null,
+          relayed_at: iso(f.c.staff_sent_at) } : null,
         quotes: f.quotes.map(q => ({ product_id: q.product_id || null, product: q.product, options: (q.specs || []).map(sp => ({ name: sp.field, value: sp.value })),
           prices: (q.rows || []).map(r => ({ quantity: Number(r.quantity), price: Number(r.price), list_price: r.list_price != null ? Number(r.list_price) : null,
             discount_percent: r.discount != null ? Number(r.discount) : null, ready: r.ready || null, order_url: r.order_url || null })) })),
-        emails_sent: f.emails.filter(e => e.ok && e.kind !== 'csr').map(e => ({ kind: e.kind, to: e.to_addr, subject: e.subject, at: iso(e.created_at) })),
+        emails_sent: f.emails.filter(e => e.ok && e.kind !== 'csr' && e.kind !== 'relay').map(e => ({ kind: e.kind, to: e.to_addr, subject: e.subject, at: iso(e.created_at) })),
         jobs_mentioned: f.jobs
       },
       recording: { ready: !!c.audio_path, url: rec.url, expires_at: rec.expires_at, content_type: 'audio/mpeg' },
@@ -277,6 +349,7 @@ module.exports = function talkHandoff(o) {
     if (!c || c.source !== 'phone' || Number(c.owner) === 1) return;
     await ensureSummary(callId).catch(e => console.error('TALKAI summary', e.message));
     await sendCsr(callId).catch(e => console.error('TALKAI csr', e.message));
+    await relayStaff(callId).catch(e => console.error('TALKAI relay', e.message));
     const s = await settings();
     if (s.webhook_url && env('TALKAI_WEBHOOK_SECRET')) setTimeout(() => sendHook(callId).catch(() => {}), 90 * 1000).unref();
   }
@@ -294,9 +367,10 @@ module.exports = function talkHandoff(o) {
     const out = { ok: true };
     if (b.summary) { const f = await ensureSummary(id, true); out.summary = f && f.c.ai_summary; out.callback = f && Number(f.c.callback) === 1; }
     if (b.csr) out.csr = await sendCsr(id, true);
+    if (b.relay) out.relay = await relayStaff(id, { force: true });
     if (b.webhook) out.webhook = await sendHook(id, 1);
     res.json(out);
   });
 
-  return { afterCall, sendCsr, sendHook, ensureSummary, payload, facts };
+  return { afterCall, sendCsr, relayStaff, sendHook, ensureSummary, payload, facts };
 };
