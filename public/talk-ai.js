@@ -169,6 +169,7 @@
     document.querySelectorAll('.tk-row').forEach(b => { const on = parseInt(b.dataset.id) === id; b.classList.toggle('on', on); if (on) b.classList.remove('unread'); });
     history.replaceState(null, '', '/talk-ai?call=' + id);
     const v = $('callView');
+    v.classList.remove('tk-split');
     v.innerHTML = '<div class="tk-empty">Loading…</div>';
     const j = await api('/api/admin/talk/calls/' + id);
     if (!j.ok) { v.innerHTML = '<div class="tk-empty">' + esc(j.error || 'Could not load the call.') + '</div>'; return; }
@@ -222,6 +223,7 @@
       html += '<div class="tk-sum"><span>Summary' + (c.summary ? ' (ElevenLabs)' : '') + '</span>' + esc(c.summary || 'No AI summary yet.') +
         '<div class="tk-sumbar"><button type="button" class="tk-link" data-ho="summary">Write the AI summary</button><button type="button" class="tk-link" data-ho="data">Webhook data</button></div></div>';
     } else if (c.summary) html += '<div class="tk-sum"><span>Summary</span>' + esc(c.summary) + '</div>';
+    const topLen = html.length;          // header, prices and AI summary stay fixed; the transcript scrolls below them
     const events = turns.filter(t => t.role === 'event');
     // "Quote emailed to X" events → the saved email to X (in order); none saved → rebuilt on click.
     const used = {}, mailKey = new Map();
@@ -269,7 +271,8 @@
     } else {
       html += '<div class="tk-empty">' + (c.answered_by === 'forward' ? 'This call was forwarded to the team.' : c.answered_by === 'message' ? 'The caller heard the closed message.' : 'Nothing was said on this call yet.') + '</div>';
     }
-    v.innerHTML = html;
+    v.classList.add('tk-split');
+    v.innerHTML = '<div class="tk-dtop">' + html.slice(0, topLen) + '</div><div class="tk-scroll" id="callScroll">' + html.slice(topLen) + '</div>';
     $('callBack').onclick = () => { $('vCalls').classList.remove('detail'); current = null; history.replaceState(null, '', '/talk-ai'); showCallsOverview(); };
     $('callUnread').onclick = async () => { await api('/api/admin/talk/calls/' + id + '/unread', { method: 'POST', body: '{}' }); current = null; loadCalls(); $('vCalls').classList.remove('detail'); v.innerHTML = '<div class="tk-empty">Marked as unread.</div>'; };
     if ($('showLog')) $('showLog').onclick = () => {
@@ -916,6 +919,7 @@
   function showCallsOverview() {
     current = null;
     document.querySelectorAll('.tk-row.on').forEach(b => b.classList.remove('on'));
+    $('callView').classList.remove('tk-split');
     $('callView').innerHTML = '<div id="talkStats"></div><div class="tk-empty" style="padding:4px 0">Pick a call on the left to see it.</div>';
     if (window.NovaStats) NovaStats.mount($('talkStats'), { url: '/api/admin/talk/stats', token: token, key: 'talk' });
   }
