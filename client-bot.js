@@ -135,6 +135,8 @@ module.exports = function mountClientBot(app, deps) {
       db.run('ALTER TABLE client_bot_rules_history ADD COLUMN ' + c, () => {});
     });
     db.run('ALTER TABLE client_chats ADD COLUMN visit TEXT', () => {});
+    // The customer's own rating of the conversation (1-5 stars, asked in the chat), an optional note, and when.
+    ['cust_rating INTEGER', 'cust_note TEXT', 'cust_rated_at TEXT'].forEach(c => db.run('ALTER TABLE client_chats ADD COLUMN ' + c, () => {}));
     // Past-due jobs NovaAI escalated (one email per job per day).
     db.run(`CREATE TABLE IF NOT EXISTS client_escalations (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, customer_id INTEGER,
       estimate_id INTEGER, kind TEXT, sent_to TEXT, email_id TEXT, ok INTEGER, error TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`);     // how they reached the site + device (JSON)
@@ -1957,6 +1959,29 @@ module.exports = function mountClientBot(app, deps) {
   }
   // What happened outside the messages, for the admin transcript: the customer moved
   // to another page, or clicked Add to Cart (added / needed to sign in / failed).
+  // The customer rates the conversation (1-5 stars, and a note when it could be better). Kept on the chat (the latest
+  // rating wins) and as an event line in the admin transcript; the chat shows as unread for admins.
+  app.post('/api/client-bot/rate', async (req, res) => {
+    const who = await identify(req);
+    if (!who) return res.status(401).json({ ok: false });
+    if (who.error) return res.status(who.status || 403).json({ ok: false });
+    if (overLimit('rate:' + who.vid, 30, 10 * 60 * 1000)) return res.status(429).json({ ok: false });
+    const b = req.body || {};
+    const chat = parseInt(b.chat_id) ? await dbGet('SELECT id, visitor_id, customer_id, source FROM client_chats WHERE id = ?', [parseInt(b.chat_id)]) : null;
+    if (!ownsChat(chat, who)) return res.json({ ok: false });
+    const stars = Math.min(5, Math.max(1, parseInt(b.stars) || 0));
+    if (!parseInt(b.stars)) return res.status(400).json({ ok: false });
+    const note = String(b.note || '').replace(/[\u0000-\u001f]+/g, ' ').trim().slice(0, 600) || null;
+    try {
+      await dbRun("UPDATE client_chats SET cust_rating = ?, cust_note = ?, cust_rated_at = datetime('now'), updated_at = datetime('now') WHERE id = ?", [stars, note, chat.id]);
+      // Stars first, then (for a low rating) the note a moment later: one line in the transcript, updated in place.
+      const last = await dbGet('SELECT id, cards FROM client_messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1', [chat.id]);
+      const text = 'Customer rated the chat ' + stars + '/5' + (note ? ': ' + note : ''), card = JSON.stringify([{ type: 'event', kind: 'rating', stars: stars, note: note }]);
+      if (last && /"kind":"rating"/.test(last.cards || '')) await dbRun('UPDATE client_messages SET content = ?, cards = ? WHERE id = ?', [text, card, last.id]);
+      else await dbRun('INSERT INTO client_messages (chat_id, role, content, cards) VALUES (?,?,?,?)', [chat.id, 'event', text, card]);
+    } catch (e) { console.error('CLIENT_BOT rate', e.message); return res.status(500).json({ ok: false }); }
+    res.json({ ok: true, stars: stars });
+  });
   app.post('/api/client-bot/event', async (req, res) => {
     const who = await identify(req);
     if (!who) return res.status(401).json({ ok: false });
@@ -2029,7 +2054,7 @@ module.exports = function mountClientBot(app, deps) {
     const msgs = (await dbAll("SELECT id, role, content, cards, created_at FROM client_messages WHERE chat_id = ? AND role IN ('user','assistant','event') ORDER BY id", [chat.id]))
       .filter(m => !isAfterCart(m) && (m.role !== 'event' || /"kind":"cart"/.test(m.cards || '') && /"outcome":"added"/.test(m.cards || '')));
     const files = await dbAll('SELECT message_id, name, kind FROM client_files WHERE chat_id = ? AND message_id IS NOT NULL ORDER BY id', [chat.id]);
-    res.json({ ok: true, chat: { id: chat.id, title: chat.title, started: chat.created_at, updated: chat.updated_at },
+    res.json({ ok: true, chat: { id: chat.id, title: chat.title, started: chat.created_at, updated: chat.updated_at, rated: chat.cust_rating || null },
       messages: msgs.map(m => {
         let cards = [];
         if ((m.role === 'assistant' || m.role === 'event') && m.cards) { try { cards = JSON.parse(m.cards); } catch (e) { cards = []; } }
@@ -2528,12 +2553,15 @@ module.exports = function mountClientBot(app, deps) {
       "WHERE source = 'website' AND message_count > 0 AND created_at >= ?", [m0]).catch(() => ({})) || {};
     const cart = await dbGet("SELECT COUNT(*) AS n FROM client_messages cm JOIN client_chats c ON c.id = cm.chat_id WHERE c.source = 'website' AND cm.role = 'event' " +
       "AND cm.content LIKE 'Add to Cart:%added it to their cart%' AND cm.created_at >= ?", [m0]).catch(() => ({})) || {};
+    const cr = await dbGet("SELECT COUNT(cust_rating) AS n, AVG(cust_rating) AS avg, SUM(cust_rating <= 2) AS low FROM client_chats WHERE source = 'website' AND cust_rated_at >= ?", [m0]).catch(() => ({})) || {};
     const t = (label, value, sub) => ({ label: label, value: value || 0, sub: sub });
     res.json({ ok: true, title: 'Website conversations', unit: 'conversations', unit1: 'conversation', series: s, tiles: [
       t('Conversations today', s.now.today, 'yesterday ' + s.now.yesterday), t('This week', s.now.week, 'last week ' + s.now.last_week),
       t('This month', s.now.month, 'last month ' + s.now.last_month),
       t('Signed-in customers', m.signed, 'this month \u00b7 ' + (m.visitors || 0) + ' visitors'),
-      t('Added to cart', cart.n, 'items, this month')] });
+      t('Added to cart', cart.n, 'items, this month'),
+      { label: 'Customer rating', value: cr.n ? Math.round(cr.avg * 10) / 10 : 0, display: cr.n ? (Math.round(cr.avg * 10) / 10).toFixed(1) + ' / 5' : '\u2014',
+        sub: cr.n ? cr.n + ' rating' + (cr.n === 1 ? '' : 's') + ' this month' + (cr.low ? ' \u00b7 ' + cr.low + ' low' : '') : 'no ratings this month' }] });
   });
   app.get('/api/admin/client-bot/chats', auth, adminOnly, async (req, res) => {
     const reader = readerOf(req);
@@ -2543,6 +2571,8 @@ module.exports = function mountClientBot(app, deps) {
     if (req.query.unread === '1') where.push(UNREAD);
     if (req.query.source === 'website' || req.query.source === 'preview') { where.push('c.source = ?'); p.push(req.query.source); }
     if (req.query.signed === '1') where.push('c.customer_id IS NOT NULL');
+    if (req.query.rated === 'low') where.push('c.cust_rating <= 3');
+    if (req.query.rated === 'any') where.push('c.cust_rating IS NOT NULL');
     if (req.query.q) {
       const like = '%' + String(req.query.q).slice(0, 80) + '%';
       where.push('(c.customer_name LIKE ? OR c.customer_email LIKE ? OR c.company LIKE ? OR c.title LIKE ? OR CAST(c.customer_id AS TEXT) = ? ' +

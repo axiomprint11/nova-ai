@@ -115,7 +115,7 @@
       if (!data || !data.ok) throw new Error((data && data.error) || 'no data');
     } catch (e) { el.innerHTML = '<div class="nvs"><div class="nvs-err">The overview could not be loaded.</div></div>'; return; }
     el.innerHTML = '<div class="nvs">' +
-      '<div class="nvs-tiles">' + (data.tiles || []).map(t => '<div class="nvs-tile"><span title="' + esc(t.label) + '">' + esc(t.label) + '</span><b>' + num(t.value) + '</b>' +
+      '<div class="nvs-tiles">' + (data.tiles || []).map(t => '<div class="nvs-tile"><span title="' + esc(t.label) + '">' + esc(t.label) + '</span><b>' + (t.display != null ? esc(t.display) : num(t.value)) + '</b>' +
         (t.sub ? '<small title="' + esc(t.sub) + '">' + esc(t.sub) + '</small>' : '') + '</div>').join('') + '</div>' +
       '<div class="nvs-card"><div class="nvs-head"><div><b>' + esc(data.title) + '</b><small class="nvs-range"></small></div>' +
         '<div class="nvs-seg" role="group" aria-label="Period">' + GRAINS.map(g => '<button type="button" data-g="' + g[0] + '">' + g[1] + '</button>').join('') + '</div></div>' +

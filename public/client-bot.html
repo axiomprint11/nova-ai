@@ -243,7 +243,14 @@
   .cv-r2.muted { color: var(--muted); font-style: italic; }
   .cv-r3 { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
   .cv-tag { font-size: 9.5px; font-weight: 700; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; background: #eef1f5; color: #475569; white-space: nowrap; }
-  .cv-tag.pre { background: #fef3c7; color: #92400e; } .cv-tag.up { background: #dcfce7; color: #166534; } .cv-tag.down { background: #fee2e2; color: #991b1b; }
+  .cv-tag.pre { background: #fef3c7; color: #92400e; }
+  #convSrc { flex-wrap: nowrap; gap: 5px; } #convSrc button { white-space: nowrap; padding-left: 9px; padding-right: 9px; }
+  .cv-tag.cr { text-transform: none; font-size: 10.5px; letter-spacing: 0; }
+  .cv-tag.cr.hi { background: #dcfce7; color: #166534; } .cv-tag.cr.mid { background: #fef3c7; color: #92400e; } .cv-tag.cr.lo { background: #fee2e2; color: #991b1b; }
+  .cv-stars { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .cv-stars.hi { background: #ecfdf5; color: #065f46; } .cv-stars.mid { background: #fffbeb; color: #92400e; } .cv-stars.lo { background: #fef2f2; color: #991b1b; }
+  .cv-stars i { font-style: normal; letter-spacing: 1px; color: #f5b301; }
+  .cb-evt-rate { border-color: #fde68a !important; background: #fffbeb !important; } .cv-tag.up { background: #dcfce7; color: #166534; } .cv-tag.down { background: #fee2e2; color: #991b1b; }
   .cb-row.cv-row small.cv-last { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cb-row.cv-row.unread small.cv-last { color: var(--ink-soft); }
   /* the open conversation: fixed top, scrolling conversation */
@@ -324,9 +331,9 @@
         <div class="row" id="convSrc">
           <button type="button" data-s="" class="on">All</button>
           <button type="button" data-s="unread">Unread <b class="cb-ucount" id="convUnread"></b></button>
-          <button type="button" data-s="website">Website</button>
-          <button type="button" data-s="preview">Admin preview</button>
-          <button type="button" data-s="signed">Signed-in only</button>
+          <button type="button" data-s="signed">Signed in</button>
+          <button type="button" data-s="rated" title="Conversations the customer rated">Rated</button>
+          <button type="button" data-s="preview">Previews</button>
         </div>
       </div>
       <div class="cb-listbar"><span id="convStamp"></span><span><button type="button" id="convOverview">Overview</button> · <button type="button" id="convReadAll">Mark all read</button></span></div>

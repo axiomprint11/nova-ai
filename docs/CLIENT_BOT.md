@@ -617,3 +617,15 @@ magnet). The chat sends the page with every message; `pageProduct()` maps `axiom
 options in front of the message as `[PAGE: …]`. Earlier messages keep a short `[PAGE: written on the … page]` tag where
 the page changed. Prompt rule 9c tells NovaAI to answer about that product unless the customer names another one, and to
 follow them when they move to another product page. Other pages (turnaround, home) are passed by title only.
+
+
+## Customers rate the chat
+
+After NovaAI's first answer, a slim strip above the message box asks **"How is NovaAI doing so far?"** with five stars.
+Four or five stars says thanks and closes. Three or fewer asks **"What could be better?"** (optional) before closing.
+"×" means not now. Each conversation asks once: the browser remembers it, and a conversation reopened from History that
+was already rated is not asked again. The rating goes to `POST /api/client-bot/rate` and is saved on the conversation
+(`cust_rating`, `cust_note`, `cust_rated_at`). The latest rating wins, and it adds one "Customer rated the chat" line to
+the admin transcript. Admins see it as a ★ n/5 tag in the list, as stars next to the date in the open conversation,
+through the **Rated** filter, and in the overview's **Customer rating** tile (this month's average, how many, how many
+low). The team's own 👍/👎 is unchanged and separate.

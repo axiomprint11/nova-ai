@@ -145,6 +145,8 @@
     return w.known ? '<span class="cv-av t' + tone(w.name) + '" title="Signed-in customer">' + esc(initials(w.name)) + '</span>'
       : '<span class="cv-av guest" title="Visitor — not signed in">' + AVI.guest + '</span>';
   }
+  const rateTone = (n) => n >= 4 ? 'hi' : n === 3 ? 'mid' : 'lo';
+  const starsText = (n) => '★★★★★'.slice(0, n) + '☆☆☆☆☆'.slice(0, 5 - n);
   const shortWhen = (ts) => { const d = toDate(ts); return isNaN(d) ? '' : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) + ' · ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
 
   let loadedAt = 0;
@@ -152,6 +154,7 @@
     const p = new URLSearchParams();
     if (src === 'website' || src === 'preview') p.set('source', src);
     if (src === 'signed') p.set('signed', '1');
+    if (src === 'rated') p.set('rated', 'any');
     if (src === 'unread') p.set('unread', '1');
     if ($('convQ').value.trim()) p.set('q', $('convQ').value.trim());
     const j = await fetch('/api/admin/client-bot/chats?' + p, { headers: H() }).then(r => r.json()).catch(() => ({}));
@@ -171,6 +174,7 @@
       const w = who(c), n = c.message_count || 0;
       const tags = [];
       if (c.source !== 'website') tags.push('<span class="cv-tag pre">Admin preview</span>');
+      if (c.cust_rating) tags.push('<span class="cv-tag cr ' + rateTone(c.cust_rating) + '" title="Customer rated the chat ' + c.cust_rating + ' of 5' + (c.cust_note ? ': ' + esc(c.cust_note) : '') + '">★ ' + c.cust_rating + '/5</span>');
       if (c.rating) tags.push('<span class="cv-tag ' + (c.rating === 'up' ? 'up' : 'down') + '">' + (c.rating === 'up' ? 'Rated good' : 'Rated not good') + '</span>');
       b.innerHTML = '<span class="cv-avcol">' + avatar(c) + (n ? '<span class="cv-n" title="' + n + ' messages">' + BUBBLE + n + '</span>' : '') + '</span>' +
         '<span class="cv-rb"><span class="cv-r1"><b class="t">' + esc(w.name) + '</b><span class="when" title="' + esc(full(c.updated_at)) + '" data-ts="' + esc(c.updated_at || '') + '">' + esc(rel(c.updated_at)) + '</span></span>' +
@@ -372,7 +376,8 @@
         '<div class="cv-top">' + avatar(c) + '<div class="cv-id"><div class="cv-line"><b class="big">' + esc(w.name) + '</b>' +
           (c.source !== 'website' ? '<span class="cv-tag pre">Admin preview' + (c.preview_by ? ' · ' + esc(String(c.preview_by).replace(/^(member|user):/, '')) : '') + '</span>' : '') +
           '<span class="cv-when" title="Started ' + esc(full(c.created_at)) + '">' + esc(shortWhen(c.created_at)) + '</span>' +
-          '<span class="cv-when cv-cnt" title="' + nMsg + ' messages">' + BUBBLE + nMsg + '</span></div>' +
+          '<span class="cv-when cv-cnt" title="' + nMsg + ' messages">' + BUBBLE + nMsg + '</span>' +
+          (c.cust_rating ? '<span class="cv-stars ' + rateTone(c.cust_rating) + '" title="Customer’s rating' + (c.cust_note ? ': ' + esc(c.cust_note) : '') + ' · ' + esc(full(c.cust_rated_at)) + '">Customer <i>' + starsText(c.cust_rating) + '</i></span>' : '') + '</div>' +
           (w.known ? '<div class="cv-who">' + esc([c.company, c.customer_email].filter(Boolean).join(' · ')) + (c.customer_id ? ' <i>#' + esc(c.customer_id) + '</i>' : '') + '</div>' : '') +
         '</div></div>' + visitorChips(j.visitor, c) + '</div>' +
       '<div class="cv-scroll">' + (nLk ? '<div class="cv-sec"><span>Conversation</span><button type="button" class="cv-lkbtn">Show NovaAI’s lookups (' + nLk + ')</button></div>' : '') +
@@ -399,6 +404,10 @@
             if (m.page_url === lastPage) return '';
             const first = lastPage == null; lastPage = m.page_url;
             return pageLine(m.page_url, m.page_title, m.created_at, !first);
+          }
+          if (ev.kind === 'rating') {
+            return '<div class="cb-evt cb-evt-rate"><span>Customer rated the chat</span><b>' + starsText(parseInt(ev.stars) || 0) + '</b>' + (ev.note ? '<i>“' + esc(ev.note) + '”</i>' : '') +
+              '<em title="' + esc(full(m.created_at)) + '" data-ts="' + esc(m.created_at || '') + '">' + esc(rel(m.created_at)) + '</em></div>';
           }
           if (ev.kind === 'escalation') {
             const st = ev.preview ? 'admin preview \u2014 no email sent' : ev.already ? 'already escalated in the last 24 hours'

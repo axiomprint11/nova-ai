@@ -326,6 +326,10 @@
       '<div class="cc-main">' +
       '<div class="cc-msgs"><div class="cc-inner"></div></div>' +
       '<div class="cc-composer">' +
+        '<div class="cc-rate" hidden role="group" aria-label="Rate this chat"><div class="cc-rate-q"><span class="cc-rate-t">How is NovaAI doing so far?</span><span class="cc-stars">' +
+          [1, 2, 3, 4, 5].map(n => '<button type="button" data-star="' + n + '" aria-label="' + n + ' star' + (n > 1 ? 's' : '') + '"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/></svg></button>').join('') + '</span>' +
+          '<button type="button" class="cc-rate-x" aria-label="Not now" title="Not now">\u00d7</button></div>' +
+          '<div class="cc-rate-more" hidden><input type="text" maxlength="600" placeholder="What could be better? (optional)"><button type="button" class="cc-rate-send">Send</button></div></div>' +
         '<div class="cc-sugg"></div>' +
         '<div class="cc-files" style="display:none"></div>' +
         '<div class="cc-shell">' +
@@ -532,6 +536,54 @@
     const ta = root.querySelector('textarea');
     const send = root.querySelector('.cc-send');
     const sugg = root.querySelector('.cc-sugg');
+    // Rate this chat: asked once the customer has had a first answer, 1-5 stars (a note when it could be better).
+    // Saved with the conversation for the team; remembered per conversation in this browser.
+    const rateBox = root.querySelector('.cc-rate');
+    const rateKey = () => 'nova-rate-' + chatId;
+    const rateSeen = () => { try { return !!localStorage.getItem(rateKey()); } catch (e) { return false; } };
+    const rateMark = (v) => { try { localStorage.setItem(rateKey(), v); } catch (e) {} };
+    let rateTimer = null, rateStars = 0;
+    function rateHide() { rateBox.hidden = true; clearTimeout(rateTimer); }
+    function maybeAskRating() {
+      if (opts.rating === false || !chatId || rateSeen() || !rateBox.hidden) return;
+      rateStars = 0;
+      rateBox.classList.remove('done');
+      rateBox.querySelector('.cc-rate-t').textContent = 'How is NovaAI doing so far?';
+      rateBox.querySelector('.cc-rate-more').hidden = true;
+      rateBox.querySelectorAll('[data-star]').forEach(b => b.classList.remove('on'));
+      rateBox.hidden = false;
+    }
+    function paintStars(n) { rateBox.querySelectorAll('[data-star]').forEach(b => b.classList.toggle('on', parseInt(b.dataset.star) <= n)); }
+    async function sendRating(stars, note) {
+      rateMark('done');
+      try {
+        await fetch('/api/client-bot/rate', { method: 'POST', keepalive: true,
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (opts.getToken ? opts.getToken() : '') },
+          body: JSON.stringify(Object.assign({ chat_id: chatId, stars: stars, note: note || '' }, opts.extraBody ? opts.extraBody() : {})) });
+      } catch (e) {}
+    }
+    function rateThanks() {
+      rateBox.classList.add('done');
+      rateBox.querySelector('.cc-rate-more').hidden = true;
+      rateBox.querySelector('.cc-rate-t').textContent = 'Thanks for the feedback!';
+      clearTimeout(rateTimer); rateTimer = setTimeout(rateHide, 2500);
+    }
+    rateBox.querySelectorAll('[data-star]').forEach(b => {
+      b.onmouseenter = () => { if (!rateBox.classList.contains('done')) paintStars(parseInt(b.dataset.star)); };
+      b.onmouseleave = () => { if (!rateBox.classList.contains('done')) paintStars(rateStars); };
+      b.onclick = () => {
+        if (rateBox.classList.contains('done')) return;
+        rateStars = parseInt(b.dataset.star); paintStars(rateStars);
+        sendRating(rateStars, '');
+        if (rateStars >= 4) return rateThanks();
+        const more = rateBox.querySelector('.cc-rate-more');
+        rateBox.querySelector('.cc-rate-t').textContent = 'Sorry about that.';
+        more.hidden = false; more.querySelector('input').focus();
+      };
+    });
+    rateBox.querySelector('.cc-rate-send').onclick = () => { const v = rateBox.querySelector('.cc-rate-more input').value.trim(); if (v) sendRating(rateStars, v); rateThanks(); };
+    rateBox.querySelector('.cc-rate-more input').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); rateBox.querySelector('.cc-rate-send').click(); } };
+    rateBox.querySelector('.cc-rate-x').onclick = () => { if (!rateStars) rateMark('later'); rateHide(); };
 
     // The website page the chat is on (the header script tells us), and events the
     // team sees in the transcript: moving to another page, Add to Cart clicks.
@@ -618,6 +670,7 @@
       } catch (e) { j = {}; }
       if (!j.ok) return j.error || 'That conversation could not be opened.';
       chatId = j.chat.id; sentPage = null; groups = []; pending = []; paintFiles();
+      rateHide(); if (j.chat.rated) rateMark('done');
       refreshTabs(); inner.innerHTML = ''; sugg.style.display = 'none';
       inner.insertAdjacentHTML('beforeend', '<div class="cc-hist-note">Conversation from ' + esc(when(j.chat.started)) +
         '. Prices are from then \u2014 tap <b>Edit</b> \u2192 <b>Update price</b> on a quote, or just ask, for today\u2019s price.</div>');
@@ -688,6 +741,7 @@
           chatId = j.chat_id;
           if (page && page.url) sentPage = page.url;
           showAnswer(b, j.reply, j.cards || [], true);
+          setTimeout(maybeAskRating, 1200);
           if (opts.onCartAdded && (j.cards || []).some(c => c.type === 'cart_added' && !c.preview)) opts.onCartAdded();
           if (opts.onAnswer) opts.onAnswer(j, b);
         }
@@ -1004,12 +1058,12 @@
       // opens): replace the greeting instead of adding a second one.
       resume: (g, sugg) => {
         const started = !!chatId || !!inner.querySelector('.msg-row.user');
-        chatId = null; sentPage = null; projLoaded = false; projBody.innerHTML = ''; refreshTabs();
+        rateHide(); chatId = null; sentPage = null; projLoaded = false; projBody.innerHTML = ''; refreshTabs();
         if (sugg) opts.suggestions = sugg;
         if (!started) { greet(g || opts.greeting); return; }
         add('ai', md(g || opts.greeting || '')); box.scrollTop = box.scrollHeight;
       },
-      reset: (g) => { chatId = null; sentPage = null; groups = []; pending = []; paintFiles(); paintPane(); greet(g || opts.greeting); },
+      reset: (g) => { rateHide(); chatId = null; sentPage = null; groups = []; pending = []; paintFiles(); paintPane(); greet(g || opts.greeting); },
       setGreeting: (g) => { opts.greeting = g; if (!chatId) greet(g); },
       load: load,
       chatId: () => chatId,

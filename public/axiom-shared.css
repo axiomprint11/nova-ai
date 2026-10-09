@@ -1797,6 +1797,25 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .cc-composer { border-top: 1px solid var(--line); padding: 10px 0 12px; }
 .cc-composer > * { max-width: 760px; margin-left: auto; margin-right: auto; padding: 0 16px; }
 .cc-sugg { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+/* Rate this chat (client chat): a slim strip above the box after the first answer. */
+.cc-rate { margin: 0 0 8px; padding: 8px 10px 8px 12px; border: 1px solid #e4e6f2; border-radius: 12px; background: #fafbff; font-size: 13px; color: #374151; }
+.cc-rate[hidden] { display: none; }
+.cc-rate-q { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cc-rate-t { font-weight: 600; flex: 1; min-width: 150px; }
+.cc-stars { display: inline-flex; gap: 2px; }
+.cc-stars button { width: 30px; height: 30px; padding: 3px; border: 0; background: none; cursor: pointer; border-radius: 8px; }
+.cc-stars button svg { width: 100%; height: 100%; fill: none; stroke: #c3c7d6; stroke-width: 1.6; stroke-linejoin: round; transition: fill .12s, stroke .12s; }
+.cc-stars button.on svg { fill: #f5b301; stroke: #e0a100; }
+.cc-stars button:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
+.cc-rate.done .cc-stars button { cursor: default; }
+.cc-rate-x { width: 26px; height: 26px; border: 0; background: none; color: #9ca3af; font-size: 18px; line-height: 1; cursor: pointer; border-radius: 7px; }
+.cc-rate-x:hover { background: #eef0f7; color: #4b5563; }
+.cc-rate.done .cc-rate-x { display: none; }
+.cc-rate-more { display: flex; gap: 6px; margin-top: 8px; }
+.cc-rate-more[hidden] { display: none; }
+.cc-rate-more input { flex: 1; min-width: 0; height: 34px; padding: 0 10px; border: 1px solid #d9dcea; border-radius: 9px; font: inherit; font-size: 13px; background: #fff; }
+.cc-rate-more input:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 3px #eef2ff; }
+.cc-rate-send { height: 34px; padding: 0 14px; border: 0; border-radius: 9px; background: #6366f1; color: #fff; font: 600 13px/1 inherit; cursor: pointer; }
 .cc-shell { display: flex; gap: 8px; align-items: flex-end; }
 .cc-shell textarea { flex: 1; resize: none; border: 1.5px solid var(--line); border-radius: 12px; padding: 10px 12px;
   font-family: inherit; font-size: 14px; outline: none; max-height: 120px; }
