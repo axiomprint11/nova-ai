@@ -191,7 +191,9 @@
     // Same avatar as the list: initials = a customer, dashed phone = a number on no account (no words needed).
     const who = c.verified ? '<b>' + (c.verified_by === 'caller_id' ? 'Recognised by caller ID:' : c.verified_by === 'check+caller_id' ? 'Verified (number + email/ZIP):' : 'Verified:') + '</b> ' + esc(c.customer_name || '#' + c.customer_id) + (c.company ? ' (' + esc(c.company) + ')' : '') + ' <i>#' + esc(c.customer_id) + '</i>'
       : match ? '<b>Caller ID matches</b> ' + match + ' <i>— not verified on the call</i>' : '';
-    let html = '<div class="tk-hd"><button type="button" class="tk-link" id="callBack" style="float:right">← All calls</button>' +
+    let html = '<div class="tk-hd"><div class="tk-hd-acts">' +
+      '<button type="button" class="tk-hd-btn" id="callUnread" title="Mark as unread"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><circle cx="19" cy="5" r="3" fill="#0a84ff" stroke="#fff" stroke-width="1.5"/></svg><span>Mark as unread</span></button>' +
+      '<button type="button" class="tk-hd-x" id="callBack" title="Close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>' +
       '<div class="tk-hd-top">' + callAvatar(c) + '<div class="tk-hd-id"><div class="tk-hd-line"><b class="big">' + esc(c.source === 'try' ? 'Test in text' : phone(c.from_number) || 'Unknown number') + '</b>' +
       (c.source !== 'phone' ? ' <span class="tk-tag test">Test</span>' : '') +
       '<span class="tk-hd-when" title="' + esc(full(c.created_at)) + '">' + esc(shortWhen(c.created_at)) + '</span>' +
@@ -201,8 +203,7 @@
       '<div class="meta">' + chips.join('') + '</div>' +
       (c.has_audio || c.can_fetch_audio ? '<div class="tk-audio" id="callAudio"><span class="tk-msg">Loading the recording…</span></div>' : '') +
       (c.error ? '<div class="tk-msg err" style="margin-top:8px">' + esc(c.error) + '</div>' : '') +
-      '<div style="margin-top:8px"><button type="button" class="tk-link" id="callUnread">Mark as unread</button>' +
-      (c.page_url ? ' \u00b7 <a class="tk-link" href="' + esc(c.page_url) + '" target="_blank" rel="noopener" style="text-decoration:none">Caller\u2019s page \u2197</a>' : '') + '</div></div>';
+      (c.page_url ? '<div style="margin-top:8px"><a class="tk-link" href="' + esc(c.page_url) + '" target="_blank" rel="noopener" style="text-decoration:none">Caller\u2019s page \u2197</a></div>' : '') + '</div>';
     if (c.quotes && c.quotes.length) html += '<div class="tk-sum" style="background:#fff;border-color:var(--line)"><span>Prices given on this call</span>' +
       c.quotes.map(q => '<div style="margin-top:4px"><b>' + esc(q.product) + '</b> \u2014 ' + q.rows.map(r => esc(Number(r.quantity).toLocaleString('en-US')) + ': $' +
         esc(Number(r.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })) +
