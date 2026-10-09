@@ -125,6 +125,28 @@
   let qt = null;
   $('convQ').oninput = () => { clearTimeout(qt); qt = setTimeout(loadConvos, 300); };
 
+  // Who a conversation is with, and the avatar for it (same look as TalkAi's calls): initials for a signed-in customer,
+  // a plain dashed person for a visitor who is not signed in, a yellow keyboard for an admin preview.
+  const BUBBLE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/></svg>';
+  const AVI = {
+    guest: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>',
+    pre: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>'
+  };
+  const initials = (n) => { const w = String(n || '').replace(/[^\p{L}\p{N} ]/gu, ' ').trim().split(/\s+/).filter(Boolean); return ((w[0] || '?')[0] + (w.length > 1 ? w[w.length - 1][0] : (w[0] || '')[1] || '')).toUpperCase(); };
+  const tone = (n) => { let h = 0; String(n || '').split('').forEach(ch => { h = (h * 31 + ch.charCodeAt(0)) >>> 0; }); return h % 8; };
+  function who(c) {
+    const name = c.customer_name || (c.customer_id ? 'Customer #' + c.customer_id : '');
+    if (name) return { known: true, name: name, sub: [c.company, c.customer_email].filter(Boolean).join(' · ') || 'Signed-in customer' };
+    return { known: false, name: 'Visitor', sub: 'Not signed in' };
+  }
+  function avatar(c) {
+    if (c.source !== 'website') return '<span class="cv-av pre" title="Admin preview">' + AVI.pre + '</span>';
+    const w = who(c);
+    return w.known ? '<span class="cv-av t' + tone(w.name) + '" title="Signed-in customer">' + esc(initials(w.name)) + '</span>'
+      : '<span class="cv-av guest" title="Visitor — not signed in">' + AVI.guest + '</span>';
+  }
+  const shortWhen = (ts) => { const d = toDate(ts); return isNaN(d) ? '' : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) + ' · ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
+
   let loadedAt = 0;
   async function loadConvos() {
     const p = new URLSearchParams();
@@ -144,18 +166,17 @@
     rows.forEach(c => {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'cb-row' + (c.id === openId ? ' on' : '') + (c.unread && c.id !== openId ? ' unread' : '');
+      b.className = 'cb-row cv-row' + (c.id === openId ? ' on' : '') + (c.unread && c.id !== openId ? ' unread' : '') + (who(c).known ? '' : ' guest');
       b.title = c.unread ? 'Unread' : '';
-      b.innerHTML = '<div class="cb-when" title="' + esc(full(c.updated_at)) + '" data-ts="' + esc(c.updated_at || '') + '">' + esc(rel(c.updated_at)) +
-          '<span>' + (c.message_count || 0) + ' messages</span></div>' +
-        '<div class="t">' + esc(c.customer_name || (c.customer_id ? 'Customer #' + c.customer_id : 'Visitor (not signed in)')) +
-        '<span class="cb-tag ' + (c.source === 'website' ? 'web' : 'pre') + '">' + (c.source === 'website' ? 'Website' : 'Preview') + '</span>' +
-        (c.rating ? '<span class="cb-rt ' + c.rating + '" title="Rated ' + (c.rating === 'up' ? 'good' : 'not good') + '">' + (c.rating === 'up' ? '\ud83d\udc4d' : '\ud83d\udc4e') + '</span>' : '') + '</div>' +
-        '<small>' + esc([c.company, c.customer_email].filter(Boolean).join(' · ')) + '</small>' +
-        '<small>' + esc(c.last_message || c.title || '') + '</small>' +
-        (c.src || c.dev_type ? '<small class="cb-row-src">' + (c.dev_type ? (c.dev_type === 'Desktop' ? '\ud83d\udcbb ' : '\ud83d\udcf1 ') : '') +
-          (c.src ? 'via ' + esc(c.src) : '') + '</small>' : '') +
-        (c.last_page ? '<small class="cb-row-page" title="' + esc(c.last_page) + '">\ud83d\udd17 ' + esc(String(c.last_page).replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')) + '</small>' : '');
+      const w = who(c), n = c.message_count || 0;
+      const tags = [];
+      if (c.source !== 'website') tags.push('<span class="cv-tag pre">Admin preview</span>');
+      if (c.rating) tags.push('<span class="cv-tag ' + (c.rating === 'up' ? 'up' : 'down') + '">' + (c.rating === 'up' ? 'Rated good' : 'Rated not good') + '</span>');
+      b.innerHTML = '<span class="cv-avcol">' + avatar(c) + (n ? '<span class="cv-n" title="' + n + ' messages">' + BUBBLE + n + '</span>' : '') + '</span>' +
+        '<span class="cv-rb"><span class="cv-r1"><b class="t">' + esc(w.name) + '</b><span class="when" title="' + esc(full(c.updated_at)) + '" data-ts="' + esc(c.updated_at || '') + '">' + esc(rel(c.updated_at)) + '</span></span>' +
+        '<span class="cv-r2' + (w.known ? '' : ' muted') + '">' + esc(w.sub) + '</span>' +
+        (tags.length ? '<span class="cv-r3">' + tags.join('') + '</span>' : '') +
+        '<small class="cv-last">' + esc(String(c.last_message || c.title || '').replace(/\*\*/g, '')) + '</small></span>';
       b.onclick = () => openConvo(c.id);
       box.appendChild(b);
     });
@@ -184,6 +205,7 @@
   function showConvosOverview() {
     openId = null;
     document.querySelectorAll('#convRows .on').forEach(b => b.classList.remove('on'));
+    $('convView').classList.remove('cv-split');
     $('convView').innerHTML = '<div style="padding:16px 18px"><div id="cbStats"></div><div class="cb-empty" style="padding:4px 0">Pick a conversation on the left to read it.</div></div>';
     if (window.NovaStats) NovaStats.mount($('cbStats'), { url: '/api/admin/client-bot/stats', token: token, key: 'clientbot' });
   }
@@ -198,6 +220,7 @@
     if (!b || !openId) return;
     await fetch('/api/admin/client-bot/chats/' + openId + '/unread', { method: 'POST', headers: H() }).catch(() => {});
     openId = null;
+    $('convView').classList.remove('cv-split');
     $('convView').innerHTML = '<div class="cb-empty">Marked as unread.</div>';
     loadConvos();
   });
@@ -293,27 +316,27 @@
       : /referral|campaign/.test(k) ? ICON.link : ICON.direct;
   }
   const chip = (icon, text, tip, cls) => '<span class="cb-chip' + (cls ? ' ' + cls : '') + '" title="' + esc(tip || text) + '">' + icon + '<span>' + esc(text) + '</span></span>';
-  function visitorBox(v, list, c) {
+  // Visitor details. A few chips at the top (where they came from, device and browser, where they are — screen, language
+  // and IP in the tooltips); the pages and visits go in "Visit details" at the bottom of the conversation.
+  function visitorChips(v, c) {
     v = v || {};
-    const rows = [];
-    const row = (label, html) => rows.push('<div class="cb-vis-row"><span>' + esc(label) + '</span><div>' + html + '</div></div>');
     const d = v.device || {};
     const chips = [];
     if (v.source) chips.push(chip(sourceIcon(v.source), v.source.label, 'Came from ' + v.source.label + ' — ' + (v.source.kind || '') +
       (v.source.detail ? ' (' + v.source.detail + ')' : ''), 'src'));
-    else if (c.source === 'website') chips.push(chip(ICON.direct, 'Source not recorded', 'This conversation is from before visit tracking', 'muted'));
     if (d.label) {
       const devIcon = d.type === 'Phone' ? ICON.phone : d.type === 'Tablet' ? ICON.tablet : ICON.laptop;
-      chips.push(chip(devIcon, d.os || d.type || 'Device', (d.type || 'Device') + (d.os ? ' — ' + d.os : '')));
-      if (d.app) chips.push(chip(ICON.app, d.app, 'Opened inside the ' + d.app + (d.browser ? ' (' + d.browser + ')' : '')));
-      else if (d.browser) chips.push(chip(ICON.browser, d.browser, 'Browser: ' + d.browser));
+      const more = [d.screen ? 'screen ' + d.screen.replace('x', ' × ') + ' px' : '', d.lang ? 'language ' + d.lang : ''].filter(Boolean).join(' · ');
+      chips.push(chip(devIcon, [d.os || d.type, d.app || d.browser].filter(Boolean).join(' · ') || 'Device',
+        (d.type || 'Device') + (d.os ? ' — ' + d.os : '') + (d.app ? ', inside the ' + d.app : d.browser ? ', ' + d.browser : '') + (more ? ' (' + more + ')' : '')));
     }
-    if (d.screen) chips.push(chip(ICON.screen, d.screen.replace('x', '×'), 'Screen ' + d.screen.replace('x', ' × ') + ' px'));
-    if (d.lang) chips.push(chip(ICON.lang, d.lang, 'Browser language: ' + d.lang));
-    if (d.tz) chips.push(chip(ICON.clock, d.tz.split('/').pop().replace(/_/g, ' '), 'Time zone: ' + d.tz));
-    if (v.ip) chips.push(chip(ICON.pin, v.ip, 'IP address ' + v.ip));
-    else if (v.ip_note) chips.push(chip(ICON.pin, 'IP not recorded', v.ip_note, 'muted'));
-    if (chips.length) rows.push('<div class="cb-chips">' + chips.join('') + '</div>');
+    if (d.tz || v.ip) chips.push(chip(ICON.pin, d.tz ? d.tz.split('/').pop().replace(/_/g, ' ') : 'Location', [d.tz ? 'Time zone: ' + d.tz : '', v.ip ? 'IP address ' + v.ip : ''].filter(Boolean).join(' · ')));
+    return chips.length ? '<div class="cb-chips">' + chips.join('') + '</div>' : '';
+  }
+  function visitorBox(v, list, c) {
+    v = v || {};
+    const rows = [];
+    const row = (label, html) => rows.push('<div class="cb-vis-row"><span>' + esc(label) + '</span><div>' + html + '</div></div>');
     const tags = Object.keys(v.tags || {});
     if (v.landing) row('Landed on', urlLink(v.landing) + (v.referrer ? ' <small>from ' + urlLink(v.referrer) + '</small>' : '') +
       (v.arrived ? ' <small>· ' + esc(rel(v.arrived)) + '</small>' : '') +
@@ -325,23 +348,39 @@
       const first = pages[0], last = pages[pages.length - 1];
       row('Chatting from', urlLink(first.url, first.title) + (last.url !== first.url ? ' <small>→ now on</small> ' + urlLink(last.url, last.title) : ''));
     }
-    return rows.length ? '<div class="cb-vis">' + rows.join('') + '</div>' : '';
+    if (v.ip) row('IP address', esc(v.ip));
+    return rows.length ? '<details class="cv-visit"><summary>Visit details</summary><div class="cb-vis">' + rows.join('') + '</div></details>' : '';
   }
 
   async function openConvo(id, keepScroll) {
     openId = id;
-    const view = $('convView'), was = view.scrollTop, atEnd = view.scrollTop + view.clientHeight >= view.scrollHeight - 30;
+    const view = $('convView'), sc0 = view.querySelector('.cv-scroll') || view;
+    const was = sc0.scrollTop, atEnd = sc0.scrollTop + sc0.clientHeight >= sc0.scrollHeight - 30;
     document.querySelectorAll('#convRows .cb-row').forEach(x => x.classList.remove('on'));
     const j = await fetch('/api/admin/client-bot/chats/' + id, { headers: H() }).then(r => r.json()).catch(() => ({}));
     if (!j || !j.ok) return;
     const c = j.chat;
-    $('convView').innerHTML =
-      '<div class="cb-tr-hd"><button type="button" class="cb-tr-unread" title="Show it as unread in the list">Mark as unread</button><b>' + esc(c.customer_name || (c.customer_id ? 'Customer #' + c.customer_id : 'Visitor (not signed in)')) + '</b>' +
-        (c.company ? ' · ' + esc(c.company) : '') +
-        '<small>' + [c.customer_email, c.customer_id ? 'customer #' + c.customer_id : null,
-          c.source === 'website' ? 'on the website' : 'admin preview' + (c.preview_by ? ' by ' + String(c.preview_by).replace(/^(member|user):/, '') : ''),
-          'started ' + rel(c.created_at)].filter(Boolean).map(esc).join(' · ') + '</small>' + visitorBox(j.visitor, j.messages || [], c) + rateBar(j.rating) + '</div>' +
-      transcript(j.messages);
+    // Fixed top (who, when, visitor chips, Mark as unread, close); only the conversation scrolls, with the rating and the
+    // visit details at its end — the same layout as a TalkAi call.
+    const nLk = (j.messages || []).reduce((n, m) => n + ((m.tools || []).length ? 1 : 0), 0);
+    const w = who(c), nMsg = (j.messages || []).filter(m => m.role === 'user' || m.role === 'assistant').length;
+    view.classList.add('cv-split');
+    view.innerHTML =
+      '<div class="cv-hd"><div class="cv-acts">' +
+        '<button type="button" class="cv-btn cb-tr-unread" title="Show it as unread in the list"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg><span>Mark as unread</span></button>' +
+        '<button type="button" class="cv-x" id="convClose" title="Close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>' +
+        '<div class="cv-top">' + avatar(c) + '<div class="cv-id"><div class="cv-line"><b class="big">' + esc(w.name) + '</b>' +
+          (c.source !== 'website' ? '<span class="cv-tag pre">Admin preview' + (c.preview_by ? ' · ' + esc(String(c.preview_by).replace(/^(member|user):/, '')) : '') + '</span>' : '') +
+          '<span class="cv-when" title="Started ' + esc(full(c.created_at)) + '">' + esc(shortWhen(c.created_at)) + '</span>' +
+          '<span class="cv-when cv-cnt" title="' + nMsg + ' messages">' + BUBBLE + nMsg + '</span></div>' +
+          (w.known ? '<div class="cv-who">' + esc([c.company, c.customer_email].filter(Boolean).join(' · ')) + (c.customer_id ? ' <i>#' + esc(c.customer_id) + '</i>' : '') + '</div>' : '') +
+        '</div></div>' + visitorChips(j.visitor, c) + '</div>' +
+      '<div class="cv-scroll">' + (nLk ? '<div class="cv-sec"><span>Conversation</span><button type="button" class="cv-lkbtn">Show NovaAI’s lookups (' + nLk + ')</button></div>' : '') +
+        '<div class="cv-tx">' + transcript(j.messages) + '</div>' +
+        '<div class="cv-foot">' + rateBar(j.rating) + visitorBox(j.visitor, j.messages || [], c) + '</div></div>';
+    $('convClose').onclick = () => { showConvosOverview(); loadConvos(); };
+    const lkb = view.querySelector('.cv-lkbtn');
+    if (lkb) lkb.onclick = () => { const on = view.querySelector('.cv-tx').classList.toggle('show-lk'); lkb.textContent = lkb.textContent.replace(/^(Show|Hide)/, on ? 'Hide' : 'Show'); };
     function transcript(list) {
       const short = shortUrl;
       // Page lines: where the chat started, and each move to another page.
@@ -397,8 +436,6 @@
               '<button type="button" data-dl="' + esc(f.id) + '" data-name="' + esc(f.name) + '">Download</button></div>').join('') + '</div>' : '') +
           (m.tools && m.tools.length ? '<div class="cb-used">' + m.tools.map(t => '<span>' + esc(t.tool) + ' → ' + esc(t.found) + '</span>').join('') + '</div>' : '') +
           '<div class="when" title="' + esc(full(m.created_at)) + '" data-ts="' + esc(m.created_at || '') + '">' + esc(rel(m.created_at)) + '</div>' +
-          (m.role === 'user' && m.page_url ? '<a class="cb-asked-on" href="' + esc(m.page_url) + '" target="_blank" rel="noopener noreferrer" title="' +
-            esc((m.page_title ? m.page_title + ' \u2014 ' : '') + m.page_url) + '">\ud83d\udd17 ' + esc(short(m.page_url)) + '</a>' : '') +
         '</div>');
       }).join('');
     }
@@ -408,7 +445,8 @@
         if (r.ok) img.src = URL.createObjectURL(await r.blob());
       } catch (e) {}
     });
-    if (keepScroll) view.scrollTop = atEnd ? view.scrollHeight : was;
+    const sc = view.querySelector('.cv-scroll') || view;
+    if (keepScroll) sc.scrollTop = atEnd ? sc.scrollHeight : was;
     await loadConvos();
   }
   // Attachments are behind admin sign-in, so they are fetched with the token.

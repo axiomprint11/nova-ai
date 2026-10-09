@@ -123,7 +123,7 @@
     const person = own ? c.line_name : c.customer_name || (match ? (match.person || match.name) : '');
     if (c.source !== 'phone') return '<span class="tk-av test" title="Test" aria-label="Test call">' + AV_ICON.test + '</span>';
     if (person) return '<span class="tk-av t' + tone(person) + (own ? ' own' : '') + '" title="' + esc(c.verified ? 'Recognised customer' : 'Number on a customer account \u2014 not verified') + '">' + esc(initials(person)) + '</span>';
-    return '<span class="tk-av unk" title="Not verified \u2014 the number is not on a customer account" aria-label="Not verified">' + AV_ICON.phone + '</span>';
+    return '<span class="tk-av unk" title="Not a client yet \u2014 this number is not on a customer account" aria-label="Not a client yet">' + AV_ICON.phone + '</span>';
   }
   function callRow(c) {
     const match = c.caller_match && c.caller_match[0];
@@ -141,10 +141,10 @@
       line2 = [known && company ? company : '', c.source === 'try' && c.tried_by ? 'by ' + String(c.tried_by).replace(/^member:|^user:/, '') : '', num].filter(Boolean).join(' \u00b7 ');
     } else if (known) {
       title = person;
-      line2 = [company, num].filter(Boolean).join(' \u00b7 ');
+      line2 = null;      // the phone number (the caller's identifier) first and darker, then the business
     } else {
-      title = num || 'Unknown number';
-      line2 = num ? 'Not a client yet' : 'No caller ID';
+      title = num || 'No caller ID';
+      line2 = '';        // "not a client yet" is in the icon's tooltip
     }
     const tags = [];
     if (!own && c.line_name) tags.push('<span class="tk-tag tr">' + esc(String(c.line_name).split(' ')[0]) + '\u2019s line</span>');
@@ -158,7 +158,8 @@
     return '<button type="button" class="tk-row' + (c.unread ? ' unread' : '') + (current === c.id ? ' on' : '') + (known || test ? '' : ' unknown') + '" data-id="' + c.id + '"><span class="tk-avcol">' + av +
       (c.duration_sec ? '<span class="tk-avdur" title="Call length ' + esc(dur(c.duration_sec)) + '">' + esc(Math.floor(c.duration_sec / 60) + ':' + String(Math.round(c.duration_sec % 60)).padStart(2, '0')) + '</span>' : '') + '</span>' +
       '<span class="tk-rb"><span class="tk-r1"><b class="t">' + esc(title) + '</b><span class="when">' + esc(rel(c.created_at)) + '</span></span>' +
-      (line2 ? '<span class="tk-r2">' + esc(line2) + '</span>' : '') +
+      (line2 === null ? '<span class="tk-r2">' + (num ? '<b class="ph">' + esc(num) + '</b>' : '') + (num && company ? ' · ' : '') + esc(company) + '</span>'
+        : line2 ? '<span class="tk-r2">' + esc(line2) + '</span>' : '') +
       (tags.length ? '<span class="tk-r3">' + tags.join('') + '</span>' : '') +
       (sub ? '<small>' + esc(sub) + '</small>' : '') + '</span></button>';
   }
