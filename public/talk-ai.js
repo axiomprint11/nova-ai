@@ -327,23 +327,19 @@
         (used ? '<div class="tk-used">' + used + '</div>' : '');
     }).join('');
   }
-  // Playback speed for call recordings: 1× to 2×, remembered per browser (also keys: [ slower, ] faster).
+  // Playback speed for call recordings: one button, each click steps 1× → 1.25× → 1.5× → 1.75× → 2× → 1×; remembered per browser.
   const SPEEDS = [1, 1.25, 1.5, 1.75, 2];
   const getRate = () => { let r = 1; try { r = parseFloat(localStorage.getItem('tk-rate')) || 1; } catch (e) {} return SPEEDS.indexOf(r) > -1 ? r : 1; };
   function wireSpeed(box) {
     const a = box.querySelector('audio'); if (!a) return;
+    const btn = box.querySelector('.tk-speed');
     const set = (r) => {
       a.playbackRate = r; a.preservesPitch = true;
-      box.querySelectorAll('.tk-speed button').forEach(b => { const on = parseFloat(b.dataset.rate) === r; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+      btn.textContent = r + '\u00d7'; btn.classList.toggle('on', r !== 1);
       try { localStorage.setItem('tk-rate', String(r)); } catch (e) {}
     };
-    box.querySelectorAll('.tk-speed button').forEach(b => { b.onclick = () => set(parseFloat(b.dataset.rate)); });
+    btn.onclick = () => set(SPEEDS[(SPEEDS.indexOf(getRate()) + 1) % SPEEDS.length]);
     a.addEventListener('loadedmetadata', () => { a.playbackRate = getRate(); });
-    a.addEventListener('keydown', (e) => {
-      const i = SPEEDS.indexOf(getRate());
-      if (e.key === ']' && i < SPEEDS.length - 1) set(SPEEDS[i + 1]);
-      if (e.key === '[' && i > 0) set(SPEEDS[i - 1]);
-    });
     set(getRate());
   }
   // The recording needs the sign-in header, so it is fetched and played from memory.
@@ -357,7 +353,7 @@
       if (audioUrl) URL.revokeObjectURL(audioUrl);
       audioUrl = URL.createObjectURL(b);
       box.innerHTML = '<audio controls preload="metadata" src="' + audioUrl + '"></audio>' +
-        '<span class="tk-speed" role="group" aria-label="Playback speed">' + SPEEDS.map(r => '<button type="button" data-rate="' + r + '">' + r + '\u00d7</button>').join('') + '</span>' +
+        '<button type="button" class="tk-speed" title="Playback speed \u2014 click to change" aria-label="Playback speed"></button>' +
         '<a class="tk-link" href="' + audioUrl + '" download="call-' + id + '.mp3">Download</a>';
       wireSpeed(box);
     } catch (e) { if ($('callAudio')) $('callAudio').innerHTML = '<span class="tk-msg">' + esc(e.message || 'The recording could not be loaded.') + '</span>'; }
