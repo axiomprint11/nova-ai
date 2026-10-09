@@ -237,12 +237,32 @@
     const mailFor = (t) => mailKey.get(t.id) || null;
     const evClass = (t) => /verified as|Transferred to|saved/i.test(t) ? ' ok' : /failed/i.test(t) ? ' bad' : '';
     if (c.transcript && c.transcript.length) {
-      html += '<div class="tk-sec"><span>Transcript</span><button type="button" class="tk-link" id="showLog">Show NovaAI’s lookups</button></div><div class="tk-tx">' +
-        c.transcript.map(t => '<div class="tk-say ' + (t.role === 'caller' ? 'caller' : 'agent') + '"><div class="who">' + (t.role === 'caller' ? 'Caller' : 'NovaAI') +
+      // NovaAI's lookups (the tools it ran for each answer) go under the transcript line they belong to, hidden until
+      // "Show NovaAI's lookups": each answer Nova logged is matched to the same words in the transcript, in order.
+      const norm = (x) => String(x || '').toLowerCase().replace(/^[.\s…]+/, '').replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 60);
+      const lk = {};
+      let ptr = -1;
+      turns.filter(t => t.role === 'agent').forEach(t => {
+        const key = norm(t.content);
+        if (key) {
+          for (let k = ptr + 1; k < c.transcript.length; k++) {
+            const tt = c.transcript[k];
+            if (tt.role === 'caller') continue;
+            const tk = norm(tt.text);
+            if (tk && (tk.indexOf(key.slice(0, 30)) === 0 || key.indexOf(tk.slice(0, 30)) === 0)) { ptr = k; break; }
+          }
+        }
+        if ((t.tools || []).length) { const at = Math.max(ptr, 0); (lk[at] = lk[at] || []).push(...t.tools); }
+      });
+      const lkHtml = (list) => '<div class="tk-used tk-lk">' + list.map(x => '<span title="' + esc(JSON.stringify(x.input || {})) + '">' + esc(x.tool) +
+        (x.found && x.found !== 'ok' ? ': ' + esc(x.found) : '') + '</span>').join('') + '</div>';
+      const nLk = Object.keys(lk).reduce((n, k) => n + lk[k].length, 0);
+      html += '<div class="tk-sec"><span>Transcript</span>' + (nLk ? '<button type="button" class="tk-link" id="showLog">Show NovaAI’s lookups (' + nLk + ')</button>' : '') + '</div><div class="tk-tx" id="callTx">' +
+        c.transcript.map((t, k) => '<div class="tk-say ' + (t.role === 'caller' ? 'caller' : 'agent') + '"><div class="who">' + (t.role === 'caller' ? 'Caller' : 'NovaAI') +
           '<small>' + (t.at != null ? Math.floor(t.at / 60) + ':' + String(Math.round(t.at % 60)).padStart(2, '0') : '') + '</small></div><div class="b">' + esc(t.text || '') + '</div></div>' +
-          (t.tools && t.tools.length ? '<div class="tk-used">' + t.tools.map(x => '<span>' + esc(x) + '</span>').join('') + '</div>' : '')).join('') +
-        events.map(t => evtHtml(t, evClass, mailFor)).join('') + '</div>' +
-        '<div id="turnLog" hidden>' + turnsHtml(turns, evClass, mailFor) + '</div>';
+          (t.tools && t.tools.length ? '<div class="tk-used">' + t.tools.map(x => '<span>' + esc(x) + '</span>').join('') + '</div>' : '') +
+          (lk[k] ? lkHtml(lk[k]) : '')).join('') +
+        events.map(t => evtHtml(t, evClass, mailFor)).join('') + '</div>';
     } else if (turns.length) {
       html += '<div class="tk-sec"><span>' + (c.source === 'try' ? 'Conversation' : 'As it happened') + '</span></div><div class="tk-tx">' + turnsHtml(turns, evClass, mailFor) + '</div>';
       if (c.source === 'phone' && !/completed|failed|busy|no-answer|canceled/.test(c.status || '')) html += '<div class="tk-msg">The full transcript, summary and recording arrive from ElevenLabs a minute after the call ends.</div>';
@@ -252,7 +272,10 @@
     v.innerHTML = html;
     $('callBack').onclick = () => { $('vCalls').classList.remove('detail'); current = null; history.replaceState(null, '', '/talk-ai'); showCallsOverview(); };
     $('callUnread').onclick = async () => { await api('/api/admin/talk/calls/' + id + '/unread', { method: 'POST', body: '{}' }); current = null; loadCalls(); $('vCalls').classList.remove('detail'); v.innerHTML = '<div class="tk-empty">Marked as unread.</div>'; };
-    if ($('showLog')) $('showLog').onclick = () => { const l = $('turnLog'); l.hidden = !l.hidden; $('showLog').textContent = l.hidden ? 'Show NovaAI’s lookups' : 'Hide NovaAI’s lookups'; };
+    if ($('showLog')) $('showLog').onclick = () => {
+      const on = $('callTx').classList.toggle('show-lk');
+      $('showLog').textContent = $('showLog').textContent.replace(/^(Show|Hide)/, on ? 'Hide' : 'Show');
+    };
     if (c.has_audio || c.can_fetch_audio) loadAudio(id);
     v.querySelectorAll('[data-mail]').forEach(b => { b.onclick = () => showMail(c.emails[parseInt(b.dataset.mail)]); });
     v.querySelectorAll('[data-ho]').forEach(b => {
