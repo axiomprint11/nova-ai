@@ -178,8 +178,6 @@
     if (c.screen_ok != null) chips.push('<span class="tk-chip">' + (Number(c.screen_ok) === 1 ? 'They pressed 1 and took it' : 'Rang them first \u2014 not taken') + '</span>');
     if (c.hours_mode) chips.push('<span class="tk-chip' + (c.hours_mode === 'missed' ? ' warn' : '') + '">' + (c.hours_mode === 'after' ? 'After hours' : c.hours_mode === 'missed' ? 'Missed call \u2014 the team didn\u2019t pick up' : 'Regular hours') + '</span>');
     if (c.duration_sec != null) chips.push('<span class="tk-chip">' + esc(dur(c.duration_sec)) + '</span>');
-    if (c.source === 'phone') chips.push(/passed-(a|b)\b/i.test(c.stir || '') ? '<span class="tk-chip ok" title="' + esc(c.stir) + '">Caller ID carrier-verified</span>'
-      : '<span class="tk-chip" title="' + esc(c.stir || 'No STIR/SHAKEN result from the carrier') + '">Caller ID not carrier-verified</span>');
     if (Number(c.returning) === 1) chips.push('<span class="tk-chip">Talked to NovaAI before \u2014 short greeting</span>');
     if (c.language) chips.push(flagChip(c.language));
     // The usual case (NovaAI answered, call completed) needs no chip; only the exceptions are shown.
