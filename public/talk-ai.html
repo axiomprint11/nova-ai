@@ -165,13 +165,24 @@
   .tk-hours input[type=time] { width: 112px; margin: 0; padding: 6px 8px; font-size: 13px; }
   .tk-hours .t { display: flex; align-items: center; gap: 6px; color: var(--muted); }
   .tk-hours .closed { color: var(--muted); font-style: italic; }
+  .tk-card.tk-acc { padding: 0; }
+  .tk-acc-hd { width: 100%; display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 0; background: none; cursor: pointer; font: inherit; text-align: left; border-radius: inherit; }
+  .tk-acc-hd:hover { background: #fafbff; }
+  .tk-acc-hd:focus-visible { outline: 2px solid var(--indigo); outline-offset: -2px; }
+  .tk-acc-t { font-size: 15px; font-weight: 700; color: var(--ink); }
+  .tk-acc-now { flex: 1; min-width: 0; font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tk-acc-now b.reg { color: #166534; } .tk-acc-now b.aft { color: #92400e; }
+  .tk-acc-chev { width: 18px; height: 18px; flex: none; color: var(--muted); transition: transform .15s; }
+  .tk-acc.open .tk-acc-chev { transform: rotate(180deg); }
+  .tk-acc-body { padding: 0 16px 16px; }
+  .tk-calcount { margin-left: 6px; background: #94a3b8; }
   .tk-cal { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
   .tk-cal-hd { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
   .tk-cal-hd span { font-size: 11.5px; color: var(--muted); }
   .tk-cal-list { max-height: 228px; overflow-y: auto; padding: 2px 12px; }
   .tk-cal-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid #f1f1f6; font-size: 13px; }
   .tk-cal-row:first-child { border-top: 0; }
-  .tk-cal-row .d { width: 108px; flex: none; font-variant-numeric: tabular-nums; color: var(--ink-soft); }
+  .tk-cal-row .d { width: 132px; flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--ink-soft); }
   .tk-cal-row .n { flex: 1; min-width: 0; font-weight: 600; }
   .tk-cal-row .in { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
   .tk-cal-row .y { font-size: 10.5px; font-weight: 700; color: #92400e; background: #fef3c7; border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
@@ -393,19 +404,32 @@
     <div class="tk-train">
       <div class="tk-grid">
         <div>
-          <div class="tk-card">
-            <h3>Opening hours</h3>
-            <p class="sub">Los Angeles time. Inside these hours the <b>Regular hours</b> setup answers; outside them (and on closed days) the <b>After hours</b> setup.</p>
-            <div class="tk-hours" id="sHours"></div>
-            <div class="tk-cal">
-              <div class="tk-cal-hd"><b>Closed days</b><span>From the AxiomPrint calendar (Closed days on the website) &middot; edit them there; NovaAI follows on the next call</span></div>
-              <div class="tk-cal-list" id="sCalendar"><div class="tk-empty" style="padding:8px 0;text-align:left">Loading…</div></div>
+          <!-- Opening hours + closed days: one accordion card, two tabs inside; closed shows only "right now". -->
+          <div class="tk-card tk-acc" id="hoursCard">
+            <button type="button" class="tk-acc-hd" id="hoursToggle" aria-expanded="false" aria-controls="hoursBody">
+              <span class="tk-acc-t">Opening hours &amp; closed days</span>
+              <span class="tk-acc-now" id="sNowShort"></span>
+              <svg class="tk-acc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="tk-acc-body" id="hoursBody" hidden>
+              <div class="tk-mtabs" id="sHoursTabs" role="tablist">
+                <button type="button" data-h="hours" class="on" role="tab">Opening hours</button>
+                <button type="button" data-h="closed" role="tab">Closed days <b class="tk-ucount tk-calcount" id="sCalCount"></b></button>
+              </div>
+              <div data-hp="hours">
+                <p class="sub" style="margin-top:12px">Los Angeles time. Inside these hours the <b>Regular hours</b> setups answer; outside them (and on closed days) the <b>After Hours</b> setup.</p>
+                <div class="tk-hours" id="sHours"></div>
+              </div>
+              <div data-hp="closed" hidden>
+                <p class="sub" style="margin-top:12px">From the AxiomPrint calendar (Closed days on the website) &middot; edit them there; NovaAI follows on the next call. Closed days get the <b>After Hours</b> setup all day.</p>
+                <div class="tk-cal"><div class="tk-cal-list" id="sCalendar"><div class="tk-empty" style="padding:8px 0;text-align:left">Loading…</div></div></div>
+                <details class="tk-extra"><summary>Extra closed days for the phone only</summary>
+                  <label class="tk-h" for="sClosedDays" style="display:block;margin-top:8px">Days the phones follow After Hours that are not in the calendar — one date per line, e.g. 2026-12-26</label>
+                  <textarea id="sClosedDays" rows="2" style="min-height:52px"></textarea>
+                </details>
+              </div>
+              <div class="tk-now" id="sNow"></div>
             </div>
-            <details class="tk-extra"><summary>Extra closed days for the phone only</summary>
-              <label class="tk-h" for="sClosedDays" style="display:block;margin-top:8px">Days the phones follow After hours that are not in the calendar — one date per line, e.g. 2026-12-26</label>
-              <textarea id="sClosedDays" rows="2" style="min-height:52px"></textarea>
-            </details>
-            <div class="tk-now" id="sNow"></div>
           </div>
           <div class="tk-card">
             <div class="tk-mtabs" id="sModeTabs" role="tablist">

@@ -539,9 +539,25 @@
         '<span class="in">' + (n === 0 ? 'today' : n === 1 ? 'tomorrow' : 'in ' + n + ' days') + '</span></div>';
     }).join('');
   }
+  // Opening hours accordion (remembered per browser) and its two tabs.
+  const hoursOpen = (on) => {
+    $('hoursCard').classList.toggle('open', on); $('hoursBody').hidden = !on; $('hoursToggle').setAttribute('aria-expanded', on ? 'true' : 'false');
+    try { localStorage.setItem('tk-hours-open', on ? '1' : '0'); } catch (e) {}
+  };
+  $('hoursToggle').onclick = () => hoursOpen($('hoursBody').hidden);
+  try { if (localStorage.getItem('tk-hours-open') === '1') hoursOpen(true); } catch (e) {}
+  document.querySelectorAll('#sHoursTabs button').forEach(b => {
+    b.onclick = () => {
+      document.querySelectorAll('#sHoursTabs button').forEach(x => x.classList.toggle('on', x === b));
+      document.querySelectorAll('#hoursBody [data-hp]').forEach(p => { p.hidden = p.dataset.hp !== b.dataset.h; });
+    };
+  });
   function paintNow(j) {
     const h = j.hours_now || {};
     paintCalendar(j);
+    $('sCalCount').textContent = (j.calendar || []).length || '';
+    $('sNowShort').innerHTML = (h.open ? '<b class="reg">Open</b> until ' + esc(h.closes) : '<b class="aft">Closed</b>' + (h.closed_today ? ' today (' + esc(h.closed_today) + ')' : '') +
+      (h.next ? ' \u00b7 opens ' + esc(h.next) : '')) + (h.week ? ' \u00b7 ' + esc(h.week) : '');
     $('sNow').innerHTML = 'Right now: ' + (h.open ? '<b class="reg">Regular hours</b> — open until ' + esc(h.closes) : '<b class="aft">After hours</b>' +
       (h.closed_today ? ' — closed today (' + esc(h.closed_today) + ')' : '') + (h.next ? ' — opens ' + esc(h.next) : '')) + '<br><small style="color:var(--muted)">' + esc(h.week || '') + '</small>';
     document.querySelectorAll('.tk-ring').forEach(x => { x.textContent = j.ring_seconds || 20; });
