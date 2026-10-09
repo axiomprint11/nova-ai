@@ -154,7 +154,29 @@
   .tk-extra summary { cursor: pointer; color: var(--ink-soft); font-weight: 600; font-size: 12.5px; }
   .tk-now { margin-top: 10px; font-size: 13px; padding: 8px 11px; border-radius: 9px; background: #f4f5fa; border: 1px solid var(--line); }
   .tk-now b.reg { color: #166534; } .tk-now b.aft { color: #92400e; }
-  .tk-mtabs { display: inline-flex; gap: 4px; padding: 3px; border-radius: 10px; background: #f1f2f8; }
+  .tk-flow { margin-top: 14px; border: 1px solid var(--line); border-radius: 12px; background: #fcfcfe; overflow: hidden; }
+  .tk-flow-hd { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
+  .tk-flow-hd > div { background: #fff; padding: 10px 14px; min-width: 0; }
+  .tk-flow-hd span { display: block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .tk-flow-hd b { display: block; font-size: 14px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .tk-flow-hd b.none { color: #b45309; font-weight: 600; font-size: 13px; }
+  .tk-flow-hd small { display: block; font-size: 11.5px; color: var(--muted); margin-top: 1px; line-height: 1.4; }
+  .tk-steps { list-style: none; margin: 0; padding: 6px 14px 10px; counter-reset: st; }
+  .tk-steps li { position: relative; padding: 8px 0 8px 34px; font-size: 13px; line-height: 1.5; color: var(--ink); counter-increment: st; }
+  .tk-steps li::before { content: counter(st); position: absolute; left: 0; top: 7px; width: 22px; height: 22px; border-radius: 50%; background: var(--indigo-light);
+    color: var(--indigo-dark); font-size: 11.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .tk-steps li + li::after { content: ''; position: absolute; left: 10.5px; top: -8px; height: 15px; border-left: 1.5px dashed #c7c9dd; }
+  .tk-steps li.alt::before { background: #f1f2f8; color: var(--muted); }
+  .tk-steps li small { display: block; color: var(--muted); font-size: 12px; }
+  .tk-steps .scr { display: inline-block; font-size: 11px; font-weight: 600; color: #3730a3; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 5px; padding: 0 6px; margin: 0 2px; white-space: nowrap; }
+  .tk-live { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; color: #166534; background: #dcfce7; border-radius: 20px; padding: 2px 8px; margin-left: 6px; vertical-align: 1px; }
+  .tk-live::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #16a34a; }
+  .tk-mtabs button .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #16a34a; margin-left: 6px; vertical-align: 1px; }
+  .tk-missednum { margin-top: 12px; }
+  .tk-tryidle { margin: 40px auto; max-width: 380px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+  .tk-tryidle b { color: var(--ink); font-size: 15px; }
+  .tk-tryidle .tk-btn { margin-top: 6px; }
+  .tk-mtabs { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 3px; border-radius: 10px; background: #f1f2f8; }
   .tk-mtabs button { border: none; background: none; padding: 7px 14px; border-radius: 8px; font: 600 13px/1 inherit; color: var(--ink-soft); cursor: pointer; }
   .tk-mtabs button.on { background: #fff; color: var(--indigo-dark); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
   .tk-ul { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6; color: var(--ink-soft); }
@@ -326,7 +348,7 @@
         <label class="tk-h" for="tryLang" style="display:block;margin-top:8px">Language</label>
         <select id="tryLang" class="tk-select"><option value="">English</option><option value="es">Spanish</option><option value="hy">Armenian</option><option value="ru">Russian</option></select>
         <label class="tk-h" for="tryHours" style="display:block;margin-top:8px">Time of day</label>
-        <select id="tryHours" class="tk-select"><option value="">Now</option><option value="regular">Regular hours</option><option value="after">After hours</option><option value="missed">Missed call (team didn’t answer)</option></select>
+        <select id="tryHours" class="tk-select"><option value="">Now</option><option value="regular">Regular Hours Agent</option><option value="missed">Regular Hours Team Missed</option><option value="after">After Hours</option></select>
         <button type="button" class="tk-btn ghost" id="tryNew" style="width:100%;margin-top:12px">Start a new test call</button>
         <div style="margin-top:14px" class="tk-hint">Prices, order details, escalations and quote emails are real (they really go out). Transfers are not made on a test.</div>
       </aside>
@@ -360,30 +382,20 @@
             <div class="tk-now" id="sNow"></div>
           </div>
           <div class="tk-card">
-            <div class="tk-mtabs" id="sModeTabs">
-              <button type="button" data-k="regular" class="on">Regular hours</button>
-              <button type="button" data-k="after">After hours</button>
-              <button type="button" data-k="missed">Business hours missed calls</button>
+            <div class="tk-mtabs" id="sModeTabs" role="tablist">
+              <button type="button" data-k="regular" class="on" role="tab">Regular Hours Agent</button>
+              <button type="button" data-k="missed" role="tab">Regular Hours Team Missed</button>
+              <button type="button" data-k="after" role="tab">After Hours</button>
             </div>
-            <div id="sMissedBox" hidden>
-              <h3 style="margin-top:12px">Business Hours Missed Call Agent</h3>
-              <p class="sub">A separate Twilio number for calls your team doesn't pick up during business hours. In Dialpad, send unanswered calls
-                (after 20 seconds) to this number: NovaAI picks up with the greeting and rules below — apologising for the wait, helping straight away,
-                and taking a message when the caller needs a person. It never transfers back to the team.</p>
+            <!-- Which number this setup answers, when, and what happens on a call (built from the settings). -->
+            <div class="tk-flow" id="sLogic"></div>
+            <div id="sMissedBox" class="tk-missednum" hidden>
               <label class="tk-h" for="sMissedNum" style="display:block">Missed-call number (Twilio)</label>
               <input type="text" id="sMissedNum" placeholder="e.g. 747 555 0199" style="max-width:280px">
               <div id="sMissedState" style="margin-top:6px;font-size:12px;color:var(--muted);line-height:1.45"></div>
             </div>
-            <div id="sWhoBox">
-            <h3 style="margin-top:12px">Who answers</h3>
-            <div class="tk-mode" id="sMode">
-              <button type="button" data-m="ai" class="ai"><b>NovaAI answers</b><small>Prices, products, turnaround and order status. Falls back to the forward number (or the closed message) if the voice service is down.</small></button>
-              <button type="button" data-m="ring_ai"><b>Ring the team first</b><small>Rings the "Transfer to" number (or the account manager's phone) for <span class="tk-ring"></span> seconds; NovaAI answers if nobody picks up.</small></button>
-              <button type="button" data-m="forward"><b>Forward to the team</b><small>Every call rings the forward number. NovaAI stays quiet.</small></button>
-              <button type="button" data-m="message"><b>Closed message</b><small>Callers hear the closed message and the call ends.</small></button>
-            </div>
-            </div>
-            <h3 style="margin-top:14px">Greeting</h3>
+            <h3 style="margin-top:18px;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Scripts</h3>
+            <h3 style="margin-top:6px">Greeting</h3>
             <p class="sub">The first thing callers hear. Keep the two legal points: that NovaAI is an AI assistant, and that the call is recorded.</p>
             <textarea id="sGreeting" rows="3"></textarea>
             <h3 style="margin-top:12px">Greeting for callers we know</h3>

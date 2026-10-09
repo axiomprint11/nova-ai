@@ -75,7 +75,7 @@
     if (v === 'train') paintTraining();
     if (v === 'setup') loadOverview().then(paintSetup);
     if (v === 'ams') loadAms();
-    if (v === 'try') { api('/api/admin/talk/lines').then(l => { lines = l.lines || []; fillTryLines(); }).catch(() => {}); if (!tryState.msgs.length) newTry(); }
+    if (v === 'try') { api('/api/admin/talk/lines').then(l => { lines = l.lines || []; fillTryLines(); }).catch(() => {}); if (!tryState.msgs.length && !tryState.busy) paintTryIdle(); }
   }
   document.querySelectorAll('.tk-tabs button').forEach(b => { b.onclick = () => show(b.dataset.v); });
 
@@ -282,25 +282,40 @@
     $('tryInput').focus();
   }
   function paintTry(extra) {
-    $('tryLog').innerHTML = tryState.msgs.map(m => '<div class="tk-say ' + (m.role === 'user' ? 'caller' : 'agent') + '"><div class="who">' + (m.role === 'user' ? 'Caller' : 'NovaAI') + '</div>' +
+    $('tryLog').innerHTML = tryState.msgs.map(m => m.role === 'note' ? '<div class="tk-evt">' + esc(m.note) + '</div>' : '<div class="tk-say ' + (m.role === 'user' ? 'caller' : 'agent') + '"><div class="who">' + (m.role === 'user' ? 'Caller' : 'NovaAI') + '</div>' +
       '<div class="b">' + esc(m.content) + '</div></div>' + (m.tools && m.tools.length ? '<div class="tk-used">' + m.tools.map(x => '<span title="' + esc(JSON.stringify(x.input || {})) + '">' +
         esc(x.tool) + (x.found && x.found !== 'ok' ? ': ' + esc(x.found) : '') + '</span>').join('') + '</div>' : '') +
       (m.note ? '<div class="tk-evt">' + esc(m.note) + '</div>' : '')).join('') + (extra || '');
     $('tryLog').scrollTop = $('tryLog').scrollHeight;
   }
+  // Nothing runs until "Start test call" (or the first message) — opening the tab or changing a setting never starts a call.
+  function paintTryIdle() {
+    $('tryLog').innerHTML = '<div class="tk-tryidle"><b>No test call running</b><span>Pick who is calling, the line, the language and the time of day, then start the call. ' +
+      'Typing a first message starts it too.</span><button type="button" class="tk-btn" id="tryStartBig">Start test call</button></div>';
+    $('tryStartBig').onclick = newTry;
+  }
   $('tryNew').onclick = newTry;
-  $('tryFrom').onchange = newTry;
-  $('tryLine').onchange = newTry; $('tryHours').onchange = newTry; $('tryLang').onchange = newTry;            // a different number = a new test call as that caller
+  // A different caller, line, language or time of day applies to the NEXT test call.
+  ['tryFrom', 'tryLine', 'tryHours', 'tryLang'].forEach(id => {
+    $(id).onchange = () => {
+      if (!tryState.callId && !tryState.msgs.length) return;
+      if (tryState.msgs.length && !tryState.msgs[tryState.msgs.length - 1].changed) {
+        tryState.msgs.push({ role: 'note', changed: true, note: 'Settings changed \u2014 click Start a new test call to use them.' });
+        paintTry();
+      }
+    };
+  });
   $('tryForm').onsubmit = async (e) => {
     e.preventDefault();
     const t = $('tryInput').value.trim();
     if (!t || tryState.busy) return;
+    if (!tryState.callId) await newTry();                     // the first message starts the call
     tryState.busy = true; $('trySend').disabled = true; $('tryInput').value = '';
     tryState.msgs.push({ role: 'user', content: t });
     paintTry('<div class="tk-say agent"><div class="who">NovaAI</div><div class="b">…</div></div>');
     try {
       const j = await api('/api/admin/talk/try', { method: 'POST', body: JSON.stringify({ call_id: tryState.callId, from: $('tryFrom').value.trim(),
-        messages: tryState.msgs.map(m => ({ role: m.role, content: m.content })) }) });
+        messages: tryState.msgs.filter(m => m.role !== 'note').map(m => ({ role: m.role, content: m.content })) }) });
       if (!j.ok) throw new Error(j.error || 'No answer.');
       tryState.callId = j.call_id;
       tryState.msgs.push({ role: 'assistant', content: j.reply || '(no words)', tools: j.tools,
@@ -332,9 +347,68 @@
     const md = modes[curMode];
     $('sGreeting').value = md.greeting || ''; $('sGreetingKnown').value = md.greeting_known || ''; $('sGreetingReturning').value = md.greeting_returning || ''; $('sModeRules').value = md.rules || '';
     document.querySelectorAll('.tk-mname').forEach(x => { x.textContent = curMode === 'after' ? 'after hours' : curMode === 'missed' ? 'missed calls' : 'regular hours'; });
-    $('sMissedBox').hidden = curMode !== 'missed'; $('sWhoBox').hidden = curMode === 'missed';
+    $('sMissedBox').hidden = curMode !== 'missed';
+    paintLogic();
     paintChoices();
   }
+  // What a call to this setup does, step by step, from the live settings (the tab you see is what callers get).
+  let logicData = null;
+  function paintLogic() {
+    const box = $('sLogic'); if (!box || !logicData) return;
+    const j = logicData, s = j.settings, h = j.hours_now || {}, cal = j.calendar || [];
+    const main = j.number ? phone(j.number) : null, missed = $('sMissedNum').value.trim() || (s.missed_number ? phone(s.missed_number) : '');
+    const transfer = s.transfer_number ? phone(s.transfer_number) : '', forward = s.forward_number ? phone(s.forward_number) : '';
+    const notify = s.notify_to || 'the team', ring = j.ring_seconds || 20, nextClosed = cal[0];
+    const scr = (t) => '<span class="scr">' + esc(t) + '</span>';
+    const live = curMode === 'missed' ? false : curMode === (h.open ? 'regular' : 'after');
+    document.querySelectorAll('#sModeTabs button').forEach(b => {
+      const on = b.dataset.k !== 'missed' && b.dataset.k === (h.open ? 'regular' : 'after');
+      const d = b.querySelector('.dot'); if (on && !d) b.insertAdjacentHTML('beforeend', '<i class="dot" title="Answering the main number now"></i>'); else if (!on && d) d.remove();
+    });
+    const greetings = scr('Greeting') + ' for a new caller, ' + scr('Greeting for callers we know') + ' when the number is on a customer account' +
+      ($('sReturningShort').checked ? ', and the ' + scr('Short greeting') + ' when they talked to NovaAI before' : '');
+    const helps = 'Helps on the spot: prices from the website calculator (a price first, then questions), products, turnaround, ' +
+      'closed days and order status \u2014 order details once the caller is recognised or verified. Can email the quote with Order now links.';
+    const down = 'If the voice service is down: ' + (forward ? 'the call is forwarded to ' + scr(forward) + '.' : 'callers hear the ' + scr('Closed message') + '.');
+    const hd = (cells) => '<div class="tk-flow-hd">' + cells.map(c => '<div><span>' + c[0] + '</span>' + c[1] + (c[2] ? '<small>' + c[2] + '</small>' : '') + '</div>').join('') + '</div>';
+    let head, steps;
+    if (curMode === 'regular') {
+      head = hd([['Number', main ? '<b>' + esc(main) + '</b>' : '<b class="none">TALKAI_NUMBER not set</b>', 'The TalkAi number'],
+        ['Answers', '<b>During opening hours' + (live ? '<span class="tk-live">Now</span>' : '') + '</b>', esc(h.week || '') + (nextClosed ? ' \u00b7 closed days go to After Hours' : '')]]);
+      steps = [
+        'A caller dials ' + scr(main || 'the TalkAi number') + ' while we are open.',
+        '<span>Clients of an account manager with their own NovaAI line (\u201ctheir clients on the main line\u201d, ring first) ring that manager for ' + ring + ' seconds first \u2014 they press 1 to take it; NovaAI picks up if they don\u2019t.</span><small>Set per manager under Account managers.</small>',
+        'NovaAI answers: ' + greetings + '.',
+        helps,
+        'Wants a person: ' + (transfer ? 'NovaAI transfers the call to ' + scr(transfer) + ' (Transfer to).' : 'no Transfer to number is set, so NovaAI takes a message.') +
+          ' Messages are emailed to ' + scr(notify) + '.',
+        down
+      ];
+    } else if (curMode === 'missed') {
+      head = hd([['Number', missed ? '<b>' + esc(missed) + '</b>' : '<b class="none">Not set yet</b>', 'Missed-call number (Twilio), below'],
+        ['Answers', '<b>Calls the team didn\u2019t pick up</b>', 'Dialpad forwards unanswered calls after 20 seconds \u2014 any time of day']]);
+      steps = [
+        'A customer calls the team on Dialpad; nobody picks up within 20 seconds, so Dialpad forwards the call to ' + scr(missed || 'the missed-call number') + '.',
+        'NovaAI answers straight away and apologises for the wait: ' + greetings + '.',
+        helps,
+        'Wants a person (artwork, order changes, a complaint): NovaAI takes a message \u2014 name, callback number and what it is about \u2014 emailed to ' + scr(notify) + ', and says the team will call back today.<small>It never transfers back: the team just couldn\u2019t pick up.</small>',
+        down
+      ];
+    } else {
+      head = hd([['Number', main ? '<b>' + esc(main) + '</b>' : '<b class="none">TALKAI_NUMBER not set</b>', 'The TalkAi number'],
+        ['Answers', '<b>Outside opening hours' + (live ? '<span class="tk-live">Now</span>' : '') + '</b>', 'Evenings, closed weekdays and every closed day' + (nextClosed ? ' (next: ' + esc(nextClosed.name) + ', ' + esc(new Date(nextClosed.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })) + ')' : '')]]);
+      steps = [
+        'A caller dials ' + scr(main || 'the TalkAi number') + ' while we are closed.',
+        'NovaAI answers and says the team is out: ' + greetings + '.',
+        helps,
+        'Wants a person: NovaAI says when we open again' + (!h.open && h.next ? ' (right now: ' + esc(h.next) + ')' : '') + ' and takes a message for the team, emailed to ' + scr(notify) + '.<small>No transfers after hours.</small>',
+        down
+      ];
+    }
+    box.innerHTML = head + '<ol class="tk-steps">' + steps.map((t, i) => '<li' + (curMode === 'regular' && i === 1 ? ' class="alt"' : '') + '>' + t + '</li>').join('') + '</ol>';
+  }
+  $('sMissedNum').addEventListener('input', () => paintLogic());
+  $('sReturningShort').addEventListener('change', () => paintLogic());
   function paintHours(h) {
     $('sHours').innerHTML = DAYS.map(([k, label]) => {
       const d = h.days[k];
@@ -402,6 +476,7 @@
     paintLangs(j);
     callerId = s.caller_id || 'carrier';
     modes = JSON.parse(JSON.stringify(s.modes));
+    logicData = j;
     paintHours(s.hours); paintNow(j); paintMode();
     $('sRules').value = s.rules || '';
     $('sTransfer').value = s.transfer_number ? phone(s.transfer_number) : '';
@@ -413,12 +488,14 @@
     $('sMissedState').innerHTML = s.missed_number ? 'Calls to ' + esc(phone(s.missed_number)) + ' get this setup. Make sure it shows <b>Connected</b> under Account managers → Twilio numbers.'
       : 'No number yet: buy one in Twilio, connect it under Account managers → Twilio numbers, then enter it here.';
     $('sSummary').checked = !!s.summary_mail;
+    paintLogic();
     $('sClosed').value = s.closed_message || '';
     $('sMsg').textContent = ''; $('sMsg').className = 'tk-msg';
   }
   $('sSave').onclick = async () => {
     const m = $('sMsg'); m.className = 'tk-msg'; m.textContent = 'Saving…';
     keepMode(); keepLangGreets();
+    Object.keys(modes || {}).forEach(k => { modes[k].answer = 'ai'; });     // every setup is NovaAI (no "Who answers" choice)
     const j = await api('/api/admin/talk/settings', { method: 'POST', body: JSON.stringify({ caller_id: callerId, hours: readHours(), modes: modes, rules: $('sRules').value,
       languages: langState ? langState.on.filter(k => k !== 'en') : undefined, lang_greetings: langState ? langState.greet : undefined,
       transfer_number: $('sTransfer').value, forward_number: $('sForward').value, notify_to: $('sNotify').value, email_bcc: $('sBcc').value, returning_short: $('sReturningShort').checked, missed_number: $('sMissedNum').value, summary_mail: $('sSummary').checked,
