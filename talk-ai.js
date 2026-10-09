@@ -178,7 +178,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     s.webhook_url = (r && r.webhook_url) || '';
     s.webhook_secret = !!env('TALKAI_WEBHOOK_SECRET');
     s.summary_mail = Number(s.summary_mail) ? 1 : 0;
-    if (['carrier', 'always', 'never'].indexOf(s.caller_id) === -1) s.caller_id = 'carrier';
+    s.caller_id = 'carrier';   // always: a known number goes straight to its orders only when the carrier verified it (STIR/SHAKEN A/B)
     let hours = null, modes = null;
     try { hours = r && r.hours ? JSON.parse(r.hours) : null; } catch (e) {}
     try { modes = r && r.modes ? JSON.parse(r.modes) : null; } catch (e) {}
@@ -1856,7 +1856,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const txt = (v, k, n) => v == null ? cur[k] : String(v).slice(0, n);
     const bcc = b.email_bcc == null ? cur.email_bcc : String(b.email_bcc).trim().slice(0, 200);
     if (bcc && !/^[^\s@,]+@[^\s@,]+\.[^\s@,]+(\s*,\s*[^\s@,]+@[^\s@,]+\.[^\s@,]+)*$/.test(bcc)) return res.status(400).json({ ok: false, error: 'Check the email for copies (BCC).' });
-    const callerId = ['carrier', 'always', 'never'].indexOf(b.caller_id) > -1 ? b.caller_id : cur.caller_id;
+    const callerId = 'carrier';
     const hours = b.hours ? normHours(b.hours) : cur.hours;
     const modes = b.modes ? { regular: normMode(b.modes.regular, cur.modes.regular), after: normMode(b.modes.after, cur.modes.after),
       missed: Object.assign(normMode(b.modes.missed, cur.modes.missed), { answer: 'ai' }) } : cur.modes;

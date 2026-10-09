@@ -460,22 +460,20 @@
             <p class="sub">On top of the phone rules below, only during <span class="tk-mname">regular hours</span>.</p>
             <textarea id="sModeRules" rows="4"></textarea>
           </div>
-          <div class="tk-card">
-            <h3>Languages</h3>
+          <div class="tk-card tk-acc" id="langCard">
+            <button type="button" class="tk-acc-hd" id="langToggle" aria-expanded="false" aria-controls="langBody">
+              <span class="tk-acc-t">Languages</span>
+              <span class="tk-acc-now" id="sLangShort"></span>
+              <svg class="tk-acc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="tk-acc-body" id="langBody" hidden>
             <p class="sub">English is always on. NovaAI understands and answers in the languages you turn on here (they also have to be added to the ElevenLabs agent, with Detect language on — see Setup).</p>
             <div class="tk-langs" id="sLangs"></div>
             <p class="sub" style="margin-top:8px">No menu: NovaAI answers in the language the caller speaks and switches the moment they do.
               A caller who spoke one of these before is greeted in it straight away next time.</p>
             <div id="sLangGreets"></div>
-          </div>
-          <div class="tk-card">
-            <h3>Order details for a known number</h3>
-            <p class="sub">When a known caller asks about their orders, NovaAI tells them how many live projects it sees and asks which one.</p>
-            <div class="tk-mode" id="sCallerId">
-              <button type="button" data-c="carrier"><b>When the number is carrier-verified</b><small>Straight to their orders when the phone company confirms the number is genuine (STIR/SHAKEN A or B, most mobile calls). Otherwise NovaAI first asks for the email or ZIP on the account. Recommended.</small></button>
-              <button type="button" data-c="always"><b>Whenever the number matches</b><small>Straight to their orders for any matching number. Easiest, but someone faking a customer's number could hear their order status.</small></button>
-              <button type="button" data-c="never"><b>Off</b><small>No name greeting. Every caller gives an order number plus the email, ZIP or phone on the account.</small></button>
             </div>
+          </div>
           </div>
           <div class="tk-card">
             <h3>Phone rules (all hours)</h3>
@@ -535,7 +533,7 @@
             <ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.6;color:var(--ink-soft)">
               <li>Short spoken sentences; no lists or links read out</li>
               <li>Answers in the caller's language</li>
-              <li>Order details only for a recognised number (see Callers we know), or after the caller confirms the email or ZIP on the account (with the order number if the number is unknown) — three tries</li>
+              <li>Order details straight away only for a carrier-verified number on an account; otherwise after the caller confirms the email or ZIP on the account (with the order number if the number is unknown) — three tries</li>
               <li>Prices only from the website calculator</li>
               <li>Never takes card numbers or payments</li>
               <li>Past-due orders escalated by email, as in the chat</li>

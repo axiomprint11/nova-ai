@@ -399,11 +399,9 @@
   // Opening hours + the Regular / After hours setups (who answers, greetings, rules for that time of day).
   const DAYS = [['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'], ['fri', 'Friday'], ['sat', 'Saturday'], ['sun', 'Sunday']];
   let callerId = 'carrier', modes = null, curMode = 'regular';
-  document.querySelectorAll('#sCallerId button').forEach(b => { b.onclick = () => { callerId = b.dataset.c; paintChoices(); }; });
   document.querySelectorAll('#sMode button').forEach(b => { b.onclick = () => { if (modes) { modes[curMode].answer = b.dataset.m; paintChoices(); } }; });
   document.querySelectorAll('#sModeTabs button').forEach(b => { b.onclick = () => { keepMode(); curMode = b.dataset.k; paintMode(); }; });
   function paintChoices() {
-    document.querySelectorAll('#sCallerId button').forEach(b => b.classList.toggle('on', b.dataset.c === callerId));
     document.querySelectorAll('#sMode button').forEach(b => b.classList.toggle('on', !!modes && b.dataset.m === modes[curMode].answer));
   }
   function keepMode() {
@@ -539,13 +537,17 @@
         '<span class="in">' + (n === 0 ? 'today' : n === 1 ? 'tomorrow' : 'in ' + n + ' days') + '</span></div>';
     }).join('');
   }
-  // Opening hours accordion (remembered per browser) and its two tabs.
-  const hoursOpen = (on) => {
-    $('hoursCard').classList.toggle('open', on); $('hoursBody').hidden = !on; $('hoursToggle').setAttribute('aria-expanded', on ? 'true' : 'false');
-    try { localStorage.setItem('tk-hours-open', on ? '1' : '0'); } catch (e) {}
-  };
-  $('hoursToggle').onclick = () => hoursOpen($('hoursBody').hidden);
-  try { if (localStorage.getItem('tk-hours-open') === '1') hoursOpen(true); } catch (e) {}
+  // Accordion cards (Opening hours, Languages): open / closed remembered per browser.
+  function accordion(card, toggle, body, key) {
+    const set = (on) => {
+      $(card).classList.toggle('open', on); $(body).hidden = !on; $(toggle).setAttribute('aria-expanded', on ? 'true' : 'false');
+      try { localStorage.setItem(key, on ? '1' : '0'); } catch (e) {}
+    };
+    $(toggle).onclick = () => set($(body).hidden);
+    try { if (localStorage.getItem(key) === '1') set(true); } catch (e) {}
+  }
+  accordion('hoursCard', 'hoursToggle', 'hoursBody', 'tk-hours-open');
+  accordion('langCard', 'langToggle', 'langBody', 'tk-langs-open');
   document.querySelectorAll('#sHoursTabs button').forEach(b => {
     b.onclick = () => {
       document.querySelectorAll('#sHoursTabs button').forEach(x => x.classList.toggle('on', x === b));
@@ -567,6 +569,7 @@
     const s = j.settings, all = j.langs || [];
     langState = { on: s.languages.slice(), greet: Object.assign({}, s.lang_greetings) };
     const draw = () => {
+      $('sLangShort').textContent = all.filter(l => langState.on.indexOf(l.code) > -1).map(l => l.name).join(', ') + ' \u00b7 follows the caller\u2019s language';
       $('sLangs').innerHTML = all.map(l => '<label class="' + (langState.on.indexOf(l.code) > -1 ? 'on' : '') + '"><input type="checkbox" data-lang="' + l.code + '"' +
         (langState.on.indexOf(l.code) > -1 ? ' checked' : '') + (l.code === 'en' ? ' disabled' : '') + '> ' + esc(l.name) + '</label>').join('');
       $('sLangGreets').innerHTML = all.filter(l => l.code !== 'en' && langState.on.indexOf(l.code) > -1).map(l =>
@@ -582,7 +585,6 @@
     if (!j) return;
     const s = j.settings;
     paintLangs(j);
-    callerId = s.caller_id || 'carrier';
     modes = JSON.parse(JSON.stringify(s.modes));
     logicData = j;
     paintHours(s.hours); paintNow(j); paintMode();
@@ -608,7 +610,7 @@
     const m = $('sMsg'); m.className = 'tk-msg'; m.textContent = 'Saving…';
     keepMode(); keepLangGreets();
     Object.keys(modes || {}).forEach(k => { modes[k].answer = 'ai'; });     // every setup is NovaAI (no "Who answers" choice)
-    const j = await api('/api/admin/talk/settings', { method: 'POST', body: JSON.stringify({ caller_id: callerId, hours: readHours(), modes: modes, rules: $('sRules').value,
+    const j = await api('/api/admin/talk/settings', { method: 'POST', body: JSON.stringify({ hours: readHours(), modes: modes, rules: $('sRules').value,
       languages: langState ? langState.on.filter(k => k !== 'en') : undefined, lang_greetings: langState ? langState.greet : undefined,
       transfer_number: $('sTransfer').value, forward_number: $('sForward').value, notify_to: $('sNotify').value, email_bcc: $('sBcc').value, returning_short: $('sReturningShort').checked, missed_number: $('sMissedNum').value, summary_mail: $('sSummary').checked,
       main_line: $('sMainLine').value, csr_to: $('sCsrTo').value, webhook_url: $('sHook').value,

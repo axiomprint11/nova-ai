@@ -49,13 +49,11 @@ Before NovaAI answers, `lookupCaller()` finds the accounts whose phone is the ca
 several accounts (duplicates, colleagues) — all count as the caller's. NovaAI greets them by first name with the
 "Callers we know" greeting (`{name}`), stored as `talk_calls.caller_first`.
 
-Order details for a known number (Training → Order details for a known number, `talk_settings.caller_id`):
-- **carrier** (default): straight to their orders when Twilio's `StirVerstat` says the carrier verified the number
-  (`TN-Validation-Passed-A` / `-B`) — `verified_by = 'caller_id'`. Otherwise NovaAI asks for ONE detail, the email or ZIP
-  on the account (`verify_caller` with `proof` only; a phone number does not count, since that is the caller ID) —
-  `verified_by = 'check+caller_id'`.
-- **always**: any matching number is trusted (a faked caller ID could hear an order status).
-- **never**: no name greeting; order number + email / ZIP / phone as before (`verified_by = 'check'`).
+Order details for a known number (always the carrier rule; the Training choice was removed in 1.11.2 and `talk_settings.caller_id` is forced to `carrier`):
+straight to their orders when Twilio's `StirVerstat` says the carrier verified the number (`TN-Validation-Passed-A` / `-B`) —
+`verified_by = 'caller_id'`. Otherwise NovaAI asks for ONE detail, the email or ZIP on the account (`verify_caller` with `proof`
+only; a phone number does not count, since that is the caller ID) — `verified_by = 'check+caller_id'`. Unknown numbers give an
+order number + email / ZIP / phone (`verified_by = 'check'`).
 
 A recognised caller may hear about every account on their number (`allowedIds()`); `order_status` on a job of another
 of those accounts is looked up as that account. Try it: put a customer's number in "Calling from" — it counts as
