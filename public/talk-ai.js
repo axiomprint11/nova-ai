@@ -358,7 +358,7 @@
       audioUrl = URL.createObjectURL(b);
       box.innerHTML = '<audio controls preload="metadata" src="' + audioUrl + '"></audio>' +
         '<button type="button" class="tk-speed" title="Playback speed \u2014 click to change" aria-label="Playback speed"></button>' +
-        '<a class="tk-link" href="' + audioUrl + '" download="call-' + id + '.mp3">Download</a>';
+        '<a class="tk-dl" href="' + audioUrl + '" download="call-' + id + '.mp3" title="Download the recording" aria-label="Download the recording"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/></svg></a>';
       wireSpeed(box);
     } catch (e) { if ($('callAudio')) $('callAudio').innerHTML = '<span class="tk-msg">' + esc(e.message || 'The recording could not be loaded.') + '</span>'; }
   }
