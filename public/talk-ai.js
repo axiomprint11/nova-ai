@@ -115,6 +115,8 @@
     phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>',
     test: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>'
   };
+  // Which setup answered the call (Training tabs), one short grey label everywhere.
+  const MODE_LABEL = { regular: 'Team Support AI', missed: 'Team Missed AI', after: 'After Hours AI' };
   function callAvatar(c) {
     const match = c.caller_match && c.caller_match[0];
     const own = Number(c.owner) === 1 && c.line_name;
@@ -146,8 +148,7 @@
     }
     const tags = [];
     if (!own && c.line_name) tags.push('<span class="tk-tag tr">' + esc(String(c.line_name).split(' ')[0]) + '\u2019s line</span>');
-    if (c.hours_mode === 'after') tags.push('<span class="tk-tag">After hours</span>');
-    if (c.hours_mode === 'missed') tags.push('<span class="tk-tag msg">Missed call</span>');
+    if (MODE_LABEL[c.hours_mode] && c.source === 'phone') tags.push('<span class="tk-tag">' + MODE_LABEL[c.hours_mode] + '</span>');
     if (c.emails_n) tags.push('<span class="tk-tag ok">\u2709 Email sent</span>');
     if (test) tags.push('<span class="tk-tag test">Test</span>');
     if (c.outcome === 'message') tags.push('<span class="tk-tag msg">Message</span>');
@@ -178,7 +179,7 @@
     const chips = [];
     if (c.line_name) chips.push('<span class="tk-chip ok">' + esc(c.line_name) + (Number(c.owner) === 1 ? ' calling their assistant' : Number(c.owner) === 2 ? '\u2019s phone (not verified)' : '\u2019s line') + '</span>');
     if (c.screen_ok != null) chips.push('<span class="tk-chip">' + (Number(c.screen_ok) === 1 ? 'They pressed 1 and took it' : 'Rang them first \u2014 not taken') + '</span>');
-    if (c.hours_mode) chips.push('<span class="tk-chip' + (c.hours_mode === 'missed' ? ' warn' : '') + '">' + (c.hours_mode === 'after' ? 'After hours' : c.hours_mode === 'missed' ? 'Missed call \u2014 the team didn\u2019t pick up' : 'Regular hours') + '</span>');
+    if (MODE_LABEL[c.hours_mode]) chips.push('<span class="tk-chip" title="Which NovaAI setup answered">' + MODE_LABEL[c.hours_mode] + '</span>');
     if (Number(c.returning) === 1) chips.push('<span class="tk-chip">Talked to NovaAI before \u2014 short greeting</span>');
     if (c.language) chips.push(flagChip(c.language));
     // The usual case (NovaAI answered, call completed) needs no chip; only the exceptions are shown.
