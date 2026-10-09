@@ -35,6 +35,7 @@
   .tk-filters { padding: 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 7px; }
   .tk-filters input { margin: 0; padding: 8px 10px; font-size: 13px; }
   .tk-filters .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  #callFilter { flex-wrap: nowrap; } #callFilter button { white-space: nowrap; }
   .tk-filters .row button { border: 1px solid var(--line); background: #fff; border-radius: 7px; padding: 4px 10px; font: 12px/1.3 inherit; cursor: pointer; }
   .tk-filters .row button.on { border-color: var(--indigo); background: var(--indigo-light); color: var(--indigo-dark); font-weight: 600; }
   .tk-qrow { display: flex; gap: 6px; }
@@ -389,7 +390,6 @@
           <button type="button" data-f="" class="on">All</button>
           <button type="button" data-f="unread">Unread <b class="tk-ucount" id="tkUnread"></b></button>
           <button type="button" data-f="phone">Phone calls</button>
-          <button type="button" data-f="messages">Messages &amp; transfers</button>
           <button type="button" data-f="tests">Tests</button>
         </div>
       </div>
