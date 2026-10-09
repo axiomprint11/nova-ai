@@ -187,8 +187,11 @@
     if (c.outcome === 'transferred') chips.push('<span class="tk-chip ok">Transferred</span>');
     if (c.status && c.source === 'phone' && !/^(completed|in-progress)$/.test(c.status)) chips.push('<span class="tk-chip">' + esc(c.status) + '</span>');
     // Emails NovaAI sent on this call: click to see exactly what went out.
-    (c.emails || []).forEach((m, i) => chips.push('<button type="button" class="tk-mailbtn' + (m.ok ? '' : ' bad') + '" data-mail="' + i + '" title="Show the email">' +
-      '\u2709 ' + (m.kind === 'csr' ? 'CSR team notified' : m.ok ? 'Email sent \u00b7 ' + esc(m.to_addr) : 'Email failed \u00b7 ' + esc(m.to_addr)) + '</button>'));
+    // Emails to the caller: one chip each. CSR summaries: one chip for all of them (opens the history).
+    (c.emails || []).forEach((m, i) => { if (m.kind !== 'csr') chips.push('<button type="button" class="tk-mailbtn' + (m.ok ? '' : ' bad') + '" data-mail="' + i + '" title="Show the email">' +
+      '✉ ' + (m.ok ? 'Email sent \u00b7 ' + esc(m.to_addr) : 'Email failed \u00b7 ' + esc(m.to_addr)) + '</button>'); });
+    const nCsr = (c.emails || []).filter(m => m.kind === 'csr').length;
+    if (nCsr) chips.push('<button type="button" class="tk-mailbtn" data-ho="hist" title="What was sent to the CSR team">✉ CSR team notified' + (nCsr > 1 ? ' · ' + nCsr : '') + '</button>');
     if (c.emailed_to && !(c.emails || []).length) chips.push('<span class="tk-chip ok">Quote emailed to ' + esc(c.emailed_to) + '</span>');
     // Same avatar as the list: initials = a customer, dashed phone = a number on no account (no words needed).
     const who = c.verified ? '<b>' + (c.verified_by === 'caller_id' ? 'Recognised by caller ID:' : c.verified_by === 'check+caller_id' ? 'Verified (number + email/ZIP):' : 'Verified:') + '</b> ' + esc(c.customer_name || '#' + c.customer_id) + (c.company ? ' (' + esc(c.company) + ')' : '') + ' <i>#' + esc(c.customer_id) + '</i>'
@@ -210,18 +213,24 @@
       c.quotes.map(q => '<div style="margin-top:4px"><b>' + esc(q.product) + '</b> \u2014 ' + q.rows.map(r => esc(Number(r.quantity).toLocaleString('en-US')) + ': $' +
         esc(Number(r.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })) +
         (r.order_url ? ' <a class="tk-link" style="text-decoration:none;padding:0" href="' + esc(r.order_url) + '" target="_blank" rel="noopener">order link</a>' : '')).join(' \u00b7 ') + '</div>').join('') + '</div>';
-    // The AI summary the CSR team gets (Dialpad shows these calls as missed), with the callback verdict.
+    // The AI summary the CSR team gets (Dialpad shows these calls as missed), with the callback verdict. Its actions sit
+    // at the bottom of the call (foot), with an envelope that lists every summary email sent to the team.
+    let foot = '';
+    const csrMails = (c.emails || []).map((m, i) => ({ m: m, i: i })).filter(x => x.m.kind === 'csr');
+    const envBtn = '<button type="button" class="tk-hist" data-ho="hist" title="' + (csrMails.length ? 'What was sent to the CSR team (' + csrMails.length + ')' : 'Nothing sent to the CSR team yet') + '"' + (csrMails.length ? '' : ' disabled') + '>' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>' +
+      (csrMails.length ? '<b>' + csrMails.length + '</b>' : '') + '</button>';
     if (c.ai_summary) {
       const cb = Number(c.callback) === 1;
-      html += '<div class="tk-sum ai"><span>AI summary <em class="' + (cb ? 'cb' : 'ok') + '">' + (cb ? 'Call back' + (c.callback_reason ? ': ' + esc(c.callback_reason) : '') : 'No callback needed') + '</em></span>' +
-        esc(c.ai_summary) + '<div class="tk-sumbar">' +
-        (c.csr_sent_at ? '<span>Emailed to the CSR team ' + esc(rel(c.csr_sent_at)) + '</span>' : '<span>Not emailed to the CSR team yet</span>') +
-        (c.hook_status ? '<span>CRM webhook: ' + esc(c.hook_status) + '</span>' : '') +
-        '<button type="button" class="tk-link" data-ho="summary">Write it again</button><button type="button" class="tk-link" data-ho="csr">' + (c.csr_sent_at ? 'Send to CSR again' : 'Send to CSR team') + '</button>' +
-        '<button type="button" class="tk-link" data-ho="data">Webhook data</button></div></div>';
+      html += '<div class="tk-sum ai"><span>AI summary <em class="' + (cb ? 'cb' : 'ok') + '">' + (cb ? 'Call back' + (c.callback_reason ? ': ' + esc(c.callback_reason) : '') : 'No callback needed') + '</em></span>' + esc(c.ai_summary) + '</div>';
+      foot = '<div class="tk-foot"><span class="tk-foot-st">' + (c.csr_sent_at ? 'Emailed to the CSR team ' + esc(rel(c.csr_sent_at)) : 'Not emailed to the CSR team yet') +
+        (c.hook_status ? ' · CRM webhook: ' + esc(c.hook_status) : '') + '</span>' +
+        '<button type="button" class="tk-link" data-ho="summary">Write it again</button>' +
+        '<span class="tk-foot-csr"><button type="button" class="tk-link" data-ho="csr">' + (c.csr_sent_at ? 'Send to CSR again' : 'Send to CSR team') + '</button>' + envBtn + '</span>' +
+        '<button type="button" class="tk-link" data-ho="data">Webhook data</button></div>';
     } else if (c.source === 'phone' && (c.transcript || []).length) {
-      html += '<div class="tk-sum"><span>Summary' + (c.summary ? ' (ElevenLabs)' : '') + '</span>' + esc(c.summary || 'No AI summary yet.') +
-        '<div class="tk-sumbar"><button type="button" class="tk-link" data-ho="summary">Write the AI summary</button><button type="button" class="tk-link" data-ho="data">Webhook data</button></div></div>';
+      html += '<div class="tk-sum"><span>Summary' + (c.summary ? ' (ElevenLabs)' : '') + '</span>' + esc(c.summary || 'No AI summary yet.') + '</div>';
+      foot = '<div class="tk-foot"><button type="button" class="tk-link" data-ho="summary">Write the AI summary</button><button type="button" class="tk-link" data-ho="data">Webhook data</button></div>';
     } else if (c.summary) html += '<div class="tk-sum"><span>Summary</span>' + esc(c.summary) + '</div>';
     const topLen = html.length;          // header, prices and AI summary stay fixed; the transcript scrolls below them
     const events = turns.filter(t => t.role === 'event');
@@ -272,7 +281,7 @@
       html += '<div class="tk-empty">' + (c.answered_by === 'forward' ? 'This call was forwarded to the team.' : c.answered_by === 'message' ? 'The caller heard the closed message.' : 'Nothing was said on this call yet.') + '</div>';
     }
     v.classList.add('tk-split');
-    v.innerHTML = '<div class="tk-dtop">' + html.slice(0, topLen) + '</div><div class="tk-scroll" id="callScroll">' + html.slice(topLen) + '</div>';
+    v.innerHTML = '<div class="tk-dtop">' + html.slice(0, topLen) + '</div><div class="tk-scroll" id="callScroll">' + html.slice(topLen) + foot + '</div>';
     $('callBack').onclick = () => { $('vCalls').classList.remove('detail'); current = null; history.replaceState(null, '', '/talk-ai'); showCallsOverview(); };
     $('callUnread').onclick = async () => { await api('/api/admin/talk/calls/' + id + '/unread', { method: 'POST', body: '{}' }); current = null; loadCalls(); $('vCalls').classList.remove('detail'); v.innerHTML = '<div class="tk-empty">Marked as unread.</div>'; };
     if ($('showLog')) $('showLog').onclick = () => {
@@ -284,6 +293,7 @@
     v.querySelectorAll('[data-ho]').forEach(b => {
       b.onclick = async () => {
         const k = b.dataset.ho;
+        if (k === 'hist') return csrHistory(b, csrMails);
         if (k === 'data') {
           const j = await api('/api/admin/talk/calls/' + id + '/handoff');
           if (!j.ok) return alert(j.error || 'Could not build it.');
@@ -306,6 +316,24 @@
       };
     });
     loadCalls();
+  }
+  // Every summary email sent to the CSR team for a call: one opens straight away, several give a short list to pick from.
+  function csrHistory(btn, list) {
+    document.querySelectorAll('.tk-histpop').forEach(x => x.remove());
+    if (!list.length) return;
+    if (list.length === 1) return showMail(list[0].m);
+    const pop = document.createElement('div');
+    pop.className = 'tk-histpop';
+    pop.setAttribute('role', 'menu');
+    pop.innerHTML = '<div class="tk-histpop-hd">Sent to the CSR team</div>' + list.slice().reverse().map(x =>
+      '<button type="button" role="menuitem" data-k="' + x.i + '"><b>' + esc(full(x.m.created_at)) + '</b><span>' + esc(x.m.subject || '') + '</span><small>' + esc(x.m.to_addr || '') + '</small></button>').join('');
+    document.body.appendChild(pop);
+    const r = btn.getBoundingClientRect();
+    pop.style.left = Math.max(8, Math.min(r.left, innerWidth - pop.offsetWidth - 8)) + 'px';
+    pop.style.top = (r.top - pop.offsetHeight - 6 > 8 ? r.top - pop.offsetHeight - 6 : r.bottom + 6) + 'px';
+    const close = (e) => { if (!pop.contains(e.target) && e.target !== btn) { pop.remove(); document.removeEventListener('mousedown', close); } };
+    setTimeout(() => document.addEventListener('mousedown', close), 0);
+    pop.querySelectorAll('button[data-k]').forEach(b => { b.onclick = () => { const it = list.find(x => String(x.i) === b.dataset.k); pop.remove(); if (it) showMail(it.m); }; });
   }
   // Data as the CRM receives it, with Copy.
   function showJson(title, obj) {

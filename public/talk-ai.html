@@ -140,6 +140,22 @@
   .tk-sumbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #dfe3f3; font-size: 12px; color: var(--muted); }
   .tk-sumbar span { display: inline; font-size: 12px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); margin: 0; }
   .tk-sumbar .tk-link { padding: 0; font-size: 12px; }
+  .tk-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 16px; padding: 12px 0 2px; border-top: 1px dashed #dfe3f3; font-size: 12.5px; }
+  .tk-foot .tk-link { padding: 0; font-size: 12.5px; }
+  .tk-foot-st { color: var(--muted); margin-right: auto; }
+  .tk-foot-csr { display: inline-flex; align-items: center; gap: 6px; }
+  .tk-hist { display: inline-flex; align-items: center; gap: 3px; height: 26px; padding: 0 7px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--ink-soft); cursor: pointer; font: 700 11px/1 inherit; }
+  .tk-hist svg { width: 15px; height: 15px; }
+  .tk-hist:hover:not(:disabled) { border-color: var(--indigo); color: var(--indigo-dark); }
+  .tk-hist:disabled { opacity: .45; cursor: default; }
+  .tk-hist:focus-visible { outline: 2px solid var(--indigo); outline-offset: 1px; }
+  .tk-histpop { position: fixed; z-index: 320; width: 320px; max-height: 320px; overflow-y: auto; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 16px 40px rgba(17,24,39,.18); padding: 6px; }
+  .tk-histpop-hd { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 6px 8px 4px; }
+  .tk-histpop button { display: block; width: 100%; text-align: left; border: 0; background: none; border-radius: 8px; padding: 8px; cursor: pointer; font: inherit; }
+  .tk-histpop button:hover, .tk-histpop button:focus-visible { background: #f4f5fc; outline: none; }
+  .tk-histpop b { display: block; font-size: 12.5px; }
+  .tk-histpop span { display: block; font-size: 12px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tk-histpop small { display: block; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tk-pop { position: fixed; inset: 0; z-index: 300; background: rgba(17,24,39,.45); display: flex; align-items: center; justify-content: center; padding: 16px; }
   .tk-pop-in { background: #fff; border-radius: 14px; width: min(760px, 100%); max-height: 86vh; display: flex; flex-direction: column; box-shadow: 0 24px 60px rgba(0,0,0,.3); }
   .tk-pop-hd { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 14px; }
