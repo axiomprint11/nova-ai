@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.10.1';
-const NOVA_BUILT = '10-08-2026 6:15pm';
+const NOVA_VERSION = '1.10.2';
+const NOVA_BUILT = '10-09-2026 9:05am';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 app.use((req, res, next) => req.path.indexOf('/api/talk/hook/') === 0 ? next() : jsonBody(req, res, next));
@@ -968,8 +968,14 @@ async function runQuery(sql) {
 // ---- Server-side price calculation (mirrors the in-browser evaluator) ----
 function num(v) { const n = Number(v); return isFinite(n) && n > 0 ? n : null; }
 // Add N business days to a start date (skips Sat/Sun). Returns a Date.
-// US federal holidays (observed). Returns a Set of 'YYYY-MM-DD' for a given year.
+// AxiomPrint's closed days come from its own calendar: the production `holidays` table (the website's "Closed days"
+// panel — "New jobs' due dates skip these days"), loaded into memory by closed-days.js and reloaded hourly.
+const closedDays = require('./closed-days')(runQuery);
+// The closed days of a year as a Set of 'YYYY-MM-DD' — every business-day count (timelines, due dates, quotes) uses
+// this. Until the calendar has loaded once (or if the database is unreachable at boot), the built-in list below.
 function usHolidays(year) {
+  const fromDb = closedDays.yearSet(year);
+  if (fromDb) return fromDb;
   const set = new Set();
   const iso = (y, m, d) => y + '-' + String(m).padStart(2,'0') + '-' + String(d).padStart(2,'0');
   const nthWeekday = (y, month, weekday, n) => {
@@ -2231,6 +2237,12 @@ function formatQuote(q) {
 
 const DATA_DICTIONARY = `
 AXIOMPRINT DATABASE GUIDE (Laravel/Yii MySQL app for a print business)
+
+CLOSED DAYS: the \`holidays\` table is AxiomPrint's own calendar of days the shop is closed (no production, no pick-up;
+  they never count as business days — the website skips them for due dates). Columns: name, \`date\`, repeat_on
+  ('does_not_repeat' | 'annually_on_same_date'), recurrence JSON (freq none/yearly, month, month_day, interval, ends).
+  A yearly row repeats every year from its date. Not the US federal list: e.g. Christmas Eve, New Year's Eve and the
+  day after Thanksgiving are closed; observed days are their own rows (Independence Day 2026 = Fri 2026-07-03).
 
 CORE CONCEPT - how a sale works:
 - The \`estimate\` table is the central object. Each row = ONE product line item for a customer (NOT a quote). ~1.17M rows.
@@ -3572,7 +3584,7 @@ function buildTimeline(days, opts) {
       } else {
         const w = cur.getDay();
         timeline.push({ date: iso(cur), type: 'skipped',
-                        label: (w === 0 || w === 6) ? 'Weekend' : 'Holiday' });
+                        label: (w === 0 || w === 6) ? 'Weekend' : 'Holiday', name: closedDays.name(iso(cur)) || undefined });
       }
     }
   }
@@ -5641,6 +5653,12 @@ app.get('/api/admin/history', auth, async (req, res) => {
   });
 });
 
+// AxiomPrint's closed days (the shop calendar in the production `holidays` table), next 12 months.
+app.get('/api/closed-days', auth, async (req, res) => {
+  if (req.query.reload === '1') await closedDays.load();
+  res.json(Object.assign({ ok: true, days: closedDays.upcoming(Math.min(Math.max(parseInt(req.query.days) || 365, 1), 1100)) }, { status: closedDays.status() }));
+});
+
 // ---- CRM Chat read / unread (admins). A conversation someone else had is unread for an admin until they open it in
 // CRM Chat, and again when something new is said in it (updated_at after their read_at). Your own chats are never unread,
 // and neither is a chat nobody wrote in. Members only ever see their own chats, so they have nothing unread.
@@ -6653,6 +6671,8 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     '      after that.\n' +
     '    Weekends and holidays are never counted. The start day is never Day 1 — counting begins the\n' +
     '      following business day.\n' +
+    '    AXIOMPRINT CLOSED DAYS (the shop calendar; no production or pick-up, never counted; "are you open on …?" is\n' +
+    '      answered from this): ' + (closedDays.text(400) || 'see the calendar') + '.\n' +
     '    Worked example, because this is the one people get wrong: approved Wednesday at 10PM, 5 business\n' +
     '      days. After the cutoff, so Wednesday is out. Thursday is the start day. Friday is Day 1, Monday\n' +
     '      Day 2, Tuesday Day 3, Wednesday Day 4, Thursday Day 5 — READY THURSDAY.\n' +
@@ -8038,7 +8058,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
               timeline.push({
                 date: iso(cur),
                 type: 'skipped',
-                label: (dow === 0 || dow === 6) ? 'Weekend' : 'Holiday'
+                label: (dow === 0 || dow === 6) ? 'Weekend' : 'Holiday', name: closedDays.name(iso(cur)) || undefined
               });
             }
           }
@@ -9026,10 +9046,10 @@ mountMcp(app, { runQuery, dataDictionary: DATA_DICTIONARY });
 const clientBot = require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly,
   quoteProduct, buildOrderLink, stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming,
   InstallPricing, getInstallPricing: () => installPricing, routeLookup, toTime24, driveFileBytes,
-  extractAttachmentText, relatedRules, sendMail, dataDir: __dirname });
+  extractAttachmentText, relatedRules, sendMail, closedDays, dataDir: __dirname });
 // TalkAi — NovaAI on the phone (Twilio + ElevenLabs), sharing the client bot's tools and rules (talk-ai.js).
 require('./talk-ai')(app, { db, runQuery, mysql, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly, serveVersionedHtml,
-  sendMail, dataDir: __dirname, loadTalkTraining }, clientBot);
+  sendMail, dataDir: __dirname, loadTalkTraining, closedDays }, clientBot);
 
 app.get(/^(?!\/api).*/, serveVersionedHtml('index.html'));
 

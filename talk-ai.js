@@ -234,7 +234,9 @@ module.exports = function mountTalkAi(app, deps, bot) {
   function hoursNow(s, at) {
     at = at || new Date();
     const h = s.hours, now = laParts(at);
-    const dayOf = (p) => { const d = h.days[p.day]; return d && d.open && h.closed.indexOf(p.date) === -1 ? d : null; };
+    // Closed: a day off in the weekly hours, a date in the shop calendar (production \`holidays\`), or an extra date set here.
+    const shut = (p) => h.closed.indexOf(p.date) > -1 || !!(deps.closedDays && deps.closedDays.isClosed(p.date));
+    const dayOf = (p) => { const d = h.days[p.day]; return d && d.open && !shut(p) ? d : null; };
     const today = dayOf(now);
     const open = !!(today && now.min >= toMin(today.from) && now.min < toMin(today.to));
     let next = null;
@@ -244,7 +246,9 @@ module.exports = function mountTalkAi(app, deps, bot) {
       if (!d || (i === 0 && now.min >= toMin(d.from))) continue;
       next = (i === 0 ? 'today' : i === 1 ? 'tomorrow' : DAY_NAMES[p.day]) + ' at ' + ampm(d.from);
     }
-    return { mode: open ? 'regular' : 'after', open: open, closes: open ? ampm(today.to) : null, next: next };
+    const holiday = deps.closedDays ? deps.closedDays.name(now.date) : null;
+    return { mode: open ? 'regular' : 'after', open: open, closes: open ? ampm(today.to) : null, next: next,
+      closed_today: !open && (holiday || h.closed.indexOf(now.date) > -1) ? (holiday || 'closed day') : null };
   }
   function weekText(h) {
     const groups = [];
@@ -900,8 +904,11 @@ module.exports = function mountTalkAi(app, deps, bot) {
       'NOW: ' + nowLA() + ' (Los Angeles time).',
       langCode(call.language) && langCode(call.language) !== 'en' ? 'LANGUAGE: the caller chose ' + LANGS[langCode(call.language)].name + ' — speak ' + LANGS[langCode(call.language)].name +
         ' for the whole call unless they switch. Product names and prices stay as the tools give them.' : '',
-      'HOURS: ' + (s._hours && s._hours.open ? 'the team is IN until ' + s._hours.closes + ' today.' : 'the team is CLOSED now' + (s._hours && s._hours.next ? '; we open again ' + s._hours.next + '.' : '.')) +
+      'HOURS: ' + (s._hours && s._hours.open ? 'the team is IN until ' + s._hours.closes + ' today.' : 'the team is CLOSED now' +
+        (s._hours && s._hours.closed_today ? ' (closed today: ' + s._hours.closed_today + ')' : '') + (s._hours && s._hours.next ? '; we open again ' + s._hours.next + '.' : '.')) +
         ' Opening hours: ' + weekText(s.hours) + ' (Los Angeles).',
+      deps.closedDays && deps.closedDays.text(400) ? 'CLOSED DAYS (the shop is closed all day \u2014 no production, no pick-up; they never count as business days; ' +
+        'answer "are you open on \u2026?" from this): ' + deps.closedDays.text(400) + '.' : '',
       'CALLER: calling from ' + (call.from_number || 'an unknown number') + '. ' + callerLine(call, c),
       coupon ? 'COUPON: ' + coupon : '',
       Number(call.owner) === 2 && s._line ? 'This number is listed as ' + amFirst(s._line) + '\u2019s own phone, but it could not be verified on this call, so treat it as an ordinary call: ' +
@@ -1801,7 +1808,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
 
   app.get('/api/admin/talk/overview', auth, adminOnly, async (req, res) => {
     const s = await settings();
-    res.json({ ok: true, settings: s, defaults: DEFAULTS, mode_defaults: MODE_DEFAULTS, langs: Object.keys(LANGS).map(k => ({ code: k, name: LANGS[k].name, digit: LANGS[k].digit, greeting: LANGS[k].greeting || '' })), hours_now: Object.assign(hoursNow(s), { week: weekText(s.hours) }), ring_seconds: RING_SECONDS, model: MODEL, number: env('TALKAI_NUMBER') || null, keep_days: KEEP_DAYS,
+    res.json({ ok: true, settings: s, defaults: DEFAULTS, mode_defaults: MODE_DEFAULTS, langs: Object.keys(LANGS).map(k => ({ code: k, name: LANGS[k].name, digit: LANGS[k].digit, greeting: LANGS[k].greeting || '' })), hours_now: Object.assign(hoursNow(s), { week: weekText(s.hours) }),
+      calendar: deps.closedDays ? deps.closedDays.upcoming(365) : [], calendar_status: deps.closedDays ? deps.closedDays.status() : null, ring_seconds: RING_SECONDS, model: MODEL, number: env('TALKAI_NUMBER') || null, keep_days: KEEP_DAYS,
       keys: { TWILIO_AUTH_TOKEN: !!env('TWILIO_AUTH_TOKEN'), TWILIO_ACCOUNT_SID: !!env('TWILIO_ACCOUNT_SID'), ELEVENLABS_API_KEY: !!env('ELEVENLABS_API_KEY'),
         ELEVENLABS_AGENT_ID: !!env('ELEVENLABS_AGENT_ID'), TALKAI_LLM_KEY: !!env('TALKAI_LLM_KEY'), ELEVENLABS_WEBHOOK_SECRET: !!env('ELEVENLABS_WEBHOOK_SECRET'),
         email: !!deps.sendMail },

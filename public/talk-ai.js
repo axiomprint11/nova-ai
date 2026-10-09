@@ -360,10 +360,24 @@
     });
     return { days: days, closed: $('sClosedDays').value.split(/[\s,]+/).map(x => x.trim()).filter(Boolean) };
   }
+  // The shop calendar (production \`holidays\`): read here, edited on the website.
+  function paintCalendar(j) {
+    const box = $('sCalendar'); if (!box) return;
+    const st = j.calendar_status || {}, list = j.calendar || [];
+    if (!list.length) { box.innerHTML = '<div class="tk-empty" style="padding:8px 0;text-align:left">' + (st.ok ? 'No closed days in the next 12 months.' : 'The calendar could not be read' + (st.error ? ' (' + esc(st.error) + ')' : '') + ' \u2014 the built-in holiday list is used until it can.') + '</div>'; return; }
+    const today = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })); today.setHours(12, 0, 0, 0);
+    box.innerHTML = list.map(x => {
+      const d = new Date(x.date + 'T12:00:00'), n = Math.round((d - today) / 86400000);
+      return '<div class="tk-cal-row' + (n === 0 ? ' today' : '') + '"><span class="d">' + esc(d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })) + '</span>' +
+        '<span class="n">' + esc(x.name) + '</span>' + (x.repeats ? '<span class="y">Every year</span>' : '') +
+        '<span class="in">' + (n === 0 ? 'today' : n === 1 ? 'tomorrow' : 'in ' + n + ' days') + '</span></div>';
+    }).join('');
+  }
   function paintNow(j) {
     const h = j.hours_now || {};
+    paintCalendar(j);
     $('sNow').innerHTML = 'Right now: ' + (h.open ? '<b class="reg">Regular hours</b> — open until ' + esc(h.closes) : '<b class="aft">After hours</b>' +
-      (h.next ? ' — opens ' + esc(h.next) : '')) + '<br><small style="color:var(--muted)">' + esc(h.week || '') + '</small>';
+      (h.closed_today ? ' — closed today (' + esc(h.closed_today) + ')' : '') + (h.next ? ' — opens ' + esc(h.next) : '')) + '<br><small style="color:var(--muted)">' + esc(h.week || '') + '</small>';
     document.querySelectorAll('.tk-ring').forEach(x => { x.textContent = j.ring_seconds || 20; });
   }
   let langState = null;

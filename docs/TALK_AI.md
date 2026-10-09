@@ -261,3 +261,11 @@ Recordings: `talk-recordings/YYYY-MM/*.mp3` (gitignored, admin-only, deleted aft
 
 Texting quotes or links (needs Twilio A2P 10DLC registration; quotes go by email for now), a language menu, 👍/👎 lessons for calls,
 outbound calls (need prior consent), business-hours rules.
+
+
+## Closed days
+
+The phones follow the AxiomPrint calendar (production `holidays`, the website's Closed days panel) through
+`closed-days.js`: on a closed day the After hours setup answers all day, the HOURS line says "closed today (<name>)",
+and a CLOSED DAYS line lists the next 12 months so NovaAI can answer "are you open on …?". Training → Opening hours
+shows the list read-only (edit it on the website); "Extra closed days for the phone only" adds dates for the phones alone.

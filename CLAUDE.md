@@ -329,6 +329,13 @@ pattern for any new report over a large log table. To add a report, add an entry
   production status, lose `estimate_invoiceid`, and their invoice stays only on the project (`invoice_projectid`, total 0,
   `payment_status` may still say paid). The client bot's `projectCards()` marks them CANCELED, `my_orders` returns
   `latest_order` = newest job that is neither canceled nor a quote, and the staff job card / hover use `boardStatus()`.
+- **Closed days come from the production `holidays` table** (the website's "Closed days" panel), not a hard-coded
+  list. `closed-days.js` expands each row (one-off, or `recurrence` yearly / monthly / weekly) into dates for last
+  year .. three years ahead, keeps them in memory and reloads hourly. `usHolidays(year)` in server.js returns those
+  dates (the old built-in federal list only until the first load), so every business-day count — quote timelines,
+  due dates, `calculate_turnaround`, the client bot's "Estimated Ready" — skips them. The CRM Chat, client bot and
+  TalkAi prompts get the next 12 months as a CLOSED DAYS line; TalkAi treats a closed day as After hours all day
+  (plus any phone-only extra dates in Setup). `GET /api/closed-days` lists them.
 - **`estimate.production_status` is stale.** True production state is the newest `qr_scan_history` row
   for that `estimate_id`. This is stated in DATA_DICTIONARY and enforced in the `get_job` MCP tool.
 - **"Related to" rules** (`product_variable_filters`) decide when a field or option exists at all — Scoring on Book

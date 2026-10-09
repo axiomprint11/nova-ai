@@ -1832,6 +1832,8 @@ module.exports = function mountClientBot(app, deps) {
       signIn,
       '',
       '',
+      deps.closedDays && deps.closedDays.text(400) ? 'CLOSED DAYS (AxiomPrint\u2019s calendar \u2014 the shop is closed: no production, no pick-up, and they never count as business days; ' +
+        'answer "are you open on \u2026?" and holiday questions from this list, and say plainly when a day is closed): ' + deps.closedDays.text(400) + '.\n' : '',
       turnaround ? 'TURNAROUND (from ' + TURNAROUND_URL + '): for questions about turnaround \u2014 how production days are counted, the 4 PM cutoff, Rush or Express, weekends and holidays, pick-up hours, shipping time \u2014 answer from this in one or two sentences and add the link ' + TURNAROUND_URL + '. Turnaround is production time only; shipping is separate. For a customer\u2019s own order, the ready date comes from the order tools.\n' + String(turnaround).slice(0, 5000) + '\n' : '',
       'DESIGN SERVICES (set by AxiomPrint):',
       String(rules.design || DEFAULT_DESIGN),

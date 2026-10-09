@@ -139,6 +139,19 @@
   .tk-hours input[type=time] { width: 112px; margin: 0; padding: 6px 8px; font-size: 13px; }
   .tk-hours .t { display: flex; align-items: center; gap: 6px; color: var(--muted); }
   .tk-hours .closed { color: var(--muted); font-style: italic; }
+  .tk-cal { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+  .tk-cal-hd { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .tk-cal-hd span { font-size: 11.5px; color: var(--muted); }
+  .tk-cal-list { max-height: 228px; overflow-y: auto; padding: 2px 12px; }
+  .tk-cal-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid #f1f1f6; font-size: 13px; }
+  .tk-cal-row:first-child { border-top: 0; }
+  .tk-cal-row .d { width: 108px; flex: none; font-variant-numeric: tabular-nums; color: var(--ink-soft); }
+  .tk-cal-row .n { flex: 1; min-width: 0; font-weight: 600; }
+  .tk-cal-row .in { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+  .tk-cal-row .y { font-size: 10.5px; font-weight: 700; color: #92400e; background: #fef3c7; border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
+  .tk-cal-row.today { background: #fffbeb; margin: 0 -12px; padding-left: 12px; padding-right: 12px; }
+  .tk-extra { margin-top: 10px; font-size: 13px; }
+  .tk-extra summary { cursor: pointer; color: var(--ink-soft); font-weight: 600; font-size: 12.5px; }
   .tk-now { margin-top: 10px; font-size: 13px; padding: 8px 11px; border-radius: 9px; background: #f4f5fa; border: 1px solid var(--line); }
   .tk-now b.reg { color: #166534; } .tk-now b.aft { color: #92400e; }
   .tk-mtabs { display: inline-flex; gap: 4px; padding: 3px; border-radius: 10px; background: #f1f2f8; }
@@ -336,8 +349,14 @@
             <h3>Opening hours</h3>
             <p class="sub">Los Angeles time. Inside these hours the <b>Regular hours</b> setup answers; outside them (and on closed days) the <b>After hours</b> setup.</p>
             <div class="tk-hours" id="sHours"></div>
-            <label class="tk-h" for="sClosedDays" style="display:block;margin-top:12px">Closed days (holidays) — one date per line, e.g. 2026-12-25</label>
-            <textarea id="sClosedDays" rows="2" style="min-height:52px"></textarea>
+            <div class="tk-cal">
+              <div class="tk-cal-hd"><b>Closed days</b><span>From the AxiomPrint calendar (Closed days on the website) &middot; edit them there; NovaAI follows on the next call</span></div>
+              <div class="tk-cal-list" id="sCalendar"><div class="tk-empty" style="padding:8px 0;text-align:left">Loading…</div></div>
+            </div>
+            <details class="tk-extra"><summary>Extra closed days for the phone only</summary>
+              <label class="tk-h" for="sClosedDays" style="display:block;margin-top:8px">Days the phones follow After hours that are not in the calendar — one date per line, e.g. 2026-12-26</label>
+              <textarea id="sClosedDays" rows="2" style="min-height:52px"></textarea>
+            </details>
             <div class="tk-now" id="sNow"></div>
           </div>
           <div class="tk-card">
@@ -448,6 +467,7 @@
               <li>Prices only from the website calculator</li>
               <li>Never takes card numbers or payments</li>
               <li>Past-due orders escalated by email, as in the chat</li>
+              <li>Closed days from the AxiomPrint calendar: After hours all day, and never counted in ready dates</li>
             </ul>
           </div>
         </div>
