@@ -33,6 +33,7 @@
     const t = d.length === 11 && d[0] === '1' ? d.slice(1) : d;
     return t.length === 10 ? '(' + t.slice(0, 3) + ') ' + t.slice(3, 6) + '-' + t.slice(6) : (v || '');
   };
+  const shortWhen = (ts) => { const d = toDate(ts); return isNaN(d) ? '' : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) + ' \u00b7 ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
   const dur = (s) => s == null ? '' : s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + String(s % 60).padStart(2, '0') + ' s';
   const LANG = { en: 'English', es: 'Spanish', hy: 'Armenian', ru: 'Russian', fa: 'Farsi', ar: 'Arabic', ko: 'Korean', zh: 'Chinese', fr: 'French' };
   const lang = (l) => l ? (LANG[String(l).slice(0, 2).toLowerCase()] || l) : '';
@@ -173,11 +174,9 @@
     const c = j.call, turns = j.turns || [];
     const match = (c.caller_match || []).map(m => esc(m.name) + (m.company ? ' (' + esc(m.company) + ')' : '') + ' <i>#' + m.id + '</i>').join(', ');
     const chips = [];
-    chips.push('<span class="tk-chip">' + esc(full(c.created_at)) + '</span>');
     if (c.line_name) chips.push('<span class="tk-chip ok">' + esc(c.line_name) + (Number(c.owner) === 1 ? ' calling their assistant' : Number(c.owner) === 2 ? '\u2019s phone (not verified)' : '\u2019s line') + '</span>');
     if (c.screen_ok != null) chips.push('<span class="tk-chip">' + (Number(c.screen_ok) === 1 ? 'They pressed 1 and took it' : 'Rang them first \u2014 not taken') + '</span>');
     if (c.hours_mode) chips.push('<span class="tk-chip' + (c.hours_mode === 'missed' ? ' warn' : '') + '">' + (c.hours_mode === 'after' ? 'After hours' : c.hours_mode === 'missed' ? 'Missed call \u2014 the team didn\u2019t pick up' : 'Regular hours') + '</span>');
-    if (c.duration_sec != null) chips.push('<span class="tk-chip">' + esc(dur(c.duration_sec)) + '</span>');
     if (Number(c.returning) === 1) chips.push('<span class="tk-chip">Talked to NovaAI before \u2014 short greeting</span>');
     if (c.language) chips.push(flagChip(c.language));
     // The usual case (NovaAI answered, call completed) needs no chip; only the exceptions are shown.
@@ -193,8 +192,11 @@
     const who = c.verified ? '<b>' + (c.verified_by === 'caller_id' ? 'Recognised by caller ID:' : c.verified_by === 'check+caller_id' ? 'Verified (number + email/ZIP):' : 'Verified:') + '</b> ' + esc(c.customer_name || '#' + c.customer_id) + (c.company ? ' (' + esc(c.company) + ')' : '') + ' <i>#' + esc(c.customer_id) + '</i>'
       : match ? '<b>Caller ID matches</b> ' + match + ' <i>— not verified on the call</i>' : '';
     let html = '<div class="tk-hd"><button type="button" class="tk-link" id="callBack" style="float:right">← All calls</button>' +
-      '<div class="tk-hd-top">' + callAvatar(c) + '<div class="tk-hd-id"><b class="big">' + esc(c.source === 'try' ? 'Test in text' : phone(c.from_number) || 'Unknown number') + '</b>' +
+      '<div class="tk-hd-top">' + callAvatar(c) + '<div class="tk-hd-id"><div class="tk-hd-line"><b class="big">' + esc(c.source === 'try' ? 'Test in text' : phone(c.from_number) || 'Unknown number') + '</b>' +
       (c.source !== 'phone' ? ' <span class="tk-tag test">Test</span>' : '') +
+      '<span class="tk-hd-when" title="' + esc(full(c.created_at)) + '">' + esc(shortWhen(c.created_at)) + '</span>' +
+      (c.duration_sec != null ? '<span class="tk-hd-dur" title="Call length"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>' + esc(dur(c.duration_sec)) + '</span>' : '') +
+      '</div>' +
       (who ? '<div class="who">' + who + '</div>' : '') + '</div></div>' +
       '<div class="meta">' + chips.join('') + '</div>' +
       (c.has_audio || c.can_fetch_audio ? '<div class="tk-audio" id="callAudio"><span class="tk-msg">Loading the recording…</span></div>' : '') +
