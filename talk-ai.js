@@ -91,6 +91,11 @@ module.exports = function mountTalkAi(app, deps, bot) {
     db.run('ALTER TABLE talk_settings ADD COLUMN returning_short INTEGER', () => {});
     db.run('ALTER TABLE talk_calls ADD COLUMN returning INTEGER', () => {});
     db.run('ALTER TABLE talk_calls ADD COLUMN audio_tries INTEGER DEFAULT 0', () => {});
+    // Hand-off (talk-handoff.js): the AI summary + callback flag, the CSR team email, the CRM webhook delivery.
+    ['ai_summary TEXT', 'callback INTEGER', 'callback_reason TEXT', 'csr_sent_at TEXT', 'csr_to TEXT', 'hook_status TEXT', 'hook_tries INTEGER', 'hook_sent_at TEXT']
+      .forEach(c => db.run('ALTER TABLE talk_calls ADD COLUMN ' + c, () => {}));
+    // The Axiom main line on Dialpad (shown in the setup steps and sent to the CRM), who gets the CSR summary, the CRM webhook URL.
+    ['main_line TEXT', 'csr_to TEXT', 'webhook_url TEXT'].forEach(c => db.run('ALTER TABLE talk_settings ADD COLUMN ' + c, () => {}));
   });
   const dbGet = (sql, p) => new Promise((ok, no) => db.get(sql, p || [], (e, r) => e ? no(e) : ok(r)));
   const dbAll = (sql, p) => new Promise((ok, no) => db.all(sql, p || [], (e, r) => e ? no(e) : ok(r)));
@@ -114,7 +119,10 @@ module.exports = function mountTalkAi(app, deps, bot) {
     notify_to: bot.ESCALATE_TO || 'gary@axiomprint.com',
     email_bcc: env('TALKAI_EMAIL_BCC') || 'gary@axiomprint.com',
     closed_message: 'Thanks for calling AxiomPrint. We can’t take your call right now. Please email order@axiomprint.com or visit axiomprint.com, and we’ll get back to you. Goodbye.',
-    summary_mail: 0
+    summary_mail: 0,
+    main_line: '+17478887777',
+    csr_to: 'luciana@axiomprint.com, vance.leo@axiomprint.com, ian@axiomprint.com, jc.sanchez@axiomprint.com',
+    webhook_url: ''
   };
   // Opening hours, Los Angeles time. Closed days (holidays) as YYYY-MM-DD.
   const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -166,6 +174,9 @@ module.exports = function mountTalkAi(app, deps, bot) {
     if (r && r.transfer_number === '') s.transfer_number = '';
     if (r && r.forward_number === '') s.forward_number = '';
     if (r && r.email_bcc === '') s.email_bcc = '';                     // turned off on purpose
+    if (r && r.csr_to === '') s.csr_to = '';
+    s.webhook_url = (r && r.webhook_url) || '';
+    s.webhook_secret = !!env('TALKAI_WEBHOOK_SECRET');
     s.summary_mail = Number(s.summary_mail) ? 1 : 0;
     if (['carrier', 'always', 'never'].indexOf(s.caller_id) === -1) s.caller_id = 'carrier';
     let hours = null, modes = null;
@@ -1727,6 +1738,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
        md.cost != null ? Number(md.cost) : null, md.termination_reason ? String(md.termination_reason).slice(0, 200) : null, lang ? String(lang).slice(0, 20) : null, call.id]);
     hit('elevenlabs-webhook', true, 'Call ' + call.id + ': transcript saved (' + transcript.length + ' turns)');
     fetchAudioSoon(call.id);
+    // The CSR team (and the CRM) hear about it: Dialpad still shows this call as missed.
+    handoff.afterCall(call.id).catch(e => console.error('TALKAI handoff', e.message));
     const s = await settings();
     if (s.summary_mail && s.notify_to && deps.sendMail && call.source === 'phone') {
       const fresh = await dbGet('SELECT * FROM talk_calls WHERE id = ?', [call.id]);
@@ -1777,6 +1790,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
       return { ok: false, error: 'The recording could not be fetched right now.' };
     } finally { audioBusy.delete(c.id); }
   }
+  const handoff = require('./talk-handoff')({ app, deps, dbGet, dbAll, dbRun, settings, env, hit, NOVA_URL, AUDIO_DIR, callLink, htmlEsc, usd2,
+    fetchAudio, auth, adminOnly });
   function fetchAudioSoon(callId) {
     [20, 120, 600].forEach(sec => setTimeout(() => fetchAudio(callId, 'after the call').catch(() => {}), sec * 1000).unref());
   }
@@ -1809,6 +1824,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
   app.get('/api/admin/talk/overview', auth, adminOnly, async (req, res) => {
     const s = await settings();
     res.json({ ok: true, settings: s, defaults: DEFAULTS, mode_defaults: MODE_DEFAULTS, langs: Object.keys(LANGS).map(k => ({ code: k, name: LANGS[k].name, digit: LANGS[k].digit, greeting: LANGS[k].greeting || '' })), hours_now: Object.assign(hoursNow(s), { week: weekText(s.hours) }),
+      latest_call: ((await dbGet("SELECT MAX(id) AS id FROM talk_calls WHERE source = 'phone' AND transcript IS NOT NULL").catch(() => null)) || {}).id || null,
+      mode_counts: await dbAll("SELECT hours_mode AS k, COUNT(*) AS n FROM talk_calls WHERE source = 'phone' AND created_at > datetime('now', '-30 days') GROUP BY hours_mode").then(r => r.reduce((m, x) => (m[x.k || 'regular'] = x.n, m), {})).catch(() => ({})),
       calendar: deps.closedDays ? deps.closedDays.upcoming(365) : [], calendar_status: deps.closedDays ? deps.closedDays.status() : null, ring_seconds: RING_SECONDS, model: MODEL, number: env('TALKAI_NUMBER') || null, keep_days: KEEP_DAYS,
       keys: { TWILIO_AUTH_TOKEN: !!env('TWILIO_AUTH_TOKEN'), TWILIO_ACCOUNT_SID: !!env('TWILIO_ACCOUNT_SID'), ELEVENLABS_API_KEY: !!env('ELEVENLABS_API_KEY'),
         ELEVENLABS_AGENT_ID: !!env('ELEVENLABS_AGENT_ID'), TALKAI_LLM_KEY: !!env('TALKAI_LLM_KEY'), ELEVENLABS_WEBHOOK_SECRET: !!env('ELEVENLABS_WEBHOOK_SECRET'),
@@ -1862,6 +1879,13 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const langs = Array.isArray(b.languages) ? b.languages.map(String).filter(k => LANGS[k] && k !== 'en') : cur.languages.filter(k => k !== 'en');
     const lg = {};
     Object.keys(LANGS).filter(k => k !== 'en').forEach(k => { const v = b.lang_greetings && b.lang_greetings[k]; lg[k] = v == null ? cur.lang_greetings[k] : String(v).slice(0, 600); });
+    const csr = b.csr_to == null ? cur.csr_to : String(b.csr_to).trim().replace(/[;\s]+/g, ' ').replace(/\s*,\s*|\s+/g, ', ').replace(/^,\s*|,\s*$/g, '').slice(0, 600);
+    if (csr && !/^[^\s@,]+@[^\s@,]+\.[^\s@,]+(, [^\s@,]+@[^\s@,]+\.[^\s@,]+)*$/.test(csr)) return res.status(400).json({ ok: false, error: 'Check the CSR team email addresses.' });
+    let mainLine;
+    try { mainLine = b.main_line == null ? cur.main_line : num(b.main_line, 'main_line'); } catch (e) { return res.status(400).json({ ok: false, error: 'Main line: ' + e.message }); }
+    const hookUrl = b.webhook_url == null ? cur.webhook_url : String(b.webhook_url).trim().slice(0, 500);
+    if (hookUrl && !/^https:\/\/[^\s]+$/i.test(hookUrl)) return res.status(400).json({ ok: false, error: 'The CRM webhook URL has to start with https://' });
+    await dbRun('UPDATE talk_settings SET csr_to = ?, main_line = ?, webhook_url = ? WHERE id = 1', [csr, mainLine || '', hookUrl]);
     await dbRun('UPDATE talk_settings SET email_bcc = ?, missed_number = ?, returning_short = ? WHERE id = 1',
       [bcc, missedNum || null, b.returning_short == null ? cur.returning_short : (b.returning_short ? 1 : 0)]);
     await dbRun('UPDATE talk_settings SET languages = ?, lang_menu = ?, lang_greetings = ? WHERE id = 1',
@@ -1877,7 +1901,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const m0 = usageStats.startOf('month');
     const m = await dbGet("SELECT SUM(answered_by = 'ai') AS ai, SUM(hours_mode = 'missed') AS missed, SUM(outcome = 'message') AS msgs, " +
       "SUM(COALESCE(owner, 0) = 1) AS own, COUNT(DISTINCT from_number) AS callers FROM talk_calls WHERE source = 'phone' AND created_at >= ?", [m0]).catch(() => ({})) || {};
-    const e = await dbGet('SELECT COUNT(*) AS n FROM talk_emails m JOIN talk_calls c ON c.id = m.call_id WHERE m.ok = 1 AND c.source = ? AND m.created_at >= ?', ['phone', m0]).catch(() => ({})) || {};
+    const e = await dbGet('SELECT COUNT(*) AS n FROM talk_emails m JOIN talk_calls c ON c.id = m.call_id WHERE m.ok = 1 AND COALESCE(m.kind, \'\') <> \'csr\' AND c.source = ? AND m.created_at >= ?', ['phone', m0]).catch(() => ({})) || {};
     const t = (label, value, sub) => ({ label: label, value: value || 0, sub: sub });
     res.json({ ok: true, title: 'Calls', unit: 'calls', unit1: 'call', series: s, tiles: [
       t('Calls today', s.now.today, 'yesterday ' + s.now.yesterday), t('Calls this week', s.now.week, 'last week ' + s.now.last_week),
@@ -1910,7 +1934,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const rows = await dbAll('SELECT c.id, c.from_number, c.source, c.status, c.answered_by, c.customer_id, c.customer_name, c.company, c.verified, c.caller_match, c.owner, ' +
       'c.language, c.summary, c.outcome, c.duration_sec, c.created_at, c.updated_at, c.audio_path IS NOT NULL AS has_audio, c.tried_by, c.verified_by, c.caller_first, c.hours_mode, c.line_id, (SELECT am_name FROM talk_lines l WHERE l.id = c.line_id) AS line_name, ' +
       '(SELECT COUNT(*) FROM talk_turns t WHERE t.call_id = c.id AND t.role = \'caller\') AS turns, ' +
-      '(SELECT COUNT(*) FROM talk_emails m WHERE m.call_id = c.id AND m.ok = 1) AS emails_n, ' +
+      '(SELECT COUNT(*) FROM talk_emails m WHERE m.call_id = c.id AND m.ok = 1 AND COALESCE(m.kind, \'\') <> \'csr\') AS emails_n, c.callback, c.csr_sent_at, c.ai_summary, ' +
       '(SELECT content FROM talk_turns t WHERE t.call_id = c.id AND t.role = \'caller\' ORDER BY t.id LIMIT 1) AS first_said, ' +
       '(r.read_at IS NULL OR r.read_at < c.updated_at) AS unread ' +
       'FROM talk_calls c LEFT JOIN talk_reads r ON r.call_id = c.id AND r.reader = ? ' + (where.length ? 'WHERE ' + where.join(' AND ') : '') +

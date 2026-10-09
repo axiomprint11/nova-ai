@@ -145,7 +145,8 @@
     if (test) tags.push('<span class="tk-tag test">Test</span>');
     if (c.outcome === 'message') tags.push('<span class="tk-tag msg">Message</span>');
     if (c.outcome === 'transferred' || c.answered_by === 'forward') tags.push('<span class="tk-tag tr">' + (c.outcome === 'transferred' ? 'Transferred' : 'Forwarded') + '</span>');
-    const sub = c.summary || c.first_said || (c.answered_by === 'message' ? 'Closed message played' : c.status ? 'Status: ' + c.status : '');
+    if (Number(c.callback) === 1 && !test) tags.push('<span class="tk-tag msg">Call back</span>');
+    const sub = c.ai_summary || c.summary || c.first_said || (c.answered_by === 'message' ? 'Closed message played' : c.status ? 'Status: ' + c.status : '');
     return '<button type="button" class="tk-row' + (c.unread ? ' unread' : '') + (current === c.id ? ' on' : '') + (known || test ? '' : ' unknown') + '" data-id="' + c.id + '">' + av +
       '<span class="tk-rb"><span class="tk-r1"><b class="t">' + esc(title) + '</b><span class="when">' + esc(rel(c.created_at)) + (c.duration_sec ? ' \u00b7 ' + esc(dur(c.duration_sec)) : '') + '</span></span>' +
       (line2 ? '<span class="tk-r2">' + esc(line2) + '</span>' : '') +
@@ -182,7 +183,7 @@
     if (c.status && c.source === 'phone' && !/^(completed|in-progress)$/.test(c.status)) chips.push('<span class="tk-chip">' + esc(c.status) + '</span>');
     // Emails NovaAI sent on this call: click to see exactly what went out.
     (c.emails || []).forEach((m, i) => chips.push('<button type="button" class="tk-mailbtn' + (m.ok ? '' : ' bad') + '" data-mail="' + i + '" title="Show the email">' +
-      '\u2709 ' + (m.ok ? 'Email sent' : 'Email failed') + ' \u00b7 ' + esc(m.to_addr) + '</button>'));
+      '\u2709 ' + (m.kind === 'csr' ? 'CSR team notified' : m.ok ? 'Email sent \u00b7 ' + esc(m.to_addr) : 'Email failed \u00b7 ' + esc(m.to_addr)) + '</button>'));
     if (c.emailed_to && !(c.emails || []).length) chips.push('<span class="tk-chip ok">Quote emailed to ' + esc(c.emailed_to) + '</span>');
     if (c.ended_reason) chips.push('<span class="tk-chip" title="How the call ended">' + esc(c.ended_reason) + '</span>');
     let html = '<div class="tk-hd"><button type="button" class="tk-link" id="callBack" style="float:right">← All calls</button>' +
@@ -199,7 +200,19 @@
       c.quotes.map(q => '<div style="margin-top:4px"><b>' + esc(q.product) + '</b> \u2014 ' + q.rows.map(r => esc(Number(r.quantity).toLocaleString('en-US')) + ': $' +
         esc(Number(r.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })) +
         (r.order_url ? ' <a class="tk-link" style="text-decoration:none;padding:0" href="' + esc(r.order_url) + '" target="_blank" rel="noopener">order link</a>' : '')).join(' \u00b7 ') + '</div>').join('') + '</div>';
-    if (c.summary) html += '<div class="tk-sum"><span>Summary</span>' + esc(c.summary) + '</div>';
+    // The AI summary the CSR team gets (Dialpad shows these calls as missed), with the callback verdict.
+    if (c.ai_summary) {
+      const cb = Number(c.callback) === 1;
+      html += '<div class="tk-sum ai"><span>AI summary <em class="' + (cb ? 'cb' : 'ok') + '">' + (cb ? 'Call back' + (c.callback_reason ? ': ' + esc(c.callback_reason) : '') : 'No callback needed') + '</em></span>' +
+        esc(c.ai_summary) + '<div class="tk-sumbar">' +
+        (c.csr_sent_at ? '<span>Emailed to the CSR team ' + esc(rel(c.csr_sent_at)) + '</span>' : '<span>Not emailed to the CSR team yet</span>') +
+        (c.hook_status ? '<span>CRM webhook: ' + esc(c.hook_status) + '</span>' : '') +
+        '<button type="button" class="tk-link" data-ho="summary">Write it again</button><button type="button" class="tk-link" data-ho="csr">' + (c.csr_sent_at ? 'Send to CSR again' : 'Send to CSR team') + '</button>' +
+        '<button type="button" class="tk-link" data-ho="data">Webhook data</button></div></div>';
+    } else if (c.source === 'phone' && (c.transcript || []).length) {
+      html += '<div class="tk-sum"><span>Summary' + (c.summary ? ' (ElevenLabs)' : '') + '</span>' + esc(c.summary || 'No AI summary yet.') +
+        '<div class="tk-sumbar"><button type="button" class="tk-link" data-ho="summary">Write the AI summary</button><button type="button" class="tk-link" data-ho="data">Webhook data</button></div></div>';
+    } else if (c.summary) html += '<div class="tk-sum"><span>Summary</span>' + esc(c.summary) + '</div>';
     const events = turns.filter(t => t.role === 'event');
     // "Quote emailed to X" events → the saved email to X (in order); none saved → rebuilt on click.
     const used = {}, mailKey = new Map();
@@ -233,6 +246,21 @@
     if ($('showLog')) $('showLog').onclick = () => { const l = $('turnLog'); l.hidden = !l.hidden; $('showLog').textContent = l.hidden ? 'Show NovaAI’s lookups' : 'Hide NovaAI’s lookups'; };
     if (c.has_audio || c.can_fetch_audio) loadAudio(id);
     v.querySelectorAll('[data-mail]').forEach(b => { b.onclick = () => showMail(c.emails[parseInt(b.dataset.mail)]); });
+    v.querySelectorAll('[data-ho]').forEach(b => {
+      b.onclick = async () => {
+        const k = b.dataset.ho;
+        if (k === 'data') {
+          const j = await api('/api/admin/talk/calls/' + id + '/handoff');
+          if (!j.ok) return alert(j.error || 'Could not build it.');
+          return showJson('What the CRM webhook gets for this call', j.payload);
+        }
+        if (k === 'csr' && !confirm('Email this call\u2019s summary to the CSR team now?')) return;
+        b.disabled = true; b.textContent = k === 'csr' ? 'Sending\u2026' : 'Writing\u2026';
+        const j = await api('/api/admin/talk/calls/' + id + '/handoff', { method: 'POST', body: JSON.stringify(k === 'csr' ? { csr: true } : { summary: true }) });
+        if (k === 'csr' && j.csr && !j.csr.sent) alert(j.csr.error || 'Not sent.');
+        openCall(id);
+      };
+    });
     v.querySelectorAll('[data-evmail]').forEach(b => {
       b.onclick = async () => {
         const k = b.dataset.evmail;
@@ -243,6 +271,20 @@
       };
     });
     loadCalls();
+  }
+  // Data as the CRM receives it, with Copy.
+  function showJson(title, obj) {
+    const pop = document.createElement('div');
+    pop.className = 'tk-pop';
+    const txt = JSON.stringify(obj, null, 2);
+    pop.innerHTML = '<div class="tk-pop-in" role="dialog" aria-label="' + esc(title) + '"><div class="tk-pop-hd"><b>' + esc(title) + '</b><span style="flex:1"></span>' +
+      '<button type="button" class="tk-link" data-copy>Copy</button><button type="button" class="tk-link" data-x>Close</button></div>' +
+      '<pre class="tk-json">' + esc(txt) + '</pre></div>';
+    document.body.appendChild(pop);
+    const close = () => pop.remove();
+    pop.onclick = (e) => { if (e.target === pop) close(); };
+    pop.querySelector('[data-x]').onclick = close;
+    pop.querySelector('[data-copy]').onclick = (e) => { navigator.clipboard.writeText(txt).then(() => { e.target.textContent = 'Copied'; }).catch(() => {}); };
   }
   // An email exactly as it went out, in a sandboxed frame (no scripts; links open in a new tab).
   function showMail(m) {
@@ -397,43 +439,67 @@
       'closed days and order status \u2014 order details once the caller is recognised or verified. Can email the quote with Order now links.';
     const down = 'If the voice service is down: ' + (forward ? 'the call is forwarded to ' + scr(forward) + '.' : 'callers hear the ' + scr('Closed message') + '.');
     const hd = (cells) => '<div class="tk-flow-hd">' + cells.map(c => '<div><span>' + c[0] + '</span>' + c[1] + (c[2] ? '<small>' + c[2] + '</small>' : '') + '</div>').join('') + '</div>';
-    let head, steps;
+    const mainLine = $('sMainLine').value.trim() || (s.main_line ? phone(s.main_line) : '(747) 888-7777');
+    const csr = $('sCsrTo').value.trim() || s.csr_to || '';
+    const usage = (k) => { const n = (j.mode_counts || {})[k] || 0; return n + ' call' + (n === 1 ? '' : 's') + ' in the last 30 days'; };
+    const after = 'After the call NovaAI writes an AI summary and emails it to the CSR team' + (csr ? ' (' + scr(csr.split(/\s*,\s*/).length + ' people') + ')' : ' \u2014 <b>no CSR emails set</b>') +
+      ': \u201cno callback needed\u201d or \u201ccall back\u201d and why. <small>Dialpad still shows the call as missed; this is how the team knows NovaAI handled it' +
+      (s.webhook_url ? ', and our CRM gets it through the webhook' : '') + '.</small>';
+    let head, steps, alt = [];
     if (curMode === 'regular') {
-      head = hd([['Number', main ? '<b>' + esc(main) + '</b>' : '<b class="none">TALKAI_NUMBER not set</b>', 'The TalkAi number'],
-        ['Answers', '<b>During opening hours' + (live ? '<span class="tk-live">Now</span>' : '') + '</b>', esc(h.week || '') + (nextClosed ? ' \u00b7 closed days go to After Hours' : '')]]);
+      head = hd([['Clients call', '<b>' + esc(mainLine) + '</b>', 'Axiom main line (Dialpad)'],
+        ['NovaAI answers on', main ? '<b>' + esc(main) + '</b>' : '<b class="none">TALKAI_NUMBER not set</b>', 'The TalkAi number'],
+        ['When', '<b>Opening hours, as one of the team' + (live ? '<span class="tk-live">Now</span>' : '') + '</b>', esc(h.week || '') + ' \u00b7 ' + usage('regular')]]);
       steps = [
-        'A caller dials ' + scr(main || 'the TalkAi number') + ' while we are open.',
+        'A client calls the Axiom main line ' + scr(mainLine) + ' during opening hours. Dialpad rings the CSR team.',
+        'NovaAI on ' + scr(main || 'the TalkAi number') + ' can pick up as one more member of that ring group \u2014 sharing the load with the team (for example every 5th call). <small>Turned on in Dialpad by adding this number to the ring group; not in use until you do. ' + usage('regular') + '.</small>',
         '<span>Clients of an account manager with their own NovaAI line (\u201ctheir clients on the main line\u201d, ring first) ring that manager for ' + ring + ' seconds first \u2014 they press 1 to take it; NovaAI picks up if they don\u2019t.</span><small>Set per manager under Account managers.</small>',
         'NovaAI answers: ' + greetings + '.',
         helps,
-        'Wants a person: ' + (transfer ? 'NovaAI transfers the call to ' + scr(transfer) + ' (Transfer to).' : 'no Transfer to number is set, so NovaAI takes a message.') +
-          ' Messages are emailed to ' + scr(notify) + '.',
+        'Wants a person: ' + (transfer ? 'NovaAI transfers the call to ' + scr(transfer) + ' (Transfer to).' : 'no Transfer to number is set, so NovaAI takes a message.') + ' Messages are emailed to ' + scr(notify) + '.',
+        after,
         down
       ];
+      alt = [1, 2];
     } else if (curMode === 'missed') {
-      head = hd([['Number', missed ? '<b>' + esc(missed) + '</b>' : '<b class="none">Not set yet</b>', 'Missed-call number (Twilio), below'],
-        ['Answers', '<b>Calls the team didn\u2019t pick up</b>', 'Dialpad forwards unanswered calls after 20 seconds \u2014 any time of day']]);
+      head = hd([['Clients call', '<b>' + esc(mainLine) + '</b>', 'Axiom main line (Dialpad)'],
+        ['NovaAI answers on', missed ? '<b>' + esc(missed) + '</b>' : '<b class="none">Not set yet</b>', 'Missed-call number \u2014 used only for this'],
+        ['When', '<b>The team didn\u2019t pick up</b>', 'Dialpad passes the call on after 20 seconds \u00b7 ' + usage('missed')]]);
       steps = [
-        'A customer calls the team on Dialpad; nobody picks up within 20 seconds, so Dialpad forwards the call to ' + scr(missed || 'the missed-call number') + '.',
+        'A client calls the Axiom main line ' + scr(mainLine) + ' during opening hours and nobody on the team picks up within 20 seconds.',
+        'Dialpad transfers the call to ' + scr(missed || 'the missed-call number') + '. This number exists only for that, so every call it gets is a call the team missed.',
         'NovaAI answers straight away and apologises for the wait: ' + greetings + '.',
         helps,
         'Wants a person (artwork, order changes, a complaint): NovaAI takes a message \u2014 name, callback number and what it is about \u2014 emailed to ' + scr(notify) + ', and says the team will call back today.<small>It never transfers back: the team just couldn\u2019t pick up.</small>',
+        after,
         down
       ];
     } else {
-      head = hd([['Number', main ? '<b>' + esc(main) + '</b>' : '<b class="none">TALKAI_NUMBER not set</b>', 'The TalkAi number'],
-        ['Answers', '<b>Outside opening hours' + (live ? '<span class="tk-live">Now</span>' : '') + '</b>', 'Evenings, closed weekdays and every closed day' + (nextClosed ? ' (next: ' + esc(nextClosed.name) + ', ' + esc(new Date(nextClosed.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })) + ')' : '')]]);
+      head = hd([['Clients call', '<b>' + esc(mainLine) + '</b>', 'Axiom main line (Dialpad)'],
+        ['NovaAI answers on', main ? '<b>' + esc(main) + '</b>' : '<b class="none">TALKAI_NUMBER not set</b>', 'The TalkAi number'],
+        ['When', '<b>Outside opening hours' + (live ? '<span class="tk-live">Now</span>' : '') + '</b>', 'Evenings, closed days' + (nextClosed ? ' (next: ' + esc(nextClosed.name) + ', ' + esc(new Date(nextClosed.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })) + ')' : '') + ' \u00b7 ' + usage('after')]]);
       steps = [
-        'A caller dials ' + scr(main || 'the TalkAi number') + ' while we are closed.',
+        'A client calls the Axiom main line ' + scr(mainLine) + ' while we are closed.',
+        'Dialpad routes the call to ' + scr(main || 'the TalkAi number') + '. NovaAI checks the time in Los Angeles and the closed-days calendar, sees we are closed, and uses this After Hours setup.',
         'NovaAI answers and says the team is out: ' + greetings + '.',
         helps,
         'Wants a person: NovaAI says when we open again' + (!h.open && h.next ? ' (right now: ' + esc(h.next) + ')' : '') + ' and takes a message for the team, emailed to ' + scr(notify) + '.<small>No transfers after hours.</small>',
+        after,
         down
       ];
     }
-    box.innerHTML = head + '<ol class="tk-steps">' + steps.map((t, i) => '<li' + (curMode === 'regular' && i === 1 ? ' class="alt"' : '') + '>' + t + '</li>').join('') + '</ol>';
+    box.innerHTML = head + '<ol class="tk-steps">' + steps.map((t, i) => '<li' + (alt.indexOf(i) > -1 ? ' class="alt"' : '') + '>' + t + '</li>').join('') + '</ol>';
   }
   $('sMissedNum').addEventListener('input', () => paintLogic());
+  ['sMainLine', 'sCsrTo', 'sTransfer'].forEach(id => $(id).addEventListener('input', () => paintLogic()));
+  $('sHookDoc').onclick = async (e) => {
+    e.preventDefault();
+    const id = logicData && logicData.latest_call;
+    if (!id) return alert('No answered phone call yet to show as an example. The full description is in docs/TALKAI_CRM_WEBHOOK.md.');
+    const j = await api('/api/admin/talk/calls/' + id + '/handoff');
+    if (!j.ok) return alert(j.error || 'Could not build it.');
+    showJson('What the CRM webhook sends (latest call, #' + id + ')', j.payload);
+  };
   $('sReturningShort').addEventListener('change', () => paintLogic());
   function paintHours(h) {
     $('sHours').innerHTML = DAYS.map(([k, label]) => {
@@ -514,6 +580,10 @@
     $('sMissedState').innerHTML = s.missed_number ? 'Calls to ' + esc(phone(s.missed_number)) + ' get this setup. Make sure it shows <b>Connected</b> under Account managers → Twilio numbers.'
       : 'No number yet: buy one in Twilio, connect it under Account managers → Twilio numbers, then enter it here.';
     $('sSummary').checked = !!s.summary_mail;
+    $('sMainLine').value = s.main_line ? phone(s.main_line) : '';
+    $('sCsrTo').value = s.csr_to || '';
+    $('sHook').value = s.webhook_url || '';
+    $('sHookState').innerHTML = s.webhook_secret ? '<b style="color:#166534">Secret set \u2713</b>' : '<b style="color:#b45309">Secret not in .env yet</b>';
     paintLogic();
     $('sClosed').value = s.closed_message || '';
     $('sMsg').textContent = ''; $('sMsg').className = 'tk-msg';
@@ -525,6 +595,7 @@
     const j = await api('/api/admin/talk/settings', { method: 'POST', body: JSON.stringify({ caller_id: callerId, hours: readHours(), modes: modes, rules: $('sRules').value,
       languages: langState ? langState.on.filter(k => k !== 'en') : undefined, lang_greetings: langState ? langState.greet : undefined,
       transfer_number: $('sTransfer').value, forward_number: $('sForward').value, notify_to: $('sNotify').value, email_bcc: $('sBcc').value, returning_short: $('sReturningShort').checked, missed_number: $('sMissedNum').value, summary_mail: $('sSummary').checked,
+      main_line: $('sMainLine').value, csr_to: $('sCsrTo').value, webhook_url: $('sHook').value,
       closed_message: $('sClosed').value }) });
     if (!j.ok) { m.className = 'tk-msg err'; m.textContent = j.error || 'Could not save.'; return; }
     const keep = curMode;

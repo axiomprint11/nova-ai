@@ -269,3 +269,14 @@ The phones follow the AxiomPrint calendar (production `holidays`, the website's 
 `closed-days.js`: on a closed day the After hours setup answers all day, the HOURS line says "closed today (<name>)",
 and a CLOSED DAYS line lists the next 12 months so NovaAI can answer "are you open on …?". Training → Opening hours
 shows the list read-only (edit it on the website); "Extra closed days for the phone only" adds dates for the phones alone.
+
+
+## After every call NovaAI answers: CSR email and CRM webhook
+
+Clients dial the Axiom main line (747) 888-7777 on Dialpad. Missed team calls go to the missed-call number ((747) 335-2887), and after-hours calls go to the TalkAi number ((747) 350-0012). Dialpad logs all of these as missed. To stop the team calling back about calls NovaAI already handled, `talk-handoff.js` runs after the post-call transcript arrives:
+
+1. **AI summary.** Claude writes 2–4 sentences from the transcript and the call facts (prices, emails, message taken, transfer), plus whether someone should call back and why.
+2. **CSR email.** It goes to *CSR team — AI summary email* (Training → Numbers and messages), headed "no callback needed" or "CALL BACK: why". It shows on the call as *CSR team notified*.
+3. **CRM webhook.** If a URL is set and `TALKAI_WEBHOOK_SECRET` is in .env, the call is POSTed about 90 s later. See docs/TALKAI_CRM_WEBHOOK.md.
+
+On a call, the AI summary box has *Write it again*, *Send to CSR again* and *Webhook data*.
