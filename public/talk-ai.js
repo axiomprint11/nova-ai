@@ -154,8 +154,9 @@
     if (c.outcome === 'transferred' || c.answered_by === 'forward') tags.push('<span class="tk-tag tr">' + (c.outcome === 'transferred' ? 'Transferred' : 'Forwarded') + '</span>');
     if (Number(c.callback) === 1 && !test) tags.push('<span class="tk-tag msg">Call back</span>');
     const sub = c.ai_summary || c.summary || c.first_said || (c.answered_by === 'message' ? 'Closed message played' : c.status ? 'Status: ' + c.status : '');
-    return '<button type="button" class="tk-row' + (c.unread ? ' unread' : '') + (current === c.id ? ' on' : '') + (known || test ? '' : ' unknown') + '" data-id="' + c.id + '">' + av +
-      '<span class="tk-rb"><span class="tk-r1"><b class="t">' + esc(title) + '</b><span class="when">' + esc(rel(c.created_at)) + (c.duration_sec ? ' \u00b7 ' + esc(dur(c.duration_sec)) : '') + '</span></span>' +
+    return '<button type="button" class="tk-row' + (c.unread ? ' unread' : '') + (current === c.id ? ' on' : '') + (known || test ? '' : ' unknown') + '" data-id="' + c.id + '"><span class="tk-avcol">' + av +
+      (c.duration_sec ? '<span class="tk-avdur" title="Call length ' + esc(dur(c.duration_sec)) + '">' + esc(Math.floor(c.duration_sec / 60) + ':' + String(Math.round(c.duration_sec % 60)).padStart(2, '0')) + '</span>' : '') + '</span>' +
+      '<span class="tk-rb"><span class="tk-r1"><b class="t">' + esc(title) + '</b><span class="when">' + esc(rel(c.created_at)) + '</span></span>' +
       (line2 ? '<span class="tk-r2">' + esc(line2) + '</span>' : '') +
       (tags.length ? '<span class="tk-r3">' + tags.join('') + '</span>' : '') +
       (sub ? '<small>' + esc(sub) + '</small>' : '') + '</span></button>';
