@@ -101,30 +101,56 @@
       $('callRows').innerHTML = '<div class="tk-empty">' + (filter || $('callQ').value ? 'No calls match.' : 'No calls yet. Once the number is connected (Setup), every call shows up here — or try it under Try it.') + '</div>';
       return;
     }
-    $('callRows').innerHTML = j.calls.map(c => {
-      const match = c.caller_match && c.caller_match[0];
-      const name = Number(c.owner) === 1 && c.line_name ? c.line_name + ' (their own call)'
-        : c.customer_name ? c.customer_name + (c.company ? ' · ' + c.company : '')
-        : c.source === 'try' ? 'Test in text' + (c.tried_by ? ' · ' + String(c.tried_by).replace(/^member:|^user:/, '') : '')
-        : c.source === 'elevenlabs' ? 'ElevenLabs test call'
-        : phone(c.from_number) || 'Unknown number';
-      const tags = [];
-      if (c.verified) tags.push('<span class="tk-tag ok">' + (c.verified_by === 'caller_id' ? 'Recognised' : 'Verified') + '</span>');
-      if (Number(c.owner) === 1) tags.push('<span class="tk-tag ok">Their assistant</span>');
-      else if (c.line_name) tags.push('<span class="tk-tag tr">' + esc(String(c.line_name).split(' ')[0]) + '\u2019s line</span>');
-      if (c.hours_mode === 'after') tags.push('<span class="tk-tag">After hours</span>');
-      if (c.hours_mode === 'missed') tags.push('<span class="tk-tag msg">Missed call</span>');
-      if (c.emails_n) tags.push('<span class="tk-tag ok">\u2709 Email sent</span>');
-      if (c.source !== 'phone') tags.push('<span class="tk-tag test">Test</span>');
-      if (c.outcome === 'message') tags.push('<span class="tk-tag msg">Message</span>');
-      if (c.outcome === 'transferred' || c.answered_by === 'forward') tags.push('<span class="tk-tag tr">' + (c.outcome === 'transferred' ? 'Transferred' : 'Forwarded') + '</span>');
-      const sub = c.summary || c.first_said || (c.answered_by === 'message' ? 'Closed message played' : c.status ? 'Status: ' + c.status : '');
-      return '<button type="button" class="tk-row' + (c.unread ? ' unread' : '') + (current === c.id ? ' on' : '') + '" data-id="' + c.id + '">' +
-        '<div class="w">' + esc(c.customer_name || c.source !== 'phone' ? phone(c.from_number) || ('#' + c.id) : (match ? 'Caller ID: ' + match.name : '#' + c.id)) +
-        '<span>' + esc(rel(c.created_at)) + (c.duration_sec ? ' · ' + esc(dur(c.duration_sec)) : '') + '</span></div>' +
-        '<div class="t">' + esc(name) + tags.join('') + '</div>' + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</button>';
-    }).join('');
+    $('callRows').innerHTML = j.calls.map(callRow).join('');
     $('callRows').querySelectorAll('.tk-row').forEach(b => { b.onclick = () => openCall(parseInt(b.dataset.id)); });
+  }
+
+  // One call in the list: an avatar that says at a glance who it is (initials = a customer we know; a plain grey
+  // phone = a number that is not on any account), the name and company, the phone number, and only the tags that matter.
+  const AV_TONES = 8;
+  const initials = (n) => { const w = String(n || '').replace(/[^\p{L}\p{N} ]/gu, ' ').trim().split(/\s+/).filter(Boolean); return ((w[0] || '?')[0] + (w.length > 1 ? w[w.length - 1][0] : (w[0] || '')[1] || '')).toUpperCase(); };
+  const tone = (n) => { let h = 0; String(n || '').split('').forEach(ch => { h = (h * 31 + ch.charCodeAt(0)) >>> 0; }); return h % AV_TONES; };
+  const AV_ICON = {
+    phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>',
+    test: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>'
+  };
+  function callRow(c) {
+    const match = c.caller_match && c.caller_match[0];
+    const test = c.source !== 'phone';
+    const own = Number(c.owner) === 1 && c.line_name;
+    // Who: verified/recognised customer, else the account the number belongs to, else nobody.
+    const person = own ? c.line_name : c.customer_name || (match ? (match.person || match.name) : '');
+    const company = own ? 'Calling their assistant' : c.customer_name ? (c.company || '') : match ? (match.company || '') : '';
+    const known = !!person;
+    const num = phone(c.from_number);
+    let av, title, line2;
+    if (test) {
+      av = '<span class="tk-av test" title="Test">' + AV_ICON.test + '</span>';
+      title = known ? person : c.source === 'try' ? 'Test in text' : 'ElevenLabs test call';
+      line2 = [known && company ? company : '', c.source === 'try' && c.tried_by ? 'by ' + String(c.tried_by).replace(/^member:|^user:/, '') : '', num].filter(Boolean).join(' \u00b7 ');
+    } else if (known) {
+      av = '<span class="tk-av t' + tone(person) + (own ? ' own' : '') + '" title="' + esc(c.verified ? 'Recognised customer' : 'Number on a customer account') + '">' + esc(initials(person)) + '</span>';
+      title = person;
+      line2 = [company, num].filter(Boolean).join(' \u00b7 ');
+    } else {
+      av = '<span class="tk-av unk" title="Not on any customer account">' + AV_ICON.phone + '</span>';
+      title = num || 'Unknown number';
+      line2 = num ? 'Not a client yet' : 'No caller ID';
+    }
+    const tags = [];
+    if (!own && c.line_name) tags.push('<span class="tk-tag tr">' + esc(String(c.line_name).split(' ')[0]) + '\u2019s line</span>');
+    if (c.hours_mode === 'after') tags.push('<span class="tk-tag">After hours</span>');
+    if (c.hours_mode === 'missed') tags.push('<span class="tk-tag msg">Missed call</span>');
+    if (c.emails_n) tags.push('<span class="tk-tag ok">\u2709 Email sent</span>');
+    if (test) tags.push('<span class="tk-tag test">Test</span>');
+    if (c.outcome === 'message') tags.push('<span class="tk-tag msg">Message</span>');
+    if (c.outcome === 'transferred' || c.answered_by === 'forward') tags.push('<span class="tk-tag tr">' + (c.outcome === 'transferred' ? 'Transferred' : 'Forwarded') + '</span>');
+    const sub = c.summary || c.first_said || (c.answered_by === 'message' ? 'Closed message played' : c.status ? 'Status: ' + c.status : '');
+    return '<button type="button" class="tk-row' + (c.unread ? ' unread' : '') + (current === c.id ? ' on' : '') + (known || test ? '' : ' unknown') + '" data-id="' + c.id + '">' + av +
+      '<span class="tk-rb"><span class="tk-r1"><b class="t">' + esc(title) + '</b><span class="when">' + esc(rel(c.created_at)) + (c.duration_sec ? ' \u00b7 ' + esc(dur(c.duration_sec)) : '') + '</span></span>' +
+      (line2 ? '<span class="tk-r2">' + esc(line2) + '</span>' : '') +
+      (tags.length ? '<span class="tk-r3">' + tags.join('') + '</span>' : '') +
+      (sub ? '<small>' + esc(sub) + '</small>' : '') + '</span></button>';
   }
 
   let audioUrl = null;
