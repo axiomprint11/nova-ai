@@ -50,14 +50,14 @@
   .tk-rows { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
   .tk-row { position: relative; text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 10px 10px 10px 20px; font: 12px/1.35 inherit; cursor: pointer;
     display: flex; gap: 10px; align-items: flex-start; }
-  .tk-row .tk-av { flex: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 600; letter-spacing: .02em; overflow: visible; }
+  .tk-row .tk-av, .tk-hd-top .tk-av { flex: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 600; letter-spacing: .02em; overflow: visible; }
   .tk-av svg { width: 16px; height: 16px; }
-  .tk-row .tk-av.t0 { background: #fde7d9; color: #b45309; } .tk-row .tk-av.t1 { background: #ede4fb; color: #6d28d9; } .tk-row .tk-av.t2 { background: #dcf5e7; color: #15803d; }
-  .tk-row .tk-av.t3 { background: #dbeafe; color: #1d4ed8; } .tk-row .tk-av.t4 { background: #fce4ec; color: #be185d; } .tk-row .tk-av.t5 { background: #e0f2f1; color: #0f766e; }
-  .tk-row .tk-av.t6 { background: #fef3c7; color: #a16207; } .tk-row .tk-av.t7 { background: #e5e7f5; color: #3f3f9e; }
-  .tk-row .tk-av.own { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px #6366f1; }
-  .tk-row .tk-av.unk { background: #fff; color: #a3a8b8; border: 1.5px dashed #cfd3df; }
-  .tk-row .tk-av.test { background: #fffbeb; color: #b45309; border: 1.5px solid #fde68a; }
+  .tk-row .tk-av.t0, .tk-hd-top .tk-av.t0 { background: #fde7d9; color: #b45309; } .tk-row .tk-av.t1, .tk-hd-top .tk-av.t1 { background: #ede4fb; color: #6d28d9; } .tk-row .tk-av.t2, .tk-hd-top .tk-av.t2 { background: #dcf5e7; color: #15803d; }
+  .tk-row .tk-av.t3, .tk-hd-top .tk-av.t3 { background: #dbeafe; color: #1d4ed8; } .tk-row .tk-av.t4, .tk-hd-top .tk-av.t4 { background: #fce4ec; color: #be185d; } .tk-row .tk-av.t5, .tk-hd-top .tk-av.t5 { background: #e0f2f1; color: #0f766e; }
+  .tk-row .tk-av.t6, .tk-hd-top .tk-av.t6 { background: #fef3c7; color: #a16207; } .tk-row .tk-av.t7, .tk-hd-top .tk-av.t7 { background: #e5e7f5; color: #3f3f9e; }
+  .tk-row .tk-av.own, .tk-hd-top .tk-av.own { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px #6366f1; }
+  .tk-row .tk-av.unk, .tk-hd-top .tk-av.unk { background: #fff; color: #a3a8b8; border: 1.5px dashed #cfd3df; }
+  .tk-row .tk-av.test, .tk-hd-top .tk-av.test { background: #fffbeb; color: #b45309; border: 1.5px solid #fde68a; }
   .tk-rb { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
   .tk-r1 { display: flex; align-items: baseline; gap: 8px; }
   .tk-r1 .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -80,6 +80,9 @@
   .tk-detail { flex: 1; min-width: 0; overflow-y: auto; padding: 18px 24px; }
   .tk-hd { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; background: #fff; font-size: 13px; }
   .tk-hd b.big { font-size: 15px; }
+  .tk-hd-top { display: flex; align-items: center; gap: 12px; }
+  .tk-hd-id { min-width: 0; }
+  .tk-hd-top .who { margin-top: 2px; }
   .tk-hd .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .tk-chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 999px; font-size: 12px; background: #f4f5fa;
     border: 1px solid var(--line); color: var(--ink); white-space: nowrap; }

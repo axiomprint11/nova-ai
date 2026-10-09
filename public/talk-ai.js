@@ -114,6 +114,14 @@
     phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>',
     test: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>'
   };
+  function callAvatar(c) {
+    const match = c.caller_match && c.caller_match[0];
+    const own = Number(c.owner) === 1 && c.line_name;
+    const person = own ? c.line_name : c.customer_name || (match ? (match.person || match.name) : '');
+    if (c.source !== 'phone') return '<span class="tk-av test" title="Test" aria-label="Test call">' + AV_ICON.test + '</span>';
+    if (person) return '<span class="tk-av t' + tone(person) + (own ? ' own' : '') + '" title="' + esc(c.verified ? 'Recognised customer' : 'Number on a customer account \u2014 not verified') + '">' + esc(initials(person)) + '</span>';
+    return '<span class="tk-av unk" title="Not verified \u2014 the number is not on a customer account" aria-label="Not verified">' + AV_ICON.phone + '</span>';
+  }
   function callRow(c) {
     const match = c.caller_match && c.caller_match[0];
     const test = c.source !== 'phone';
@@ -123,17 +131,15 @@
     const company = own ? 'Calling their assistant' : c.customer_name ? (c.company || '') : match ? (match.company || '') : '';
     const known = !!person;
     const num = phone(c.from_number);
-    let av, title, line2;
+    const av = callAvatar(c);
+    let title, line2;
     if (test) {
-      av = '<span class="tk-av test" title="Test">' + AV_ICON.test + '</span>';
       title = known ? person : c.source === 'try' ? 'Test in text' : 'ElevenLabs test call';
       line2 = [known && company ? company : '', c.source === 'try' && c.tried_by ? 'by ' + String(c.tried_by).replace(/^member:|^user:/, '') : '', num].filter(Boolean).join(' \u00b7 ');
     } else if (known) {
-      av = '<span class="tk-av t' + tone(person) + (own ? ' own' : '') + '" title="' + esc(c.verified ? 'Recognised customer' : 'Number on a customer account') + '">' + esc(initials(person)) + '</span>';
       title = person;
       line2 = [company, num].filter(Boolean).join(' \u00b7 ');
     } else {
-      av = '<span class="tk-av unk" title="Not on any customer account">' + AV_ICON.phone + '</span>';
       title = num || 'Unknown number';
       line2 = num ? 'Not a client yet' : 'No caller ID';
     }
@@ -186,11 +192,13 @@
       '\u2709 ' + (m.kind === 'csr' ? 'CSR team notified' : m.ok ? 'Email sent \u00b7 ' + esc(m.to_addr) : 'Email failed \u00b7 ' + esc(m.to_addr)) + '</button>'));
     if (c.emailed_to && !(c.emails || []).length) chips.push('<span class="tk-chip ok">Quote emailed to ' + esc(c.emailed_to) + '</span>');
     if (c.ended_reason) chips.push('<span class="tk-chip" title="How the call ended">' + esc(c.ended_reason) + '</span>');
+    // Same avatar as the list: initials = a customer, dashed phone = a number on no account (no words needed).
+    const who = c.verified ? '<b>' + (c.verified_by === 'caller_id' ? 'Recognised by caller ID:' : c.verified_by === 'check+caller_id' ? 'Verified (number + email/ZIP):' : 'Verified:') + '</b> ' + esc(c.customer_name || '#' + c.customer_id) + (c.company ? ' (' + esc(c.company) + ')' : '') + ' <i>#' + esc(c.customer_id) + '</i>'
+      : match ? '<b>Caller ID matches</b> ' + match + ' <i>— not verified on the call</i>' : '';
     let html = '<div class="tk-hd"><button type="button" class="tk-link" id="callBack" style="float:right">← All calls</button>' +
-      '<b class="big">' + esc(c.source === 'try' ? 'Test in text' : phone(c.from_number) || 'Unknown number') + '</b>' +
+      '<div class="tk-hd-top">' + callAvatar(c) + '<div class="tk-hd-id"><b class="big">' + esc(c.source === 'try' ? 'Test in text' : phone(c.from_number) || 'Unknown number') + '</b>' +
       (c.source !== 'phone' ? ' <span class="tk-tag test">Test</span>' : '') +
-      '<div class="who">' + (c.verified ? '<b>' + (c.verified_by === 'caller_id' ? 'Recognised by caller ID:' : c.verified_by === 'check+caller_id' ? 'Verified (number + email/ZIP):' : 'Verified:') + '</b> ' + esc(c.customer_name || '#' + c.customer_id) + (c.company ? ' (' + esc(c.company) + ')' : '') + ' <i>#' + esc(c.customer_id) + '</i>'
-        : match ? '<b>Caller ID matches</b> ' + match + ' <i>— not verified on the call</i>' : '<i>Not verified' + (c.source === 'phone' ? '; the number is not on a customer account' : '') + '</i>') + '</div>' +
+      (who ? '<div class="who">' + who + '</div>' : '') + '</div></div>' +
       '<div class="meta">' + chips.join('') + '</div>' +
       (c.has_audio || c.can_fetch_audio ? '<div class="tk-audio" id="callAudio"><span class="tk-msg">Loading the recording…</span></div>' : '') +
       (c.error ? '<div class="tk-msg err" style="margin-top:8px">' + esc(c.error) + '</div>' : '') +
