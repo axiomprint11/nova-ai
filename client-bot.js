@@ -1814,6 +1814,7 @@ module.exports = function mountClientBot(app, deps) {
       '9. When the visitor picks a product from a list, their message reads "I\u2019d like to price <name> (product #<id>)". That is their choice: price THAT product id with price_product straight away, using every size, quantity and option already mentioned in the conversation.',
       '9a. PRICE FIRST, DO NOT ASK. Never ask a clarifying question before pricing — no "which paper?", "how many?", "one side or two?". Call price_product straight away with every option the customer stated (they show as Specified) and leave everything else on the website default (Default). No quantity given: leave quantities out and the default quantity is priced. Fields that change the price but were not stated show on the card as YELLOW dropdowns the customer picks from right there — do not ask about them; at most add a few words such as "you can pick the finish on the quote". Ask a question only when you cannot tell which product they mean, or when price_product itself says something is required. This overrides any house rule that says to confirm details before pricing.',
       '9b. SEVERAL PRODUCTS in one message (e.g. "business cards and roll up banners"): keep it short. Number them, one line each ("1) Business cards", "2) Roll up banners"), then "Starting with the business cards \u2014 which one do you need?" and call search_products for the FIRST one only (or price it straight away if the exact product is clear). Do not describe the products, list their types in a sentence or ask about quantities and specs. The next one comes after the first is priced or added to the cart. Never show product ids (#449) to the customer.',
+      '9c. THE PAGE THEY ARE ON: a customer message may start with [PAGE: \u2026]. They see that product on their screen and assume you see it too. Unless they name a different product, "this", "it", "these" and questions such as "will this stick to \u2026", "is it waterproof", "what sizes", "how much for 10" are about THAT product \u2014 answer about it from the PAGE facts (product_details with its id for more; price it with price_product and its id). Do not answer about a product from earlier in the chat when the question fits the page product; if it could truly be either, answer for the page product first, then the other in one line. Practical questions get a straight answer from what the product is (a magnet holds only on steel or iron \u2014 not on plastic, aluminum, fiberglass or wood). A new [PAGE] means they moved to another product \u2014 follow them. When they ask for something else ("what banners do you have?") help with that as usual. Never say you can see their screen; say "the <product> page".',
       '10. AxiomPrint also INSTALLS signs and graphics on site and DELIVERS locally in the Los Angeles area. Price those only with estimate_installation / estimate_delivery, always call the result an estimate, and never quote a rate yourself. When a product and its installation are both asked for, price the product with price_product and the installation with estimate_installation.',
       '11. Artwork templates: use get_template. The customer gets a Download button — do not send them to email for a template unless none exists.',
       '11b. What is new: when the customer asks about new, newest or latest products or recent additions, call newest_products and show them \u2014 never say there is no list of new products.',
@@ -1892,6 +1893,51 @@ module.exports = function mountClientBot(app, deps) {
       Array.from(u.searchParams.keys()).forEach(k => { if (/token|pass|secret|auth|key|sig|session|code|^k$/i.test(k)) u.searchParams.delete(k); });
       return { url: u.toString().slice(0, 500), title: String(title || '').replace(/\s+/g, ' ').trim().slice(0, 150) || null };
     } catch (e) { return null; }
+  }
+  // The product a website page is about: axiomprint.com/product/<slug>, where the slug is product.url and ends in
+  // "-<product id>" (car-magnets-201 = product #201). Only public products; cached for 10 minutes.
+  const pageCache = new Map();
+  async function pageProduct(url, cid) {
+    let u;
+    try { u = new URL(String(url || '')); } catch (e) { return null; }
+    const m = u.pathname.match(/\/products?\/([^\/?#]+)\/?$/i);
+    if (!m) return null;
+    let slug = '';
+    try { slug = decodeURIComponent(m[1]).toLowerCase().slice(0, 200); } catch (e) { return null; }
+    const key = slug + '|' + (parseInt(cid) || 0);
+    const hit = pageCache.get(key);
+    if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.v;
+    let v = null;
+    try {
+      let pid = 0;
+      const r = await runQuery('SELECT id FROM product WHERE url = ' + deps.mysql.escape(slug) + ' ORDER BY id DESC LIMIT 1');
+      if (r[0]) pid = r[0].id;
+      else { const t = slug.match(/-(\d+)$/); if (t) pid = parseInt(t[1]); }
+      const p = pid ? await publicProduct(pid, cid) : null;
+      if (p) {
+        const pub = await publicOptions(p.id);
+        v = { id: p.id, name: String(p.public_title || p.title || '').trim(), about: clip(p.short_description, 300), details: clip(p.information, 900),
+          options: pub.vars.filter(x => x.type !== 'upload_file').slice(0, 14).map(x => String(x.title).replace(/_/g, ' ') +
+            (x.default ? ' (default ' + x.default + ')' : '')).join('; ') };
+      }
+    } catch (e) { console.error('CLIENT_BOT pageProduct', e.message); }
+    pageCache.set(key, { at: Date.now(), v: v });
+    if (pageCache.size > 500) pageCache.delete(pageCache.keys().next().value);
+    return v;
+  }
+  // What the model is told about the page a message was written on. Full facts for the message being answered,
+  // one short line for earlier messages (only where the page changed).
+  function pageNote(page, prod, full) {
+    if (!page || !page.url) return null;
+    if (prod) {
+      if (!full) return '[PAGE: written on the ' + prod.name + ' page (product #' + prod.id + ')]';
+      return '[PAGE: the customer is writing from the product page for "' + prod.name + '" (product #' + prod.id + ', ' + page.url + '). ' +
+        'They are looking at this product and expect you to know it: a question that names no other product is about ' + prod.name + '. ' +
+        (prod.about ? 'About it: ' + prod.about + ' ' : '') + (prod.details ? 'From the page: ' + prod.details + ' ' : '') +
+        (prod.options ? 'Options on the page: ' + prod.options + '.' : '') + ']';
+    }
+    if (!page.title) return null;
+    return full ? '[PAGE: the customer is writing from the page "' + page.title + '" (' + page.url + ').]' : '[PAGE: written on "' + page.title + '"]';
   }
   // What happened outside the messages, for the admin transcript: the customer moved
   // to another page, or clicked Add to Cart (added / needed to sign in / failed).
@@ -2089,7 +2135,7 @@ module.exports = function mountClientBot(app, deps) {
     // History from the server. Attachments come back with their message: pictures and
     // PDFs for the latest two messages that had them, a description for older ones.
     // Changes made on a quote card (Edit) are told to the model before the next message.
-    const past = (await dbAll('SELECT id, role, content, cards, tools FROM client_messages WHERE chat_id = ? AND role IN (\'user\',\'assistant\',\'note\') ' +
+    const past = (await dbAll('SELECT id, role, content, cards, tools, page_url, page_title FROM client_messages WHERE chat_id = ? AND role IN (\'user\',\'assistant\',\'note\') ' +
       'ORDER BY id DESC LIMIT 40', [chat.id])).reverse();
     // Where an answer showed a product list, the model reads which products (in order).
     past.forEach(m => {
@@ -2105,6 +2151,17 @@ module.exports = function mountClientBot(app, deps) {
     // Built twice at most: if the model refuses an attachment (a PDF it cannot
     // open, say), the files are marked and the answer is retried with descriptions
     // only, so one bad file never breaks the rest of the conversation.
+    // The page each message was written on: the product they are looking at is what "this" and "it" mean.
+    const page = cleanPage(req.body && req.body.page_url, req.body && req.body.page_title);
+    const pageCid = who.customer ? who.customer.id : null;
+    const nowNote = page ? pageNote(page, await pageProduct(page.url, pageCid), true) : null;
+    const pastNote = {};
+    let lastUrl = null;
+    for (const m of past) {
+      if (m.role !== 'user' || !m.page_url) continue;
+      if (m.page_url !== lastUrl) pastNote[m.id] = pageNote({ url: m.page_url, title: m.page_title }, await pageProduct(m.page_url, pageCid), false);
+      lastUrl = m.page_url;
+    }
     function build(textOnly) {
       const budget = { left: 18 * 1024 * 1024, pages: 0, images: 0, used: [], textOnly: textOnly };
       const userContent = (body, list, full, notes) => {
@@ -2116,7 +2173,7 @@ module.exports = function mountClientBot(app, deps) {
         return blocks;
       };
       // The newest attachments first get the byte budget.
-      const current = userContent(text, files, true, []);
+      const current = userContent(text, files, true, nowNote ? [nowNote] : []);
       const messages = [];
       let notes = [];
       past.forEach(m => {
@@ -2124,7 +2181,7 @@ module.exports = function mountClientBot(app, deps) {
         if (!m.content) return;
         if (m.role === 'user') {
           const mine = pastFiles.filter(f => f.message_id === m.id);
-          messages.push({ role: 'user', content: userContent(m.content, mine, withFiles.indexOf(m.id) > -1 && withFiles.indexOf(m.id) < 2, notes) });
+          messages.push({ role: 'user', content: userContent(m.content, mine, withFiles.indexOf(m.id) > -1 && withFiles.indexOf(m.id) < 2, pastNote[m.id] ? notes.concat([pastNote[m.id]]) : notes) });
           notes = [];
         } else messages.push({ role: 'assistant', content: m.content });
       });
@@ -2136,7 +2193,6 @@ module.exports = function mountClientBot(app, deps) {
         ? current.slice(0, -1).concat([{ type: 'text', text: notes.join('\n') + '\n\n' + text }]) : notes.join('\n') + '\n\n' + current) : current });
       return { messages: messages, sent: budget.used };
     }
-    const page = cleanPage(req.body && req.body.page_url, req.body && req.body.page_title);
     const ins = await dbRun('INSERT INTO client_messages (chat_id, role, content, page_url, page_title) VALUES (?,?,?,?,?)',
       [chat.id, 'user', text, page ? page.url : null, page ? page.title : null]);
     if (files.length) await dbRun('UPDATE client_files SET chat_id = ?, message_id = ? WHERE id IN (' + files.map(f => parseInt(f.id)).join(',') + ')',

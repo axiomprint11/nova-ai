@@ -90,6 +90,7 @@
   function setUnread(n) {
     $('tkUnread').textContent = n ? (n > 99 ? '99+' : n) : '';
     $('tkUnreadTab').textContent = n ? (n > 99 ? '99+' : n) : '';
+    if (window.NovaNav) NovaNav.set('talk', n);
   }
   async function loadCalls() {
     const j = await api('/api/admin/talk/calls?filter=' + encodeURIComponent(filter) + '&q=' + encodeURIComponent($('callQ').value.trim()));

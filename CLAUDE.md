@@ -174,6 +174,15 @@ admins can switch the user filter), "+ New chat" opens ChatBot, and a row of you
 has no Agents tab and Users has no per-member agents column: ChatBot's training opens from CRM Chat ("Train ChatBot",
 `trainAgent('chatbot')`) and TalkAi's from its page (`/admin?tab=agents&agent=talk-ai`).
 
+**One left menu.** `public/nova-nav.js` (`NovaNav.mount`) draws the same grouped menu on `/admin`, `/talk-ai` and
+`/client-bot`: CRM Chat · Client ChatBot · TalkAi (each with its unread count) / Users · Domain Knowledge · Connectors /
+Installation Pricing · Delivery Pricing and Templates (both "Soon"). On admin.html it fills `#novaNav` and its tabs switch in
+place (`onTab`); on the other two pages it moves the page into a column beside itself. Icons only at 761–1100px, a strip
+across the top on phones. Members see CRM Chat and Domain Knowledge (when they have access). Pages update a count with
+`NovaNav.set(key, n)`. CRM Chat read state (admins): SQLite `crm_chat_reads`; a chat someone else had is unread until
+opened in CRM Chat (`/api/crm/unread-count`, `/api/admin/crm/chats/:id/read`, `/unread`, `/read-all`; History rows carry
+`unread`, filter `rating=unread`). First visit counts everything older than 12 hours as read.
+
 **Usage overviews.** CRM Chat (the History tab, renamed), TalkAi (Calls, right pane until a call is picked) and Client
 ChatBot (Conversations, likewise) open with tiles (today / this week / this month vs the period before, plus a few of
 the month's outcomes) and a Daily / Weekly / Monthly bar chart: `public/nova-stats.js` (`NovaStats.mount`) draws what
@@ -226,7 +235,10 @@ keeps the conversation on screen across a sign-in. Desktop: the window drags by 
 sends it with a new conversation (`client_chats.visit`); `visitor-info.js` turns it and the user agent into source / device
 for the admin view. The loader reports the page (`nova-client:page`); user
 messages store `page_url`/`page_title`, and `role='event'` rows (page moves, Add to Cart clicks with outcome) come
-from `POST /api/client-bot/event` — shown in the admin transcript, never sent to the model. Product lists are shown once: `mergeProductList()` moves the model's
+from `POST /api/client-bot/event` — shown in the admin transcript, never sent to the model. **The page they are on**: the product page the customer writes from (`/product/<product.url>`, the slug ends in
+`-<product id>`) is resolved by `pageProduct()` (public products only, cached 10 min) and put in front of their message as
+`[PAGE: …]` with the product's name, id, description and options (`pageNote()`; earlier messages get a one-line tag where the
+page changed). Prompt rule 9c: "this / it / will it stick" with no other product named means that product. Product lists are shown once: `mergeProductList()` moves the model's
 "- **Name** — desc" lines into the products card (desc under the name; else `oneLine(short_description)`) and leaves a
 `[[products]]` marker where the list goes; past answers give the model the listed names and ids in its place. Customers see the assistant as **NovaAI** (sparkle mark, "AI" badge;
 saved greetings saying "Nova" are shown as "NovaAI"). **History** (signed-in only): `GET /api/client-bot/history{/:id}`;

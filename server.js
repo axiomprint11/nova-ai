@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.10.0';
-const NOVA_BUILT = '10-08-2026 5:35pm';
+const NOVA_VERSION = '1.10.1';
+const NOVA_BUILT = '10-08-2026 6:15pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 app.use((req, res, next) => req.path.indexOf('/api/talk/hook/') === 0 ? next() : jsonBody(req, res, next));
@@ -5572,8 +5572,12 @@ app.get('/api/admin/users-activity', auth, adminOnly, (req, res) => {
 });
 
 // Admin: history list - one row per conversation, with rating summary, filterable
-app.get('/api/admin/history', auth, (req, res) => {
-  const filter = req.query.rating || 'all'; // all|up|down
+app.get('/api/admin/history', auth, async (req, res) => {
+  const filter = req.query.rating || 'all'; // all|up|down|unread
+  // Admins: which conversations someone else had since this admin last opened them (the CRM Chat unread dot).
+  const reader = crmReader(req);
+  let reads = null;
+  if (req.user.is_admin) { await initCrmReads(reader); reads = {}; (await crmAll('SELECT chat_id, read_at FROM crm_chat_reads WHERE reader = ?', [reader])).forEach(r => { reads[r.chat_id] = r.read_at; }); }
   let userKey = req.query.user || '';     // optional exact user_key
   let where = [];
   let params = [];
@@ -5601,6 +5605,8 @@ app.get('/api/admin/history', auth, (req, res) => {
     let list = rows || [];
     if (filter === 'up') list = list.filter(r => r.ups > 0);
     else if (filter === 'down') list = list.filter(r => r.downs > 0);
+    if (reads) list.forEach(r => { r.unread = crmUnread(r, reader, reads) ? 1 : 0; });
+    if (filter === 'unread') list = list.filter(r => r.unread);
     // Map user_key -> display name + photo (from members; admins get their username)
     db.all('SELECT email, display_name, username, photo, axiom_user_id FROM members', [], async (e, members) => {
       const byKey = {};
@@ -5633,6 +5639,53 @@ app.get('/api/admin/history', auth, (req, res) => {
       res.json({ success: true, history: list });
     });
   });
+});
+
+// ---- CRM Chat read / unread (admins). A conversation someone else had is unread for an admin until they open it in
+// CRM Chat, and again when something new is said in it (updated_at after their read_at). Your own chats are never unread,
+// and neither is a chat nobody wrote in. Members only ever see their own chats, so they have nothing unread.
+db.run(`CREATE TABLE IF NOT EXISTS crm_chat_reads (
+  chat_id INTEGER NOT NULL,
+  reader TEXT NOT NULL,
+  read_at TEXT DEFAULT (datetime('now')),
+  PRIMARY KEY (chat_id, reader)
+)`);
+const crmAll = (sql, p) => new Promise(ok => db.all(sql, p || [], (e, r) => ok(e ? [] : (r || []))));
+const crmRun = (sql, p) => new Promise((ok, no) => db.run(sql, p || [], (e) => e ? no(e) : ok()));
+const crmReader = (req) => String((req.user && (req.user.key || req.user.username)) || '').slice(0, 120);
+const crmUnread = (row, reader, reads) => row.user_key !== reader && row.msgs > 0 && (!reads[row.id] || reads[row.id] < row.updated_at);
+const CRM_UNREAD_SQL = "SELECT COUNT(*) AS n FROM chats c LEFT JOIN crm_chat_reads r ON r.chat_id = c.id AND r.reader = ? " +
+  "WHERE c.user_key <> ? AND (r.read_at IS NULL OR r.read_at < c.updated_at) AND EXISTS (SELECT 1 FROM messages m WHERE m.chat_id = c.id)";
+// First visit for this admin: everything older than 12 hours counts as read, so the list starts with what is new.
+async function initCrmReads(reader) {
+  if (!reader) return;
+  try {
+    const seen = await crmAll('SELECT 1 AS x FROM crm_chat_reads WHERE reader = ? LIMIT 1', [reader]);
+    if (!seen.length) await crmRun("INSERT OR IGNORE INTO crm_chat_reads (chat_id, reader, read_at) SELECT id, ?, updated_at FROM chats " +
+      "WHERE updated_at < datetime('now', '-12 hours')", [reader]);
+  } catch (e) { console.error('CRM reads init', e.message); }
+}
+app.get('/api/crm/unread-count', auth, async (req, res) => {
+  if (!req.user.is_admin) return res.json({ ok: true, unread: 0 });
+  const reader = crmReader(req);
+  await initCrmReads(reader);
+  const r = await crmAll(CRM_UNREAD_SQL, [reader, reader]);
+  res.json({ ok: true, unread: (r[0] && r[0].n) || 0 });
+});
+app.post('/api/admin/crm/chats/:id/read', auth, adminOnly, async (req, res) => {
+  try { await crmRun("INSERT OR REPLACE INTO crm_chat_reads (chat_id, reader, read_at) VALUES (?, ?, datetime('now'))", [parseInt(req.params.id) || 0, crmReader(req)]); }
+  catch (e) { return res.status(500).json({ ok: false }); }
+  res.json({ ok: true });
+});
+app.post('/api/admin/crm/chats/:id/unread', auth, adminOnly, async (req, res) => {
+  try { await crmRun('DELETE FROM crm_chat_reads WHERE chat_id = ? AND reader = ?', [parseInt(req.params.id) || 0, crmReader(req)]); }
+  catch (e) { return res.status(500).json({ ok: false }); }
+  res.json({ ok: true });
+});
+app.post('/api/admin/crm/chats/read-all', auth, adminOnly, async (req, res) => {
+  try { await crmRun("INSERT OR REPLACE INTO crm_chat_reads (chat_id, reader, read_at) SELECT id, ?, datetime('now') FROM chats", [crmReader(req)]); }
+  catch (e) { return res.status(500).json({ ok: false }); }
+  res.json({ ok: true });
 });
 
 // ===== Admin: Agents =====

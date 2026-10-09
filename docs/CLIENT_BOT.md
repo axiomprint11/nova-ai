@@ -607,3 +607,13 @@ saved for the model, hidden from the customer's History and shown in Conversatio
 3. Sign-in uses the website login (`tokenKey: 'axiom-print-app'` + `customers/me`); test it signed in and as a guest.
 4. Add the header script to the website (and the sign-in / Add to Cart hooks).
 5. Set `CLIENT_BOT_PUBLIC=1`, restart, and watch **Conversations**.
+
+
+## The page the customer is on
+
+Customers ask about the product in front of them ("will this stick to the cylinder?" on the Car Magnets page means the
+magnet). The chat sends the page with every message; `pageProduct()` maps `axiomprint.com/product/<slug>` to the product
+(`product.url`, or the trailing `-<id>`), public products only, and `pageNote()` puts its name, id, description and
+options in front of the message as `[PAGE: …]`. Earlier messages keep a short `[PAGE: written on the … page]` tag where
+the page changed. Prompt rule 9c tells NovaAI to answer about that product unless the customer names another one, and to
+follow them when they move to another product page. Other pages (turnaround, home) are passed by title only.

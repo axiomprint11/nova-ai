@@ -136,6 +136,7 @@
     const rows = (j && j.chats) || [];
     const box = $('convRows');
     $('convUnread').textContent = j && j.unread ? j.unread : '';
+    if (j && j.ok !== false && window.NovaNav) NovaNav.set('client', j.unread || 0);
     loadedAt = Date.now(); stamp();
     const keep = box.scrollTop;                       // a refresh keeps your place in the list
     if (!rows.length) { box.innerHTML = '<div class="cb-empty">' + (src === 'unread' ? 'All caught up \u2014 nothing unread.' : 'No conversations yet.') + '</div>'; return; }

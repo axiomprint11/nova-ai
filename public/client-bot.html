@@ -16,6 +16,9 @@
   .cb-pill.off { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
   .cb-pill.on { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
   .cb-top .sp { flex: 1; }
+  @media (max-width: 760px) { .cb-top { flex-wrap: wrap; } .cb-tabs { overflow-x: auto; max-width: 100%; } .cb-tabs button { flex: none; }
+    #vConvos { flex-direction: column; overflow-y: auto; } #vConvos .cb-list { width: 100%; max-height: 60vh; border-right: 0; border-bottom: 1px solid var(--line); }
+    #vConvos .cb-transcript { padding: 14px; overflow: visible; } }
   .cb-tabs { display: flex; gap: 4px; }
   .cb-tabs button { border: 1px solid transparent; background: none; padding: 7px 13px; border-radius: 9px; font-family: inherit;
     font-size: 13px; font-weight: 600; color: var(--ink-soft); cursor: pointer; }
@@ -221,7 +224,6 @@
 </head>
 <body>
 <div class="cb-top">
-  <a class="btn-ghost" href="/admin" style="text-decoration:none" title="Back to Admin">&larr;</a>
   <h1>Client ChatBot <span>· customer-facing Nova</span></h1>
   <span class="cb-pill off" id="cbPublic">Admins only</span>
   <div class="sp"></div>
@@ -332,6 +334,8 @@
   <div class="cb-view" id="vSetup"><div class="cb-setup" id="setupBox"></div></div>
 </div>
 
+<script src="/nova-nav.js"></script>
+<script>NovaNav.mount({ current: 'client' });</script>
 <script src="/axiom-voice.js"></script>
 <script src="/client-chat.js"></script>
 <script src="/nova-stats.js"></script>
