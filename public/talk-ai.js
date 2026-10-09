@@ -116,7 +116,7 @@
     test: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>'
   };
   // Which setup answered the call (Training tabs), one short grey label everywhere.
-  const MODE_LABEL = { regular: 'Team Support AI', missed: 'Team Missed AI', after: 'After Hours AI' };
+  const MODE_LABEL = { regular: 'Team Support', missed: 'Team Missed', after: 'After Hours' };
   function callAvatar(c) {
     const match = c.caller_match && c.caller_match[0];
     const own = Number(c.owner) === 1 && c.line_name;
