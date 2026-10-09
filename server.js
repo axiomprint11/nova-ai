@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.11.3';
-const NOVA_BUILT = '10-09-2026 10:20am';
+const NOVA_VERSION = '1.12.0';
+const NOVA_BUILT = '10-09-2026 11:55am';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 app.use((req, res, next) => req.path.indexOf('/api/talk/hook/') === 0 ? next() : jsonBody(req, res, next));
@@ -336,7 +336,10 @@ db.serialize(() => {
     ['agent-five', 'Agent (Unassigned)', 'Reserved for a future agent.', 'coming_soon', 'all', 6],
     // NovaAI on the phone. A training target only (role / rules / knowledge, Domain Knowledge docs shared with
     // it): access 'system' keeps it out of every staff chat's agent menu.
-    ['talk-ai', 'TalkAi', 'NovaAI on the phone. Training and documents for calls; call settings are on the TalkAi page.', 'active', 'system', 7]
+    ['talk-ai', 'TalkAi', 'NovaAI on the phone. Training and documents for calls; call settings are on the TalkAi page.', 'active', 'system', 7],
+    // NovaAI on axiomprint.com (the website chat). Also a training target only: Domain Knowledge documents shared
+    // with "Client ChatBot" by name reach customers (its rules and lessons are on the Client ChatBot page).
+    ['client-bot', 'Client ChatBot', 'NovaAI on axiomprint.com. Documents shared with it by name reach website customers.', 'active', 'system', 8]
   ];
   SEED_AGENTS.forEach(a => {
     db.run('INSERT OR IGNORE INTO agents (slug, name, description, status, access, sort_order) VALUES (?,?,?,?,?,?)', a);
@@ -344,10 +347,10 @@ db.serialize(() => {
   // ChatBot must be available to everyone. If an older row exists (or someone flipped
   // it), force it back to active/all so it never silently disappears for members.
   db.run("UPDATE agents SET status = 'active', access = 'all' WHERE slug = 'chatbot'");
-  db.run("UPDATE agents SET status = 'active', access = 'system' WHERE slug = 'talk-ai'");
+  db.run("UPDATE agents SET status = 'active', access = 'system' WHERE slug IN ('talk-ai', 'client-bot')");
   // One chat agent (ChatBot) and TalkAi. The others are retired: their rows stay so old chats keep their
   // agent's name, but they are never listed, chosen or routed to.
-  db.run("UPDATE agents SET status = 'retired' WHERE slug NOT IN ('chatbot', 'talk-ai')");
+  db.run("UPDATE agents SET status = 'retired' WHERE slug NOT IN ('chatbot', 'talk-ai', 'client-bot')");
   // Per-member agent access. If a member has NO rows here, they get ALL active agents
   // (default-allow). If they have rows, they get ONLY those agents (allow-list).
   db.run(`CREATE TABLE IF NOT EXISTS member_agents (
@@ -924,6 +927,22 @@ async function extractPdfText(buffer) {
   return (data.text || '').slice(0, 6000);
 }
 
+// Text of a Word (.docx) file: mammoth when it is installed, otherwise straight from word/document.xml (a .docx is a
+// zip; xlsx's CFB reader opens it) — paragraphs as lines, table cells joined with " | ", so tables stay readable.
+async function docxText(buffer) {
+  try { const mammoth = require('mammoth'); const r = await mammoth.extractRawText({ buffer }); if (r && r.value) return r.value; } catch (e) {}
+  try {
+    const XLSX = require('xlsx');
+    const z = XLSX.CFB.read(buffer, { type: 'buffer' });
+    const f = XLSX.CFB.find(z, 'word/document.xml') || XLSX.CFB.find(z, '/word/document.xml');
+    if (!f || !f.content) return '';
+    const xml = Buffer.from(f.content).toString('utf8');
+    return xml.replace(/<\/w:p>\s*<\/w:tc>/g, '</w:tc>').replace(/<w:tab\/>/g, '\t').replace(/<w:br[^>]*\/>/g, '\n')
+      .replace(/<\/w:tc>/g, ' | ').replace(/<\/w:tr>/g, '\n').replace(/<\/w:p>/g, '\n')
+      .replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&')
+      .replace(/ \| \n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  } catch (e) { return ''; }
+}
 // Extract text from an attached knowledge file (PDF or Word). Returns '' if not extractable.
 async function extractFileText(buffer, mimetype, filename) {
   const name = (filename || '').toLowerCase();
@@ -933,10 +952,8 @@ async function extractFileText(buffer, mimetype, filename) {
       return await extractPdfText(buffer);
     }
     if (mt.includes('word') || mt.includes('officedocument.wordprocessing') || name.endsWith('.docx') || name.endsWith('.doc')) {
-      let mammoth;
-      try { mammoth = require('mammoth'); } catch (e) { return '(Word file attached — install "mammoth" to extract its text for agents.)'; }
-      const result = await mammoth.extractRawText({ buffer });
-      return (result.value || '').slice(0, 6000);
+      const t = await docxText(buffer);
+      return t ? t.slice(0, 20000) : '(Word file attached \u2014 its text could not be read; save it as .docx or PDF.)';
     }
     // Plain text, Markdown, CSV: read as is.
     if (mt.startsWith('text/') || /\.(txt|md|csv)$/.test(name)) return buffer.toString('utf8').replace(/\u0000/g, '').slice(0, 20000);
@@ -971,6 +988,7 @@ function num(v) { const n = Number(v); return isFinite(n) && n > 0 ? n : null; }
 // AxiomPrint's closed days come from its own calendar: the production `holidays` table (the website's "Closed days"
 // panel — "New jobs' due dates skip these days"), loaded into memory by closed-days.js and reloaded hourly.
 const closedDays = require('./closed-days')(runQuery);
+const { artworkSpecs } = require('./artwork-specs');
 // The closed days of a year as a Set of 'YYYY-MM-DD' — every business-day count (timelines, due dates, quotes) uses
 // this. Until the calendar has loaded once (or if the database is unreachable at boot), the built-in list below.
 function usHolidays(year) {
@@ -2237,6 +2255,11 @@ function formatQuote(q) {
 
 const DATA_DICTIONARY = `
 AXIOMPRINT DATABASE GUIDE (Laravel/Yii MySQL app for a print business)
+
+ARTWORK SPECS per product: product.safe (safe area), product.bleed, product.dpi (minimum image resolution). safe and bleed
+  are inches as TOTALS across a dimension: safe 0.25 = keep content 0.125 in inside each trim edge; bleed 0.25 = 0.125 in past
+  each trim edge (a 3.5x2 card file is 3.75x2.25). 0 = none for that product (e.g. banners with hems: bleed 0). Roll labels use
+  safe 0.125; large format uses dpi 150. These beat any general artwork guide.
 
 CLOSED DAYS: the \`holidays\` table is AxiomPrint's own calendar of days the shop is closed (no production, no pick-up;
   they never count as business days — the website skips them for due dates). Columns: name, \`date\`, repeat_on
@@ -5305,6 +5328,13 @@ async function loadTalkTraining() {
   return s.trim().slice(0, 24000);
 }
 
+// The website chat's documents: Domain Knowledge docs shared with "Client ChatBot" BY NAME (never "All agents" ones,
+// which are written for staff). Capped.
+async function loadClientTraining() {
+  const docs = await loadAgentKnowledge('client-bot', { explicitOnly: true }).catch(() => '');
+  return String(docs || '').slice(0, 16000);
+}
+
 function loadAgentKnowledge(slug, opts) {
   const explicitOnly = !!(opts && opts.explicitOnly);
   return new Promise((resolve) => {
@@ -5917,11 +5947,7 @@ async function extractAttachmentText(buf, mime, filename) {
     } else if (name.endsWith('.docx') || name.endsWith('.doc') ||
                mt.includes('officedocument.wordprocessing') || mt.includes('msword')) {
       kind = 'word';
-      try {
-        const mammoth = require('mammoth');
-        const r = await mammoth.extractRawText({ buffer: buf });
-        text = r.value || '';
-      } catch (e) { text = ''; }
+      text = await docxText(buf);
     } else if (/\.(xlsx|xlsm|xlsb|xls|ods|fods|dif|slk)$/.test(name) ||
                mt.includes('spreadsheetml') || mt.includes('ms-excel') ||
                mt.includes('opendocument.spreadsheet')) {
@@ -6919,6 +6945,10 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     '- DIE LINES / TEMPLATES: use get_dieline, never raw SQL. A product can have several, one per size/fold ' +
     'combination, so if more than one comes back ASK WHICH SIZE rather than guessing or listing all of them. ' +
     'Give the file as a markdown link. Never invent or guess a Drive link.\n' +
+    '- ARTWORK SPECS (safe area / safe margin, bleed, resolution): for a specific product, get_product_options returns its ' +
+    'own `artwork` values (product.safe / bleed / dpi) — use those; they override the general artwork guide in Domain Knowledge. ' +
+    'Product values are totals across a dimension: give the per-edge figure ("0.125 in inside each trim edge"). Only general ' +
+    'questions with no product get the general guide.\n' +
     '- TURNAROUND: any question about lead time, when a job will be ready, or whether a date is achievable ' +
     'goes through calculate_turnaround. It draws a visual timeline for the user, so afterwards give only the ' +
     'ready date and the deadline verdict — never re-list the days. Remember turnaround is PRODUCTION time and ' +
@@ -7079,7 +7109,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
         try {
           const pid = parseInt(toolUse.input.product_id);
           const want = String(toolUse.input.field || '').trim().toLowerCase();
-          const prod = await runQueryRaw('SELECT id, title, public_title, image, url, formula FROM product WHERE id = ' + pid);
+          const prod = await runQueryRaw('SELECT id, title, public_title, image, url, formula, safe, bleed, dpi FROM product WHERE id = ' + pid);
           if (!prod.length) {
             toolResult = 'No product with id ' + pid + '. Search by name first: SELECT id, title FROM product WHERE title LIKE \'%keyword%\'';
           } else {
@@ -7132,6 +7162,8 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
                 image_url: prod[0].image || null,
                 page_url: prod[0].url ? ('https://axiomprint.com/product/' + prod[0].url) : null
               },
+              // The product's own safe area / bleed / resolution — beats the general artwork guide.
+              artwork: artworkSpecs(prod[0]) || undefined,
               note: 'hidden:true options exist in the database but are NOT selectable on the site - say so if you list them.',
               // Every condition that touches the fields shown, in plain words.
               related_to_rules: (function () {
@@ -9046,7 +9078,7 @@ mountMcp(app, { runQuery, dataDictionary: DATA_DICTIONARY });
 const clientBot = require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly,
   quoteProduct, buildOrderLink, stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming,
   InstallPricing, getInstallPricing: () => installPricing, routeLookup, toTime24, driveFileBytes,
-  extractAttachmentText, relatedRules, sendMail, closedDays, dataDir: __dirname });
+  extractAttachmentText, relatedRules, sendMail, closedDays, loadClientTraining, dataDir: __dirname });
 // TalkAi — NovaAI on the phone (Twilio + ElevenLabs), sharing the client bot's tools and rules (talk-ai.js).
 require('./talk-ai')(app, { db, runQuery, mysql, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly, serveVersionedHtml,
   sendMail, dataDir: __dirname, loadTalkTraining, closedDays }, clientBot);

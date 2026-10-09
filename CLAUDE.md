@@ -336,6 +336,14 @@ pattern for any new report over a large log table. To add a report, add an entry
   due dates, `calculate_turnaround`, the client bot's "Estimated Ready" — skips them. The CRM Chat, client bot and
   TalkAi prompts get the next 12 months as a CLOSED DAYS line; TalkAi treats a closed day as After hours all day
   (plus any phone-only extra dates in Setup). `GET /api/closed-days` lists them.
+- **Artwork specs are per product**: `product.safe` (safe area), `product.bleed`, `product.dpi`. Safe and bleed are
+  inches as TOTALS across a dimension (0.25 = 0.125 in per edge; a 3.5×2 card with 0.25 bleed is a 3.75×2.25 file);
+  0 = none. `artwork-specs.js` (`artworkSpecs()` / `artworkLine()`) turns them into per-edge sentences for the client
+  bot's `product_details` (`artwork`), the `[PAGE]` note, and staff `get_product_options`. Rule: a specific product's
+  values beat the general artwork guide (Domain Knowledge doc), which is only for general questions (client rule 11c,
+  TalkAi ARTWORK SPECS line, staff prompt). Domain Knowledge docs reach the website chat when shared with the
+  `client-bot` agent ("Client ChatBot", access `system`) by name (`loadClientTraining()`); Word files are read by
+  `docxText()` (mammoth if installed, else word/document.xml via xlsx's CFB).
 - **`estimate.production_status` is stale.** True production state is the newest `qr_scan_history` row
   for that `estimate_id`. This is stated in DATA_DICTIONARY and enforced in the `get_job` MCP tool.
 - **"Related to" rules** (`product_variable_filters`) decide when a field or option exists at all — Scoring on Book
