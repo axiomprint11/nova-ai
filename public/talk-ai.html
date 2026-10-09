@@ -198,6 +198,13 @@
   .tk-flow-hd b { display: block; font-size: 14px; margin-top: 2px; font-variant-numeric: tabular-nums; }
   .tk-flow-hd b.none { color: #b45309; font-weight: 600; font-size: 13px; }
   .tk-flow-hd small { display: block; font-size: 11.5px; color: var(--muted); margin-top: 1px; line-height: 1.4; }
+  .tk-steps-tg { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 14px; border: 0; background: none;
+    cursor: pointer; font: 600 12.5px/1.2 inherit; color: var(--indigo-dark); text-align: left; }
+  .tk-steps-tg:hover { background: #f4f5fc; }
+  .tk-steps-tg:focus-visible { outline: 2px solid var(--indigo); outline-offset: -2px; }
+  .tk-steps-tg svg { width: 16px; height: 16px; flex: none; transition: transform .15s; }
+  .tk-steps-tg[aria-expanded="true"] svg { transform: rotate(180deg); }
+  .tk-steps-tg[aria-expanded="true"] { border-bottom: 1px solid var(--line); }
   .tk-steps { list-style: none; margin: 0; padding: 6px 14px 10px; counter-reset: st; }
   .tk-steps li { position: relative; padding: 8px 0 8px 34px; font-size: 13px; line-height: 1.5; color: var(--ink); counter-increment: st; }
   .tk-steps li::before { content: counter(st); position: absolute; left: 0; top: 7px; width: 22px; height: 22px; border-radius: 50%; background: var(--indigo-light);

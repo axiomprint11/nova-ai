@@ -486,7 +486,18 @@
         down
       ];
     }
-    box.innerHTML = head + '<ol class="tk-steps">' + steps.map((t, i) => '<li' + (alt.indexOf(i) > -1 ? ' class="alt"' : '') + '>' + t + '</li>').join('') + '</ol>';
+    // The steps fold away (remembered per browser); the number / when header stays in view.
+    let open = false;
+    try { open = localStorage.getItem('tk-steps-open') === '1'; } catch (e) {}
+    box.innerHTML = head + '<button type="button" class="tk-steps-tg" aria-expanded="' + open + '"><span>How a call goes \u00b7 ' + steps.length + ' steps</span>' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>' +
+      '<ol class="tk-steps"' + (open ? '' : ' hidden') + '>' + steps.map((t, i) => '<li' + (alt.indexOf(i) > -1 ? ' class="alt"' : '') + '>' + t + '</li>').join('') + '</ol>';
+    const tg = box.querySelector('.tk-steps-tg');
+    tg.onclick = () => {
+      const ol = box.querySelector('.tk-steps'), on = ol.hidden;
+      ol.hidden = !on; tg.setAttribute('aria-expanded', on ? 'true' : 'false');
+      try { localStorage.setItem('tk-steps-open', on ? '1' : '0'); } catch (e) {}
+    };
   }
   $('sMissedNum').addEventListener('input', () => paintLogic());
   ['sMainLine', 'sCsrTo', 'sTransfer'].forEach(id => $(id).addEventListener('input', () => paintLogic()));
