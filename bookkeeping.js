@@ -51,8 +51,25 @@ module.exports = function mountBookkeeping(app, deps) {
     db.run('CREATE INDEX IF NOT EXISTS bk_txn_date ON bk_transactions(date)');
     db.run(`CREATE TABLE IF NOT EXISTS bk_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, pattern TEXT, category TEXT, vendor TEXT,
       note TEXT, source TEXT, created_by TEXT, hits INTEGER DEFAULT 0, active INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')))`);
-    db.run(`CREATE TABLE IF NOT EXISTS bk_vendors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, approved INTEGER DEFAULT 0, email TEXT,
+    db.run(`CREATE TABLE IF NOT EXISTS bk_vendors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, approved INTEGER DEFAULT 0, email TEXT,
       default_category TEXT, notes TEXT, created_at TEXT DEFAULT (datetime('now')), approved_by TEXT, approved_at TEXT)`);
+    // 1.15.3 made bk_vendors.name UNIQUE; a company can be both a supplier and a vendor in the CRM, so the first
+    // CRM sync failed. Rebuild the table without the constraint (ids kept).
+    db.get("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bk_vendors'", (e, row) => {
+      if (e || !row || !/UNIQUE/i.test(row.sql || '')) return;
+      const NEW = ['id', 'name', 'approved', 'email', 'default_category', 'notes', 'created_at', 'approved_by', 'approved_at', 'source', 'crm_id', 'phone', 'specialty', 'contact', 'address', 'aliases', 'synced_at', 'photo'];
+      db.all('PRAGMA table_info(bk_vendors)', (e2, cols) => {
+        if (e2) return console.error('BK vendors migration', e2.message);
+        const keep = NEW.filter(c => (cols || []).some(x => x.name === c)).join(', ');
+        db.serialize(() => {
+          db.run('ALTER TABLE bk_vendors RENAME TO bk_vendors_old');
+          db.run(`CREATE TABLE bk_vendors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, approved INTEGER DEFAULT 0, email TEXT, default_category TEXT, notes TEXT,
+            created_at TEXT DEFAULT (datetime('now')), approved_by TEXT, approved_at TEXT, source TEXT, crm_id INTEGER, phone TEXT, specialty TEXT, contact TEXT, address TEXT, aliases TEXT, synced_at TEXT, photo TEXT)`);
+          db.run(`INSERT INTO bk_vendors (${keep}) SELECT ${keep} FROM bk_vendors_old`);
+          db.run('DROP TABLE bk_vendors_old', er => console.log(er ? 'BK vendors migration failed: ' + er.message : 'BK vendors table rebuilt without the name constraint'));
+        });
+      });
+    });
     db.run(`CREATE TABLE IF NOT EXISTS bk_emails (id INTEGER PRIMARY KEY AUTOINCREMENT, gmail_id TEXT UNIQUE, thread_id TEXT, from_addr TEXT,
       subject TEXT, received_at TEXT, snippet TEXT, body TEXT, attachments TEXT, status TEXT DEFAULT 'new', note TEXT,
       created_at TEXT DEFAULT (datetime('now')))`);
@@ -72,7 +89,7 @@ module.exports = function mountBookkeeping(app, deps) {
     db.run(`CREATE TABLE IF NOT EXISTS bk_briefs (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT UNIQUE, text TEXT, stats TEXT, posted_at TEXT,
       post_error TEXT, created_at TEXT DEFAULT (datetime('now')))`);
     // The vendor directory: the CRM's `suppliers` and `vendors` tables (read-only, synced), plus vendors first seen on a bill.
-    ['source TEXT', 'crm_id INTEGER', 'phone TEXT', 'specialty TEXT', 'contact TEXT', 'address TEXT', 'aliases TEXT', 'synced_at TEXT'].forEach(c => db.run('ALTER TABLE bk_vendors ADD COLUMN ' + c, () => {}));
+    ['source TEXT', 'crm_id INTEGER', 'phone TEXT', 'specialty TEXT', 'contact TEXT', 'address TEXT', 'aliases TEXT', 'synced_at TEXT', 'photo TEXT'].forEach(c => db.run('ALTER TABLE bk_vendors ADD COLUMN ' + c, () => {}));
     db.run('ALTER TABLE bk_transactions ADD COLUMN vendor_id INTEGER', () => {});
     db.run(`CREATE TABLE IF NOT EXISTS bk_chat (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT DEFAULT (datetime('now')), channel TEXT, space TEXT,
       thread TEXT, sender TEXT, sender_email TEXT, direction TEXT, text TEXT, tools TEXT)`);
@@ -311,17 +328,19 @@ module.exports = function mountBookkeeping(app, deps) {
     let n = 0, errors = [];
     for (const t of ['suppliers', 'vendors']) {
       let rows = [];
-      try { rows = await runQuery('SELECT id, company_name, contact_name, email, phone, specialty, address, city, state, zip FROM ' + t + ' ORDER BY id'); }
+      try { rows = await runQuery('SELECT id, company_name, contact_name, email, phone, specialty, address, city, state, zip, photo_url FROM ' + t + ' ORDER BY id'); }
       catch (e) { errors.push(t + ': ' + e.message); continue; }
       for (const r of rows) {
         const name = String(r.company_name || r.contact_name || '').trim().slice(0, 120);
         if (!name) continue;
         const addr = [r.address, r.city, r.state, r.zip].filter(Boolean).join(', ').slice(0, 200);
-        const ex = await dbGet('SELECT id FROM bk_vendors WHERE (source = ? AND crm_id = ?) OR (LOWER(name) = LOWER(?) AND (source IS NULL OR source IN (?, ?)))', [t, r.id, name, 'bill', t]);
-        if (ex) await dbRun("UPDATE bk_vendors SET name = ?, source = ?, crm_id = ?, email = ?, phone = ?, specialty = ?, contact = ?, address = ?, approved = 1, synced_at = datetime('now') WHERE id = ?",
-          [name, t, r.id, String(r.email || '').slice(0, 200), String(r.phone || '').slice(0, 40), String(r.specialty || '').slice(0, 200), String(r.contact_name || '').slice(0, 120), addr, ex.id]);
-        else await dbRun("INSERT INTO bk_vendors (name, approved, email, source, crm_id, phone, specialty, contact, address, approved_by, approved_at, synced_at) VALUES (?,1,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))",
-          [name, String(r.email || '').slice(0, 200), t, r.id, String(r.phone || '').slice(0, 40), String(r.specialty || '').slice(0, 200), String(r.contact_name || '').slice(0, 120), addr, 'crm']);
+        const photo = /^https?:\/\//.test(String(r.photo_url || '')) ? String(r.photo_url).slice(0, 300) : null;
+        // The same CRM row again, or a vendor first seen on a bill that this CRM row is; never another CRM row.
+        const ex = await dbGet('SELECT id FROM bk_vendors WHERE (source = ? AND crm_id = ?) OR (LOWER(name) = LOWER(?) AND (source IS NULL OR source = ?))', [t, r.id, name, 'bill']);
+        if (ex) await dbRun("UPDATE bk_vendors SET name = ?, source = ?, crm_id = ?, email = ?, phone = ?, specialty = ?, contact = ?, address = ?, photo = ?, approved = 1, synced_at = datetime('now') WHERE id = ?",
+          [name, t, r.id, String(r.email || '').slice(0, 200), String(r.phone || '').slice(0, 40), String(r.specialty || '').slice(0, 200), String(r.contact_name || '').slice(0, 120), addr, photo, ex.id]);
+        else await dbRun("INSERT INTO bk_vendors (name, approved, email, source, crm_id, phone, specialty, contact, address, photo, approved_by, approved_at, synced_at) VALUES (?,1,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))",
+          [name, String(r.email || '').slice(0, 200), t, r.id, String(r.phone || '').slice(0, 40), String(r.specialty || '').slice(0, 200), String(r.contact_name || '').slice(0, 120), addr, photo, 'crm']);
         n++;
       }
     }
@@ -392,7 +411,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const dup = invNo ? await dbGet('SELECT id FROM bk_bills WHERE LOWER(vendor) = LOWER(?) AND invoice_no = ? AND status <> ?', [vendor, invNo, 'rejected'])
       : await dbGet('SELECT id FROM bk_bills WHERE LOWER(vendor) = LOWER(?) AND ABS(total - ?) < 0.01 AND invoice_date = ? AND status <> ?', [vendor, Number(j.total) || 0, j.invoice_date || '', 'rejected']);
     let v = (await matchVendor(vendor, em.from_addr)) || await dbGet('SELECT * FROM bk_vendors WHERE LOWER(name) = LOWER(?)', [vendor]);
-    if (!v) { await dbRun('INSERT OR IGNORE INTO bk_vendors (name, approved, source) VALUES (?, 0, ?)', [vendor, 'bill']); v = await dbGet('SELECT * FROM bk_vendors WHERE LOWER(name) = LOWER(?)', [vendor]); dirCache.at = 0; }
+    if (!v) { await dbRun('INSERT INTO bk_vendors (name, approved, source) VALUES (?, 0, ?)', [vendor, 'bill']); v = await dbGet('SELECT * FROM bk_vendors WHERE LOWER(name) = LOWER(?)', [vendor]); dirCache.at = 0; }
     const main = atts[0] || null;
     const ins = await dbRun('INSERT INTO bk_bills (email_id, vendor, vendor_id, invoice_no, invoice_date, due_date, terms, subtotal, tax, total, currency, kind, duplicate_of, lines, file, file_name, status, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       [em.id, vendor, v ? v.id : null, invNo || null, j.invoice_date || null, j.due_date || null, String(j.terms || '').slice(0, 60), Number(j.subtotal) || null, Number(j.tax) || null, Number(j.total) || 0,

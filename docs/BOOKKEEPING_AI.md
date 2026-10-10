@@ -68,8 +68,9 @@ The same conversation exists in the tab ("Talk to BookkeeperAI"), so Google Chat
 
 ## Suppliers & vendors (the directory)
 The CRM's `suppliers` and `vendors` tables are read (read-only) into `bk_vendors` (`source` = suppliers | vendors,
-`crm_id`, email, phone, specialty, contact, address) on every daily run and on **Refresh from CRM**; they come in
-approved. A bank line is linked to a directory entry (`bk_transactions.vendor_id`) when the entry's name, one of its
+`crm_id`, email, phone, specialty, contact, address, `photo` = the CRM's `photo_url`, shown on the left) on every daily run and on
+**Refresh from CRM**; they come in approved. The same company may be both a supplier and a vendor — `bk_vendors.name` is
+not unique (the 1.15.3 UNIQUE constraint is dropped at boot by rebuilding the table, ids kept). A bank line is linked to a directory entry (`bk_transactions.vendor_id`) when the entry's name, one of its
 bank-statement aliases, or (for bills) its email domain matches; the AI is told "OUR VENDOR: Veritiv — Paper → usually
 Paper" and gets the whole directory as context. Approving a category for a linked transaction fills the vendor's
 *usual category* (editable in the tab, with the aliases). Vendors first seen on a bill (`source` = bill) wait for
