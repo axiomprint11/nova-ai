@@ -363,10 +363,9 @@
       (j.rules || []).map(r => '<tr><td>' + (r.kind === 'vendor' ? 'Vendor is ' : 'Contains ') + '<b>' + esc(r.pattern) + '</b></td><td>' + esc(r.category) + '</td><td>' + esc(r.source) + ' · ' + esc(r.created_by || '') + '</td><td>' + r.hits + '</td><td><button class="bk-btn sm bad" data-del="' + r.id + '">Remove</button></td></tr>').join('') + '</tbody></table>' +
       (!(j.rules || []).length ? '<div class="bk-muted" style="padding:14px 0">No rules yet — each approval with "remember" ticked adds one.</div>' : '') + '</div>' +
       
-      '<div class="bk-card"><h2>Notes for the AI</h2><div class="bk-muted">How AxiomPrint books things — BookkeeperAI reads this with every proposal. The chart of accounts itself is edited under <a href="#" id="toChart">Chart of Accounts</a>.</div>' +
+      '<div class="bk-card"><h2>Notes for the AI ' + qHelp('notes', 'Notes for the AI', 'How AxiomPrint books things — BookkeeperAI reads this with every proposal. The chart of accounts itself is edited under Accounts → Chart of Accounts.') + '</h2>' +
       '<textarea class="bk" id="sNotes" style="margin-top:8px">' + esc(ov.settings.notes) + '</textarea>' +
       '<div class="bk-row" style="margin-top:8px"><label class="bk-muted">Ask me when confidence is below <input class="bk" id="sThr" type="number" min="0.3" max="1" step="0.05" value="' + esc(ov.settings.threshold) + '" style="width:80px"></label><button class="bk-btn p" id="sSave">Save</button><span class="bk-muted" id="sMsg"></span></div></div>';
-    $('toChart').onclick = (e) => { e.preventDefault(); show('accounts', 'chart'); };
     $('rAdd').onclick = async () => { const r = await post('/api/bookkeeping/rules', { kind: $('rKind').value, pattern: $('rPat').value.trim(), category: v.querySelector('input.rcat').value }); if (!r.ok) alert(r.error); loadRules(); };
     v.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await api('/api/bookkeeping/rules/' + b.dataset.del, { method: 'DELETE' }); loadRules(); });
     $('sSave').onclick = async () => { await post('/api/bookkeeping/settings', { notes: $('sNotes').value, threshold: $('sThr').value }); $('sMsg').textContent = 'Saved.'; await overview(); };
