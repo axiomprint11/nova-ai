@@ -160,7 +160,7 @@ All set aside; "Mark as read" by hand sets `read_by = 'user'`. The daily run's s
 messages kept; the overview has `inbox_messages` and `ai_read_today`.
 
 ### Baskets (1.18.13)
-`scanInbox` lists only `is:unread in:inbox` mail (last `backfill_days`), so the inbox here follows the team's Gmail unread count;
+`scanInbox` lists only `is:unread in:inbox` mail (no date limit), so the inbox here follows the team's Gmail unread count;
 open rows (`new` / `message`) whose Gmail id is no longer unread are set aside with `read_by = 'gmail'`. The page sorts open
 emails into baskets by rating: **Bills** (kind bill, drafts excluded from the count), **Direct messages**, **Ads**,
 **Confirmations** (notification + receipt), **Other**, **Not rated**, and **Set aside**; it opens on the first basket with

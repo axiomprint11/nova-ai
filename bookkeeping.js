@@ -411,8 +411,8 @@ module.exports = function mountBookkeeping(app, deps) {
     const g = gmail();
     // Only what is still UNREAD in Gmail: the inbox here mirrors the team's unread count. An email someone reads in
     // Gmail drops out of the unread list and is set aside here too (read_by = 'gmail'), so the two stay in step.
-    const days = Math.max(1, s.backfill_days);
-    const q = 'is:unread in:inbox -in:spam -in:trash newer_than:' + days + 'd';
+    // No date limit: unread is unread, however old (backfill_days only applied when read mail was scanned too).
+    const q = 'is:unread in:inbox -in:spam -in:trash';
     let pageToken, ids = [], n = 0;
     do {
       const r = await g.users.messages.list({ userId: 'me', q: q, maxResults: 100, pageToken: pageToken });
@@ -420,7 +420,7 @@ module.exports = function mountBookkeeping(app, deps) {
     } while (pageToken && ids.length < 1000);
     const seen = new Set((await dbAll('SELECT gmail_id FROM bk_emails')).map(r => r.gmail_id));
     const unread = new Set(ids);
-    const open = await dbAll("SELECT id, gmail_id FROM bk_emails WHERE status IN ('new','message') AND received_at >= datetime('now', ?)", ['-' + days + ' days']);
+    const open = await dbAll("SELECT id, gmail_id FROM bk_emails WHERE status IN ('new','message')");
     let readInGmail = 0;
     for (const o of open) if (o.gmail_id && !unread.has(o.gmail_id)) { await dbRun("UPDATE bk_emails SET status = 'skipped', read_by = 'gmail', note = COALESCE(note, '') || ' — read in Gmail' WHERE id = ?", [o.id]); readInGmail++; }
     for (const id of ids) {
