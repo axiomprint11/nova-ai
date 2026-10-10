@@ -705,11 +705,15 @@ module.exports = function mountBookkeeping(app, deps) {
         (t.plaid_category ? ' | bank says: ' + t.plaid_category : '') + (t.account_name ? ' | ' + t.account_name : '')).join('\n');
       const prior = (await dbAll("SELECT merchant, name, category FROM bk_transactions WHERE status = 'categorized' ORDER BY updated_at DESC LIMIT 60"))
         .map(x => (x.merchant || x.name) + ' → ' + x.category).filter((v, k, a) => a.indexOf(v) === k).slice(0, 40).join('\n');
+      // What the owner answered when asked before — the words matter ("Uber rides are personal", "SparkFun is parts for the cutter").
+      const lessons = (await dbAll("SELECT q.question, q.answer, p.title FROM bk_questions q JOIN bk_proposals p ON p.id = q.proposal_id WHERE q.answer IS NOT NULL AND q.answer <> '' AND q.answer NOT LIKE '→ %' ORDER BY q.answered_at DESC LIMIT 30"))
+        .map(x => '- ' + x.title.replace(/ → .*$/, '') + ': asked "' + x.question + '" — answer: ' + x.answer).join('\n');
       let j = null;
       try {
         const r = await anthropic.messages.create({ model: MODEL, max_tokens: 2500, system: SYS(s) + '\n' + await dirLine(), messages: [{ role: 'user', content:
           'Bank transactions (amount: - means money out, + means money in). Propose a category for each from the chart of accounts.\n' + listing +
           (prior ? '\n\nHOW WE CATEGORIZED BEFORE (approved):\n' + prior : '') +
+          (lessons ? '\n\nWHAT THE OWNER TOLD US WHEN WE ASKED (apply these to similar transactions instead of asking again):\n' + lessons : '') +
           '\n\nReturn ONLY JSON: {"items": [{"id": <id>, "category": "", "vendor": "<clean vendor name>", "confidence": 0.0, "reason": "<one short line>", "ask": "<a question for the owner ONLY if you cannot tell, else empty>"}]}' }] });
         j = jsonOf((r.content || []).filter(b => b.type === 'text').map(b => b.text).join(''));
       } catch (e) { errlog('categorize', e.message); }
@@ -1114,8 +1118,11 @@ module.exports = function mountBookkeeping(app, deps) {
     res.json({ ok: true, results: out });
   });
   app.post('/api/bookkeeping/questions/:id/answer', ...guard, async (req, res) => {
-    const r = await answerQuestion(parseInt(req.params.id), String(req.body.answer || ''), userId(req));
-    if (r.ok && req.body.category) { const q = await dbGet('SELECT proposal_id FROM bk_questions WHERE id = ?', [parseInt(req.params.id)]); r.approved = await decide(q.proposal_id, 'approve', userId(req), { category: req.body.category }); }
+    const cat = String(req.body.category || '').trim();
+    const text = String(req.body.answer || '').trim();
+    if (!text && !cat) return res.json({ ok: false, error: 'Pick a category or write an answer.' });
+    const r = await answerQuestion(parseInt(req.params.id), text || ('→ ' + cat), userId(req));
+    if (r.ok && cat) { const q = await dbGet('SELECT proposal_id FROM bk_questions WHERE id = ?', [parseInt(req.params.id)]); r.approved = await decide(q.proposal_id, 'approve', userId(req), { category: req.body.category }); }
     res.json(r);
   });
   app.get('/api/bookkeeping/transactions', ...guard, async (req, res) => {

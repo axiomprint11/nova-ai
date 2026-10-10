@@ -196,7 +196,7 @@
       if (p.type === 'bill') body += '<div class="r"><a href="#" data-file="' + p.ref_id + '">Open the bill file</a>' + (pl.due_date ? ' · due ' + esc(pl.due_date) : '') + '</div>';
       if (open(p)) body += '<div class="q">' + esc(p.question.question) + '</div>';
       let acts;
-      if (open(p)) acts = '<input type="text" placeholder="Your answer" data-ans="' + p.question.id + '" style="min-width:220px">' + (p.type === 'category' ? catSelect(pl.category, 'ans-cat') : '') + '<button class="bk-btn sm p" data-answer="' + p.question.id + '" data-pid="' + p.id + '">Answer</button>';
+      if (open(p)) acts = '<input type="text" placeholder="Optional note — e.g. “Uber rides are personal”" data-ans="' + p.question.id + '" style="min-width:220px">' + (p.type === 'category' ? catSelect(pl.category, 'ans-cat') : '') + '<button class="bk-btn sm p" data-answer="' + p.question.id + '" data-pid="' + p.id + '">Answer</button>';
       else if (p.type === 'category') acts = catSelect(pl.category, 'pick') + '<label class="bk-muted"><input type="checkbox" class="remember" checked> remember ' + esc(pl.vendor || '') + '</label><button class="bk-btn sm ok" data-approve="' + p.id + '">Approve</button><button class="bk-btn sm bad" data-reject="' + p.id + '">Reject</button>';
       else acts = (pl.new_vendor ? '<label class="bk-muted"><input type="checkbox" class="appvendor" checked> approve vendor</label>' : '') + '<button class="bk-btn sm ok" data-approve="' + p.id + '">Approve</button><button class="bk-btn sm bad" data-reject="' + p.id + '">Reject</button>';
       return '<div class="bk-prop" data-id="' + p.id + '"><div class="body">' + body + '</div><div class="acts">' + acts + '</div></div>';
@@ -220,7 +220,8 @@
     v.querySelectorAll('[data-reject]').forEach(b => b.onclick = async () => { const note = prompt('Why? (optional)') ; if (note === null) return; b.disabled = true; await post('/api/bookkeeping/proposals/' + b.dataset.reject + '/decide', { action: 'reject', note }); refresh(); });
     v.querySelectorAll('[data-answer]').forEach(b => b.onclick = async () => {
       const row = b.closest('.bk-prop'); const inp = row.querySelector('[data-ans]'); const cat = row.querySelector('input.ans-cat');
-      if (!inp.value.trim()) { inp.focus(); return; }
+      // A category alone is an answer; words are optional (they teach BookkeeperAI for next time, e.g. "Uber rides are personal").
+      if (!inp.value.trim() && !(cat && cat.value)) { inp.focus(); return; }
       b.disabled = true;
       await post('/api/bookkeeping/questions/' + b.dataset.answer + '/answer', { answer: inp.value.trim(), category: cat ? cat.value : undefined });
       refresh();

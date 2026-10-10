@@ -148,6 +148,13 @@ bill's vendor name as an alias on the entry (so the next bill links by itself), 
 and removes the bill-source row if nothing else points at it. `GET /api/bookkeeping/bills` returns `vendor_card`,
 `suggestions` (with scores), `proposal_status` and the open `question` per bill.
 
+## Questions and what they teach
+A question is answered with a category alone (the answer is stored as "→ <category>" and the proposal is approved with
+it), with words alone, or both. Written answers are the lessons: the categorizer gets the last 30 as "WHAT THE OWNER TOLD
+US WHEN WE ASKED" (question + answer per transaction) and is told to apply them to similar transactions instead of asking
+again — "Uber rides are personal" stops the next Uber question. Approved categories also reach it as "HOW WE CATEGORIZED
+BEFORE", and vendor rules (made from approvals with "remember") run before the AI looks at all.
+
 ## What the agent may do (its only tools)
 `list_pending`, `approve` (by id / all / with a corrected category), `reject`, `answer_question` (records the answer; with
 a category it approves the proposal), `add_rule`, `add_category`, `run_now`, `balances`, `materials` (catalog lookup). No SQL, no vendor details, no payments.
