@@ -159,6 +159,18 @@ Messages · Bills · **Set aside by AI** (the report of what it marked read on i
 All set aside; "Mark as read" by hand sets `read_by = 'user'`. The daily run's summary line counts emails set aside and
 messages kept; the overview has `inbox_messages` and `ai_read_today`.
 
+### Baskets (1.18.13)
+`scanInbox` lists only `is:unread in:inbox` mail (last `backfill_days`), so the inbox here follows the team's Gmail unread count;
+open rows (`new` / `message`) whose Gmail id is no longer unread are set aside with `read_by = 'gmail'`. The page sorts open
+emails into baskets by rating: **Bills** (kind bill, drafts excluded from the count), **Direct messages**, **Ads**,
+**Confirmations** (notification + receipt), **Other**, **Not rated**, and **Set aside**; it opens on the first basket with
+mail. Each basket has its own action bar: "Mark all N ads / confirmations / other as read" (`POST /inbox/set-aside`, Nova
+only — Gmail is never written), "Turn all N into bills" (parses each → Bills), "Rate them now". The reading pane has
+**Turn into a bill** (or **Open in Bills →** for a draft), Mark as read, and **Move to…** (`POST /api/bookkeeping/emails/:id/kind`
+— replaces the rating with confidence 1, `message` sets status `message`). **Start fresh** (`POST /api/bookkeeping/inbox/reset`)
+deletes every `bk_emails` row with no bill (and its saved attachments), audits `gmail.reset`, then the page runs Scan now.
+The header line reads "N not read · checked <time>".
+
 ### Reading pane
 The Inbox is a split view: the list on the left (two-line rows: sender + time, subject, snippet + kind tag + attachments),
 the selected email on the right. The pane shows the email the way Gmail shows it: subject, sender (name + address, "to accounting@"), date,

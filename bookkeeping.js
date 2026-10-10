@@ -409,13 +409,20 @@ module.exports = function mountBookkeeping(app, deps) {
     const s = await settings();
     try { fs.mkdirSync(FILES, { recursive: true }); } catch (e) {}
     const g = gmail();
-    const q = 'in:anywhere -in:spam -in:trash newer_than:' + Math.max(1, s.backfill_days) + 'd';
+    // Only what is still UNREAD in Gmail: the inbox here mirrors the team's unread count. An email someone reads in
+    // Gmail drops out of the unread list and is set aside here too (read_by = 'gmail'), so the two stay in step.
+    const days = Math.max(1, s.backfill_days);
+    const q = 'is:unread in:inbox -in:spam -in:trash newer_than:' + days + 'd';
     let pageToken, ids = [], n = 0;
     do {
       const r = await g.users.messages.list({ userId: 'me', q: q, maxResults: 100, pageToken: pageToken });
       ids = ids.concat((r.data.messages || []).map(m => m.id)); pageToken = r.data.nextPageToken;
-    } while (pageToken && ids.length < 500);
+    } while (pageToken && ids.length < 1000);
     const seen = new Set((await dbAll('SELECT gmail_id FROM bk_emails')).map(r => r.gmail_id));
+    const unread = new Set(ids);
+    const open = await dbAll("SELECT id, gmail_id FROM bk_emails WHERE status IN ('new','message') AND received_at >= datetime('now', ?)", ['-' + days + ' days']);
+    let readInGmail = 0;
+    for (const o of open) if (o.gmail_id && !unread.has(o.gmail_id)) { await dbRun("UPDATE bk_emails SET status = 'skipped', read_by = 'gmail', note = COALESCE(note, '') || ' — read in Gmail' WHERE id = ?", [o.id]); readInGmail++; }
     for (const id of ids) {
       if (seen.has(id)) continue;
       try {
@@ -444,8 +451,18 @@ module.exports = function mountBookkeeping(app, deps) {
         n++;
       } catch (e) { errlog('gmail message', id, e.message); }
     }
-    await audit(who, 'gmail.scan', INBOX, { looked_at: ids.length, new: n });
-    return { looked_at: ids.length, new: n };
+    await audit(who, 'gmail.scan', INBOX, { unread: ids.length, new: n, read_in_gmail: readInGmail });
+    return { looked_at: ids.length, unread: ids.length, new: n, read_in_gmail: readInGmail };
+  }
+  // Start fresh: forget every scanned email that did not become a bill (and its saved attachments), then scan the
+  // unread mail again. Bills keep their email. A person's decision, audited.
+  async function resetInbox(who) {
+    const rows = await dbAll('SELECT id, attachments FROM bk_emails WHERE id NOT IN (SELECT email_id FROM bk_bills WHERE email_id IS NOT NULL)');
+    let files = 0;
+    for (const r of rows) { let atts = []; try { atts = JSON.parse(r.attachments || '[]'); } catch (e) {} for (const a of atts) { if (!a.file) continue; const full = path.resolve(FILES, a.file); if (full.indexOf(path.resolve(FILES)) === 0) { try { fs.unlinkSync(full); files++; } catch (e) {} } } }
+    await dbRun('DELETE FROM bk_emails WHERE id NOT IN (SELECT email_id FROM bk_bills WHERE email_id IS NOT NULL)');
+    await audit(who, 'gmail.reset', INBOX, { removed: rows.length, files });
+    return { removed: rows.length, files };
   }
   // Gmail push (users.watch → Pub/Sub → this URL). The token in the URL is the only check; the body is not trusted
   // — a push just starts a scan, which reads the inbox itself.
@@ -1417,6 +1434,18 @@ module.exports = function mountBookkeeping(app, deps) {
   });
   app.post('/api/bookkeeping/run', ...guard, async (req, res) => res.json(await runDaily('manual', userId(req), { post: !!(req.body && req.body.post) })));
   // The tab drives the rating itself so the person can watch: fetch → rate 25 at a time → read the rated bills one by one.
+  app.post('/api/bookkeeping/inbox/reset', ...guard, async (req, res) => { try { const r = await resetInbox(userId(req)); res.json({ ok: true, reset: r }); } catch (e) { res.json({ ok: false, error: e.message }); } });
+  // Move an email to another basket by hand (ad / confirmation / message / bill / other). The rating is replaced,
+  // the note says who moved it; a bill still has to be read with "Turn into a bill".
+  app.post('/api/bookkeeping/emails/:id/kind', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), kind = String(req.body && req.body.kind || '');
+    if (['advertisement', 'notification', 'receipt', 'bill', 'message', 'other'].indexOf(kind) < 0) return res.json({ ok: false, error: 'Which basket?' });
+    const em = await dbGet('SELECT id, status FROM bk_emails WHERE id = ?', [id]); if (!em) return res.json({ ok: false, error: 'No such email' });
+    if (em.status === 'parsed') return res.json({ ok: false, error: 'It is a bill draft already.' });
+    const status = kind === 'message' ? 'message' : (em.status === 'message' ? 'new' : em.status);
+    await dbRun("UPDATE bk_emails SET kind = ?, confidence = 1, status = ?, triaged_at = COALESCE(triaged_at, datetime('now')), note = ? WHERE id = ?", [kind, status, 'moved to ' + kind + ' by ' + userId(req), id]);
+    await audit(userId(req), 'email.move', id, { kind }); res.json({ ok: true });
+  });
   app.post('/api/bookkeeping/inbox/fetch', ...guard, async (req, res) => { try { const r = await scanInbox(userId(req)); const left = await dbGet("SELECT COUNT(*) n FROM bk_emails WHERE status = 'new' AND triaged_at IS NULL"); res.json({ ok: true, scan: r, to_rate: left.n }); } catch (e) { res.json({ ok: false, error: e.message }); } });
   app.post('/api/bookkeeping/inbox/rate', ...guard, async (req, res) => {
     try { const r = await triageEmails(userId(req), Math.min(50, parseInt(req.body && req.body.limit) || 25)); const left = await dbGet("SELECT COUNT(*) n FROM bk_emails WHERE status = 'new' AND triaged_at IS NULL"); const s = await settings();
