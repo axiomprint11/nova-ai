@@ -19,7 +19,7 @@
   document.querySelectorAll('.bk-tabs button').forEach(b => b.onclick = () => show(b.dataset.v));
   // Main tabs with sub-tabs: Accounts (vendors / chart / rules) and Bills (bills / inbox). show('chart') or
   // show('inbox') opens that sub-tab directly; the last sub-tab of each is remembered per browser.
-  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, chart: loadChart, rules: loadRules, materials: loadMaterials }, first: 'vendors' }, bills: { bar: 'subBills', subs: { bills: loadBills, inbox: loadInbox }, first: 'bills' } };
+  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, chart: loadChart, rules: loadRules, materials: loadMaterials }, first: 'vendors' } };
   document.querySelectorAll('.bk-sub button').forEach(b => b.onclick = () => show(b.closest('.bk-view').dataset.v, b.dataset.s));
   const lastSub = {}; Object.keys(TABS).forEach(k => { try { lastSub[k] = localStorage.getItem('bk_sub_' + k) || TABS[k].first; } catch (e) { lastSub[k] = TABS[k].first; } });
   function show(v, sub) {
@@ -35,7 +35,7 @@
       try { history.replaceState(null, '', '/bookkeeping?tab=' + v + '&sub=' + sub); } catch (e) {}
       return;
     }
-    ({ brief: loadBrief, txns: loadTxns, conn: loadConn, activity: loadActivity })[v]();
+    ({ brief: loadBrief, txns: loadTxns, bills: loadBills, inbox: loadInbox, conn: loadConn, activity: loadActivity })[v]();
     try { history.replaceState(null, '', '/bookkeeping?tab=' + v); } catch (e) {}
   }
   async function overview() {
@@ -45,7 +45,7 @@
     $('nPending').textContent = ov.counts.pending || '';
     const rs = $('runState');
     if (ov.running) { rs.className = 'bk-pill off'; rs.textContent = 'Running…'; }
-    else if (ov.last_run) { rs.className = 'bk-pill ' + (ov.last_run.ok ? 'on' : 'err'); rs.textContent = (ov.last_run.ok ? 'Last run ' : 'Last run failed ') + when(ov.last_run.started_at); rs.title = ov.last_run.summary || ''; rs.style.cursor = 'pointer';
+    else if (ov.last_run) { rs.className = 'bk-pill ' + (ov.last_run.ok ? 'on' : 'err'); rs.textContent = ov.last_run.ok ? 'Last run ' + when(ov.last_run.started_at) : 'Run failed ' + when(ov.last_run.started_at) + ' — ' + String(ov.last_run.summary || 'no details').slice(0, 70) + (String(ov.last_run.summary || '').length > 70 ? '…' : ''); rs.title = ov.last_run.summary || ''; rs.style.cursor = 'pointer';
       rs.onclick = () => alert((ov.last_run.ok ? 'Last run ' : 'Last run FAILED ') + when(ov.last_run.started_at) + (ov.last_run.started_by ? ' (' + ov.last_run.started_by + ')' : '') + '\n\n' + (ov.last_run.summary || 'no details') + '\n\nEvery run is listed under Activity.'); }
     else { rs.className = 'bk-pill off'; rs.textContent = 'Not run yet'; }
     return ov;
@@ -335,6 +335,7 @@
     const fromAddr = (f) => { const m = /<([^>]+)>/.exec(f || ''); return m ? m[1] : String(f || ''); };
     const clip = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.5 8.5a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8"/></svg>';
     const day = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$/.test(ts) ? '' : 'Z')); if (isNaN(d)) return ts; const now = new Date(); return d.toDateString() === now.toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric' }); };
+    all.sort((a, b) => (st(b) === 'new') - (st(a) === 'new') || String(b.received_at || '').localeCompare(String(a.received_at || '')));   // not read yet on top, then newest first
     const row = (m) => { const k = st(m); return '<div class="ib-row ' + k + (ibOpen === m.id ? ' open' : '') + '" data-m="' + m.id + '" data-k="' + k + '" data-q="' + esc((m.from_addr + ' ' + m.subject + ' ' + (m.snippet || '') + ' ' + (m.note || '')).toLowerCase()) + '">' +
       '<span class="ib-dot ' + k + '" title="' + esc(k) + '"></span><span class="ib-from" title="' + esc(fromAddr(m.from_addr)) + '">' + esc(fromName(m.from_addr)) + '</span>' +
       '<span class="ib-subj"><b>' + esc(m.subject || '(no subject)') + '</b> <span>— ' + esc(m.snippet || '') + '</span></span>' +
@@ -351,7 +352,7 @@
     $('ibQ').oninput = filter; filter();
     v.querySelectorAll('.ib-row').forEach(r => r.onclick = (ev) => { if (ev.target.closest('.ib-detail')) return; ibOpen = ibOpen === Number(r.dataset.m) ? null : Number(r.dataset.m); loadInbox(); });
     v.querySelectorAll('[data-parse]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/emails/' + b.dataset.parse + '/parse', {}); if (!r.ok) alert(r.error); loadInbox(); overview(); });
-    v.querySelectorAll('[data-gobills]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); show('bills', 'bills'); });
+    v.querySelectorAll('[data-gobills]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); show('bills'); });
     $('scanNow2').onclick = async () => { $('scanNow2').disabled = true; const r = await post('/api/bookkeeping/scan', {}); if (!r.ok) alert(r.error); await overview(); loadInbox(); };
     const nb = $('nInbox'); if (nb) nb.textContent = counts.new || '';
   }

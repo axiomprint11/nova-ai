@@ -133,8 +133,8 @@ icon and color, round marks for a single choice, checkboxes + Done for `{ multi:
 stored "Paper; Freight & Shipping"), "+ New category…" in the footer. Transactions show "Type › Sub category".
 
 ## Bills tab and vendor pairing
-The Bills main tab has two sub-tabs, **Bills** and **Inbox** (`?tab=bills&sub=inbox`; the Inbox tab carries a badge with
-the not-yet-read count). Inbox is a Gmail-like list: status dot (green = read as a bill, grey = skipped, blue = not read,
+**Bills** and **Inbox** are two main tabs (`?tab=inbox`; the Inbox tab carries a badge with the not-yet-read count;
+emails not read yet sort to the top). Inbox is a Gmail-like list: status dot (green = read as a bill, grey = skipped, blue = not read,
 red = error), sender, subject — snippet on one line, attachment count, time; All / Bills / Skipped / Not read chips and a
 search box; a row opens in place with the full snippet, the files, BookkeeperAI's verdict and "Read it as a bill".
 Bills are cards: vendor (logo, CRM type, specialty), kind + number, dates, total, status, the AI's note, an open question,
