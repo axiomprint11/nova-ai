@@ -361,6 +361,18 @@ pattern for any new report over a large log table. To add a report, add an entry
   requested options a rule dropped as `not_applied`, and the client bot's `product_details` gives the public ones as
   `conditions`. Answers about an option must state its condition. `get_product_options` also flags fields the
   product formula never mentions (`not_in_price_formula`) — those cost nothing on the site whatever their values say.
+- **Number fields** (`product_variables.type = 'number'`, no items — Pages_Per_Set on Document Copies #362, Die_Fee…)
+  are typed-in numbers the formula uses directly. `quoteProduct` fills them from `options` by name or name prefix
+  ("Pages" → Pages_Per_Set) or `numbers` {variable_id: n} (card re-prices); not given, a count (pages / sheets / set /
+  copies) is 1 and flagged to confirm, anything else 0. They show as spec rows with `isNumber`; order links and the
+  website cart payload do not carry them yet. Options with the **same title twice** (Document Copies' two "Full Color",
+  one per side count, split by a Related-to rule) resolve to the twin the other choices allow.
+- **Plain printing** of pages / sheets / documents (no booklet or other product named) is Document Printing & Copies:
+  the client bot's `search_products` adds "document copies" and ranks it first (`PLAIN_PRINT` / `BOUND_PRODUCT`), and
+  prompt rule 9d (TalkAi: the EVERYTHING THEY SAID line) says to price with every spec said anywhere in the
+  conversation — a page count goes in the pages field, never quantity. `priceCard` matches a choice exactly, then by
+  its leading number ("120" → "120 (Cover=4, Inside=116)"), then the one choice containing it; it tells the model when
+  the asked quantity is below the product's smallest.
 - **Order quantity lives in `estimateoption`** (`estimate_option_name='Quantity'`), not
   `invoiceestimate.invoice_estcount`, which is often 0. Sizes are often internal numeric codes.
 - Job number `E1169106` = `estimate.id` 1169106. Strip the `E`.

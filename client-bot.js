@@ -493,6 +493,8 @@ module.exports = function mountClientBot(app, deps) {
 
 
   // ---------------------------------------------------------------- tools
+  const PLAIN_PRINT = /\b(pages?|sheets?|copies|copy|copying|documents?|docs?|print ?outs?|black\s*(and|&)\s*white|b\s*&\s*w|bond|loose|unbound|no binding|single[- ]sided|double[- ]sided)\b/i;
+  const BOUND_PRODUCT = /\b(booklets?|bound|binding|saddle|spiral|coil|wire-?o|catalogs?|catalogues?|magazines?|books?|brochures?|flyers?|postcards?|cards?|posters?|banners?|stickers?|labels?|menus?|envelopes?|letterheads?|note ?pads?|calendars?|signs?|decals?|programs?|manuals?)\b/i;
   const publicProductWhere = (cid) =>
     "p.active = 1 AND JSON_CONTAINS(COALESCE(p.available_for_websites, '[]'), '\"" + SITE + "\"') AND " +
     "(p.available_for_customers IS NULL OR JSON_LENGTH(p.available_for_customers) = 0" +
@@ -804,11 +806,33 @@ module.exports = function mountClientBot(app, deps) {
     const pub = await publicOptions(p.id);
     const norm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const options = {}, ignored = [];
+    // The field by its name ("Pages") or the start of it ("Pages" → Pages_Per_Set); the choice exactly, else by
+    // its leading number ("120" → "120 (Cover=4, Inside=116)"), else the one choice that contains what was said.
+    // A typed-in number field (Pages_Per_Set) takes the number.
+    const fieldFor = (k) => pub.byName[norm(k)] ||
+      (norm(k).length >= 4 ? pub.vars.filter(v => norm(v.title).indexOf(norm(k)) === 0).sort((a, b) => a.title.length - b.title.length)[0] : null);
+    const leadNum = (t) => { const m = String(t || '').replace(/,/g, '').match(/^\s*(\d+(?:\.\d+)?)/); return m ? Number(m[1]) : null; };
+    const matched = [];
     Object.keys(input.options || {}).slice(0, 40).forEach(k => {
-      const v = pub.byName[norm(k)];
+      const v = fieldFor(k);
       const want = String(input.options[k] || '').slice(0, 120);
-      if (v && v.choices.some(c => norm(c) === norm(want))) options[v.title] = want;
-      else ignored.push(k);
+      if (!v) { ignored.push(k); return; }
+      if (v.type === 'number') {
+        const n = leadNum(want) != null ? leadNum(want) : (String(want).match(/\d+(\.\d+)?/) || [])[0];
+        if (n != null && n !== '') options[v.title] = String(n); else ignored.push(k);
+        return;
+      }
+      let hit = v.choices.find(c => norm(c) === norm(want));
+      if (!hit && leadNum(want) != null) {
+        const byNum = v.choices.filter(c => leadNum(c) === leadNum(want));
+        if (byNum.length === 1) hit = byNum[0];
+      }
+      if (!hit && norm(want).length >= 3) {
+        const inside = v.choices.filter(c => norm(c).indexOf(norm(want)) > -1);
+        if (inside.length === 1) hit = inside[0];
+      }
+      if (hit) { options[v.title] = hit; if (norm(hit) !== norm(want)) matched.push(v.title.replace(/_/g, ' ') + ' "' + want + '" = ' + hit); }
+      else ignored.push(k + ' "' + want + '" (choices: ' + v.choices.slice(0, 12).join(', ') + (v.choices.length > 12 ? '…' : '') + ')');
     });
     const sz = await sizeFromCustomer(p.id, input, ctx);
     const width = sz.width, height = sz.height;
@@ -887,7 +911,9 @@ module.exports = function mountClientBot(app, deps) {
           ignored.push(x.field + ' "' + x.asked + '" is not available with the other options chosen \u2014 not included in this price (see conditions in product_details)'));
       }
       forModel.push({ quantity: q.quantity, price: q.price, each: q.each, ready: ready,
-        your_discount: q.discount ? q.discount.percent + '%' : undefined });
+        your_discount: q.discount ? q.discount.percent + '%' : undefined,
+        // Asked for fewer than the product's smallest quantity: the smallest was priced.
+        note: qty && Number(q.quantity) > qty ? 'They asked for ' + qty + '; the smallest quantity for this product is ' + q.quantity + ', which is what was priced. Say so in a few words.' : undefined });
     }
     if (!head) return { error: (forModel[0] && forModel[0].error) || 'That combination could not be priced.' };
     rows.sort((x, y) => Number(x.quantity) - Number(y.quantity));
@@ -906,6 +932,7 @@ module.exports = function mountClientBot(app, deps) {
         product: head.product, options_used: head.specs.map(sp => ({ field: sp.field, value: sp.value, how: sp.tag })), prices: forModel,
         size_used: sz.said ? sz.said + '. Say the size the way the customer did: "' + sz.spoken + '". If that is not what they meant, re-price with the right size_unit.' : undefined,
         ignored_options: ignored.length ? ignored : undefined,
+        matched_options: matched.length ? matched : undefined,
         left_on_default: (head.edit.fields || []).filter(f => !head.specs.some(sp => sp.field === f.field && sp.tag === 'specified'))
           .map(f => ({ field: f.field, now: f.value, choices: f.choices.slice(0, 12) })),
         check: 'If the customer asked for any option listed in left_on_default (e.g. round corners, lamination, holes), call price_product AGAIN with it in options before answering.',
@@ -1431,7 +1458,13 @@ module.exports = function mountClientBot(app, deps) {
       // and the next comes after it is priced or added to the cart (rule 9b).
       if (cards.some(c => c && c.type === 'products')) return { not_shown: 'A product list is already on screen in this answer. Show one list at a time: ' +
         'say you are starting with the first product; this one comes next, after the first is priced or added to the cart.' };
-      const terms = searchTerms(String(input.query || '')).slice(0, 6);
+      const q0 = String(input.query || '');
+      // Plain printing of pages / sheets / documents (no booklet, binding or other product named) is Document
+      // Printing & Copies — its name never says "pages", so a keyword search missed it and offered menus and
+      // perfect-bound catalogs for "120 pages, double sided, no binding".
+      const plain = PLAIN_PRINT.test(q0) && !BOUND_PRODUCT.test(q0.replace(/\b(no|without|not)\s+(binding|bound|staples?|stapling)\b/ig, ' '));
+      let terms = searchTerms(q0).slice(0, 6);
+      if (plain) terms = searchTerms('document copies').concat(terms).filter((w, i, a) => a.indexOf(w) === i).slice(0, 7);
       if (!terms.length) return { results: [] };
       const cond = terms.map(w => {
         const like = deps.mysql.escape('%' + likeStem(w) + '%');
@@ -1459,6 +1492,7 @@ module.exports = function mountClientBot(app, deps) {
         const pop = (sold[r.id] || 0) > 0 ? Math.log10(sold[r.id] + 1) / Math.log10(maxSold + 1) : 0;
         r._match = Math.max(5, Math.round(Math.min(99, (covered / terms.length) * 40 + (inName / terms.length) * 30 + pop * 29)));
       });
+      if (plain) rows.forEach(r => { if (/\bdocument|\bcop(y|ies)\b/i.test((r.public_title || '') + ' ' + r.title) && !/^copy of /i.test(r.title)) r._match = Math.max(r._match, 96); });
       rows.sort((a, b) => b._match - a._match);
       const top = rows.slice(0, 6).map(r => ({
         id: r.id, name: r.public_title || r.title, link: productLink(r), about: clip(r.short_description, 160)
@@ -1829,6 +1863,7 @@ module.exports = function mountClientBot(app, deps) {
       '9a. PRICE FIRST, DO NOT ASK. Never ask a clarifying question before pricing — no "which paper?", "how many?", "one side or two?". Call price_product straight away with every option the customer stated (they show as Specified) and leave everything else on the website default (Default). No quantity given: leave quantities out and the default quantity is priced. Fields that change the price but were not stated show on the card as YELLOW dropdowns the customer picks from right there — do not ask about them; at most add a few words such as "you can pick the finish on the quote". Ask a question only when you cannot tell which product they mean, or when price_product itself says something is required. This overrides any house rule that says to confirm details before pricing.',
       '9b. SEVERAL PRODUCTS in one message (e.g. "business cards and roll up banners"): keep it short. Number them, one line each ("1) Business cards", "2) Roll up banners"), then "Starting with the business cards \u2014 which one do you need?" and call search_products for the FIRST one only (or price it straight away if the exact product is clear). Do not describe the products, list their types in a sentence or ask about quantities and specs. The next one comes after the first is priced or added to the cart. Never show product ids (#449) to the customer.',
       '9c. THE PAGE THEY ARE ON: a customer message may start with [PAGE: \u2026]. They see that product on their screen and assume you see it too. Unless they name a different product, "this", "it", "these" and questions such as "will this stick to \u2026", "is it waterproof", "what sizes", "how much for 10" are about THAT product \u2014 answer about it from the PAGE facts (product_details with its id for more; price it with price_product and its id). Do not answer about a product from earlier in the chat when the question fits the page product; if it could truly be either, answer for the page product first, then the other in one line. Practical questions get a straight answer from what the product is (a magnet holds only on steel or iron \u2014 not on plastic, aluminum, fiberglass or wood). A new [PAGE] means they moved to another product \u2014 follow them. When they ask for something else ("what banners do you have?") help with that as usual. Never say you can see their screen; say "the <product> page".',
+      '9d. EVERYTHING THEY ALREADY SAID GOES INTO THE PRICE: when you call price_product (also right after they pick a product from a list), pass every spec stated ANYWHERE in this conversation, not just in the last message \u2014 size, page count, sides, color, paper, finish, quantity. A PAGE COUNT goes in the product\u2019s pages field (Pages, Pages_Per_Set: "120"), never in quantity; quantity is how many copies, sets, booklets or pieces (one = 1). Never price a default when they told you the value. PLAIN PRINTING of pages, sheets or documents (color or black and white, single or double sided, loose / no binding, regular paper) is Document Printing & Copies \u2014 search "document copies" and price it: Pages_Per_Set = their page count, quantity = how many copies of the whole document, Printed_Sides and Print_Color as said. Suggest it first; offer a booklet or binding only if they ask for one.',
       '10. AxiomPrint also INSTALLS signs and graphics on site and DELIVERS locally in the Los Angeles area. Price those only with estimate_installation / estimate_delivery, always call the result an estimate, and never quote a rate yourself. When a product and its installation are both asked for, price the product with price_product and the installation with estimate_installation.',
       '11. Artwork templates: use get_template. The customer gets a Download button — do not send them to email for a template unless none exists.',
       '11b. What is new: when the customer asks about new, newest or latest products or recent additions, call newest_products and show them \u2014 never say there is no list of new products.',
@@ -2214,7 +2249,9 @@ module.exports = function mountClientBot(app, deps) {
         return blocks;
       };
       // The newest attachments first get the byte budget.
-      const current = userContent(text, files, true, nowNote ? [nowNote] : []);
+      // Picked from a product list: the price must carry what they said before the list (rule 9d).
+      const pickNote = /\(product #\d+\)\.?\s*$/i.test(text) ? '[They picked this from the list. Price it with every spec they gave earlier in this conversation \u2014 page count, size, sides, color, paper, quantity \u2014 not the defaults.]' : null;
+      const current = userContent(text, files, true, [nowNote, pickNote].filter(Boolean));
       const messages = [];
       let notes = [];
       past.forEach(m => {

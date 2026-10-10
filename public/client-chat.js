@@ -906,6 +906,8 @@
       // had specified, and anything that was questionable (they have now looked at it).
       const form = el.querySelector('.cc-edit');
       const options = {};
+      // What they specified that has no dropdown here (a number such as pages) stays as it was.
+      (c.specs || []).forEach(sp => { if (sp.tag === 'specified' && !form.querySelector('select[data-f="' + String(sp.field).replace(/"/g, '') + '"]')) options[sp.field] = sp.value; });
       form.querySelectorAll('select[data-f]').forEach(s => {
         if (s.value !== s.getAttribute('data-was') || /^(specified|questionable)$/.test(s.getAttribute('data-tag'))) options[s.getAttribute('data-f')] = s.value;
       });

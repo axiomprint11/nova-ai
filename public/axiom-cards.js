@@ -461,6 +461,12 @@ function buildJobCard(d) {
 }
 
 // ===== Rating buttons =====
+// Typed-in numbers on a quote (Pages Per Set: 120) by variable id, so a re-price keeps them.
+function numbersOf(state) {
+  const out = {};
+  (state && state.specs || []).forEach(sp => { if (sp && sp.isNumber && sp.variable_id && sp.source !== 'default') out[sp.variable_id] = sp.value; });
+  return Object.keys(out).length ? out : undefined;
+}
 function buildRating(messageId, current) {
   const wrap = document.createElement('div');
   wrap.className = 'rating';
@@ -800,7 +806,7 @@ function buildPriceCard(d) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
         body: JSON.stringify({
-          product_id: state.product_id, item_ids: itemIds, quantity: qty,
+          product_id: state.product_id, item_ids: itemIds, numbers: numbersOf(state), quantity: qty,
           client_id: state.client_id,
           chat_id: (typeof currentChatId !== 'undefined') ? currentChatId : undefined,
           client_name_hint: state.client_name || undefined,
@@ -1035,7 +1041,7 @@ function buildPriceCard(d) {
       client_id: state.client_id, client_name: state.client_name || null,
       product_id: state.product_id, product: state.product,
       quantity: state.quantity,
-      item_ids: itemIds,
+      item_ids: itemIds, numbers: numbersOf(state),
       width: state.width, height: state.height,
       // Sent so the server can refuse an order that drops the version detail.
       versions: state.versions || 1,
@@ -1318,6 +1324,7 @@ function buildPriceCard(d) {
             if (sp.variable_id && !sp.isQuantity && !sp.isVersionRow && sp.item_id) m[sp.variable_id] = sp.item_id;
             return m;
           }, {}),
+          numbers: numbersOf(state),
           quantity: state.quantity, versions: state.versions,
           version_names: state.version_names, version_quantities: state.version_quantities,
           width: state.width, height: state.height, client_id: state.client_id

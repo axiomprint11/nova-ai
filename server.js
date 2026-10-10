@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.14.4';
-const NOVA_BUILT = '10-09-2026 6:05pm';
+const NOVA_VERSION = '1.14.5';
+const NOVA_BUILT = '10-09-2026 6:50pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 app.use((req, res, next) => req.path.indexOf('/api/talk/hook/') === 0 ? next() : jsonBody(req, res, next));
@@ -1335,6 +1335,7 @@ async function quoteProduct(pid, opts) {
 
   // What was asked for, by name (AI) or by item id (editor)
   const requestedFor = {};
+  const requestedAlts = {};
   const unmatched = [];
   const byId = opts.itemIds || null;
   optionVars.forEach(v => {
@@ -1353,7 +1354,13 @@ async function quoteProduct(pid, opts) {
     const hit = v.items.find(i => norm(i.title) === asked) ||
                 v.items.find(i => norm(i.title).indexOf(asked) > -1) ||
                 v.items.find(i => asked.indexOf(norm(i.title)) > -1);
-    if (hit) requestedFor[v.id] = hit;
+    if (hit) {
+      requestedFor[v.id] = hit;
+      // Same title twice (Document Copies has a "Full Color" for one side and another for two, kept apart by a
+      // Related-to rule): remember every twin, so the one that fits the other choices is used.
+      const twins = v.items.filter(i => i !== hit && norm(i.title) === norm(hit.title));
+      if (twins.length) requestedAlts[v.id] = twins;
+    }
     else unmatched.push({ field: String(v.title).replace(/_/g, ' '), asked: want[key],
                           available: v.items.map(i => i.title), _fromKey: key });
   });
@@ -1506,6 +1513,8 @@ async function quoteProduct(pid, opts) {
   const pickFor = (v) => {
     const req = requestedFor[v.id];
     if (req && allowed(req)) return req;
+    const twin = (requestedAlts[v.id] || []).find(allowed);
+    if (twin) { requestedFor[v.id] = twin; return twin; }
     const ok = v.items.filter(allowed);
     const pool = ok.length ? ok : v.items;
     return pool.find(i => i.default == 1) || pool[0];
@@ -1513,6 +1522,28 @@ async function quoteProduct(pid, opts) {
 
   optionVars.forEach(v => { if (requestedFor[v.id]) chosen[v.id] = requestedFor[v.id]; });
   optionVars.forEach(v => { if (!chosen[v.id]) chosen[v.id] = pickFor(v); });
+
+  // NUMBER fields — a typed-in number, no list (Pages_Per_Set on Document Copies, a Die_Fee). The formula uses
+  // the number itself; before this they were never filled, so they priced as 0 (120 pages cost the same as none).
+  // Taken from options by name ("Pages Per Set" or just "Pages"). Not given: a count (pages, sheets, sets, copies)
+  // is 1 and flagged to confirm on the card; anything else (fees, prices) stays 0 as on the website.
+  const numberRows = [];
+  calc.variables.filter(v => v.type === 'number' && !(v.items || []).length).forEach(v => {
+    const want = opts.options || {};
+    const nt = norm(v.title);
+    const key = Object.keys(want).find(k => norm(k) === nt) ||
+                Object.keys(want).find(k => norm(k).length >= 4 && nt.indexOf(norm(k)) === 0);
+    // A card re-priced by item ids carries its numbers by variable id (opts.numbers).
+    const byNum = opts.numbers && opts.numbers[v.id] != null ? opts.numbers[v.id] : null;
+    const m = byNum != null ? String(byNum).match(/\d+(\.\d+)?/) : key != null ? String(want[key]).replace(/,/g, '').match(/\d+(\.\d+)?/) : null;
+    const given = m ? Number(m[0]) : null;
+    const isCount = /page|sheet|per_?set|copies|count/i.test(v.title);
+    if (given == null && !isCount) return;
+    const n = given != null ? given : 1;
+    chosen[v.id] = { id: null, title: String(n), value: n, base: 0, isNumber: true };
+    numberRows.push({ v: v, row: { variable_id: v.id, item_id: null, field: String(v.title).replace(/_/g, ' '), value: String(n),
+      source: given != null ? 'requested' : 'default', isNumber: true } });
+  });
   const srcOf = {};
   for (let pass = 0; pass < 5; pass++) {
     let changed = false;
@@ -1684,6 +1715,13 @@ async function quoteProduct(pid, opts) {
       source: source
     };
   }).filter(Boolean);
+  // Number fields in the spec list at their place in the product's field order.
+  numberRows.forEach(nr => {
+    if (!fieldActive(nr.v.id)) return;
+    const after = optionVars.find(o => (Number(o.order) || 0) > (Number(nr.v.order) || 0));
+    const idx = after ? used.findIndex(u => u.variable_id === after.id) : -1;
+    used.splice(idx > -1 ? idx : used.length, 0, nr.row);
+  });
 
   // Asked for, but a "Related to" rule kept it out: the field only shows with
   // another selection (Scoring needs a Cover paper), or the option needs a
@@ -1862,6 +1900,8 @@ async function quoteProduct(pid, opts) {
         });
 
         used.forEach(u => {
+          // A count typed into a number field (pages per set) that nobody gave: 1 was priced — confirm it.
+          if (u.isNumber && u.source === 'default') { open.push({ field: u.field, note: 'No ' + u.field.toLowerCase() + ' was given \u2014 1 was priced.' }); return; }
           // Specified beats clarify, always. A value the person asked for is
           // settled — flagging it says "you didn't tell me" about something they
           // did tell us, which reads as the chat not listening.
@@ -2777,6 +2817,7 @@ app.post('/api/chatbot/order-request', auth, async (req, res) => {
     // option ids on something that creates a real order.
     const q = await quoteProduct(parseInt(b.product_id), {
       itemIds: b.item_ids || {},
+      numbers: b.numbers || undefined,
       options: b.options || {},
       quantity: parseInt(b.quantity),
       width: b.width, height: b.height,
@@ -3174,7 +3215,8 @@ app.post('/api/chatbot/order-cart', auth, async (req, res) => {
         product_id: row.product_id,
         priceOpts: {
           quantity: saved.quantity || row.quantity,
-          item_ids: saved.item_ids,
+          // quoteProduct reads itemIds — item_ids alone was ignored and priced the defaults.
+          item_ids: saved.item_ids, itemIds: saved.item_ids || undefined, numbers: saved.numbers || undefined,
           versions: saved.versions,
           version_names: saved.version_names,
           version_quantities: saved.version_quantities,
@@ -3366,7 +3408,7 @@ app.post('/api/chats/:id/cart/reprice', auth, async (req, res) => {
     try {
       const q = await quoteProduct(row.product_id, {
         quantity: saved.quantity || row.quantity,
-        item_ids: saved.item_ids,
+        item_ids: saved.item_ids, itemIds: saved.item_ids || undefined, numbers: saved.numbers || undefined,
         versions: saved.versions,
         version_names: saved.version_names,
         version_quantities: saved.version_quantities,
@@ -3754,6 +3796,7 @@ app.post('/api/chatbot/reprice', auth, async (req, res) => {
     }
     const q = await quoteProduct(pid, {
       itemIds: req.body.item_ids || {},
+      numbers: req.body.numbers || undefined,
       quantity: req.body.quantity,
       version_names: req.body.version_names,
       version_quantities: req.body.version_quantities,
