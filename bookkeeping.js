@@ -1299,8 +1299,14 @@ module.exports = function mountBookkeeping(app, deps) {
     res.json({ ok: true });
   });
   app.post('/api/bookkeeping/vendors/:id', ...guard, async (req, res) => {
-    const b = req.body || {};
-    await dbRun('UPDATE bk_vendors SET approved = ?, default_category = ?, notes = ?, aliases = ?, approved_by = ?, approved_at = ? WHERE id = ?', [b.approved ? 1 : 0, String(b.default_category || '').slice(0, 80) || null, String(b.notes || '').slice(0, 500) || null, String(b.aliases || '').slice(0, 1000) || null, userId(req), nowIso(), parseInt(req.params.id)]);
+    // Partial update: only the fields sent change (the tab autosaves one field at a time).
+    const b = req.body || {}, sets = [], args = [];
+    if (b.default_category !== undefined) { sets.push('default_category = ?'); args.push(String(b.default_category || '').slice(0, 300) || null); }
+    if (b.notes !== undefined) { sets.push('notes = ?'); args.push(String(b.notes || '').slice(0, 500) || null); }
+    if (b.aliases !== undefined) { sets.push('aliases = ?'); args.push(String(b.aliases || '').slice(0, 1000) || null); }
+    if (b.approved !== undefined) { sets.push('approved = ?, approved_by = ?, approved_at = ?'); args.push(b.approved ? 1 : 0, userId(req), nowIso()); }
+    if (!sets.length) return res.json({ ok: false, error: 'Nothing to change' });
+    await dbRun('UPDATE bk_vendors SET ' + sets.join(', ') + ' WHERE id = ?', args.concat([parseInt(req.params.id)]));
     dirCache.at = 0;
     await audit(userId(req), 'vendor.update', req.params.id, b); res.json({ ok: true });
   });

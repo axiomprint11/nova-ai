@@ -82,8 +82,10 @@ city/state/zip, country, hours, list, CRM id). **Approved** = BookkeeperAI may l
 without asking (CRM entries come approved; bill-seen ones wait); **Linked** = transactions / bills matched to it so far. A bank line is linked to a directory entry (`bk_transactions.vendor_id`) when the entry's name, one of its
 bank-statement aliases, or (for bills) its email domain matches; the AI is told "OUR VENDOR: Veritiv — Paper → usually
 Paper" and gets the whole directory as context. Approving a category for a linked transaction fills the vendor's
-*usual category* (editable in the tab, with the aliases). Vendors first seen on a bill (`source` = bill) wait for
-approval in the tab's second list. Edit names, emails and specialties in the CRM, not here.
+*usual category* (editable in the tab, with the aliases). Vendors first seen on a bill (`source` = bill) sit in the same list with an
+"Approve" pill. The table autosaves: the usual category when picked (removing one asks first), bank-statement names on
+blur, Approve on click (`POST /api/bookkeeping/vendors/:id` is a partial update — only the fields sent change). Type and
+Approved filters live in the table header. Edit names, emails and specialties in the CRM, not here.
 
 ## Materials & GEO types (the CRM materials catalog)
 CRM → Products → Materials is mirrored read-only into `bk_materials` with every sync of the directory: name, `material`
