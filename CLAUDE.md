@@ -363,9 +363,9 @@ pattern for any new report over a large log table. To add a report, add an entry
   product formula never mentions (`not_in_price_formula`) — those cost nothing on the site whatever their values say.
 - **Number fields** (`product_variables.type = 'number'`, no items — Pages_Per_Set on Document Copies #362, Die_Fee…)
   are typed-in numbers the formula uses directly. `quoteProduct` fills them from `options` by name or name prefix
-  ("Pages" → Pages_Per_Set) or `numbers` {variable_id: n} (card re-prices); not given, a count (pages / sheets / set /
-  copies) is 1 and flagged to confirm, anything else 0. They show as spec rows with `isNumber`; order links and the
-  website cart payload do not carry them yet. Options with the **same title twice** (Document Copies' two "Full Color",
+  ("Pages" → Pages_Per_Set) or `numbers` {variable_id: n} (card re-prices), as whole numbers; not given, the field's
+  CRM Default (`product_variables.default_value`; a count left on it is flagged to confirm). They show as spec rows
+  with `isNumber`; Order now links carry them as raw values (`"Pages_Per_Set": 120`); the website cart payload does not yet. Options with the **same title twice** (Document Copies' two "Full Color",
   one per side count, split by a Related-to rule) resolve to the twin the other choices allow.
 - **Plain printing** of pages / sheets / documents (no booklet or other product named) is Document Printing & Copies:
   the client bot's `search_products` adds "document copies" and ranks it first (`PLAIN_PRINT` / `BOUND_PRODUCT`), and

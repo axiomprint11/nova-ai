@@ -510,7 +510,7 @@ module.exports = function mountClientBot(app, deps) {
   // The options a customer can see for a product: not hidden, not internal, and
   // only choices that are not hidden.
   async function publicOptions(pid) {
-    const vars = await runQuery('SELECT id, title, type FROM product_variables WHERE product_id = ' + parseInt(pid) +
+    const vars = await runQuery('SELECT id, title, type, default_value FROM product_variables WHERE product_id = ' + parseInt(pid) +
       ' AND internal = 0 AND hidden = 0 ORDER BY `order`');
     const items = vars.length ? await runQuery('SELECT variable_id, title, `default` FROM product_variable_item WHERE variable_id IN (' +
       vars.map(v => parseInt(v.id)).join(',') + ') AND (isHidden IS NULL OR isHidden = 0) ORDER BY variable_id, `order`') : [];
@@ -518,7 +518,10 @@ module.exports = function mountClientBot(app, deps) {
     vars.forEach(v => {
       const its = items.filter(i => i.variable_id === v.id);
       const o = { id: v.id, title: v.title, type: v.type, choices: its.map(i => i.title),
-                  default: (its.find(i => Number(i.default) === 1) || {}).title };
+                  // A typed-in number (Pages_Per_Set) has no choices: its default is the CRM's Default field.
+                  default: v.type === 'number' ? (v.default_value != null && String(v.default_value).trim() !== '' ? String(v.default_value).trim() : undefined)
+                    : (its.find(i => Number(i.default) === 1) || {}).title };
+      if (v.type === 'number') o.enter = 'a whole number (pass it in options, e.g. "' + v.title + '": "120")';
       out.vars.push(o); out.ids.add(Number(v.id));
       out.byName[String(v.title).toLowerCase().replace(/[^a-z0-9]/g, '')] = o;
     });
@@ -1558,7 +1561,7 @@ module.exports = function mountClientBot(app, deps) {
         // This product's own safe area / bleed / resolution (rule 11c): they beat the general artwork guide.
         artwork: artworkSpecs(p) || undefined,
         options: pub.vars.filter(v => v.type !== 'upload_file').map(v => ({
-          name: String(v.title).replace(/_/g, ' '), choices: v.choices.slice(0, 30), default: v.default || undefined }))
+          name: String(v.title).replace(/_/g, ' '), choices: v.choices.slice(0, 30), default: v.default || undefined, enter: v.enter }))
       };
     }
     if (name === 'price_product') {

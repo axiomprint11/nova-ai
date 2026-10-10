@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.14.5';
-const NOVA_BUILT = '10-09-2026 6:50pm';
+const NOVA_VERSION = '1.14.6';
+const NOVA_BUILT = '10-09-2026 7:05pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 app.use((req, res, next) => req.path.indexOf('/api/talk/hook/') === 0 ? next() : jsonBody(req, res, next));
@@ -1090,7 +1090,7 @@ async function loadCalc(pid) {
   // clarify_for_ai is the team's own switch: fields ticked here must never be
   // quietly defaulted — the card flags them so the value gets confirmed rather
   // than guessed. Set per product in the CRM.
-  const variables = await runQuery('SELECT id, title, type, `order`, configs, hidden, internal, hasVersions, clarify_for_ai FROM product_variables WHERE product_id = ' + pid + ' ORDER BY `order`');
+  const variables = await runQuery('SELECT id, title, type, `order`, configs, hidden, internal, hasVersions, clarify_for_ai, default_value FROM product_variables WHERE product_id = ' + pid + ' ORDER BY `order`');
   // Parse configs JSON (holds wxh flag, min/max dimensions, etc. for size variables)
   variables.forEach(v => {
     v.cfg = {};
@@ -1523,10 +1523,11 @@ async function quoteProduct(pid, opts) {
   optionVars.forEach(v => { if (requestedFor[v.id]) chosen[v.id] = requestedFor[v.id]; });
   optionVars.forEach(v => { if (!chosen[v.id]) chosen[v.id] = pickFor(v); });
 
-  // NUMBER fields — a typed-in number, no list (Pages_Per_Set on Document Copies, a Die_Fee). The formula uses
-  // the number itself; before this they were never filled, so they priced as 0 (120 pages cost the same as none).
-  // Taken from options by name ("Pages Per Set" or just "Pages"). Not given: a count (pages, sheets, sets, copies)
-  // is 1 and flagged to confirm on the card; anything else (fees, prices) stays 0 as on the website.
+  // NUMBER fields — a typed-in whole number, no list (Pages_Per_Set on Document Copies, a Die_Fee). The formula
+  // uses the number itself; before this they were never filled, so they priced as 0 (120 pages cost the same as
+  // none). Taken from options by name ("Pages Per Set" or just "Pages") and rounded to a whole number. Not given:
+  // the field's own Default from the CRM (product_variables.default_value — Pages_Per_Set is 1); a count (pages,
+  // sheets, sets, copies) left on its default is flagged on the card to confirm.
   const numberRows = [];
   calc.variables.filter(v => v.type === 'number' && !(v.items || []).length).forEach(v => {
     const want = opts.options || {};
@@ -1536,10 +1537,12 @@ async function quoteProduct(pid, opts) {
     // A card re-priced by item ids carries its numbers by variable id (opts.numbers).
     const byNum = opts.numbers && opts.numbers[v.id] != null ? opts.numbers[v.id] : null;
     const m = byNum != null ? String(byNum).match(/\d+(\.\d+)?/) : key != null ? String(want[key]).replace(/,/g, '').match(/\d+(\.\d+)?/) : null;
-    const given = m ? Number(m[0]) : null;
+    const given = m ? Math.max(0, Math.round(Number(m[0]))) : null;
     const isCount = /page|sheet|per_?set|copies|count/i.test(v.title);
-    if (given == null && !isCount) return;
-    const n = given != null ? given : 1;
+    const dv = String(v.default_value == null ? '' : v.default_value).trim();
+    const dflt = /^-?\d+(\.\d+)?$/.test(dv) ? Math.round(Number(dv)) : (isCount ? 1 : 0);
+    if (given == null && !isCount && !dflt) return;
+    const n = given != null ? given : dflt;
     chosen[v.id] = { id: null, title: String(n), value: n, base: 0, isNumber: true };
     numberRows.push({ v: v, row: { variable_id: v.id, item_id: null, field: String(v.title).replace(/_/g, ' '), value: String(n),
       source: given != null ? 'requested' : 'default', isNumber: true } });
@@ -3858,7 +3861,9 @@ async function buildOrderLink(item) {
     const v = info.vars[parseInt(sp.variable_id)];
     if (!v || v.internal) return;
     if (sp.isQuantity) { qtyTitle = v.title; qtyItem = parseInt(sp.item_id) || null; return; }
-    if (v.type === 'text' || v.type === 'number') return;      // no raw values on a quote
+    // A typed-in number goes in as the raw value (docs/NOVA_AI_URL_GENERATOR.md: text / number = raw value).
+    if (v.type === 'number') { if (sp.isNumber && /^\d+$/.test(String(sp.value))) selections[v.title] = parseInt(sp.value); return; }
+    if (v.type === 'text') return;      // no raw text on a quote
     if (!parseInt(sp.item_id)) return;
     selections[v.title] = parseInt(sp.item_id);
     if (/\(custom\)/i.test(String(sp.value || ''))) custom = true;
