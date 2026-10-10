@@ -165,8 +165,7 @@ open rows (`new` / `message`) whose Gmail id is no longer unread are set aside w
 **Confirmations** (notification + receipt), **Other**, **Not rated**, and **Set aside**; plus **Everything else** (read in Gmail). With no email selected the list takes the whole width, one line per email (`.ib-split.lines`); clicking opens the split view, × goes back. Each basket has its own action bar: "Mark all N ads / confirmations / other as read" (`POST /inbox/set-aside`, Nova
 only — Gmail is never written), "Turn all N into bills" (parses each → Bills), "Rate them now". The reading pane has
 **Turn into a bill** (or **Open in Bills →** for a draft), Mark as read, and **Move to…** (`POST /api/bookkeeping/emails/:id/kind`
-— replaces the rating with confidence 1, `message` sets status `message`). **Start fresh** (`POST /api/bookkeeping/inbox/reset`)
-deletes every `bk_emails` row with no bill (and its saved attachments), audits `gmail.reset`, then the page runs Scan now.
+— replaces the rating with confidence 1, `message` sets status `message`). `POST /api/bookkeeping/inbox/reset` (no button any more; curl it with a bookkeeper token) deletes every `bk_emails` row with no bill (and its saved attachments) and audits `gmail.reset`. People are shown as a face (`whoHtml`: member photo or initial, from `overview.people`) in notes ("moved to … by"), the Runs table and the audit log; the agent / executor / poll keep their word. No Plain text button — text is the fallback when an email has no HTML.
 The header line reads "N not read · checked <time>".
 
 ### Reading pane

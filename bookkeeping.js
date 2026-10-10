@@ -1183,7 +1183,9 @@ module.exports = function mountBookkeeping(app, deps) {
       emails: (await dbGet('SELECT COUNT(*) AS n FROM bk_emails')).n, rules: (await dbGet('SELECT COUNT(*) AS n FROM bk_rules WHERE active = 1')).n
     };
     const lastRun = await dbGet('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 1');
-    res.json({ ok: true, me: userId(req), settings: Object.assign({}, s, { chat_webhook: s.chat_webhook ? '(set)' : '' }), chart: chartOf(s), counts, brief, last_run: lastRun, running: !!running,
+    // who is who, for the page to show a face instead of an email (members: photo from the CRM, else an initial)
+    let people = []; try { people = (await dbAll('SELECT email, username, display_name, photo FROM members')).map(m => ({ email: m.email, username: m.username, name: m.display_name || m.username || m.email, photo: m.photo || null })); } catch (e) {}
+    res.json({ ok: true, me: userId(req), people, settings: Object.assign({}, s, { chat_webhook: s.chat_webhook ? '(set)' : '' }), chart: chartOf(s), counts, brief, last_run: lastRun, running: !!running,
       connections: {
         plaid: { configured: plaidReady(), env: PLAID_ENV, items },
         gmail: { inbox: INBOX, key: fs.existsSync(keyPath), last_scan: (await dbGet("SELECT at FROM bk_audit WHERE action = 'gmail.scan' ORDER BY id DESC LIMIT 1") || {}).at || null,
