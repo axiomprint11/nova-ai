@@ -132,6 +132,18 @@ value, so `querySelector('input.pick').value` reads it): a popover with search, 
 icon and color, round marks for a single choice, checkboxes + Done for `{ multi: true }` (a vendor's usual categories,
 stored "Paper; Freight & Shipping"), "+ New category…" in the footer. Transactions show "Type › Sub category".
 
+## Bills tab and vendor pairing
+Bills are cards: vendor (logo, CRM type, specialty), kind + number, dates, total, status, the AI's note, an open question,
+the line items with "Type › Sub category", Open the file, Approve / Reject (the bill's proposal). Decided bills fold under
+"n decided bills"; the inbox table sits below. A bill's vendor is paired with the directory: `matchVendor()` (name,
+alias, email domain) at parse time, then `suggestVendors()` — a word-overlap / prefix / initials / domain score over CRM
+entries — and a score ≥ 0.85 links by itself ("Pacific Office Automation" ↔ "Pacific Office Automation Inc"). Anything
+weaker shows "Not in the CRM directory — is it X or Y?" with the near matches as one-click links and "pick another" (a
+searchable picker, near matches first). `POST /api/bookkeeping/bills/:id/vendor {vendor_id, remember}` pairs it, keeps the
+bill's vendor name as an alias on the entry (so the next bill links by itself), fixes the pending proposal's `new_vendor`,
+and removes the bill-source row if nothing else points at it. `GET /api/bookkeeping/bills` returns `vendor_card`,
+`suggestions` (with scores), `proposal_status` and the open `question` per bill.
+
 ## What the agent may do (its only tools)
 `list_pending`, `approve` (by id / all / with a corrected category), `reject`, `answer_question` (records the answer; with
 a category it approves the proposal), `add_rule`, `add_category`, `run_now`, `balances`, `materials` (catalog lookup). No SQL, no vendor details, no payments.

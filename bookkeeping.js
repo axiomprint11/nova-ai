@@ -569,6 +569,35 @@ module.exports = function mountBookkeeping(app, deps) {
     if (first && first.length >= 5) { const h = list.filter(v => v._n.split(' ')[0] === first); if (h.length === 1) return h[0]; }
     return null;
   }
+  // Near matches for a bill's vendor name: scored by shared name words (less the generic ones), prefix, and the email
+  // domain; CRM entries only (a bill-source row is what we are trying to replace). [{ vendor, score }], best first.
+  const GENERIC = /^(inc|llc|co|corp|corporation|company|the|of|and|ltd|group|services|service|usa|us|international)$/;
+  const words = (t) => matNorm(t).split(' ').filter(w => w && !GENERIC.test(w));
+  async function suggestVendors(name, email, n) {
+    const list = (await directory()).filter(v => v.source && v.source !== 'bill');
+    const W = words(name), nn = W.join(' '), dom = domainOf(email);
+    const out = [];
+    list.forEach(v => {
+      const VW = words(v.name), vn = VW.join(' ');
+      let score = 0;
+      if (nn && vn) {
+        if (nn === vn) score = 1;
+        else {
+          const hit = W.filter(w => VW.indexOf(w) > -1).length;
+          score = hit ? hit / Math.max(W.length, VW.length) : 0;
+          if (vn.startsWith(nn) || nn.startsWith(vn)) score = Math.max(score, 0.85);
+          const al = (v._al || []).map(a => words(a).join(' '));
+          if (al.indexOf(nn) > -1) score = 1;
+          // initials: "POA" ~ Pacific Office Automation
+          if (!score && W.length === 1 && W[0].length >= 3 && VW.length >= 3 && VW.map(x => x[0]).join('') === W[0]) score = 0.7;
+        }
+      }
+      if (dom && !FREE_MAIL.test(dom) && v._dom && (v._dom === dom || dom.endsWith('.' + v._dom))) score = Math.max(score, 0.95);
+      if (score >= 0.3) out.push({ vendor: v, score: Math.round(score * 100) / 100 });
+    });
+    return out.sort((a, b) => b.score - a.score).slice(0, n || 5);
+  }
+  const vendorCard = (v) => v ? { id: v.id, name: v.name, kind: v.kind || (v.source === 'suppliers' ? 'supplier' : v.source === 'vendors' ? 'vendor' : v.source === 'bill' ? 'bill' : 'other'), source: v.source, photo: v.photo || null, approved: !!v.approved, specialty: v.specialty || '' } : null;
   const dirLine = async () => {
     const list = (await directory()).filter(v => v.approved);
     if (!list.length) return '';
@@ -616,6 +645,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const dup = invNo ? await dbGet('SELECT id FROM bk_bills WHERE LOWER(vendor) = LOWER(?) AND invoice_no = ? AND status <> ?', [vendor, invNo, 'rejected'])
       : await dbGet('SELECT id FROM bk_bills WHERE LOWER(vendor) = LOWER(?) AND ABS(total - ?) < 0.01 AND invoice_date = ? AND status <> ?', [vendor, Number(j.total) || 0, j.invoice_date || '', 'rejected']);
     let v = (await matchVendor(vendor, em.from_addr)) || await dbGet('SELECT * FROM bk_vendors WHERE LOWER(name) = LOWER(?)', [vendor]);
+    if (!v) { const sug = await suggestVendors(vendor, em.from_addr, 1); if (sug.length && sug[0].score >= 0.85) v = sug[0].vendor; }   // "Pacific Office Automation" ↔ "Pacific Office Automation Inc"
     if (!v) { await dbRun('INSERT INTO bk_vendors (name, approved, source) VALUES (?, 0, ?)', [vendor, 'bill']); v = await dbGet('SELECT * FROM bk_vendors WHERE LOWER(name) = LOWER(?)', [vendor]); dirCache.at = 0; }
     const main = atts[0] || null;
     const ins = await dbRun('INSERT INTO bk_bills (email_id, vendor, vendor_id, invoice_no, invoice_date, due_date, terms, subtotal, tax, total, currency, kind, duplicate_of, lines, file, file_name, status, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
@@ -1104,9 +1134,35 @@ module.exports = function mountBookkeeping(app, deps) {
     res.json({ ok: true });
   });
   app.get('/api/bookkeeping/bills', ...guard, async (req, res) => {
-    const rows = await dbAll('SELECT b.*, e.from_addr, e.subject, e.received_at FROM bk_bills b LEFT JOIN bk_emails e ON e.id = b.email_id ORDER BY b.id DESC LIMIT 200');
-    rows.forEach(r => { try { r.lines = JSON.parse(r.lines || '[]'); } catch (e) { r.lines = []; } });
+    const rows = await dbAll('SELECT b.*, e.from_addr, e.subject, e.received_at, p.status AS proposal_status, p.confidence AS proposal_confidence, p.reason AS proposal_reason FROM bk_bills b LEFT JOIN bk_emails e ON e.id = b.email_id LEFT JOIN bk_proposals p ON p.id = b.proposal_id ORDER BY b.id DESC LIMIT 200');
+    const dir = await directory();
+    for (const r of rows) {
+      try { r.lines = JSON.parse(r.lines || '[]'); } catch (e) { r.lines = []; }
+      const v = r.vendor_id ? dir.find(x => x.id === r.vendor_id) : null;
+      r.vendor_card = vendorCard(v);
+      // not linked to a CRM entry yet (none, or only the bill-source row) → near matches to pair with
+      r.suggestions = (!v || v.source === 'bill') ? (await suggestVendors(r.vendor, r.from_addr, 3)).map(x => Object.assign(vendorCard(x.vendor), { score: x.score })) : [];
+      const q = r.proposal_id ? await dbGet('SELECT id, question, answer FROM bk_questions WHERE proposal_id = ? ORDER BY id DESC LIMIT 1', [r.proposal_id]) : null;
+      r.question = q && !q.answer ? q : null;
+    }
     res.json({ ok: true, bills: rows });
+  });
+  // Pair a bill with a directory entry: { vendor_id, remember } — remember keeps the bill's vendor name as an alias so
+  // the next bill from them links by itself. A bill-source row left with nothing pointing at it is removed.
+  app.post('/api/bookkeeping/bills/:id/vendor', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), vid = parseInt(req.body && req.body.vendor_id) || null;
+    const b = await dbGet('SELECT * FROM bk_bills WHERE id = ?', [id]); if (!b) return res.json({ ok: false, error: 'No such bill' });
+    const v = vid ? await dbGet('SELECT * FROM bk_vendors WHERE id = ?', [vid]) : null; if (vid && !v) return res.json({ ok: false, error: 'No such vendor' });
+    const old = b.vendor_id;
+    await dbRun('UPDATE bk_bills SET vendor_id = ?, updated_at = datetime(\'now\') WHERE id = ?', [vid, id]);
+    if (v && req.body.remember !== false && b.vendor && normV(b.vendor) !== normV(v.name)) {
+      const al = String(v.aliases || '').split('\n').filter(Boolean); if (al.indexOf(b.vendor) < 0) { al.push(String(b.vendor).slice(0, 120)); await dbRun('UPDATE bk_vendors SET aliases = ? WHERE id = ?', [al.join('\n'), vid]); }
+    }
+    if (old && old !== vid) { const o = await dbGet('SELECT id, source FROM bk_vendors WHERE id = ?', [old]); if (o && o.source === 'bill') { const used = await dbGet('SELECT (SELECT COUNT(*) FROM bk_bills WHERE vendor_id = ?) + (SELECT COUNT(*) FROM bk_transactions WHERE vendor_id = ?) + (SELECT COUNT(*) FROM bk_materials WHERE vendor_id = ?) AS n', [old, old, old]); if (!used.n) await dbRun('DELETE FROM bk_vendors WHERE id = ?', [old]); } }
+    if (b.proposal_id && v) { const p = await dbGet('SELECT payload FROM bk_proposals WHERE id = ?', [b.proposal_id]); if (p) { let pl = {}; try { pl = JSON.parse(p.payload || '{}'); } catch (e) {} pl.new_vendor = !v.approved; pl.vendor_id = vid; await dbRun('UPDATE bk_proposals SET payload = ? WHERE id = ?', [JSON.stringify(pl), b.proposal_id]); } }
+    dirCache.at = 0; matCache.at = 0;
+    await audit(userId(req), 'bill.vendor', id, { vendor_id: vid, was: old, remember: req.body.remember !== false });
+    res.json({ ok: true, vendor: vendorCard(v) });
   });
   app.get('/api/bookkeeping/bills/:id/file', ...guard, async (req, res) => {
     const b = await dbGet('SELECT file, file_name FROM bk_bills WHERE id = ?', [parseInt(req.params.id)]);

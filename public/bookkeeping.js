@@ -262,17 +262,72 @@
     const v = $('vBills');
     if (!ov) await overview();
     const [j, e] = await Promise.all([api('/api/bookkeeping/bills'), api('/api/bookkeeping/emails')]);
-    v.innerHTML = '<div class="bk-card"><h2>Bill drafts<span class="sp"></span><button class="bk-btn" id="scanNow">Scan the inbox now</button></h2>' +
-      '<table class="bk"><thead><tr><th>#</th><th>Vendor</th><th>Invoice</th><th>Dates</th><th class="num">Total</th><th>Status</th><th></th></tr></thead><tbody>' +
-      (j.bills || []).map(b => '<tr><td>' + b.id + '</td><td>' + esc(b.vendor) + (b.duplicate_of ? '<div class="bk-tag">dup of #' + b.duplicate_of + '</div>' : '') + '</td><td>' + esc(b.invoice_no || '') + ' <span class="bk-tag">' + esc(b.kind) + '</span></td><td>' + esc(b.invoice_date || '') + (b.due_date ? '<div class="bk-muted">due ' + esc(b.due_date) + '</div>' : '') + '</td><td class="num">' + usd(b.total) + '</td><td><span class="bk-tag ' + esc(b.status) + '">' + esc(b.status) + '</span>' + (b.note ? '<div class="bk-muted">' + esc(b.note) + '</div>' : '') + '</td><td>' + (b.file ? '<a href="#" data-file="' + b.id + '">file</a>' : '') + '</td></tr>' +
-        (b.lines.length ? '<tr><td></td><td colspan="6"><div class="bk-lines">' + b.lines.map(l => '<div><span>' + esc(l.description) + '</span><span>' + esc(l.category || '') + '</span><span>' + usd(l.amount) + '</span></div>').join('') + '</div></td></tr>' : '')).join('') + '</tbody></table>' +
-      (!(j.bills || []).length ? '<div class="bk-muted" style="padding:14px 0">No bill drafts yet.</div>' : '') + '</div>' +
-      '<div class="bk-card"><h2>Inbox — ' + esc(ov ? ov.connections.gmail.inbox : '') + '</h2><table class="bk"><thead><tr><th>Received</th><th>From</th><th>Subject</th><th>Attachments</th><th>Status</th><th></th></tr></thead><tbody>' +
-      (e.emails || []).map(m => '<tr><td>' + when(m.received_at) + '</td><td>' + esc(m.from_addr) + '</td><td>' + esc(m.subject) + '<div class="bk-muted">' + esc(m.snippet) + '</div></td><td>' + m.attachments.map(a => esc(a.name)).join('<br>') + '</td><td><span class="bk-tag ' + esc(m.status) + '">' + esc(m.status) + '</span>' + (m.note ? '<div class="bk-muted">' + esc(m.note) + '</div>' : '') + '</td><td>' + (m.status !== 'parsed' ? '<button class="bk-btn sm" data-parse="' + m.id + '">Read as a bill</button>' : '') + '</td></tr>').join('') + '</tbody></table>' +
+    const KIND = { invoice: 'Invoice', credit_memo: 'Credit memo', statement: 'Statement' };
+    const vlogo = (c) => c && c.photo ? '<img class="bk-logo bk-vl" src="' + esc(c.photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;bk-logo bk-vl ph&quot;>' + esc(String(c.name || '?').charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo bk-vl ph' + (c ? '' : ' none') + '">' + esc(c ? String(c.name).charAt(0).toUpperCase() : '?') + '</span>';
+    const kindTag = (k) => k ? '<span class="bk-src ' + esc(k) + '">' + esc(k === 'bill' ? 'from a bill' : k) + '</span>' : '';
+    const vendorBlock = (b) => {
+      const c = b.vendor_card, linked = c && c.kind !== 'bill';
+      return '<div class="bl-vendor">' + vlogo(linked ? c : null) + '<div class="bl-vname"><b>' + esc(b.vendor) + '</b>' +
+        (linked ? '<div class="bk-dim">' + kindTag(c.kind) + (c.name !== b.vendor ? ' ' + esc(c.name) : '') + (c.specialty ? ' · ' + esc(c.specialty) : '') + ' · <a href="#" data-link="' + b.id + '">change</a></div>'
+          : '<div class="bl-unlinked">Not in the CRM directory' + (b.suggestions.length ? ' — is it ' + b.suggestions.map(sg => '<a href="#" class="bl-sug" data-pair="' + b.id + '" data-vid="' + sg.id + '" title="' + Math.round(sg.score * 100) + '% match">' + esc(sg.name) + '</a>').join(' or ') + '?' : '') + ' <a href="#" data-link="' + b.id + '">' + (b.suggestions.length ? 'pick another' : 'link to a vendor') + '</a></div>') + '</div></div>';
+    };
+    const billCard = (b) => {
+      const tot = b.lines.reduce((a, l) => a + (Number(l.amount) || 0), 0);
+      const pend = b.proposal_status === 'pending';
+      return '<div class="bl-card' + (b.status === 'rejected' ? ' off' : '') + '" data-bill="' + b.id + '"><div class="bl-head">' + vendorBlock(b) +
+        '<div class="bl-meta"><div><span class="bk-tag">' + esc(KIND[b.kind] || b.kind) + '</span> ' + (b.invoice_no ? '<b>#' + esc(b.invoice_no) + '</b>' : '<span class="bk-dim">no number</span>') + (b.duplicate_of ? ' <span class="bk-tag rejected">possible duplicate of #' + b.duplicate_of + '</span>' : '') + '</div>' +
+          '<div class="bk-muted">' + (b.invoice_date ? 'Dated ' + esc(b.invoice_date) : '') + (b.due_date ? ' · due <b>' + esc(b.due_date) + '</b>' : '') + (b.terms ? ' · ' + esc(b.terms) : '') + (b.received_at ? ' · received ' + when(b.received_at) : '') + '</div></div>' +
+        '<div class="bl-total"><b>' + usd(b.total) + '</b><span class="bk-tag ' + esc(b.status) + '">' + esc(b.status) + '</span></div></div>' +
+        (b.note || b.proposal_reason ? '<div class="bl-note">' + esc(b.note || b.proposal_reason) + '</div>' : '') +
+        (b.question ? '<div class="bl-q">' + esc(b.question.question) + ' <span class="bk-dim">— answer it in the Daily Brief</span></div>' : '') +
+        (b.lines.length ? '<table class="bk bl-lines"><tbody>' + b.lines.map(l => '<tr><td>' + esc(l.description || '') + (l.qty && l.unit_price ? ' <span class="bk-dim">' + esc(l.qty) + ' × ' + usd(l.unit_price) + '</span>' : '') + '</td><td class="bk-muted">' + catLabel(l.category || '') + '</td><td class="num">' + usd(l.amount) + '</td></tr>').join('') +
+          (b.subtotal != null || b.tax ? '<tr class="sum"><td></td><td class="bk-muted">' + (b.subtotal != null ? 'Subtotal ' + usd(b.subtotal) : '') + (b.tax ? ' · tax ' + usd(b.tax) : '') + '</td><td class="num">' + usd(b.total) + '</td></tr>' : (Math.abs(tot - b.total) > 0.01 && tot ? '<tr class="sum"><td></td><td class="bk-dim">lines add up to ' + usd(tot) + '</td><td></td></tr>' : '')) + '</tbody></table>' : '') +
+        '<div class="bl-acts">' + (b.file ? '<a href="#" class="bk-btn sm" data-file="' + b.id + '">Open the file</a>' : '') + (b.subject ? '<span class="bk-dim bl-subj" title="' + esc(b.from_addr || '') + '">✉ ' + esc(b.subject) + '</span>' : '') + '<span class="sp"></span>' +
+          (pend ? '<button class="bk-btn sm ok" data-bapprove="' + b.proposal_id + '">Approve</button><button class="bk-btn sm bad" data-breject="' + b.proposal_id + '">Reject</button>' : '') + '</div></div>';
+    };
+    const bills = j.bills || [], open = bills.filter(b => b.status === 'draft'), done = bills.filter(b => b.status !== 'draft');
+    v.innerHTML = '<div class="bk-card"><h2>Bills<span class="sp"></span><span class="bk-muted">' + open.length + ' draft' + (open.length === 1 ? '' : 's') + (done.length ? ' · ' + done.length + ' decided' : '') + '</span><button class="bk-btn" id="scanNow">Scan the inbox now</button></h2>' +
+      '<div class="bk-muted" style="margin-bottom:10px">Bills BookkeeperAI read from ' + esc(ov ? ov.connections.gmail.inbox : 'the inbox') + '. Each one is paired with a CRM supplier or vendor — when the name is not an exact match, pick the right one once and the next bill from them links by itself.</div>' +
+      (open.length ? open.map(billCard).join('') : '<div class="bk-muted" style="padding:10px 0">No bill drafts waiting.</div>') +
+      (done.length ? '<details class="bl-done"><summary>' + done.length + ' decided bill' + (done.length === 1 ? '' : 's') + '</summary>' + done.map(billCard).join('') + '</details>' : '') + '</div>' +
+      '<div class="bk-card"><h2>Inbox — ' + esc(ov ? ov.connections.gmail.inbox : '') + '<span class="sp"></span><span class="bk-muted">' + (e.emails || []).length + ' recent emails</span></h2><table class="bk bl-inbox"><thead><tr><th>Received</th><th>From</th><th>Subject</th><th>Files</th><th>What NovaAI made of it</th><th></th></tr></thead><tbody>' +
+      (e.emails || []).map(m => '<tr><td class="bk-muted nowrap">' + when(m.received_at) + '</td><td class="bk-muted">' + esc(String(m.from_addr || '').replace(/<.*>/, '').trim() || m.from_addr) + '</td><td><div class="bl-subject">' + esc(m.subject) + '</div><div class="bk-dim bl-snip">' + esc(m.snippet) + '</div></td><td class="bk-muted">' + (m.attachments.length ? m.attachments.map(a => esc(a.name)).join('<br>') : '') + '</td><td><span class="bk-tag ' + esc(m.status) + '">' + esc(m.status) + '</span>' + (m.note ? ' <span class="bk-muted">' + esc(m.note) + '</span>' : '') + '</td><td>' + (m.status !== 'parsed' ? '<button class="bk-btn sm" data-parse="' + m.id + '">Read as a bill</button>' : '') + '</td></tr>').join('') + '</tbody></table>' +
       (!(e.emails || []).length ? '<div class="bk-muted" style="padding:14px 0">Nothing scanned yet.</div>' : '') + '</div>';
     $('scanNow').onclick = async () => { $('scanNow').disabled = true; const r = await post('/api/bookkeeping/scan', {}); if (!r.ok) alert(r.error); loadBills(); overview(); };
     v.querySelectorAll('[data-file]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); openFile(a.dataset.file); });
     v.querySelectorAll('[data-parse]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/emails/' + b.dataset.parse + '/parse', {}); if (!r.ok) alert(r.error); loadBills(); overview(); });
+    v.querySelectorAll('[data-bapprove]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/proposals/' + b.dataset.bapprove + '/decide', { action: 'approve', approve_vendor: true }); if (!r.ok) alert(r.error); loadBills(); overview(); });
+    v.querySelectorAll('[data-breject]').forEach(b => b.onclick = async () => { const note = prompt('Why? (optional)'); if (note === null) return; b.disabled = true; await post('/api/bookkeeping/proposals/' + b.dataset.breject + '/decide', { action: 'reject', note }); loadBills(); overview(); });
+    const pair = async (billId, vid) => { const r = await post('/api/bookkeeping/bills/' + billId + '/vendor', { vendor_id: vid, remember: true }); if (!r.ok) alert(r.error); loadBills(); };
+    v.querySelectorAll('[data-pair]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); pair(a.dataset.pair, a.dataset.vid); });
+    v.querySelectorAll('[data-link]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); const b = bills.find(x => String(x.id) === a.dataset.link); vendorPicker(a, b, (vid) => pair(b.id, vid)); });
+  }
+  // Pick a directory entry for a bill: near matches first, then search the whole directory.
+  async function vendorPicker(anchor, bill, onPick) {
+    document.querySelectorAll('.ckp-pop').forEach(p => p.remove());
+    const j = await api('/api/bookkeeping/directory?fresh=0');
+    const all = (j.vendors || []).filter(x => x.kind !== 'bill');
+    const pop = document.createElement('div'); pop.className = 'ckp-pop single';
+    pop.addEventListener('click', (e) => e.stopPropagation());
+    pop.innerHTML = '<div class="ckp-search"><input type="text" placeholder="Search suppliers and vendors…"></div><div class="ckp-list"></div><div class="ckp-foot"><span class="bk-muted">Linking “' + esc(bill.vendor) + '” remembers the name for next time.</span></div>';
+    document.body.appendChild(pop);
+    const r = anchor.getBoundingClientRect(), W = Math.min(380, window.innerWidth - 16);
+    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) + 'px'; pop.style.width = W + 'px';
+    const below = window.innerHeight - r.bottom - 8; if (below >= 320) { pop.style.top = (r.bottom + 4) + 'px'; pop.style.maxHeight = Math.min(440, below) + 'px'; } else { pop.style.bottom = (window.innerHeight - r.top + 4) + 'px'; pop.style.maxHeight = Math.min(440, r.top - 8) + 'px'; }
+    const list = pop.querySelector('.ckp-list'), q = pop.querySelector('input');
+    const row = (x, extra) => '<div class="ckp-i vp" data-v="' + x.id + '">' + (x.photo ? '<img class="bk-logo vp-logo" src="' + esc(x.photo) + '" alt="">' : '<span class="bk-logo vp-logo ph">' + esc(String(x.name).charAt(0).toUpperCase()) + '</span>') + '<span class="vp-n"><b>' + esc(x.name) + '</b><small>' + esc([x.kind, x.specialty].filter(Boolean).join(' · ')) + '</small></span>' + (extra || '') + '</div>';
+    const draw = () => {
+      const f = q.value.trim().toLowerCase(); let html = '';
+      if (!f && bill.suggestions.length) html += '<div class="ckp-g"><div class="ckp-gh">Near matches</div>' + bill.suggestions.map(sg => row(sg, '<span class="bk-dim">' + Math.round(sg.score * 100) + '%</span>')).join('') + '</div>';
+      const rest = all.filter(x => !f || (x.name + ' ' + (x.specialty || '') + ' ' + (x.aliases || '')).toLowerCase().indexOf(f) > -1).slice(0, 60);
+      html += '<div class="ckp-g"><div class="ckp-gh">' + (f ? 'Matches' : 'All suppliers and vendors') + '<small>' + rest.length + '</small></div>' + rest.map(x => row(x)).join('') + '</div>';
+      list.innerHTML = html;
+    };
+    draw(); setTimeout(() => q.focus(), 0); q.oninput = draw;
+    list.onclick = (e) => { const it = e.target.closest('.ckp-i'); if (!it) return; onPick(Number(it.dataset.v)); close(); };
+    const close = () => { pop.remove(); document.removeEventListener('click', away); document.removeEventListener('keydown', esc1); };
+    const away = (e) => { if (!pop.contains(e.target)) close(); }, esc1 = (e) => { if (e.key === 'Escape') close(); };
+    setTimeout(() => { document.addEventListener('click', away); document.addEventListener('keydown', esc1); }, 0);
   }
 
   // ---------------------------------------------------------------- Rules
