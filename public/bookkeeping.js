@@ -48,6 +48,29 @@
     else { rs.className = 'bk-pill off'; rs.textContent = 'Not run yet'; }
     return ov;
   }
+  // ---------------------------------------------------------------- "?" help: hover = tooltip, click = popup
+  const HELP = {};
+  const qHelp = (key, title, html) => { HELP[key] = { title, html }; return '<button type="button" class="bk-q" data-help="' + esc(key) + '">?</button>'; };
+  let tipEl = null;
+  document.addEventListener('mouseover', (e) => {
+    const b = e.target.closest && e.target.closest('[data-help]'); if (!b || tipEl) return;
+    const h = HELP[b.dataset.help]; if (!h) return;
+    tipEl = document.createElement('div'); tipEl.className = 'bk-tip'; tipEl.innerHTML = h.html; document.body.appendChild(tipEl);
+    const r = b.getBoundingClientRect(), W = Math.min(420, window.innerWidth - 16);
+    tipEl.style.width = W + 'px'; tipEl.style.left = Math.max(8, Math.min(r.left - 8, window.innerWidth - W - 8)) + 'px'; tipEl.style.top = (r.bottom + 8) + 'px';
+    const off = () => { if (tipEl) { tipEl.remove(); tipEl = null; } b.removeEventListener('mouseleave', off); };
+    b.addEventListener('mouseleave', off);
+  });
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('[data-help]'); if (!b) return;
+    const h = HELP[b.dataset.help]; if (!h) return;
+    if (tipEl) { tipEl.remove(); tipEl = null; }
+    const el = document.createElement('div'); el.className = 'bk-help on';
+    el.innerHTML = '<div class="bk-help-box"><b>' + esc(h.title) + '</b><span class="bk-x" title="Close">✕</span><p>' + h.html + '</p></div>';
+    el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) el.remove(); };
+    document.body.appendChild(el);
+  });
+
   // ---------------------------------------------------------------- category picker
   // catSelect(cur, cls, blank, { multi }) draws a picker: a button with the choice (chips when multi) + a hidden input
   // carrying the value (`cls` on both the wrapper and the input, so `root.querySelector('.cls').value` still works; several
@@ -286,8 +309,7 @@
           (pend ? '<button class="bk-btn sm ok" data-bapprove="' + b.proposal_id + '">Approve</button><button class="bk-btn sm bad" data-breject="' + b.proposal_id + '">Reject</button>' : '') + '</div></div>';
     };
     const bills = j.bills || [], open = bills.filter(b => b.status === 'draft'), done = bills.filter(b => b.status !== 'draft');
-    v.innerHTML = '<div class="bk-card"><h2>Bills<span class="sp"></span><span class="bk-muted">' + open.length + ' draft' + (open.length === 1 ? '' : 's') + (done.length ? ' · ' + done.length + ' decided' : '') + '</span><button class="bk-btn" id="scanNow">Scan the inbox now</button></h2>' +
-      '<div class="bk-muted" style="margin-bottom:10px">Bills BookkeeperAI read from ' + esc(ov ? ov.connections.gmail.inbox : 'the inbox') + '. Each one is paired with a CRM supplier or vendor — when the name is not an exact match, pick the right one once and the next bill from them links by itself.</div>' +
+    v.innerHTML = '<div class="bk-card"><h2>Bills ' + qHelp('bills', 'Bills', 'Bills BookkeeperAI read from ' + esc(ov ? ov.connections.gmail.inbox : 'the inbox') + '. Each one is paired with a CRM supplier or vendor — when the name is not an exact match, pick the right one once and the next bill from them links by itself.') + '<span class="sp"></span><span class="bk-muted">' + open.length + ' draft' + (open.length === 1 ? '' : 's') + (done.length ? ' · ' + done.length + ' decided' : '') + '</span><button class="bk-btn" id="scanNow">Scan the inbox now</button></h2>' +
       (open.length ? open.map(billCard).join('') : '<div class="bk-muted" style="padding:10px 0">No bill drafts waiting.</div>') +
       (done.length ? '<details class="bl-done"><summary>' + done.length + ' decided bill' + (done.length === 1 ? '' : 's') + '</summary>' + done.map(billCard).join('') + '</details>' : '') + '</div>' +
       '<div class="bk-card"><h2>Inbox — ' + esc(ov ? ov.connections.gmail.inbox : '') + '<span class="sp"></span><span class="bk-muted">' + (e.emails || []).length + ' recent emails</span></h2><table class="bk bl-inbox"><thead><tr><th>Received</th><th>From</th><th>Subject</th><th>Files</th><th>What NovaAI made of it</th><th></th></tr></thead><tbody>' +
@@ -432,8 +454,7 @@
     if (!ov) await overview();
     const j = await api('/api/bookkeeping/chart');
     coa = j.tree || []; coaUsage = j.usage || {}; if (coaSel >= coa.length) coaSel = 0;
-    v.innerHTML = '<div class="bk-card" style="margin-bottom:14px"><h2>Chart of Accounts<span class="sp"></span><span class="coa-status" id="coaStatus"></span></h2>' +
-      '<div class="bk-muted">Every transaction and bill line gets a <b>sub category</b>; sub categories are grouped under a <b>type of expense</b> with its color and icon, so reports can roll up by type. Changes save as you make them. Renaming follows the name everywhere it is used; a sub category in use cannot be deleted — rename it instead.</div></div>' +
+    v.innerHTML = '<div class="bk-card" style="margin-bottom:14px"><h2>Chart of Accounts ' + qHelp('chart', 'Chart of Accounts', 'Every transaction and bill line gets a <b>sub category</b>; sub categories are grouped under a <b>type of expense</b> with its color and icon, so reports can roll up by type. Changes save as you make them. Renaming follows the name everywhere it is used; a sub category in use cannot be deleted — rename it instead.') + '<span class="sp"></span><span class="coa-status" id="coaStatus"></span></h2></div>' +
       '<div class="coa"><div class="coa-list" id="coaList"></div><div class="coa-edit" id="coaEdit"></div></div>';
     drawChart();
   }
@@ -546,8 +567,8 @@
       document.body.appendChild(el);
     };
     const unapproved = all.filter(x => !x.approved).length;
-    v.innerHTML = '<div class="bk-card"><h2>Vendors &amp; suppliers <button class="bk-q" id="vendorsQ" title="What is this list?">?</button><span class="sp"></span><span class="bk-muted">' + (j.synced_at ? 'synced ' + when(j.synced_at) : 'not synced yet') + (j.sync_error ? ' · <span style="color:#b91c1c">' + esc(j.sync_error) + '</span>' : '') + '</span><button class="bk-btn" id="dirSync"' + (j.crm ? '' : ' disabled') + '>Refresh from CRM</button></h2>' +
-      '<div class="bk-help" id="vendorsHelp"><div class="bk-help-box"><b>Vendors &amp; suppliers</b><span class="bk-x" title="Close">✕</span><p>Read from the CRM’s Suppliers and Vendors lists (read-only, refreshed with every daily run); the photo is the CRM’s. They are trusted: a bank line or bill that matches one is linked to it, and BookkeeperAI uses the specialty and the usual category when it proposes. The type is the CRM list the company is in (Supplier, Vendor — new lists appear as new types). Edit names, emails and specialties in the CRM; set the usual category and the bank-statement names here; click a name or logo for the full record. The list refreshes by itself: when you open this tab, hourly, and with every daily run. <b>Approved</b> means BookkeeperAI may link bank lines and bills to the company without asking (CRM entries are approved by themselves); <b>Linked</b> counts the transactions and bills matched to it so far. Vendors first seen on a bill are <span class="bk-src bill">from a bill</span> and wait for your approval.</p></div></div>' + (unapproved ? '<div class="bk-muted" style="margin-bottom:8px">' + unapproved + ' vendor' + (unapproved === 1 ? '' : 's') + ' first seen on a bill ' + (unapproved === 1 ? 'is' : 'are') + ' waiting for your approval.</div>' : '') +
+    v.innerHTML = '<div class="bk-card"><h2>Vendors &amp; suppliers ' + qHelp('vendors', 'Vendors & suppliers', 'Read from the CRM’s Suppliers and Vendors lists (read-only, refreshed with every daily run); the photo is the CRM’s. They are trusted: a bank line or bill that matches one is linked to it, and BookkeeperAI uses the specialty and the usual category when it proposes. The type is the CRM list the company is in (Supplier, Vendor — new lists appear as new types). Edit names, emails and specialties in the CRM; set the usual category and the bank-statement names here; click a name or logo for the full record. The list refreshes by itself: when you open this tab, hourly, and with every daily run. <b>Approved</b> means BookkeeperAI may link bank lines and bills to the company without asking (CRM entries are approved by themselves); <b>Linked</b> counts the transactions and bills matched to it so far. Vendors first seen on a bill are <span class="bk-src bill">from a bill</span> and wait for your approval.') + '<span class="sp"></span><span class="bk-muted">' + (j.synced_at ? 'synced ' + when(j.synced_at) : 'not synced yet') + (j.sync_error ? ' · <span style="color:#b91c1c">' + esc(j.sync_error) + '</span>' : '') + '</span><button class="bk-btn" id="dirSync"' + (j.crm ? '' : ' disabled') + '>Refresh from CRM</button></h2>' +
+      (unapproved ? '<div class="bk-muted" style="margin-bottom:8px">' + unapproved + ' vendor' + (unapproved === 1 ? '' : 's') + ' first seen on a bill ' + (unapproved === 1 ? 'is' : 'are') + ' waiting for your approval.</div>' : '') +
       '<div class="bk-filters"><select id="vKind"><option value="">All types (' + all.length + ')</option>' + kinds.filter(k => counts[k]).map(k => '<option value="' + esc(k) + '"' + (kindF === k ? ' selected' : '') + '>' + esc(label(k)) + ' (' + counts[k] + ')</option>').join('') + '</select>' +
       '<select id="vAppr"><option value="">Approved and waiting</option><option value="0">Waiting for approval' + (unapproved ? ' (' + unapproved + ')' : '') + '</option><option value="1">Approved</option></select><input name="q" id="vQ" placeholder="Search name, contact, email, specialty…"></div>' +
       (all.length ? '<table class="bk bk-dir"><thead><tr><th></th><th>Type</th><th>Name</th><th>Contact</th><th>Specialty</th><th>Usual category</th><th>On the bank statement as</th><th class="c" title="BookkeeperAI may link bank lines and bills to an approved company without asking">Approved</th><th class="num" title="Bank transactions and bills linked to this company">Linked</th><th></th></tr></thead><tbody>' + all.map(row).join('') + '</tbody></table><div class="bk-muted" id="vNone" style="display:none;padding:14px 0">Nothing matches.</div>'
@@ -561,8 +582,6 @@
     ['vKind', 'vAppr'].forEach(id => $(id).onchange = filter); $('vQ').oninput = filter; filter();
     v.querySelectorAll('[data-vopen]').forEach(a => a.onclick = (e) => { e.preventDefault(); const x = all.find(y => String(y.id) === a.dataset.vopen); if (x) openVendor(x); });
     v.querySelectorAll('[data-mats]').forEach(a => a.onclick = (e) => { e.preventDefault(); matFilter = { vendor: a.dataset.mats }; show('materials'); });
-    $('vendorsQ').onclick = () => $('vendorsHelp').classList.add('on');
-    $('vendorsHelp').onclick = (e) => { if (e.target === $('vendorsHelp') || e.target.classList.contains('bk-x')) $('vendorsHelp').classList.remove('on'); };
     $('dirSync').onclick = async () => { $('dirSync').disabled = true; const r = await post('/api/bookkeeping/directory/sync', {}); if (!r.ok) alert(r.error); else if (r.errors && r.errors.length) alert(r.errors.join('\n')); loadVendors(); };
     v.querySelectorAll('[data-vsave]').forEach(b => b.onclick = async () => {
       const tr = b.closest('tr'); b.disabled = true;
