@@ -85,7 +85,7 @@ module.exports = function mountBookkeeping(app, deps) {
       duplicate_of INTEGER, lines TEXT, file TEXT, file_name TEXT, status TEXT DEFAULT 'draft', proposal_id INTEGER, note TEXT,
       created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
     ['scheduled_for TEXT', 'paid_at TEXT', 'paid_note TEXT'].forEach(c => db.run('ALTER TABLE bk_bills ADD COLUMN ' + c, () => {}));
-    ['kind TEXT', 'confidence REAL', 'triaged_at TEXT', 'read_by TEXT'].forEach(c => db.run('ALTER TABLE bk_emails ADD COLUMN ' + c, () => {}));
+    ['kind TEXT', 'confidence REAL', 'triaged_at TEXT', 'read_by TEXT', 'body_html TEXT'].forEach(c => db.run('ALTER TABLE bk_emails ADD COLUMN ' + c, () => {}));
     db.run(`CREATE TABLE IF NOT EXISTS bk_proposals (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, ref_table TEXT, ref_id INTEGER, title TEXT,
       payload TEXT, confidence REAL, reason TEXT, status TEXT DEFAULT 'pending', decided_by TEXT, decided_at TEXT, decision TEXT,
       created_at TEXT DEFAULT (datetime('now')))`);
@@ -390,6 +390,12 @@ module.exports = function mountBookkeeping(app, deps) {
   }
   const b64url = (s) => Buffer.from(String(s || '').replace(/-/g, '+').replace(/_/g, '/'), 'base64');
   function partsOf(payload) { const out = []; (function walk(p) { if (!p) return; out.push(p); (p.parts || []).forEach(walk); })(payload); return out; }
+  // The HTML part, cleaned for the reading pane (scripts, forms and event handlers out; images and links stay).
+  function emailHtml(payload) {
+    const html = partsOf(payload).find(p => p.mimeType === 'text/html' && p.body && p.body.data);
+    if (!html) return null;
+    return b64url(html.body.data).toString('utf8').replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<(iframe|object|embed|form|input|button)[\s\S]*?(<\/\1>|>)/gi, '').replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '').slice(0, 400000);
+  }
   function emailText(payload) {
     const parts = partsOf(payload);
     const plain = parts.find(p => p.mimeType === 'text/plain' && p.body && p.body.data);
@@ -433,8 +439,8 @@ module.exports = function mountBookkeeping(app, deps) {
         }
         // Our own mail (the team writing to a vendor) is not a bill.
         const ours = /@axiomprint\.com/i.test(from);
-        await dbRun('INSERT OR IGNORE INTO bk_emails (gmail_id, thread_id, from_addr, subject, received_at, snippet, body, attachments, status) VALUES (?,?,?,?,?,?,?,?,?)',
-          [id, m.threadId, from.slice(0, 200), subject.slice(0, 300), at, (m.snippet || '').slice(0, 300), emailText(m.payload), JSON.stringify(atts), ours ? 'skipped' : 'new']);
+        await dbRun('INSERT OR IGNORE INTO bk_emails (gmail_id, thread_id, from_addr, subject, received_at, snippet, body, body_html, attachments, status) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          [id, m.threadId, from.slice(0, 200), subject.slice(0, 300), at, (m.snippet || '').slice(0, 300), emailText(m.payload), emailHtml(m.payload), JSON.stringify(atts), ours ? 'skipped' : 'new']);
         n++;
       } catch (e) { errlog('gmail message', id, e.message); }
     }
@@ -1266,6 +1272,9 @@ module.exports = function mountBookkeeping(app, deps) {
     const m = await dbGet('SELECT * FROM bk_emails WHERE id = ?', [parseInt(req.params.id)]); if (!m) return res.json({ ok: false, error: 'No such email' });
     try { m.attachments = JSON.parse(m.attachments || '[]'); } catch (e) { m.attachments = []; }
     m.attachments = m.attachments.map((a, i) => ({ i, name: a.name, mime: a.mime, size: a.size, kind: /\.pdf$/i.test(a.file || '') || /pdf/.test(a.mime || '') ? 'pdf' : 'image' }));
+    if (!m.body_html && m.gmail_id && google && fs.existsSync(keyPath)) {   // rows scanned before 1.18.7: fetch the HTML once
+      try { const g = gmail(); const full = (await g.users.messages.get({ userId: 'me', id: m.gmail_id, format: 'full' })).data; const h = emailHtml(full.payload); if (h) { await dbRun('UPDATE bk_emails SET body_html = ? WHERE id = ?', [h, m.id]); m.body_html = h; } } catch (e) { errlog('email html', e.message); }
+    }
     const bill = await dbGet('SELECT id, status FROM bk_bills WHERE email_id = ? ORDER BY id DESC LIMIT 1', [m.id]);
     res.json({ ok: true, email: m, bill: bill || null, inbox: INBOX });
   });

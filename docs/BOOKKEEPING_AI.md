@@ -160,8 +160,10 @@ All set aside; "Mark as read" by hand sets `read_by = 'user'`. The daily run's s
 messages kept; the overview has `inbox_messages` and `ai_read_today`.
 
 ### Reading pane
-A click on an inbox row opens the email the way Gmail shows it: subject, sender (name + address, "to accounting@"), date,
-the rating / verdict line (and the bill it became), the full text (`bk_emails.body`), attachment cards (image thumbnails,
+The Inbox is a split view: the list on the left (two-line rows: sender + time, subject, snippet + kind tag + attachments),
+the selected email on the right. The pane shows the email the way Gmail shows it: subject, sender (name + address, "to accounting@"), date,
+the rating / verdict line (and the bill it became), the HTML body in a sandboxed iframe (`bk_emails.body_html`, scripts / forms / handlers stripped by `emailHtml()`; rows
+scanned before 1.18.7 fetch it once on open; "Plain text" falls back to `body`), attachment cards (image thumbnails,
 PDF icon) that open a viewer (PDF in a frame, image as is, Download / Open in a tab), and Read it as a bill / Mark as read.
 `GET /api/bookkeeping/emails/:id` (full record + `bill`), `GET /api/bookkeeping/emails/:id/att/:i` (the file, inline).
 Transactions has All / New / Pending / Categorized chips with counts (`by_status` in the response) and the tab badge counts

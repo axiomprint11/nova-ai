@@ -287,7 +287,7 @@
   }
 
   // ---------------------------------------------------------------- Transactions
-  let txnSt = ''; try { txnSt = localStorage.getItem('bk_txn_st') || ''; } catch (e) {}
+  let txnSt = 'pending'; try { txnSt = localStorage.getItem('bk_txn_st') ?? 'pending'; } catch (e) {}
   async function loadTxns() {
     const v = $('vTxns');
     if (!ov) await overview();
@@ -295,18 +295,20 @@
     const j = await api('/api/bookkeeping/transactions?status=' + encodeURIComponent(st) + '&q=' + encodeURIComponent(q));
     const bs = j.by_status || {}, total = Object.values(bs).reduce((a, b) => a + b, 0);
     const chip = (k, l) => '<button class="ib-chip' + (st === k ? ' on' : '') + '" data-st="' + k + '">' + l + ' (' + (k ? (bs[k] || 0) : total) + ')</button>';
-    v.innerHTML = '<div class="bk-card"><div class="bk-filters" style="align-items:center">' + chip('', 'All') + chip('new', 'New') + chip('pending', 'Pending') + chip('categorized', 'Categorized') + '<input name="q" placeholder="Search name, vendor or category" value="' + esc(q) + '" style="margin-left:8px"><span class="sp"></span><button class="bk-btn" id="syncNow">Sync banks now</button></div>' +
-      '<table class="bk"><thead><tr><th>Date</th><th>Description</th><th>Account</th><th class="num">Amount</th><th>Category</th><th></th></tr></thead><tbody>' +
+    v.innerHTML = '<div class="bk-card"><div class="bk-filters" style="align-items:center">' + chip('', 'All') + chip('pending', 'Pending') + chip('new', 'New') + chip('categorized', 'Categorized') + '<input name="q" placeholder="Search name, vendor or category" value="' + esc(q) + '" style="margin-left:8px"><span class="sp"></span><button class="bk-btn" id="syncNow">Sync banks now</button></div>' +
+      '<table class="bk"><thead><tr><th>Date</th><th>Description</th><th>Account</th><th class="num">Amount</th><th>Category <span class="bk-dim" style="font-weight:500">pick to set</span></th></tr></thead><tbody>' +
       (j.transactions || []).map(t => '<tr><td>' + esc(t.date) + (t.pending ? ' <span class="bk-tag">pending</span>' : '') + '</td><td>' + esc(t.merchant || t.name) + (t.merchant && t.merchant !== t.name ? '<div class="bk-muted">' + esc(t.name) + '</div>' : '') +
         (t.vendor_name ? '<div><span class="bk-src ' + esc(t.vendor_source || '') + '">' + (t.vendor_source === 'suppliers' ? 'supplier' : t.vendor_source === 'vendors' ? 'vendor' : 'from a bill') + '</span> ' + esc(t.vendor_name) + ' <a href="#" class="bk-muted" data-setv="' + t.id + '" title="Link to another supplier / vendor">change</a></div>' : '<div><a href="#" class="bk-muted" data-setv="' + t.id + '">link to a supplier / vendor</a></div>') +
         (t.plaid_category ? '<div class="bk-muted">bank: ' + esc(t.plaid_category) + '</div>' : '') + '</td><td>' + esc(t.account_name || '') + '</td>' +
-        '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '">' + usd(-t.amount) + '</td><td>' + (t.category ? catLabel(t.category) + ' <span class="bk-tag ' + esc(t.category_source || '') + '">' + esc(t.category_source || '') + '</span>' : '<span class="bk-tag ' + esc(t.status) + '">' + esc(t.status) + '</span>') + '</td>' +
-        '<td>' + catSelect(t.category || '', 'tx-cat') + ' <button class="bk-btn sm" data-tx="' + t.id + '">Set</button></td></tr>').join('') + '</tbody></table>' +
+        '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '">' + usd(-t.amount) + '</td>' +
+        '<td data-txid="' + t.id + '"><div class="bk-row" style="gap:8px;flex-wrap:nowrap">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : 'Choose…') + (t.category ? '<span class="bk-tag ' + esc(t.category_source || '') + '" title="How it was set">' + esc(t.category_source || '') + '</span>' : '<span class="bk-tag ' + esc(t.status) + '">' + esc(t.status) + '</span>') + '</div></td></tr>').join('') + '</tbody></table>' +
       (!(j.transactions || []).length ? '<div class="bk-muted" style="padding:14px 0">No transactions yet — connect a bank under Connections, then Sync.</div>' : '') + '</div>';
     v.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { txnSt = b.dataset.st; try { localStorage.setItem('bk_txn_st', txnSt); } catch (e) {} loadTxns(); });
     v.querySelector('input[name=q]').onkeydown = (e) => { if (e.key === 'Enter') loadTxns(); };
     $('syncNow').onclick = async () => { $('syncNow').disabled = true; const r = await post('/api/bookkeeping/sync', {}); if (!r.ok) alert(r.error); loadTxns(); overview(); };
-    v.querySelectorAll('[data-tx]').forEach(b => b.onclick = async () => { const sel = b.parentNode.querySelector('input.tx-cat'); await post('/api/bookkeeping/transactions/' + b.dataset.tx + '/category', { category: sel.value }); loadTxns(); overview(); });
+    // Picking a category sets it on the spot (no Set button); the row flashes green.
+    v.querySelectorAll('td[data-txid]').forEach(td => { const wrap = td.querySelector('.ckp'), inp = td.querySelector('input.tx-cat'); let last = inp.value;
+      wrap.addEventListener('change', async () => { if (inp.value === last || !inp.value) return; last = inp.value; const r = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/category', { category: inp.value }); const tr = td.closest('tr'); tr.classList.add(r.ok ? 'saved' : 'failed'); setTimeout(() => { tr.classList.remove('saved', 'failed'); loadTxns(); overview(); }, 700); }); });
     v.querySelectorAll('[data-setv]').forEach(a => a.onclick = async (e) => {
       e.preventDefault();
       const d = await api('/api/bookkeeping/directory');
@@ -400,9 +402,8 @@
     const rank = (m) => ({ new: 0, message: 1 })[st(m)] ?? 2;
     all.sort((a, b) => rank(a) - rank(b) || String(b.received_at || '').localeCompare(String(a.received_at || '')));   // not read yet, then messages for a person, then the rest, newest first
     const row = (m) => { const k = st(m); return '<div class="ib-row ' + k + (ibOpen === m.id ? ' open' : '') + '" data-m="' + m.id + '" data-k="' + k + '" data-ai="' + (m.read_by === 'ai' ? 1 : 0) + '" data-q="' + esc((m.from_addr + ' ' + m.subject + ' ' + (m.snippet || '') + ' ' + (m.note || '')).toLowerCase()) + '">' +
-      '<span class="ib-dot ' + k + '" title="' + esc(k) + '"></span><span class="ib-from" title="' + esc(fromAddr(m.from_addr)) + '">' + esc(fromName(m.from_addr)) + '</span>' +
-      '<span class="ib-subj"><b>' + esc(m.subject || '(no subject)') + '</b> <span>— ' + esc(m.snippet || '') + '</span></span>' +
-      '<span class="ib-att">' + kindTag(m) + (m.attachments.length ? ' ' + clip + ' ' + m.attachments.length : '') + '</span><span class="ib-time">' + esc(day(m.received_at)) + '</span>' +
+      '<span class="ib-dot ' + k + '" title="' + esc(k) + '"></span><span class="ib-main"><span class="ib-l1"><span class="ib-from" title="' + esc(fromAddr(m.from_addr)) + '">' + esc(fromName(m.from_addr)) + '</span><span class="ib-time">' + esc(day(m.received_at)) + '</span></span>' +
+      '<span class="ib-l2"><b>' + esc(m.subject || '(no subject)') + '</b></span><span class="ib-l3"><span class="ib-snip">' + esc(m.snippet || '') + '</span><span class="ib-att">' + kindTag(m) + (m.attachments.length ? ' ' + clip + ' ' + m.attachments.length : '') + '</span></span></span>' +
       '</div>'; };
     const rated = { advertisement: 0, notification: 0, receipt: 0 }; all.forEach(m => { if (st(m) === 'new' && rated[m.kind] !== undefined) rated[m.kind]++; });
     const unrated = all.filter(m => st(m) === 'new' && !m.triaged_at).length;
@@ -412,11 +413,13 @@
         (rated.advertisement ? '<button class="bk-btn sm" data-aside="advertisement">Set aside all ads (' + rated.advertisement + ')</button>' : '') + (rated.notification ? '<button class="bk-btn sm" data-aside="notification">Set aside all notices (' + rated.notification + ')</button>' : '') + (rated.receipt ? '<button class="bk-btn sm" data-aside="receipt">Set aside all receipts (' + rated.receipt + ')</button>' : '') +
         (rated.advertisement + rated.notification + rated.receipt > 1 ? '<button class="bk-btn sm ok" data-aside="all">Set aside all three (' + (rated.advertisement + rated.notification + rated.receipt) + ')</button>' : '') + '</div>' : '') +
       '<div class="ib-bar">' + [['all', 'All'], ['new', 'Not read'], ['message', 'Messages'], ['parsed', 'Bills'], ['ai', 'Set aside by AI'], ['skipped', 'All set aside']].map(([k, l]) => '<button class="ib-chip' + (ibFilter === k ? ' on' : '') + '" data-f="' + k + '">' + l + ' (' + (counts[k] || 0) + ')</button>').join('') + '<input id="ibQ" placeholder="Search sender, subject, text…"></div>' +
-      '<div class="ib-list">' + all.map(row).join('') + '</div>' + (!all.length ? '<div class="bk-muted" style="padding:14px 0">Nothing scanned yet — press Scan now.</div>' : '') + '<div class="bk-muted" id="ibNone" style="display:none;padding:14px 0">Nothing matches.</div></div>';
+      '<div class="ib-split"><div class="ib-list">' + all.map(row).join('') + (!all.length ? '<div class="bk-muted" style="padding:14px 0">Nothing scanned yet — press Scan now.</div>' : '') + '<div class="bk-muted" id="ibNone" style="display:none;padding:14px 10px">Nothing matches.</div></div>' +
+      '<div class="ib-pane" id="ibPane"><div class="ib-empty">Select an email to read it</div></div></div></div>';
+    if (ibOpen && all.some(m => m.id === ibOpen)) { const r0 = v.querySelector('.ib-row[data-m="' + ibOpen + '"]'); if (r0) r0.classList.add('open'); openEmail(ibOpen); }
     const filter = () => { const q = $('ibQ').value.trim().toLowerCase(); let n = 0; v.querySelectorAll('.ib-row').forEach(r => { const on = (ibFilter === 'all' || (ibFilter === 'ai' ? r.dataset.ai === '1' : r.dataset.k === ibFilter)) && (!q || r.dataset.q.indexOf(q) > -1); r.style.display = on ? '' : 'none'; if (on) n++; }); $('ibNone').style.display = n || !all.length ? 'none' : ''; };
     v.querySelectorAll('.ib-chip').forEach(c => c.onclick = () => { ibFilter = c.dataset.f; v.querySelectorAll('.ib-chip').forEach(x => x.classList.toggle('on', x === c)); filter(); });
     $('ibQ').oninput = filter; filter();
-    v.querySelectorAll('.ib-row').forEach(r => r.onclick = () => { ibOpen = Number(r.dataset.m); v.querySelectorAll('.ib-row').forEach(x => x.classList.toggle('open', x === r)); openEmail(ibOpen, all.find(x => x.id === ibOpen)); });
+    v.querySelectorAll('.ib-row').forEach(r => r.onclick = () => { ibOpen = Number(r.dataset.m); v.querySelectorAll('.ib-row').forEach(x => x.classList.toggle('open', x === r)); openEmail(ibOpen); });
     // Scan now, visibly: fetch new mail → rate 25 at a time (each rated row gets its tag as it comes in) → read the rated bills one by one.
     $('scanNow2').onclick = async () => {
       const btn = $('scanNow2'), prog = $('ibProg'), txt = $('ibProgText'); btn.disabled = true; prog.style.display = '';
@@ -447,7 +450,7 @@
     $('nInbox').textContent = (counts.new + counts.message) || '';
   }
   // The reading pane — an email the way Gmail shows it: subject, sender, date, the text, attachment cards that open a viewer.
-  async function openEmail(id, m) {
+  async function openEmail(id) {
     const j = await api('/api/bookkeeping/emails/' + id); if (!j.ok) return alert(j.error);
     const e = j.email, k = e.status === 'parsed' ? 'parsed' : e.status === 'error' ? 'error' : e.status === 'new' ? 'new' : e.status === 'message' ? 'message' : 'skipped';
     const KIND = { advertisement: 'Ad', notification: 'Notice', receipt: 'Receipt', bill: 'Bill', message: 'Message', other: 'Other' };
@@ -458,23 +461,29 @@
     const body = dec(e.body || e.snippet || '').replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').replace(/[-_=]{8,}/g, '');
     const authHdr = { 'Authorization': 'Bearer ' + token };
     const att = (a) => '<a href="#" class="em-att" data-i="' + a.i + '" data-kind="' + a.kind + '" title="' + esc(a.name) + '"><span class="em-thumb ' + a.kind + '">' + (a.kind === 'pdf' ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>' : '') + '</span><span class="em-attn"><b>' + esc(a.name) + '</b><small>' + (a.kind === 'pdf' ? 'PDF' : 'Image') + (a.size ? ' · ' + (a.size > 1048576 ? (a.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(a.size / 1024)) + ' KB') : '') + '</small></span></a>';
-    const el = document.createElement('div'); el.className = 'bk-modal em-modal';
-    el.innerHTML = '<div class="bk-modal-box em-box"><div class="em-head"><div class="em-subject">' + esc(dec(e.subject) || '(no subject)') + '</div><button class="bk-btn sm bk-x" title="Close">✕</button></div>' +
+    const el = $('ibPane'); if (!el) return;
+    const htmlBody = e.body_html ? '<iframe class="em-html" sandbox="allow-same-origin allow-popups" referrerpolicy="no-referrer"></iframe>' : '';
+    el.innerHTML = '<div class="em-box"><div class="em-head"><div class="em-subject">' + esc(dec(e.subject) || '(no subject)') + '</div></div>' +
       '<div class="em-meta"><span class="em-av">' + esc(fromName(e.from_addr).charAt(0).toUpperCase()) + '</span><div class="em-who"><b>' + esc(fromName(e.from_addr)) + '</b> <span class="bk-muted">&lt;' + esc(fromAddr(e.from_addr)) + '&gt;</span><div class="bk-muted">to ' + esc(j.inbox) + '</div></div><div class="em-date bk-muted">' + esc(fmtDate(e.received_at)) + '</div></div>' +
       '<div class="em-verdict"><span class="ib-tag ' + k + '">' + esc(k === 'skipped' ? (e.read_by === 'ai' ? 'set aside by AI' : e.read_by === 'user' ? 'set aside' : 'set aside') : k === 'message' ? 'for a person' : k === 'parsed' ? 'bill' : k) + '</span>' + (e.kind ? '<span class="ib-kind ' + esc(e.kind) + '">' + esc(KIND[e.kind] || e.kind) + (e.confidence != null ? ' ' + Math.round(e.confidence * 100) + '%' : '') + '</span>' : '') + '<span class="bk-muted">' + esc(e.note || (k === 'new' ? 'Not rated yet.' : '')) + '</span>' + (j.bill ? ' <a href="#" data-gobills>bill #' + j.bill.id + ' (' + esc(j.bill.status) + ')</a>' : '') + '</div>' +
-      '<div class="em-body">' + esc(body) + '</div>' +
+      '<div class="em-acts">' + (k !== 'parsed' ? '<button class="bk-btn sm p" data-parse>Read it as a bill</button>' : '') + (k === 'new' || k === 'message' ? '<button class="bk-btn sm" data-read>Mark as read</button>' : '') + (e.body_html ? '<button class="bk-btn sm" data-plain>Plain text</button>' : '') + '<span class="sp"></span><span class="bk-dim">#' + e.id + '</span></div>' +
       (e.attachments.length ? '<div class="em-atts">' + e.attachments.map(att).join('') + '</div>' : '') +
-      '<div class="em-acts">' + (k !== 'parsed' ? '<button class="bk-btn sm p" data-parse>Read it as a bill</button>' : '') + (k === 'new' || k === 'message' ? '<button class="bk-btn sm" data-read>Mark as read</button>' : '') + '<span class="sp"></span><span class="bk-dim">#' + e.id + '</span></div></div>';
-    const close = () => { el.remove(); document.removeEventListener('keydown', onKey); };
-    const onKey = (ev) => { if (ev.key === 'Escape') close(); };
-    el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
-    document.addEventListener('keydown', onKey); document.body.appendChild(el);
+      (htmlBody || '<div class="em-body">' + esc(body).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>') + '</div>') + '</div>';
+    const close = () => { el.innerHTML = '<div class="ib-empty">Select an email to read it</div>'; };
+    if (e.body_html) {
+      const fr = el.querySelector('.em-html');
+      const base = '<base target="_blank"><style>body{margin:0;padding:16px 22px;font:14px/1.5 -apple-system,Segoe UI,Roboto,Inter,sans-serif;color:#1f1f33;word-break:break-word}img{max-width:100%;height:auto}a{color:#4338ca}</style>';
+      fr.srcdoc = base + e.body_html;
+      fr.onload = () => { try { const d = fr.contentDocument; const fit = () => { fr.style.height = Math.min(Math.max(d.documentElement.scrollHeight, d.body.scrollHeight) + 20, 4000) + 'px'; }; fit(); setTimeout(fit, 400); setTimeout(fit, 1500); } catch (er) {} };
+      const pl = el.querySelector('[data-plain]'); if (pl) pl.onclick = () => { fr.outerHTML = '<div class="em-body">' + esc(body).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>') + '</div>'; pl.remove(); };
+    }
     // image thumbnails
     e.attachments.filter(a => a.kind === 'image').forEach(async a => { try { const r = await fetch('/api/bookkeeping/emails/' + id + '/att/' + a.i, { headers: authHdr }); if (r.ok) { const u = URL.createObjectURL(await r.blob()); const t = el.querySelector('.em-att[data-i="' + a.i + '"] .em-thumb'); if (t) t.style.backgroundImage = 'url(' + u + ')'; } } catch (er) {} });
     el.querySelectorAll('.em-att').forEach(a => a.onclick = async (ev) => { ev.preventDefault(); const r = await fetch('/api/bookkeeping/emails/' + id + '/att/' + a.dataset.i, { headers: authHdr }); if (!r.ok) return alert('File not available.'); const u = URL.createObjectURL(await r.blob()); viewFile(u, a.dataset.kind, a.title); });
     const p1 = el.querySelector('[data-parse]'); if (p1) p1.onclick = async () => { p1.disabled = true; p1.textContent = 'Reading…'; const r = await post('/api/bookkeeping/emails/' + id + '/parse', {}); if (!r.ok) alert(r.error); close(); await overview(); loadInbox(); };
     const r1 = el.querySelector('[data-read]'); if (r1) r1.onclick = async () => { r1.disabled = true; const r = await post('/api/bookkeeping/emails/' + id + '/read', {}); if (!r.ok) alert(r.error); close(); await overview(); loadInbox(); };
-    const g1 = el.querySelector('[data-gobills]'); if (g1) g1.onclick = (ev) => { ev.preventDefault(); close(); show('bills'); };
+    const g1 = el.querySelector('[data-gobills]'); if (g1) g1.onclick = (ev) => { ev.preventDefault(); show('bills'); };
+    el.scrollTop = 0;
   }
   // Attachment viewer: PDFs in a frame, images as is; opens above the reading pane.
   function viewFile(url, kind, name) {
