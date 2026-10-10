@@ -180,6 +180,9 @@ tr:last-child td { border-bottom: none; }
 .panel-msg.assistant .panel-msg-body { background: #f7f7fc; padding: 12px 14px; border-radius: 12px; font-size: 13.5px; }
 .panel-msg.assistant .panel-msg-body strong { font-weight: 600; }
 .close { background: none; border: none; font-size: 24px; color: var(--muted); cursor: pointer; line-height: 1; }
+.panel-inner.chat-view { width: min(1360px, 96vw); max-width: 96vw; height: 90vh; max-height: 90vh; overflow: hidden; }
+.panel-inner.chat-view .panel-body { padding: 0; flex: 1; overflow: hidden; display: block; }
+.panel-frame { display: block; width: 100%; height: 100%; border: 0; border-radius: 0 0 16px 16px; background: #fff; }
 
 .jg-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 18px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #fafafd; }
 .jg-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
@@ -409,7 +412,7 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
   </div>
   <div id="panel" class="panel">
     <div class="panel-inner">
-      <div class="panel-head"><span id="panelTitle">Chat</span><button class="close" onclick="document.getElementById('panel').style.display='none'">&times;</button></div>
+      <div class="panel-head"><span id="panelTitle">Chat</span><button class="close" onclick="document.getElementById('panel').style.display='none';document.getElementById('panelBody').innerHTML=''">&times;</button></div>
       <div id="panelBody" class="panel-body"></div>
     </div>
   </div>
@@ -1587,68 +1590,12 @@ async function openChat(id, title, userKey) {
     a.textContent = 'Continue in ChatBot'; a.style.cssText = 'text-decoration:none;margin-left:auto;margin-right:10px;font-size:12px;padding:6px 12px';
     const head = document.querySelector('#panel .panel-head'); head.insertBefore(a, head.querySelector('.close'));
   }
-  body.innerHTML = 'Loading...';
+  // The conversation as it looked in ChatBot — bubbles, tables, price cards, the Saved pane and the pictures that
+  // were sent — in the chat page's read-only view. Admins get the training buttons under each answer there.
+  const inner = panel.querySelector('.panel-inner');
+  inner.classList.add('chat-view');
+  body.innerHTML = '<iframe class="panel-frame" title="Conversation" src="/chatbot?chat=' + encodeURIComponent(id) + '&view=1"></iframe>';
   panel.style.display = 'flex';
-  try {
-    const res = await fetch('/api/chats/' + id, { headers: { 'Authorization': 'Bearer ' + token } });
-    const j = await res.json();
-    if (!j.success) { body.innerHTML = 'Could not load.'; return; }
-    body.innerHTML = '';
-    j.messages.forEach(m => {
-      const div = document.createElement('div');
-      div.className = 'panel-msg ' + m.role;
-      const who = m.role === 'user' ? 'User' : 'Axiom AI';
-      let rate = '';
-      if (m.role === 'assistant' && m.rating === 1) rate = ' <span class="badge on">👍</span>';
-      if (m.role === 'assistant' && m.rating === -1) rate = ' <span class="badge off">👎</span>';
-
-      // Teach from any answer, whether or not anyone rated it at the time. The
-      // team rarely remembers mid-conversation, but a good exchange is just as
-      // useful found later.
-      let train = '';
-      if (m.role === 'assistant' && m.id) {
-        train = '<div class="panel-train">' +
-          '<button class="tr-good" data-mid="' + m.id + '" data-kind="good">Use as a good example</button>' +
-          '<button class="tr-bad"  data-mid="' + m.id + '" data-kind="bad">Mark as a bad one</button>' +
-          '<span class="tr-msg"></span></div>';
-      }
-      div.innerHTML = '<div class="panel-msg-who">' + who + rate + '</div>' +
-        '<div class="panel-msg-body">' + md(m.content) + '</div>' + train;
-      body.appendChild(div);
-    });
-    // Wire the training buttons.
-    body.querySelectorAll('.tr-good, .tr-bad').forEach(b => {
-      b.onclick = async () => {
-        const row = b.parentElement;
-        const note = row.querySelector('.tr-msg');
-        row.querySelectorAll('button').forEach(x => x.disabled = true);
-        note.textContent = 'Saving…';
-        try {
-          const r = await fetch('/api/admin/train-from-chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-            body: JSON.stringify({ message_id: Number(b.getAttribute('data-mid')),
-                                   kind: b.getAttribute('data-kind') })
-          });
-          const j = await r.json();
-          if (j.success) {
-            note.textContent = j.kind === 'good'
-              ? '✓ Added to approved examples'
-              : '✓ Marked as one to avoid';
-            note.className = 'tr-msg ok';
-          } else {
-            note.textContent = j.error || 'Could not save';
-            note.className = 'tr-msg err';
-            row.querySelectorAll('button').forEach(x => x.disabled = false);
-          }
-        } catch (e) {
-          note.textContent = 'Could not save';
-          note.className = 'tr-msg err';
-          row.querySelectorAll('button').forEach(x => x.disabled = false);
-        }
-      };
-    });
-  } catch (e) { body.innerHTML = 'Connection error.'; }
 }
 
 checkAccess();

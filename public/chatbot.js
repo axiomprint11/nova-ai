@@ -9,6 +9,24 @@ function usd2(n) { return Number(n || 0).toLocaleString('en-US', { minimumFracti
 // and saved items on the right. The widget's own shell (widget.js) signs the
 // person in and decides when to show the chat; this file only draws it.
 const EMBED = !!window.NOVA_EMBED;
+// Read-only view (/chatbot?chat=<id>&view=1): how CRM Chat → History shows a conversation — the same look as the
+// chat, nothing typed, nothing saved. Anything that would change the chat, its client, cart or ratings is refused
+// here in the page; pricing look-ups, reports, order links and admin training still work.
+const VIEW = !EMBED && new URLSearchParams(location.search).get('view') === '1';
+let viewOwner = '';
+if (VIEW) {
+  document.documentElement.classList.add('cb-view');
+  const realFetch = window.fetch.bind(window);
+  const READ_POSTS = /^\/api\/(chatbot\/(reprice|order-links|find-client|job-peek)|reports\/|admin\/train-from-chat)/;
+  window.fetch = function (url, opts) {
+    const method = String((opts && opts.method) || 'GET').toUpperCase();
+    const u = String(url && url.url || url);
+    if (method !== 'GET' && !READ_POSTS.test(u.replace(location.origin, ''))) {
+      return Promise.resolve(new Response(JSON.stringify({ success: false, ok: false, error: 'Read-only view' }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    return realFetch(url, opts);
+  };
+}
 let token = localStorage.getItem('axiom_token');
 let username = localStorage.getItem('axiom_user');
 let isAdmin = localStorage.getItem('axiom_admin') === '1';
@@ -133,6 +151,8 @@ document.addEventListener('DOMContentLoaded', () => {
   m.addEventListener('scroll', () => { stickToBottom = nearBottom(m); }, { passive: true });
 });
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// For attribute values (esc leaves quotes alone).
+function escA(s){ return esc(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }
 // Voice typing: the mic turns the composer into a recording bar (waveform, timer,
 // Cancel / Done); on Done the server turns the recording into text and it lands in
@@ -230,7 +250,8 @@ async function loadAgents() {
   loadChatList();
   // /chatbot?chat=123 (from History → Continue): open that conversation.
   const want = parseInt(new URLSearchParams(location.search).get('chat'));
-  if (want && await openChat(want) !== false) { history.replaceState(null, '', '/chatbot'); return; }
+  if (want && await openChat(want) !== false) { if (!VIEW) history.replaceState(null, '', '/chatbot'); return; }
+  if (VIEW) { document.getElementById('messagesInner').innerHTML = '<div class="cb-view-empty">This conversation could not be opened.</div>'; return; }
   if (!document.getElementById('messagesInner').children.length) greet();
 }
 
@@ -326,15 +347,24 @@ async function openChat(id) {
     if (!j.success) return false;
     currentChatId = id;
     chatHistory = [];
+    if (VIEW) viewOwner = String((j.chat && (j.chat.display_name || j.chat.user_key)) || '').replace(/^(member|user):/, '');
     loadChatClient();          // whoever this conversation belongs to
     loadCart();
     document.getElementById('suggestions').style.display = 'none';
     const inner = document.getElementById('messagesInner');
     inner.innerHTML = '';
+    // The pictures / PDFs / documents of the last two messages that had any go back to the model as it saw
+    // them, so a continued chat can still read the estimate it was given; older ones are named in the text.
+    const withFiles = j.messages.filter(m => m.role === 'user' && (m.files || []).length);
+    const resend = new Set(withFiles.slice(-2).map(m => m.id));
+    const pending = [];
     j.messages.forEach(m => {
       if (m.role === 'user') {
-        addUserRow(m.content);
-        chatHistory.push({ role: 'user', content: m.content });
+        addUserRow(m.content, m.files);
+        const names = (m.files || []).map(f => f.name).join(', ');
+        const entry = { role: 'user', content: (m.content || '') + (names ? '\n[Attached: ' + names + ']' : '') };
+        chatHistory.push(entry);
+        if (resend.has(m.id) && !VIEW) pending.push(filesToBlocks(m.files, m.content).then(b => { if (b) entry.content = b; }).catch(() => {}));
       } else {
         const row = document.createElement('div');
         row.className = 'msg-row';
@@ -352,7 +382,12 @@ async function openChat(id) {
           try { renderCard(bubble, c); } catch (e) {}
         });
         const isDraft = (m.cards || []).some(c => c && c.type === 'email_draft');
-        if (!isDraft) bubble.appendChild(buildRating(m.id, m.rating));
+        if (!isDraft) {
+          const rt = buildRating(m.id, m.rating);
+          if (VIEW) rt.classList.add('ro');
+          bubble.appendChild(rt);
+          if (VIEW && isAdmin && m.id) bubble.appendChild(trainButtons(m.id));
+        }
         row.innerHTML = '<div class="msg-avatar ai">AI</div>';
         row.appendChild(col);
         inner.appendChild(row);
@@ -361,27 +396,91 @@ async function openChat(id) {
         if (!isDraft) chatHistory.push({ role: 'assistant', content: m.content });
       }
     });
-    loadChatList();
+    if (pending.length) Promise.all(pending);
+    if (!VIEW) loadChatList();
     scrollDown();
     embedNotify('chat');
     return true;
   } catch (e) { return false; }
 }
 
+// Saved attachments back into model blocks (fetched through their signed links).
+async function filesToBlocks(files, text) {
+  const blocks = [];
+  for (const f of (files || [])) {
+    const r = await fetch(f.url);
+    if (!r.ok) continue;
+    if (f.kind === 'image' || f.kind === 'pdf') {
+      const b64 = await new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(',')[1]); fr.onerror = no; r.blob().then(bl => fr.readAsDataURL(bl)); });
+      blocks.push(f.kind === 'image' ? { type: 'image', source: { type: 'base64', media_type: f.media_type, data: b64 } }
+        : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } });
+    } else {
+      blocks.push({ type: 'text', text: '--- ' + (f.name || 'file') + ' ---\n' + (await r.text()) });
+    }
+  }
+  if (!blocks.length) return null;
+  blocks.push({ type: 'text', text: text || 'See the attached.' });
+  return blocks;
+}
+
+// Admin, in the History view: teach from this answer (same as the old History panel buttons).
+function trainButtons(mid) {
+  const row = document.createElement('div');
+  row.className = 'cb-train';
+  row.innerHTML = '<button type="button" data-kind="good">Use as a good example</button><button type="button" data-kind="bad">Mark as a bad one</button><span class="cb-train-msg"></span>';
+  const note = row.querySelector('.cb-train-msg');
+  row.querySelectorAll('button').forEach(b => {
+    b.onclick = async () => {
+      row.querySelectorAll('button').forEach(x => x.disabled = true);
+      note.textContent = 'Saving\u2026'; note.className = 'cb-train-msg';
+      try {
+        const r = await fetch('/api/admin/train-from-chat', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+          body: JSON.stringify({ message_id: mid, kind: b.dataset.kind }) });
+        const j = await r.json();
+        if (!j.success) throw new Error(j.error || 'Could not save');
+        note.textContent = j.kind === 'good' ? '\u2713 Added to approved examples' : '\u2713 Marked as one to avoid';
+        note.className = 'cb-train-msg ok';
+      } catch (e) {
+        note.textContent = e.message || 'Could not save'; note.className = 'cb-train-msg err';
+        row.querySelectorAll('button').forEach(x => x.disabled = false);
+      }
+    };
+  });
+  return row;
+}
+
 
 
 // ===== User message row =====
-function addUserRow(text) {
+// files: what was attached — pictures as thumbnails (click = full size), PDFs and documents as named chips.
+// Live sends carry the data; reopened chats carry signed links.
+function addUserRow(text, files) {
   const row = document.createElement('div');
   row.className = 'msg-row user';
   const col = document.createElement('div');
   col.className = 'msg-col';
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble user';
-  bubble.textContent = text;
-  col.appendChild(bubble);
+  const list = (files || []).filter(f => f && f.kind !== 'error' && f.kind !== 'pending');
+  if (list.length) {
+    const box = document.createElement('div');
+    box.className = 'ub-files';
+    box.innerHTML = list.map(f => {
+      const src = f.url || (f.data ? 'data:' + (f.media_type || 'image/jpeg') + ';base64,' + f.data : '');
+      if (f.kind === 'image' && src) return '<a class="ub-img" href="' + escA(f.url || '#') + '" target="_blank" rel="noopener" title="' + escA(f.name || 'Image') + '"' +
+        (f.url ? '' : ' onclick="return false"') + '><img src="' + escA(src) + '" alt="' + escA(f.name || 'Image') + '" loading="lazy"></a>';
+      const tag = f.kind === 'pdf' ? 'PDF' : 'DOC';
+      return (f.url ? '<a class="ub-doc" href="' + escA(f.url) + '" target="_blank" rel="noopener">' : '<span class="ub-doc">') +
+        '<b>' + tag + '</b><span>' + esc(f.name || 'file') + '</span>' + (f.url ? '</a>' : '</span>');
+    }).join('');
+    col.appendChild(box);
+  }
+  if (text && !(list.length && text === '(attachment)')) {
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble user';
+    bubble.textContent = text;
+    col.appendChild(bubble);
+  }
   row.appendChild(col);
-  row.innerHTML += '<div class="msg-avatar user">' + (username || 'U').charAt(0).toUpperCase() + '</div>';
+  row.innerHTML += '<div class="msg-avatar user">' + ((VIEW && viewOwner) || username || 'U').charAt(0).toUpperCase() + '</div>';
   document.getElementById('messagesInner').appendChild(row);
   scrollDown();
 }
@@ -2054,11 +2153,10 @@ async function sendMessage() {
   document.getElementById('sendBtn').disabled = true;
 
   stickToBottom = true;        // sending is an explicit "take me to the bottom"
-  addUserRow(text || '(attachment)');
-
   // Images and PDFs travel as native blocks; extracted text is folded into the
   // message so the model reads a spreadsheet as content, not as a filename.
   const usable = files.filter(f => f.kind !== 'error' && f.kind !== 'pending');
+  addUserRow(text || (usable.length ? '' : '(attachment)'), usable);
   if (usable.length) {
     const blocks = [];
     usable.forEach(f => {
@@ -2092,7 +2190,10 @@ async function sendMessage() {
     } catch (e) {}
   }
   if (currentChatId) {
-    fetch('/api/chats/message', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ chat_id: currentChatId, role: 'user', content: text }) });
+    // The attachments are saved with the message, so History and a reopened chat show what was sent.
+    fetch('/api/chats/message', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ chat_id: currentChatId, role: 'user', content: text,
+      files: usable.length ? usable.map(f => ({ name: f.name, kind: f.kind, media_type: f.media_type, data: f.data, text: f.kind === 'file' ? f.text : undefined })) : undefined }) })
+      .then(r => r.json()).then(j => { if (usable.length && !(j && j.success)) console.warn('Attachment not saved', j && j.error); }).catch(() => {});
   }
 
   const startTime = Date.now();

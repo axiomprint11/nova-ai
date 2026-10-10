@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.14.3';
-const NOVA_BUILT = '10-09-2026 5:30pm';
+const NOVA_VERSION = '1.14.4';
+const NOVA_BUILT = '10-09-2026 6:05pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 app.use((req, res, next) => req.path.indexOf('/api/talk/hook/') === 0 ? next() : jsonBody(req, res, next));
@@ -292,7 +292,12 @@ db.run(`CREATE TABLE IF NOT EXISTS messages (
   // picks, timelines. Without these a reopened chat shows "Which one?" with
   // nothing under it, which is most of what an answer actually was.
   db.run('ALTER TABLE messages ADD COLUMN cards TEXT', () => {});
+  // Pictures, PDFs and documents sent with a message (chat_files refs) — so a reopened chat, and History,
+  // show exactly what the model was looking at when it priced the job.
+  db.run('ALTER TABLE messages ADD COLUMN files TEXT', () => {});
 });
+db.run(`CREATE TABLE IF NOT EXISTS chat_files (id INTEGER PRIMARY KEY AUTOINCREMENT, ref TEXT UNIQUE NOT NULL, chat_id INTEGER, message_id INTEGER,
+  user_key TEXT, name TEXT, kind TEXT, media_type TEXT, size INTEGER, path TEXT, created_at TEXT DEFAULT (datetime('now')))`);
 
 // Agents: configurable AI agents. Order Assist is active; others are placeholders.
 db.serialize(() => {
@@ -5409,10 +5414,92 @@ app.post('/api/chats/create', auth, (req, res) => {
   });
 });
 
+// ===== Chat attachments =====
+// What the person attached to a ChatBot / CRM widget message, kept as the model saw it: pictures (already scaled
+// to 1600px JPEG in the browser), PDFs, and the text read out of spreadsheets and documents. Files live in
+// CHAT_UPLOAD_DIR (default ./chat-uploads, gitignored, never served statically); the browser gets signed,
+// expiring links (/api/chat-files/<ref>?e=&s=) so an <img> can show them without a bearer header.
+const CHAT_UPLOAD_DIR = process.env.CHAT_UPLOAD_DIR || path.join(__dirname, 'chat-uploads');
+const chatFileKey = crypto.createHash('sha256').update('chat-files:' + String(process.env.JWT_SECRET || 'nova')).digest();
+const chatFileSig = (ref, exp) => crypto.createHmac('sha256', chatFileKey).update(ref + ':' + exp).digest('hex').slice(0, 32);
+function chatFileUrl(ref) {
+  const exp = Math.floor(Date.now() / 1000) + 7 * 86400;
+  return '/api/chat-files/' + ref + '?e=' + exp + '&s=' + chatFileSig(ref, exp);
+}
+function sniffChatFile(buf) {
+  if (buf.length > 3 && buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return { media_type: 'image/jpeg', ext: '.jpg', kind: 'image' };
+  if (buf.length > 8 && buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))) return { media_type: 'image/png', ext: '.png', kind: 'image' };
+  if (buf.length > 6 && /^GIF8[79]a/.test(buf.slice(0, 6).toString('latin1'))) return { media_type: 'image/gif', ext: '.gif', kind: 'image' };
+  if (buf.length > 12 && buf.slice(0, 4).toString('latin1') === 'RIFF' && buf.slice(8, 12).toString('latin1') === 'WEBP') return { media_type: 'image/webp', ext: '.webp', kind: 'image' };
+  if (buf.length > 5 && buf.slice(0, 5).toString('latin1') === '%PDF-') return { media_type: 'application/pdf', ext: '.pdf', kind: 'pdf' };
+  return null;
+}
+// Returns [{ref, name, kind, media_type, size}] for what was stored; anything unreadable is skipped.
+function saveChatFiles(chatId, userKey, files) {
+  const out = [];
+  if (!Array.isArray(files) || !files.length) return out;
+  try { fs.mkdirSync(CHAT_UPLOAD_DIR, { recursive: true }); } catch (e) {}
+  files.slice(0, 10).forEach(f => {
+    try {
+      const name = String((f && f.name) || 'attachment').replace(/[\r\n]/g, ' ').slice(0, 160);
+      let buf, t;
+      if (f && (f.kind === 'image' || f.kind === 'pdf') && f.data) {
+        buf = Buffer.from(String(f.data), 'base64');
+        t = sniffChatFile(buf);
+        if (!t || buf.length > 20 * 1024 * 1024) return;
+      } else if (f && f.text) {
+        buf = Buffer.from(String(f.text).slice(0, 2000000), 'utf8');
+        t = { media_type: 'text/plain; charset=utf-8', ext: '.txt', kind: 'file' };
+      } else return;
+      const ref = crypto.randomBytes(12).toString('hex');
+      const file = ref + t.ext;
+      fs.writeFileSync(path.join(CHAT_UPLOAD_DIR, file), buf);
+      db.run('INSERT INTO chat_files (ref, chat_id, user_key, name, kind, media_type, size, path) VALUES (?,?,?,?,?,?,?,?)',
+        [ref, chatId, userKey, name, t.kind, t.media_type, buf.length, file]);
+      out.push({ ref: ref, name: name, kind: t.kind, media_type: t.media_type, size: buf.length });
+    } catch (e) { console.error('CHAT FILE save', e.message); }
+  });
+  return out;
+}
+const withFileUrls = (list) => (list || []).map(f => Object.assign({}, f, { url: chatFileUrl(f.ref) }));
+app.get('/api/chat-files/:ref', (req, res) => {
+  const ref = String(req.params.ref || ''), exp = parseInt(req.query.e), sig = String(req.query.s || '');
+  const want = /^[0-9a-f]{24}$/.test(ref) && exp ? chatFileSig(ref, exp) : '';
+  if (!want || sig.length !== want.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want))) return res.status(403).type('text/plain').send('Bad link');
+  if (exp * 1000 < Date.now()) return res.status(410).type('text/plain').send('This link has expired — reopen the chat');
+  db.get('SELECT name, media_type, path FROM chat_files WHERE ref = ?', [ref], (e, row) => {
+    if (e || !row) return res.status(404).type('text/plain').send('Not found');
+    const full = path.resolve(CHAT_UPLOAD_DIR, row.path);
+    if (full.indexOf(path.resolve(CHAT_UPLOAD_DIR)) !== 0 || !fs.existsSync(full)) return res.status(404).type('text/plain').send('Not found');
+    res.setHeader('Content-Type', row.media_type || 'application/octet-stream');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'");
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.setHeader('Content-Disposition', 'inline; filename="' + String(row.name || 'file').replace(/["\\]/g, '') + '"');
+    fs.createReadStream(full).pipe(res);
+  });
+});
+
 // Save a message to a chat. Returns message_id (used for rating assistant msgs)
 app.post('/api/chats/message', auth, (req, res) => {
   const { chat_id, role, content, cards } = req.body;
   if (!chat_id || !role) return res.json({ success: false, error: 'Missing fields' });
+  if (Array.isArray(req.body.files) && req.body.files.length) {
+    // Attachments only into a chat of your own (an admin may file into any).
+    return db.get('SELECT user_key FROM chats WHERE id = ?', [chat_id], (e, chat) => {
+      if (e || !chat) return res.json({ success: false, error: 'Not found' });
+      if (chat.user_key !== req.user.key && !req.user.is_admin) return res.status(403).json({ success: false, error: 'Forbidden' });
+      const saved = saveChatFiles(parseInt(chat_id), req.user.key, req.body.files);
+      db.run('INSERT INTO messages (chat_id, user_key, role, content, cards, files) VALUES (?,?,?,?,?,?)',
+        [chat_id, req.user.key, role, String(content || ''), null, saved.length ? JSON.stringify(saved) : null], function (err) {
+          if (err) return res.json({ success: false, error: err.message });
+          const mid = this.lastID;
+          if (saved.length) db.run('UPDATE chat_files SET message_id = ? WHERE ref IN (' + saved.map(() => '?').join(',') + ')', [mid].concat(saved.map(f => f.ref)));
+          db.run('UPDATE chats SET updated_at = datetime("now") WHERE id = ?', [chat_id]);
+          res.json({ success: true, message_id: mid, files: withFileUrls(saved) });
+        });
+    });
+  }
   // Cards are stored with the message so reopening a chat shows what was
   // actually on screen, not just the sentence above it.
   let cardJson = null;
@@ -5534,9 +5621,10 @@ app.get('/api/chats/:id', auth, (req, res) => {
   db.get('SELECT * FROM chats WHERE id = ?', [req.params.id], (err, chat) => {
     if (err || !chat) return res.json({ success: false, error: 'Not found' });
     if (chat.user_key !== req.user.key && !req.user.is_admin) return res.status(403).json({ success: false, error: 'Forbidden' });
-    db.all('SELECT id, role, content, rating, cards, created_at FROM messages WHERE chat_id = ? ORDER BY id', [req.params.id], (e, msgs) => {
+    db.all('SELECT id, role, content, rating, cards, files, created_at FROM messages WHERE chat_id = ? ORDER BY id', [req.params.id], (e, msgs) => {
       (msgs || []).forEach(m => {
         try { m.cards = m.cards ? JSON.parse(m.cards) : null; } catch (e2) { m.cards = null; }
+        try { m.files = m.files ? withFileUrls(JSON.parse(m.files)) : null; } catch (e2) { m.files = null; }
       });
       res.json({ success: true, chat, messages: msgs || [] });
     });

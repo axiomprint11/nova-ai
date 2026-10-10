@@ -151,6 +151,15 @@ order-assist.js and index.html), never `'$' + n.toFixed(2)`. The prompts tell th
   30 days of shared-inbox mail with the client's email (`gmailSearch`, quoted text stripped) for tone.
   The quote tables and Order now links come from Saved, so the model never retypes a price. The draft is
   stored with the chat as an `email_draft` card and is kept out of the model's history on reopen.
+  **Attachments are saved**: a sent message's pictures (the browser's 1600px JPEG), PDFs and extracted document
+  text go with `POST /api/chats/message` `files` → SQLite `chat_files` + `chat-uploads/` (gitignored; `CHAT_UPLOAD_DIR`;
+  type checked by magic bytes) and `messages.files`; `GET /api/chats/:id` returns them with signed, 7-day links
+  (`/api/chat-files/<ref>?e=&s=`, no bearer needed for `<img>`). The user row shows thumbnails / document chips; on
+  reopen the last two messages with files go back to the model as image/document blocks.
+  **Read-only view** `/chatbot?chat=<id>&view=1` (`VIEW` in chatbot.js): no top bar, sidebar or composer, every
+  write to the chat refused in the page (a `fetch` wrapper; pricing look-ups, reports, order links and
+  `/api/admin/train-from-chat` still go through), admins get "Use as a good example / Mark as a bad one" under each
+  answer. CRM Chat → History opens a conversation in it (an iframe in the wide panel), so History looks like the chat.
 - `widget.html` + `widget.js` — the CRM widget (framed by `embed.js`). It is the ChatBot page inside a
   compact header: `widget.html` repeats chatbot.html's split markup with the **same element ids** and loads
   `chatbot.js` with `window.NOVA_EMBED = true`, so Save, Saved, Draft and the client bar are the same code.

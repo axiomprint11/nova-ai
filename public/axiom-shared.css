@@ -2242,3 +2242,28 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 /* the deadline facts under a job's steps (approved & paid · turnaround · ready · pick up / shipping) */
 .cc-proj-dl { margin: 8px 12px 0; padding: 7px 10px; border-radius: 8px; background: #f6f7fb; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
 .cc-proj-dl b { color: var(--ink); font-weight: 600; }
+
+/* ===== Attachments on a sent message (ChatBot / CRM widget) ===== */
+.ub-files { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; align-items: flex-start; max-width: 100%; }
+.ub-img { display: block; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: #f4f4f8; line-height: 0; }
+.ub-img img { display: block; max-width: 260px; max-height: 220px; width: auto; height: auto; object-fit: contain; }
+.ub-img:hover { box-shadow: 0 2px 10px rgba(30,27,46,.15); }
+.ub-doc { display: inline-flex; align-items: center; gap: 8px; max-width: 280px; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--line);
+  background: #fff; color: var(--ink); text-decoration: none; font-size: 12.5px; }
+.ub-doc b { flex: none; font-size: 10px; font-weight: 700; letter-spacing: .04em; color: #fff; background: #6366f1; border-radius: 5px; padding: 2px 5px; }
+.ub-doc span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.ub-doc:hover { border-color: #c7d2fe; background: #f5f7ff; }
+
+/* ===== Read-only view (/chatbot?chat=<id>&view=1 — CRM Chat → History) ===== */
+.cb-view .topbar, .cb-view .sidebar, .cb-view .composer, .cb-view .cbar-chev { display: none !important; }
+.cb-view .cbar-btn, .cb-view .cart-pill { pointer-events: none; }
+.cb-view .rating.ro { pointer-events: none; }
+.cb-view .rating.ro .rate-btn:not(.active) { display: none; }
+.cb-view .rating.ro:not(:has(.active)) { display: none; }
+.cb-view-empty { padding: 40px 20px; text-align: center; color: var(--muted); }
+.cb-train { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.cb-train button { font: inherit; font-size: 12px; padding: 5px 11px; border-radius: 8px; cursor: pointer; border: 1px solid var(--line); background: #fff; color: var(--ink-soft, #4b5563); }
+.cb-train button[data-kind="good"] { border-color: #a7f3d0; color: #047857; background: #f0fdf4; }
+.cb-train button:disabled { opacity: .55; cursor: default; }
+.cb-train-msg { font-size: 12px; color: var(--muted); }
+.cb-train-msg.ok { color: #047857; } .cb-train-msg.err { color: #b91c1c; }
