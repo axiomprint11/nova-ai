@@ -82,7 +82,7 @@
 
   // ---------------------------------------------------------------- column filters (a header word that opens a small list)
   // thFilter(key, label, options [{v, l, n}], cur) → header markup; thFilterBind(root, onChange) wires the popovers.
-  const thFilter = (key, label, options, cur) => { const o = options.find(x => x.v === cur); return '<button type="button" class="thf' + (cur ? ' on' : '') + '" data-thf="' + esc(key) + '" data-v="' + esc(cur || '') + '"><span class="thf-l">' + esc(label) + '</span>' + (o && cur ? ' <b>' + esc(o.l) + '</b>' : '') + '<span class="thf-c"></span></button>'; };
+  const thFilter = (key, label, options, cur) => { const o = options.find(x => x.v === cur); return '<button type="button" class="thf' + (cur ? ' on' : '') + '" data-thf="' + esc(key) + '" data-v="' + esc(cur || '') + '"><span class="thf-l">' + esc(label) + '</span>' + (o && cur ? ' <b>' + (o.t != null ? esc(o.t) : o.l) + '</b>' : '') + '<span class="thf-c"></span></button>'; };
   function thFilterBind(root, options, onChange) {
     root.querySelectorAll('.thf').forEach(btn => btn.onclick = (e) => {
       e.stopPropagation(); document.querySelectorAll('.thf-pop').forEach(p => p.remove());
@@ -753,7 +753,7 @@
     const catCounts = { '': 0 }; all.forEach(x => { const cs = splitCats(x.default_category); if (!cs.length) catCounts['']++; cs.forEach(c => { catCounts[c] = (catCounts[c] || 0) + 1; }); });
     const kindTag = (x) => '<span class="bk-src ' + esc(x.kind || 'other') + '">' + esc(label(x.kind)) + '</span>';
     const FOPTS = {
-      kind: [{ v: '', l: 'All types', n: all.length }].concat(kinds.filter(k => counts[k]).map(k => ({ v: k, l: kindTag({ kind: k }), n: counts[k] }))),
+      kind: [{ v: '', l: 'All types', n: all.length }].concat(kinds.filter(k => counts[k]).map(k => ({ v: k, l: kindTag({ kind: k }), t: label(k), n: counts[k] }))),
       cat: [{ v: '', l: 'All', n: all.length }, { v: '__none', l: 'Not set', n: catCounts[''] }].concat(Object.keys(catCounts).filter(c => c).sort().map(c => ({ v: c, l: catLabel(c), n: catCounts[c] }))),
       ap: [{ v: '', l: 'All', n: all.length }, { v: '1', l: 'Approved', n: all.length - unapproved0() }, { v: '0', l: 'Waiting for approval', n: unapproved0() }]
     };
