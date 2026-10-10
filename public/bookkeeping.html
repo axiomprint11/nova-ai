@@ -96,7 +96,15 @@
   .ib-list { border-top: 1px solid var(--line); }
   .ib-split { display: grid; grid-template-columns: minmax(320px, 420px) 1fr; gap: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; height: calc(100vh - 250px); min-height: 520px; }
   .ib-split .ib-list { border-top: 0; overflow: auto; border-right: 1px solid var(--line); background: #fff; }
-  .ib-pane { overflow: auto; background: #fafafe; } .ib-empty { display: grid; place-items: center; height: 100%; color: var(--muted); font-size: 14px; }
+  .ib-pane { overflow: auto; background: #fafafe; }
+  /* nothing selected: the list takes the whole width, one line per email, like Gmail */
+  .ib-row .ib-line { display: none; }
+  .ib-split.lines { grid-template-columns: 1fr; } .ib-split.lines .ib-pane { display: none; } .ib-split.lines .ib-list { border-right: 0; }
+  .ib-split.lines .ib-row .ib-main { display: none; } .ib-split.lines .ib-row { display: grid; grid-template-columns: 14px 200px minmax(0, 1fr) auto 64px; align-items: center; gap: 10px; padding: 9px 14px; }
+  .ib-split.lines .ib-row .ib-line { display: contents; } .ib-split.lines .ib-line .ib-from { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ib-split.lines .ib-line .ib-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+  .ib-split.lines .ib-line .ib-text .ib-snip { color: var(--muted); font-weight: 400; } .ib-split.lines .ib-line .ib-att { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; color: var(--muted); font-size: 12px; } .ib-split.lines .ib-line .ib-time { text-align: right; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .ib-split.lines .ib-row.else .ib-from, .ib-split.lines .ib-row.skipped .ib-from { font-weight: 500; color: var(--ink-soft); }
+  .em-head { display: flex; align-items: flex-start; gap: 10px; } .em-head .em-subject { flex: 1; } .em-close { border: 0; background: none; font-size: 22px; line-height: 1; color: var(--muted); cursor: pointer; padding: 0 4px; } .em-close:hover { color: var(--ink); } .ib-empty { display: grid; place-items: center; height: 100%; color: var(--muted); font-size: 14px; }
   .ib-row { display: grid; grid-template-columns: 16px 1fr; gap: 8px; align-items: start; padding: 10px 12px 10px 10px; border-bottom: 1px solid #f0f0f6; cursor: pointer; font-size: 13px; }
   .ib-row .ib-dot { margin-top: 5px; } .ib-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .ib-l1 { display: flex; justify-content: space-between; gap: 8px; } .ib-l2 b { font-weight: 600; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

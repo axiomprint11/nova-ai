@@ -160,11 +160,9 @@ All set aside; "Mark as read" by hand sets `read_by = 'user'`. The daily run's s
 messages kept; the overview has `inbox_messages` and `ai_read_today`.
 
 ### Baskets (1.18.13)
-`scanInbox` lists only `is:unread in:inbox` mail (no date limit), so the inbox here follows the team's Gmail unread count;
-open rows (`new` / `message`) whose Gmail id is no longer unread are set aside with `read_by = 'gmail'`. The page sorts open
-emails into baskets by rating: **Bills** (kind bill, drafts excluded from the count), **Direct messages**, **Ads**,
-**Confirmations** (notification + receipt), **Other**, **Not rated**, and **Set aside**; it opens on the first basket with
-mail. Each basket has its own action bar: "Mark all N ads / confirmations / other as read" (`POST /inbox/set-aside`, Nova
+`scanInbox` lists `is:unread in:inbox` mail (no date limit), so the inbox here follows the team's Gmail unread count, plus mail already read in Gmail from the last `backfill_days` (default 30) stored as `skipped` / `read_by = 'gmail'` for the **Everything else** basket (rated too — `TO_RATE` — but never moved);
+open rows (`new` / `message`) whose Gmail id is no longer unread are set aside with `read_by = 'gmail'`. The first chip is **Not read** (every open email, the default); then the baskets by rating: **Bills** (kind bill, drafts excluded from the count), **Direct messages**, **Ads**,
+**Confirmations** (notification + receipt), **Other**, **Not rated**, and **Set aside**; plus **Everything else** (read in Gmail). With no email selected the list takes the whole width, one line per email (`.ib-split.lines`); clicking opens the split view, × goes back. Each basket has its own action bar: "Mark all N ads / confirmations / other as read" (`POST /inbox/set-aside`, Nova
 only — Gmail is never written), "Turn all N into bills" (parses each → Bills), "Rate them now". The reading pane has
 **Turn into a bill** (or **Open in Bills →** for a draft), Mark as read, and **Move to…** (`POST /api/bookkeeping/emails/:id/kind`
 — replaces the rating with confidence 1, `message` sets status `message`). **Start fresh** (`POST /api/bookkeeping/inbox/reset`)
