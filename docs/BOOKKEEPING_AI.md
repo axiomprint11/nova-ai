@@ -132,6 +132,14 @@ value, so `querySelector('input.pick').value` reads it): a popover with search, 
 icon and color, round marks for a single choice, checkboxes + Done for `{ multi: true }` (a vendor's usual categories,
 stored "Paper; Freight & Shipping"), "+ New category…" in the footer. Transactions show "Type › Sub category".
 
+## Inbox triage
+Before the expensive read (`parseEmail()`, the main model with the attachments), `triageEmails()` looks at every unread
+email with the light model (`modelLight` = `MODEL_LIGHT`, text only, 25 per call, up to 150 per pass): advertisement /
+notification / receipt / bill / other with a confidence. Advertisements, notifications and payment receipts at ≥ 95%
+(`TRIAGE_SURE`) are marked read (`status = 'skipped'`, note "advertisement — promotion (98%)"); everything else stays for
+the full read, which runs 40 at a time. The poll parses whenever unread emails exist (not only after new ones arrive), so
+a backlog drains by itself. "Mark as read" on an open row (`POST /api/bookkeeping/emails/:id/read`) sets one aside by hand.
+
 ## Bills tab and vendor pairing
 The Bills tab has four sub-tabs by status — **Pending** (drafts; rejected folded below), **Approved**, **Scheduled**,
 **Paid** — each with a count. After approval a bill is moved by hand: "Schedule payment…" (a pay date →
