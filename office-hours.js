@@ -37,15 +37,16 @@ module.exports = function officeHours(db) {
   }
   const toMin = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || '')); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
   const ampm = (t) => { const v = toMin(t); if (v == null) return t; const h = Math.floor(v / 60), mi = v % 60; return ((h % 12) || 12) + (mi ? ':' + String(mi).padStart(2, '0') : '') + ' ' + (h < 12 ? 'AM' : 'PM'); };
-  // "Mon–Fri 9 AM–6 PM, Sat 10 AM–2 PM, Sun closed"
-  function weekText(h) {
+  // "Mon–Fri 9 AM–6 PM, Sat 10 AM–2 PM, Sun closed" — or, spoken (TalkAi), "Monday to Friday 9 AM to 6 PM, Saturday
+  // 10 AM to 2 PM, closed Sunday": full day names and "to", never abbreviations or dashes the voice would read oddly.
+  function weekText(h, spoken) {
     const groups = [];
     DAYS.forEach(k => {
-      const d = h.days[k], txt = d.open ? ampm(d.from) + '–' + ampm(d.to) : 'closed', last = groups[groups.length - 1];
+      const d = h.days[k], txt = d.open ? ampm(d.from) + (spoken ? ' to ' : '–') + ampm(d.to) : 'closed', last = groups[groups.length - 1];
       if (last && last.txt === txt) last.to = k; else groups.push({ from: k, to: k, txt });
     });
-    const nm = (k) => NAMES[k].slice(0, 3);
-    return groups.map(g => (g.from === g.to ? nm(g.from) : nm(g.from) + '–' + nm(g.to)) + ' ' + g.txt).join(', ');
+    const nm = (k) => spoken ? NAMES[k] : NAMES[k].slice(0, 3);
+    return groups.map(g => { const days = g.from === g.to ? nm(g.from) : nm(g.from) + (spoken ? ' to ' : '–') + nm(g.to); return spoken && g.txt === 'closed' ? 'closed ' + days : days + ' ' + g.txt; }).join(', ');
   }
   // Open right now (Los Angeles)? closedDays (closed-days.js) adds the calendar.
   function status(h, closedDays) {
@@ -57,10 +58,12 @@ module.exports = function officeHours(db) {
     const open = !holiday && d.open && nowMin >= toMin(d.from) && nowMin < toMin(d.to);
     return { open: !!open, closes: open ? ampm(d.to) : null, holiday: holiday || null, today: wd };
   }
-  async function line(closedDays) {
+  // line(closedDays, { spoken: true }) for the phone: full day names, "to" instead of dashes, and a rule to keep it that way.
+  async function line(closedDays, opts) {
     const h = await get();
     const st = status(h, closedDays);
-    return 'OFFICE HOURS (what to tell customers when they ask when we are open, pick-up times or when to call — the ONLY hours you ever state): ' + weekText(h) + ' (Los Angeles)' +
+    const spoken = !!(opts && opts.spoken);
+    return 'OFFICE HOURS (what to tell customers when they ask when we are open, pick-up times or when to call — the ONLY hours you ever state' + (spoken ? '; say day names in full, "Monday to Friday", "Saturday", never "Mon–Fri" or "Sat"' : '') + '): ' + weekText(h, spoken) + ' (Los Angeles)' +
       (h.note ? '. ' + h.note.replace(/[.\s]+$/, '') : '') + '. Right now the office is ' + (st.open ? 'open until ' + st.closes + ' today' : 'closed' + (st.holiday ? ' (' + st.holiday + ')' : '')) + '.' +
       (h.address ? ' Address: ' + h.address + '.' : '') + (h.phone ? ' Phone: ' + h.phone + '.' : '');
   }

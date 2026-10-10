@@ -890,6 +890,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
       '- PRICE FIRST: as soon as you know which product, call price_product with what they said and the DEFAULTS for everything else (no quantity? price 1 for banners and signs, the usual quantity otherwise). At most ONE round of questions before the first price, and only to tell which product. Then say the price, name one or two defaults in a few words ("that\u2019s 13 ounce vinyl with hems and grommets") and ask if they want anything different. Look up their orders as soon as you can.',
       '- EVERYTHING THEY SAID counts when you price: pass every spec from the whole call (size, page count, sides, color, paper, quantity). A page count goes in the pages field (Pages, Pages_Per_Set), never in quantity. Plain printing of pages, sheets or documents (no binding) is Document Printing & Copies.',
       '- Spoken words only: no lists, bullets, numbering, headings, markdown, emojis, URLs or symbols like * # / |. Never read out a link — say "on axiomprint.com".',
+      '- Say words in full, the way a person talks: day names ("Monday to Friday", "Saturday", never "Mon–Fri" or "Sat"), months, "to" instead of a dash, "and" instead of "&".',
       '- Before a lookup say two or three words ("One moment."), nothing more.',
       '- Prices exactly as the tools give them, e.g. "500 business cards come to $89.50." For a few quantities, say each one briefly. Never round, guess or add things up yourself.',
       '- Ready dates are ESTIMATES: always "estimated to be ready Monday, October 12th" (or "estimated ready today by 5 PM"), never "will be ready", "it\u2019ll be done" or "ready Monday" on its own.',
@@ -953,7 +954,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
       'NOW: ' + nowLA() + ' (Los Angeles time).',
       langCode(call.language) && langCode(call.language) !== 'en' ? 'LANGUAGE: the caller chose ' + LANGS[langCode(call.language)].name + ' — speak ' + LANGS[langCode(call.language)].name +
         ' for the whole call unless they switch. Product names and prices stay as the tools give them.' : '',
-      (deps.officeHours ? await deps.officeHours.line(deps.closedDays).catch(() => '') : ''),
+      (deps.officeHours ? await deps.officeHours.line(deps.closedDays, { spoken: true }).catch(() => '') : ''),
       'TEAM AVAILABILITY (internal \u2014 for transfers and "the team will call you back"; never read these times out as our opening hours): ' +
         (s._hours && s._hours.open ? 'the team is answering until ' + s._hours.closes + ' today.' : 'the team is not answering now' +
         (s._hours && s._hours.closed_today ? ' (closed today: ' + s._hours.closed_today + ')' : '') + (s._hours && s._hours.next ? '; they are back ' + s._hours.next + '.' : '.')),

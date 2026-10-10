@@ -358,7 +358,9 @@ pattern for any new report over a large log table. To add a report, add an entry
 - **Office hours are company data, not the TalkAi routing hours.** `office-hours.js` (SQLite `company_info`, key
   `office_hours`; Admin → Domain Knowledge → Company info; `GET /api/office-hours`, `POST /api/admin/office-hours`)
   holds what customers are told (default Mon–Fri 9–6, Sat 10–2, Sun closed + a note); `officeHours.line(closedDays)`
-  is an OFFICE HOURS line in the CRM Chat, website chat and TalkAi prompts (the only hours they may state). TalkAi's
+  is an OFFICE HOURS line in the CRM Chat, website chat and TalkAi prompts (the only hours they may state); TalkAi gets
+  `line(closedDays, { spoken: true })` — full day names and "to" ("Monday to Friday 9 AM to 6 PM"), plus a prompt rule to
+  say words in full, while the chats keep "Mon–Fri". TalkAi's
   `talk_settings.hours` (8:00–6:55) only decides which setup answers — the phone is answered 24/7 — and reaches the
   prompt as an internal TEAM AVAILABILITY line, never as opening hours.
 - **Closed days come from the production `holidays` table** (the website's "Closed days" panel), not a hard-coded
