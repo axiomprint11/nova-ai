@@ -460,7 +460,7 @@
         (bc.bill ? '<span data-for="bill"><span class="bk-muted">Looks like an invoice or statement. Turning one into a bill reads it in full and files a draft under Bills.</span> <button class="bk-btn sm p" data-parseall>Turn all ' + bc.bill + ' into bills</button></span>' : '') +
         (bc.message ? '<span data-for="message"><span class="bk-muted">People writing to accounting — for a person to answer.</span></span>' : '') +
         (bc.unrated ? '<span data-for="unrated"><span class="bk-muted">Not rated yet.</span> <button class="bk-btn sm p" data-ratenow>Rate them now</button></span>' : '') +
-        '<span data-for="done"><span class="bk-muted">Read in Gmail, marked read here, or set aside by the AI.</span></span></div>' +
+        '</div>' +
       '<div class="ib-split"><div class="ib-list">' + all.map(row).join('') + (!all.length ? '<div class="bk-muted" style="padding:14px 0">Nothing scanned yet — press Scan now.</div>' : '') + '<div class="bk-muted" id="ibNone" style="display:none;padding:14px 10px">Nothing matches.</div></div>' +
       '<div class="ib-pane" id="ibPane"><div class="ib-empty">Select an email to read it</div></div></div></div>';
     if (ibOpen && all.some(m => m.id === ibOpen)) { const r0 = v.querySelector('.ib-row[data-m="' + ibOpen + '"]'); if (r0) r0.classList.add('open'); openEmail(ibOpen); }
