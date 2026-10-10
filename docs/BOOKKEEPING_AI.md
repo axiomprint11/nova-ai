@@ -33,8 +33,9 @@ The clock is inside Nova (pm2), no Inngest / Trigger.dev: one process, one SQLit
 1. dashboard.plaid.com → create the account, product **Transactions**. Sandbox first (`PLAID_ENV=sandbox`, test
    bank `user_good` / `pass_good`), then apply for Production.
 2. `.env`: `PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ENV=sandbox|production` → `pm2 restart axiom-ai`.
-3. Dashboard → Team Settings → Webhooks: `https://nova.axiomprint.com/api/bookkeeping/plaid/webhook` (Nova also
-   passes it with every Link token).
+3. No dashboard webhook to configure (Team Settings → Webhooks only lists Transfer / Wallet / Income events): the
+   Transactions webhook `https://nova.axiomprint.com/api/bookkeeping/plaid/webhook` is set per connection by the Link
+   token Nova creates.
 4. Nova → Bookkeeping AI → Connections → **Connect a bank**, sign in to each bank (Plaid Link in the browser).
    Access tokens are stored AES-256-GCM encrypted (key derived from `JWT_SECRET`); the first 90 days sync at once.
 
