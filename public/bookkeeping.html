@@ -71,7 +71,7 @@
   .bk-tabs .n:empty { display: none; }
   .bk-main { flex: 1; min-height: 0; overflow: auto; padding: 18px; }
   .bk-view { display: none; max-width: 1180px; margin: 0 auto; }
-  .bk-view[data-v=accounts], .bk-view[data-v=materials] { max-width: none; margin: 0; }
+  .bk-view[data-v=accounts] { max-width: none; margin: 0; }
   .bk-sub { display: flex; gap: 2px; margin: -4px 0 14px; border-bottom: 1px solid var(--line); }
   .bk-sub button { border: 0; border-bottom: 2px solid transparent; background: none; padding: 8px 14px; font: 600 13px/1 inherit; color: var(--muted); cursor: pointer; margin-bottom: -1px; }
   .bk-sub button.on { color: var(--indigo-dark); border-bottom-color: var(--indigo); } .bk-sub .n { display: inline-block; min-width: 16px; padding: 1px 5px; border-radius: 9px; background: #0a84ff; color: #fff; font-size: 10.5px; line-height: 1.3; text-align: center; margin-left: 5px; } .bk-sub .n:empty { display: none; }
@@ -219,7 +219,6 @@
     <button data-v="accounts">Accounts</button>
   </div>
   <div class="bk-tabs small" id="tabs2">
-    <button data-v="materials">Materials &amp; GEO types</button>
     <button data-v="conn">Connections</button>
     <button data-v="activity">Activity</button>
   </div>
@@ -240,12 +239,13 @@
       <button data-s="vendors">Vendors &amp; suppliers</button>
       <button data-s="chart">Chart of Accounts</button>
       <button data-s="rules">Rules</button>
+      <button data-s="materials">Materials &amp; GEO types</button>
     </div>
     <div class="bk-subview" data-s="vendors" id="vVendors"></div>
     <div class="bk-subview" data-s="chart" id="vChart"></div>
     <div class="bk-subview" data-s="rules" id="vRules"></div>
+    <div class="bk-subview" data-s="materials" id="vMaterials"></div>
   </section>
-  <section class="bk-view" data-v="materials" id="vMaterials"></section>
   <section class="bk-view" data-v="conn" id="vConn"></section>
   <section class="bk-view" data-v="activity" id="vActivity"></section>
 </div>

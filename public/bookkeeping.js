@@ -19,7 +19,7 @@
   document.querySelectorAll('.bk-tabs button').forEach(b => b.onclick = () => show(b.dataset.v));
   // Main tabs with sub-tabs: Accounts (vendors / chart / rules) and Bills (bills / inbox). show('chart') or
   // show('inbox') opens that sub-tab directly; the last sub-tab of each is remembered per browser.
-  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, chart: loadChart, rules: loadRules }, first: 'vendors' }, bills: { bar: 'subBills', subs: { bills: loadBills, inbox: loadInbox }, first: 'bills' } };
+  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, chart: loadChart, rules: loadRules, materials: loadMaterials }, first: 'vendors' }, bills: { bar: 'subBills', subs: { bills: loadBills, inbox: loadInbox }, first: 'bills' } };
   document.querySelectorAll('.bk-sub button').forEach(b => b.onclick = () => show(b.closest('.bk-view').dataset.v, b.dataset.s));
   const lastSub = {}; Object.keys(TABS).forEach(k => { try { lastSub[k] = localStorage.getItem('bk_sub_' + k) || TABS[k].first; } catch (e) { lastSub[k] = TABS[k].first; } });
   function show(v, sub) {
@@ -35,7 +35,7 @@
       try { history.replaceState(null, '', '/bookkeeping?tab=' + v + '&sub=' + sub); } catch (e) {}
       return;
     }
-    ({ brief: loadBrief, txns: loadTxns, materials: loadMaterials, conn: loadConn, activity: loadActivity })[v]();
+    ({ brief: loadBrief, txns: loadTxns, conn: loadConn, activity: loadActivity })[v]();
     try { history.replaceState(null, '', '/bookkeeping?tab=' + v); } catch (e) {}
   }
   async function overview() {

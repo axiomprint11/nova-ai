@@ -103,9 +103,9 @@ vendor and a GEO TYPES line (purchases of catalog materials are production cost,
 read-only `materials` tool (by supplier and/or a name / GEO type / manufacturer query).
 
 ## Accounts tab — Vendors & suppliers · Chart of Accounts · Rules
-The fourth main tab, **Accounts**, holds the directory (Vendors & suppliers), the Chart of Accounts editor and the
-categorization Rules (`?tab=accounts&sub=chart`; `show('vendors')` etc. still work). Materials, Connections and
-Activity stay in the small row.
+The fourth main tab, **Accounts**, holds the directory (Vendors & suppliers), the Chart of Accounts editor, the
+categorization Rules and Materials & GEO types (`?tab=accounts&sub=chart`; `show('vendors')` etc. still work).
+Connections and Activity stay in the small row.
 
 ### Chart of Accounts — a styled tree
 Canonical form `bk_settings.chart_json`: `[{ name, color, icon, children: [{ name, icon }] }]` — a **type of expense**
