@@ -85,6 +85,7 @@ module.exports = function mountBookkeeping(app, deps) {
       duplicate_of INTEGER, lines TEXT, file TEXT, file_name TEXT, status TEXT DEFAULT 'draft', proposal_id INTEGER, note TEXT,
       created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
     ['scheduled_for TEXT', 'paid_at TEXT', 'paid_note TEXT'].forEach(c => db.run('ALTER TABLE bk_bills ADD COLUMN ' + c, () => {}));
+    ['kind TEXT', 'confidence REAL', 'triaged_at TEXT', 'read_by TEXT'].forEach(c => db.run('ALTER TABLE bk_emails ADD COLUMN ' + c, () => {}));
     db.run(`CREATE TABLE IF NOT EXISTS bk_proposals (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, ref_table TEXT, ref_id INTEGER, title TEXT,
       payload TEXT, confidence REAL, reason TEXT, status TEXT DEFAULT 'pending', decided_by TEXT, decided_at TEXT, decision TEXT,
       created_at TEXT DEFAULT (datetime('now')))`);
@@ -133,7 +134,8 @@ module.exports = function mountBookkeeping(app, deps) {
   ];
   const DEFAULT_CATEGORIES = DEFAULT_CHART;
   const SETTING_DEFAULTS = {
-    run_at: env('BOOKKEEPER_RUN_AT') || '07:00', poll_min: parseInt(env('BOOKKEEPER_POLL_MIN')) || 15, threshold: 0.75,
+    run_at: env('BOOKKEEPER_RUN_AT') || '07:00', poll_min: parseInt(env('BOOKKEEPER_POLL_MIN')) || 5, threshold: 0.75,
+    triage_ad: 0.95, triage_bill: 0.8, triage_notice: 0.75, triage_message: 0.6,   // inbox triage: when BookkeeperAI acts on its own
     categories: DEFAULT_CATEGORIES.join('\n'), chat_webhook: env('BOOKKEEPER_CHAT_WEBHOOK') || '', chat_space: '',
     backfill_days: parseInt(env('BOOKKEEPER_BACKFILL_DAYS')) || 7, gmail_history_id: '', gmail_watch_expires: '',
     notes: 'AxiomPrint is a print shop in Glendale, CA. Inks, paper, printing supplies and outsourced printing are cost of goods. Equipment over $2,500 is a fixed asset, not an expense. Transfers between our own accounts and credit card payments are not expenses.'
@@ -144,7 +146,8 @@ module.exports = function mountBookkeeping(app, deps) {
     const rows = await dbAll('SELECT key, value FROM bk_settings');
     const s = Object.assign({}, SETTING_DEFAULTS);
     rows.forEach(r => { s[r.key] = r.value; });
-    s.poll_min = parseInt(s.poll_min) || 15; s.threshold = Number(s.threshold) || 0.75; s.backfill_days = parseInt(s.backfill_days) || 7;
+    s.poll_min = Math.max(2, parseInt(s.poll_min) || 5); s.threshold = Number(s.threshold) || 0.75; s.backfill_days = parseInt(s.backfill_days) || 7;
+    ['triage_ad', 'triage_bill', 'triage_notice', 'triage_message'].forEach(k => { s[k] = Math.max(0.3, Math.min(1, Number(s[k]) || SETTING_DEFAULTS[k])); });
     settingsCache = s;
     return s;
   }
@@ -638,7 +641,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const j = jsonOf((r.content || []).filter(b => b.type === 'text').map(b => b.text).join(''));
     if (!j) { await dbRun("UPDATE bk_emails SET status = 'error', note = ? WHERE id = ?", ['The AI gave no usable answer.', em.id]); return null; }
     if (!j.is_bill || ['invoice', 'credit_memo', 'statement'].indexOf(j.kind) === -1) {
-      await dbRun("UPDATE bk_emails SET status = 'skipped', note = ? WHERE id = ?", [(j.kind || 'other') + (j.reason ? ' — ' + j.reason : ''), em.id]);
+      await dbRun("UPDATE bk_emails SET status = 'skipped', read_by = 'ai', kind = COALESCE(kind, ?), note = ? WHERE id = ?", [j.kind === 'receipt' ? 'receipt' : 'other', (j.kind || 'other') + (j.reason ? ' — ' + j.reason : ''), em.id]);
       return null;
     }
     const vendor = String(j.vendor || '').trim().slice(0, 120) || 'Unknown vendor';
@@ -674,39 +677,53 @@ module.exports = function mountBookkeeping(app, deps) {
   // Triage before the expensive read: a cheap text-only look at every unread email (sender, subject, first lines).
   // Advertisements, newsletters, shipping / account notifications and payment receipts that the model is ≥ 95% sure
   // about are marked read ("skipped") with the reason; anything that might be a bill stays for parseEmail().
-  const TRIAGE_SURE = 0.95;
+  // Every unread email gets a kind and a confidence (stored); what happens next depends on the thresholds in settings:
+  //   advertisement / receipt ≥ triage_ad     → marked read by the AI (set aside)
+  //   notification (delivery, tracking, alerts) ≥ triage_notice → marked read by the AI
+  //   bill ≥ triage_bill                        → read in full by parseEmail() → a bill draft
+  //   message (a person writing) ≥ triage_message → left for a person, tagged "message"
+  //   anything else / unsure                    → read in full anyway (a missed bill costs more than a model call)
   async function triageEmails(who, limit) {
-    const rows = await dbAll("SELECT id, from_addr, subject, snippet, body, attachments FROM bk_emails WHERE status = 'new' ORDER BY id LIMIT ?", [limit || 150]);
-    let read = 0, looked = 0;
+    const s = await settings();
+    const rows = await dbAll("SELECT id, from_addr, subject, snippet, body, attachments FROM bk_emails WHERE status = 'new' AND triaged_at IS NULL ORDER BY id LIMIT ?", [limit || 150]);
+    const out = { looked: 0, read: 0, bills: 0, messages: 0, unsure: 0, by_kind: {} };
     for (let i = 0; i < rows.length; i += 25) {
       const batch = rows.slice(i, i + 25);
       const listing = batch.map(m => { let atts = []; try { atts = JSON.parse(m.attachments || '[]'); } catch (e) {} return m.id + ' | from: ' + m.from_addr + ' | subject: ' + m.subject + ' | attachments: ' + (atts.map(a => a.name).join(', ') || 'none') + ' | text: ' + String(m.body || m.snippet || '').replace(/\s+/g, ' ').slice(0, 400); }).join('\n');
       let j = null;
       try {
-        const r = await anthropic.messages.create({ model: MODEL_LIGHT, max_tokens: 2000, system: 'You sort the accounting inbox of AxiomPrint, a print shop. For each email say what it is. Kinds: advertisement (marketing, promotions, newsletters, sales), notification (shipping, tracking, account alerts, calendar, system mail), receipt (confirmation of a payment already made), bill (an invoice, statement or credit memo asking for money, or anything with an invoice-like attachment), other (a person writing, a question, anything unclear). When in doubt say bill or other — a missed advertisement costs nothing, a missed bill does. Return ONLY JSON.',
-          messages: [{ role: 'user', content: 'EMAILS\n' + listing + '\n\nReturn ONLY JSON: {"items": [{"id": <id>, "kind": "advertisement"|"notification"|"receipt"|"bill"|"other", "confidence": 0.0, "why": "<a few words>"}]}' }] });
+        const r = await anthropic.messages.create({ model: MODEL_LIGHT, max_tokens: 2000, system: 'You sort the accounting inbox of AxiomPrint, a print shop. For each email say what it is. Kinds: advertisement (marketing, promotions, newsletters, sales), notification (shipping, delivery and tracking confirmations, account alerts, calendar, system mail), receipt (confirmation of a payment already made), bill (an invoice, statement or credit memo asking for money, or anything with an invoice-like attachment), message (a real person writing to us — a question, a reply, a request), other (anything unclear). When in doubt between advertisement and anything else, say the other thing — a missed advertisement costs nothing, a missed bill or message does. Return ONLY JSON.',
+          messages: [{ role: 'user', content: 'EMAILS\n' + listing + '\n\nReturn ONLY JSON: {"items": [{"id": <id>, "kind": "advertisement"|"notification"|"receipt"|"bill"|"message"|"other", "confidence": 0.0, "why": "<a few words>"}]}' }] });
         j = jsonOf((r.content || []).filter(b => b.type === 'text').map(b => b.text).join(''));
       } catch (e) { errlog('triage', e.message); break; }
       for (const m of batch) {
-        looked++;
+        out.looked++;
         const it = j && Array.isArray(j.items) ? j.items.find(x => Number(x.id) === m.id) : null;
-        if (!it) continue;
-        const conf = Math.max(0, Math.min(1, Number(it.confidence) || 0));
-        if (['advertisement', 'notification', 'receipt'].indexOf(it.kind) > -1 && conf >= TRIAGE_SURE) {
-          await dbRun("UPDATE bk_emails SET status = 'skipped', note = ? WHERE id = ?", [it.kind + ' — ' + String(it.why || '').slice(0, 200) + ' (' + Math.round(conf * 100) + '%)', m.id]);
-          read++;
+        const kind = it && ['advertisement', 'notification', 'receipt', 'bill', 'message', 'other'].indexOf(it.kind) > -1 ? it.kind : 'other';
+        const conf = it ? Math.max(0, Math.min(1, Number(it.confidence) || 0)) : 0;
+        const why = it ? String(it.why || '').slice(0, 200) : '';
+        out.by_kind[kind] = (out.by_kind[kind] || 0) + 1;
+        const pct = Math.round(conf * 100) + '%';
+        if ((kind === 'advertisement' || kind === 'receipt') && conf >= s.triage_ad || kind === 'notification' && conf >= s.triage_notice) {
+          await dbRun("UPDATE bk_emails SET status = 'skipped', kind = ?, confidence = ?, triaged_at = datetime('now'), read_by = 'ai', note = ? WHERE id = ?", [kind, conf, kind + ' — ' + why + ' (' + pct + ')', m.id]); out.read++;
+        } else if (kind === 'message' && conf >= s.triage_message) {
+          await dbRun("UPDATE bk_emails SET status = 'message', kind = ?, confidence = ?, triaged_at = datetime('now'), note = ? WHERE id = ?", [kind, conf, 'message — ' + why + ' (' + pct + ') — for a person to answer', m.id]); out.messages++;
+        } else {
+          // bill (any confidence) and everything unsure: the full read decides
+          await dbRun("UPDATE bk_emails SET kind = ?, confidence = ?, triaged_at = datetime('now'), note = ? WHERE id = ?", [kind, conf, kind + ' — ' + why + ' (' + pct + ')', m.id]);
+          if (kind === 'bill' && conf >= s.triage_bill) out.bills++; else out.unsure++;
         }
       }
     }
-    if (looked) await audit(who, 'gmail.triage', null, { looked, read });
-    return { looked, read };
+    if (out.looked) await audit(who, 'gmail.triage', null, out);
+    return out;
   }
   async function parseNewEmails(who) {
-    await triageEmails(who);
+    const triage = await triageEmails(who);
     const rows = await dbAll("SELECT * FROM bk_emails WHERE status = 'new' ORDER BY id LIMIT 40");
     let bills = 0;
     for (const em of rows) { try { if (await parseEmail(em, who)) bills++; } catch (e) { errlog('parse email', em.id, e.message); await dbRun("UPDATE bk_emails SET status = 'error', note = ? WHERE id = ?", [e.message.slice(0, 300), em.id]); } }
-    return { emails: rows.length, bills };
+    return { emails: rows.length, bills, triage };
   }
 
   // Rules first (deterministic), then the AI for what is left, in one call per batch.
@@ -1033,7 +1050,7 @@ module.exports = function mountBookkeeping(app, deps) {
       if (plaidReady()) { try { summary.plaid = await syncAll(who); parts.push(summary.plaid.added + ' new transaction' + (summary.plaid.added === 1 ? '' : 's') + (summary.plaid.errors.length ? ' (' + summary.plaid.errors.join('; ') + ')' : '')); } catch (e) { parts.push('bank sync failed: ' + e.message); } }
       else parts.push('banks not connected');
       try { summary.gmail = await scanInbox(who); parts.push(summary.gmail.new + ' new email' + (summary.gmail.new === 1 ? '' : 's')); } catch (e) { parts.push('inbox scan failed: ' + e.message); errlog('scan', e.message); }
-      try { summary.bills = await parseNewEmails(who); parts.push(summary.bills.bills + ' bill draft' + (summary.bills.bills === 1 ? '' : 's')); } catch (e) { parts.push('bill parsing failed: ' + e.message); }
+      try { summary.bills = await parseNewEmails(who); parts.push(summary.bills.bills + ' bill draft' + (summary.bills.bills === 1 ? '' : 's') + (summary.bills.triage && summary.bills.triage.read ? ', ' + summary.bills.triage.read + ' email' + (summary.bills.triage.read === 1 ? '' : 's') + ' set aside' : '') + (summary.bills.triage && summary.bills.triage.messages ? ', ' + summary.bills.triage.messages + ' message' + (summary.bills.triage.messages === 1 ? '' : 's') + ' for a person' : '')); } catch (e) { parts.push('bill parsing failed: ' + e.message); }
       try { summary.cat = await categorize(who); parts.push(summary.cat.by_rule + ' by rule, ' + summary.cat.proposed + ' proposed, ' + summary.cat.asked + ' question' + (summary.cat.asked === 1 ? '' : 's')); } catch (e) { parts.push('categorizing failed: ' + e.message); }
       const brief = await composeBrief(laDay(), parts.join(' · '));
       summary.brief = brief.stats;
@@ -1065,9 +1082,7 @@ module.exports = function mountBookkeeping(app, deps) {
       if (!running) syncDirectoryIfStale('clock', 3600000);
       if (Date.now() - lastPoll > s.poll_min * 60000 && !running) {
         lastPoll = Date.now();
-        if (await dbGet('SELECT 1 FROM bk_runs LIMIT 1')) {          // nothing polls until the first run (set-up time)
-          try { await scanInbox('poll'); if (await dbGet("SELECT 1 FROM bk_emails WHERE status = 'new' LIMIT 1")) await parseNewEmails('poll'); } catch (e) { errlog('poll', e.message); }
-        }
+        try { await scanInbox('poll'); if (await dbGet("SELECT 1 FROM bk_emails WHERE status = 'new' LIMIT 1")) await parseNewEmails('poll'); } catch (e) { errlog('poll', e.message); }
       }
     } catch (e) { errlog('tick', e.message); }
   }
@@ -1128,6 +1143,8 @@ module.exports = function mountBookkeeping(app, deps) {
       bill_drafts: (await dbGet("SELECT COUNT(*) AS n FROM bk_bills WHERE status = 'draft'")).n,
       bills_by_status: Object.fromEntries((await dbAll('SELECT status, COUNT(*) n FROM bk_bills GROUP BY status')).map(r => [r.status, r.n])),
       inbox_new: (await dbGet("SELECT COUNT(*) AS n FROM bk_emails WHERE status = 'new'")).n,
+      inbox_messages: (await dbGet("SELECT COUNT(*) AS n FROM bk_emails WHERE status = 'message'")).n,
+      ai_read_today: (await dbGet("SELECT COUNT(*) AS n FROM bk_emails WHERE read_by = 'ai' AND triaged_at >= datetime('now', '-1 day')")).n,
       emails: (await dbGet('SELECT COUNT(*) AS n FROM bk_emails')).n, rules: (await dbGet('SELECT COUNT(*) AS n FROM bk_rules WHERE active = 1')).n
     };
     const lastRun = await dbGet('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 1');
@@ -1230,7 +1247,7 @@ module.exports = function mountBookkeeping(app, deps) {
     fs.createReadStream(full).pipe(res);
   });
   app.get('/api/bookkeeping/emails', ...guard, async (req, res) => {
-    const rows = await dbAll('SELECT id, gmail_id, from_addr, subject, received_at, snippet, attachments, status, note FROM bk_emails ORDER BY received_at DESC LIMIT 200');
+    const rows = await dbAll('SELECT id, gmail_id, from_addr, subject, received_at, snippet, attachments, status, note, kind, confidence, read_by, triaged_at FROM bk_emails ORDER BY received_at DESC LIMIT 300');
     rows.forEach(r => { try { r.attachments = JSON.parse(r.attachments || '[]'); } catch (e) { r.attachments = []; } });
     res.json({ ok: true, emails: rows });
   });
@@ -1238,7 +1255,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const id = parseInt(req.params.id), em = await dbGet('SELECT id, status FROM bk_emails WHERE id = ?', [id]);
     if (!em) return res.json({ ok: false, error: 'No such email' });
     if (em.status === 'parsed') return res.json({ ok: false, error: 'It is a bill draft already.' });
-    await dbRun("UPDATE bk_emails SET status = 'skipped', note = ? WHERE id = ?", ['marked read by ' + userId(req), id]);
+    await dbRun("UPDATE bk_emails SET status = 'skipped', read_by = 'user', note = ? WHERE id = ?", ['marked read by ' + userId(req), id]);
     await audit(userId(req), 'email.read', id, null); res.json({ ok: true });
   });
   app.post('/api/bookkeeping/emails/:id/parse', ...guard, async (req, res) => {
@@ -1290,7 +1307,7 @@ module.exports = function mountBookkeeping(app, deps) {
   app.get('/api/bookkeeping/activity', ...guard, async (req, res) => res.json({ ok: true, runs: await dbAll('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 40'), audit: await dbAll('SELECT * FROM bk_audit ORDER BY id DESC LIMIT 200'), briefs: await dbAll('SELECT day, stats, posted_at, post_error FROM bk_briefs ORDER BY day DESC LIMIT 30') }));
   app.post('/api/bookkeeping/settings', ...guard, async (req, res) => {
     const b = req.body || {};
-    for (const k of ['run_at', 'poll_min', 'threshold', 'notes', 'chat_webhook', 'backfill_days']) if (b[k] !== undefined) await setSetting(k, b[k], userId(req));
+    for (const k of ['run_at', 'poll_min', 'threshold', 'notes', 'chat_webhook', 'backfill_days', 'triage_ad', 'triage_bill', 'triage_notice', 'triage_message']) if (b[k] !== undefined) await setSetting(k, b[k], userId(req));
     if (b.categories !== undefined) await saveChart(parseChartText(b.categories, chartTree(await settings())), userId(req));
     await audit(userId(req), 'settings', null, Object.keys(b));
     res.json({ ok: true, settings: await settings() });

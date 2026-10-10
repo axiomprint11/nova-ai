@@ -133,12 +133,23 @@ icon and color, round marks for a single choice, checkboxes + Done for `{ multi:
 stored "Paper; Freight & Shipping"), "+ New category…" in the footer. Transactions show "Type › Sub category".
 
 ## Inbox triage
-Before the expensive read (`parseEmail()`, the main model with the attachments), `triageEmails()` looks at every unread
-email with the light model (`modelLight` = `MODEL_LIGHT`, text only, 25 per call, up to 150 per pass): advertisement /
-notification / receipt / bill / other with a confidence. Advertisements, notifications and payment receipts at ≥ 95%
-(`TRIAGE_SURE`) are marked read (`status = 'skipped'`, note "advertisement — promotion (98%)"); everything else stays for
-the full read, which runs 40 at a time. The poll parses whenever unread emails exist (not only after new ones arrive), so
-a backlog drains by itself. "Mark as read" on an open row (`POST /api/bookkeeping/emails/:id/read`) sets one aside by hand.
+The inbox is checked every `poll_min` minutes (default **5**, from the first boot — no longer gated on a first daily run).
+`triageEmails()` gives every unread email a **kind** and a **confidence** with the light model (`modelLight` =
+`MODEL_LIGHT`, text only, 25 per call, up to 150 per pass; stored in `bk_emails.kind / confidence / triaged_at`), then
+acts by the thresholds in settings (Connections → "When BookkeeperAI acts on its own"):
+
+| kind | threshold (default) | what happens |
+|---|---|---|
+| advertisement, receipt | `triage_ad` 95% | marked read: `status = 'skipped'`, `read_by = 'ai'`, note "advertisement — promotion (98%)" |
+| notification (delivery, tracking, alerts) | `triage_notice` 75% | marked read the same way |
+| bill | `triage_bill` 80% | read in full by `parseEmail()` → a bill draft (below the threshold it is still read in full — a missed bill costs more than a model call) |
+| message (a person writing) | `triage_message` 60% | `status = 'message'`, kept for a person (purple in the inbox, counted in the Inbox badge) |
+| other / unsure | — | read in full |
+
+The full read (`parseEmail`, 40 per pass) that finds "not a bill" also sets `read_by = 'ai'`. The Inbox chips are Not read ·
+Messages · Bills · **Set aside by AI** (the report of what it marked read on its own, with kind, confidence and why) ·
+All set aside; "Mark as read" by hand sets `read_by = 'user'`. The daily run's summary line counts emails set aside and
+messages kept; the overview has `inbox_messages` and `ai_read_today`.
 
 ## Bills tab and vendor pairing
 The Bills tab has four sub-tabs by status — **Pending** (drafts; rejected folded below), **Approved**, **Scheduled**,
