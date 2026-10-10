@@ -34,24 +34,81 @@
     else { rs.className = 'bk-pill off'; rs.textContent = 'Not run yet'; }
     return ov;
   }
-  // Category dropdown: grouped by type of expense (parent), with "+ New category…" at the end (see newCategory).
+  // ---------------------------------------------------------------- category picker
+  // catSelect(cur, cls, blank, { multi }) draws a picker: a button with the choice (chips when multi) + a hidden input
+  // carrying the value (`cls` on both the wrapper and the input, so `root.querySelector('.cls').value` still works; several
+  // choices are joined with "; "). Click → a popover: search, the types of expense as collapsible groups, "+ New category…".
   const parentOf = (name) => { const c = chart.find(x => x.name === name && x.parent); return c ? c.parent : ''; };
   const catLabel = (name) => { const p = parentOf(name); return p ? esc(p) + ' <span class="bk-dim">›</span> ' + esc(name) : esc(name || ''); };
-  const catSelect = (cur, cls, blank) => {
-    const opt = (c) => '<option value="' + esc(c) + '"' + (c === cur ? ' selected' : '') + '>' + esc(c) + '</option>';
-    const tops = chart.filter(c => !c.parent); let html = '';
-    tops.forEach(t => { html += t.children ? '<optgroup label="' + esc(t.name) + '">' + chart.filter(c => c.parent === t.name).map(c => opt(c.name)).join('') + '</optgroup>' : opt(t.name); });
-    if (cur && categories.indexOf(cur) < 0) html += opt(cur);
-    return '<select class="' + (cls || '') + ' catsel">' + (blank ? '<option value=""' + (cur ? '' : ' selected') + '>' + esc(blank) + '</option>' : '') + html + '<option value="__new">+ New category…</option></select>';
+  const splitCats = (v) => String(v || '').split(/\s*[;|\n]\s*/).map(x => x.trim()).filter(Boolean);
+  const catSelect = (cur, cls, blank, o) => {
+    o = o || {}; const vals = splitCats(cur);
+    return '<span class="ckp ' + esc(cls || '') + (o.multi ? ' multi' : '') + '" data-blank="' + esc(blank || '') + '"><button type="button" class="ckp-btn">' + ckpFace(vals, blank, !!o.multi) + '</button><input type="hidden" class="' + esc(cls || '') + ' ckp-val" value="' + esc(vals.join('; ')) + '"></span>';
   };
-  // Picking "+ New category…" in any category dropdown opens a small form: name + type of expense (an existing one or a new one).
-  document.addEventListener('change', (e) => {
-    const sel = e.target; if (!sel.matches || !sel.matches('select.catsel') || sel.value !== '__new') return;
-    const prev = sel.dataset.prev || ''; sel.value = prev;
-    newCategory(sel);
+  const ckpFace = (vals, blank, multi) => {
+    if (!vals.length) return '<span class="ckp-empty">' + esc(blank || 'Choose…') + '</span><span class="ckp-caret"></span>';
+    if (!multi) { const p = parentOf(vals[0]); return '<span class="ckp-one">' + (p ? '<small>' + esc(p) + '</small>' : '') + esc(vals[0]) + '</span><span class="ckp-caret"></span>'; }
+    return vals.map(v => '<span class="ckp-chip">' + esc(v) + '<i data-rm="' + esc(v) + '" title="Remove">×</i></span>').join('') + '<span class="ckp-caret"></span>';
+  };
+  const ckpSet = (wrap, vals) => { wrap.querySelector('.ckp-val').value = vals.join('; '); wrap.querySelector('.ckp-btn').innerHTML = ckpFace(vals, wrap.dataset.blank, wrap.classList.contains('multi')); wrap.dispatchEvent(new Event('change', { bubbles: true })); };
+  let ckpOpen = null, ckpCollapsed = {}; try { ckpCollapsed = JSON.parse(localStorage.getItem('bk_ckp_collapsed') || '{}') || {}; } catch (e) {}
+  function ckpClose() { if (ckpOpen) { ckpOpen.pop.remove(); ckpOpen.wrap.classList.remove('open'); ckpOpen = null; } }
+  document.addEventListener('click', (e) => {
+    const rm = e.target.closest && e.target.closest('.ckp-chip i[data-rm]');
+    if (rm) { const wrap = rm.closest('.ckp'); ckpSet(wrap, splitCats(wrap.querySelector('.ckp-val').value).filter(v => v !== rm.dataset.rm)); e.preventDefault(); return; }
+    const btn = e.target.closest && e.target.closest('.ckp-btn');
+    if (btn) { const wrap = btn.closest('.ckp'); if (ckpOpen && ckpOpen.wrap === wrap) ckpClose(); else { ckpClose(); ckpShow(wrap); } return; }
+    if (ckpOpen && !e.target.closest('.ckp-pop') && !e.target.closest('.bk-modal')) ckpClose();
   });
-  document.addEventListener('focusin', (e) => { if (e.target.matches && e.target.matches('select.catsel')) e.target.dataset.prev = e.target.value; });
-  function newCategory(sel) {
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ckpOpen) ckpClose(); });
+  window.addEventListener('resize', ckpClose); document.querySelector('.bk-main').addEventListener('scroll', ckpClose);
+  function ckpShow(wrap) {
+    const multi = wrap.classList.contains('multi'), blank = wrap.dataset.blank;
+    let vals = splitCats(wrap.querySelector('.ckp-val').value);
+    const pop = document.createElement('div'); pop.className = 'ckp-pop' + (multi ? ' multi' : ' single');
+    pop.innerHTML = '<div class="ckp-search"><input type="text" placeholder="Search categories…"></div><div class="ckp-list"></div>' +
+      '<div class="ckp-foot"><a href="#" class="ckp-new">+ New category…</a><span class="sp"></span>' + (blank ? '<a href="#" class="ckp-clear">' + esc(multi ? 'Clear' : blank) + '</a>' : '') + (multi ? '<button type="button" class="bk-btn sm p ckp-done">Done</button>' : '') + '</div>';
+    pop.addEventListener('click', (e) => e.stopPropagation());   // clicks inside (which re-draw the list) must not reach the close-on-outside-click handler
+    document.body.appendChild(pop);
+    const r = wrap.getBoundingClientRect(), W = Math.min(360, window.innerWidth - 16);
+    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) + 'px'; pop.style.width = W + 'px';
+    const below = window.innerHeight - r.bottom - 8, above = r.top - 8;
+    if (below >= 300 || below >= above) { pop.style.top = (r.bottom + 4) + 'px'; pop.style.maxHeight = Math.min(420, below) + 'px'; }
+    else { pop.style.bottom = (window.innerHeight - r.top + 4) + 'px'; pop.style.maxHeight = Math.min(420, above) + 'px'; }
+    wrap.classList.add('open'); ckpOpen = { wrap, pop };
+    const list = pop.querySelector('.ckp-list'), q = pop.querySelector('input');
+    const draw = () => {
+      const f = q.value.trim().toLowerCase(); let html = '';
+      const tops = chart.filter(c => !c.parent);
+      tops.forEach(t => {
+        const kids = t.children ? chart.filter(c => c.parent === t.name).map(c => c.name) : [t.name];
+        const show = f ? kids.filter(k => k.toLowerCase().indexOf(f) > -1 || t.name.toLowerCase().indexOf(f) > -1) : kids;
+        if (!show.length) return;
+        const col = !f && ckpCollapsed[t.name] && !show.some(k => vals.indexOf(k) > -1);
+        const nSel = kids.filter(k => vals.indexOf(k) > -1).length;
+        html += '<div class="ckp-g' + (col ? ' col' : '') + '" data-g="' + esc(t.name) + '"><div class="ckp-gh"><span class="ckp-tri"></span>' + esc(t.name) + (nSel ? '<b>' + nSel + '</b>' : '') + '<small>' + kids.length + '</small></div>' +
+          (t.children ? show.map(k => '<div class="ckp-i' + (vals.indexOf(k) > -1 ? ' on' : '') + '" data-v="' + esc(k) + '"><span class="ckp-ck"></span>' + esc(k) + '</div>').join('') : '<div class="ckp-i top' + (vals.indexOf(t.name) > -1 ? ' on' : '') + '" data-v="' + esc(t.name) + '"><span class="ckp-ck"></span>use as is</div>') + '</div>';
+      });
+      vals.filter(v => categories.indexOf(v) < 0).forEach(v => { html += '<div class="ckp-g"><div class="ckp-i on" data-v="' + esc(v) + '"><span class="ckp-ck"></span>' + esc(v) + ' <small class="bk-dim">not in the chart</small></div></div>'; });
+      list.innerHTML = html || '<div class="bk-muted" style="padding:10px 12px">No match — add it below.</div>';
+    };
+    draw(); setTimeout(() => q.focus(), 0);
+    q.oninput = draw;
+    q.onkeydown = (e) => { if (e.key === 'Enter') { const first = list.querySelector('.ckp-i'); if (first) first.click(); e.preventDefault(); } };
+    list.onclick = (e) => {
+      const gh = e.target.closest('.ckp-gh');
+      if (gh) { const g = gh.parentNode; g.classList.toggle('col'); ckpCollapsed[g.dataset.g] = g.classList.contains('col') ? 1 : 0; try { localStorage.setItem('bk_ckp_collapsed', JSON.stringify(ckpCollapsed)); } catch (er) {} return; }
+      const it = e.target.closest('.ckp-i'); if (!it) return;
+      const v = it.dataset.v;
+      if (multi) { vals = vals.indexOf(v) > -1 ? vals.filter(x => x !== v) : vals.concat([v]); ckpSet(wrap, vals); draw(); }
+      else { ckpSet(wrap, [v]); ckpClose(); }
+    };
+    pop.querySelector('.ckp-new').onclick = (e) => { e.preventDefault(); ckpClose(); newCategory(wrap); };
+    const clr = pop.querySelector('.ckp-clear'); if (clr) clr.onclick = (e) => { e.preventDefault(); vals = []; ckpSet(wrap, vals); if (multi) draw(); else ckpClose(); };
+    const done = pop.querySelector('.ckp-done'); if (done) done.onclick = ckpClose;
+  }
+  // "+ New category…": name + type of expense (an existing one or a new one); the new one is selected in the picker that asked.
+  function newCategory(wrap) {
     const tops = chart.filter(c => !c.parent && c.children).map(c => c.name);
     const el = document.createElement('div'); el.className = 'bk-modal';
     el.innerHTML = '<div class="bk-modal-box" style="width:min(440px,100%)"><div class="bk-modal-title">New category</div><div class="bk-muted" style="margin-bottom:10px">A sub category under a type of expense. Pick the type, or type a new one to start a new branch of the tree.</div>' +
@@ -62,8 +119,8 @@
     const close = () => el.remove();
     el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
     document.body.appendChild(el);
-    const par = el.querySelector('#ncParent'), wrap = el.querySelector('#ncNewTypeWrap');
-    par.onchange = () => { wrap.style.display = par.value ? 'none' : ''; };
+    const par = el.querySelector('#ncParent'), wrapT = el.querySelector('#ncNewTypeWrap');
+    par.onchange = () => { wrapT.style.display = par.value ? 'none' : ''; };
     el.querySelector('#ncName').focus();
     el.querySelector('#ncSave').onclick = async () => {
       const name = el.querySelector('#ncName').value.trim(), parent = par.value || el.querySelector('#ncNewType').value.trim();
@@ -72,8 +129,7 @@
       if (!r.ok) { el.querySelector('#ncMsg').textContent = r.error; return; }
       ov.chart = r.chart; ov.settings.categories = r.settings.categories; chart = r.chart;
       categories = chart.filter(c => c.parent || !c.children).map(c => c.name).filter((n, i, a) => a.indexOf(n) === i);
-      // Re-draw every category dropdown on the page with the new one, keeping each one's choice; select it in the one that asked.
-      document.querySelectorAll('select.catsel').forEach(o => { const blank = o.options[0] && o.options[0].value === '' ? o.options[0].textContent : ''; const cur = o === sel ? name : o.value; const tmp = document.createElement('div'); tmp.innerHTML = catSelect(cur, o.className.replace(/\bcatsel\b/, '').trim(), blank); o.replaceWith(tmp.firstChild); });
+      if (wrap && wrap.classList) { const vals = splitCats(wrap.querySelector('.ckp-val').value); ckpSet(wrap, wrap.classList.contains('multi') ? vals.concat([name]) : [name]); }
       close();
     };
   }
@@ -115,14 +171,14 @@
       (ov.brief ? '<div class="bk-card"><h2>Today’s brief as posted</h2><pre class="bk-brief">' + esc(ov.brief.text) + '</pre></div>' : '');
     const refresh = () => loadBrief();
     v.querySelectorAll('[data-approve]').forEach(b => b.onclick = async () => {
-      const row = b.closest('.bk-prop'); const sel = row.querySelector('select.pick'); const rem = row.querySelector('.remember'); const av = row.querySelector('.appvendor');
+      const row = b.closest('.bk-prop'); const sel = row.querySelector('input.pick'); const rem = row.querySelector('.remember'); const av = row.querySelector('.appvendor');
       b.disabled = true;
       const r = await post('/api/bookkeeping/proposals/' + b.dataset.approve + '/decide', { action: 'approve', category: sel ? sel.value : undefined, remember: rem ? rem.checked : undefined, approve_vendor: av ? av.checked : undefined });
       if (!r.ok) { alert(r.error || 'Could not approve'); b.disabled = false; } else refresh();
     });
     v.querySelectorAll('[data-reject]').forEach(b => b.onclick = async () => { const note = prompt('Why? (optional)') ; if (note === null) return; b.disabled = true; await post('/api/bookkeeping/proposals/' + b.dataset.reject + '/decide', { action: 'reject', note }); refresh(); });
     v.querySelectorAll('[data-answer]').forEach(b => b.onclick = async () => {
-      const row = b.closest('.bk-prop'); const inp = row.querySelector('[data-ans]'); const cat = row.querySelector('select.ans-cat');
+      const row = b.closest('.bk-prop'); const inp = row.querySelector('[data-ans]'); const cat = row.querySelector('input.ans-cat');
       if (!inp.value.trim()) { inp.focus(); return; }
       b.disabled = true;
       await post('/api/bookkeeping/questions/' + b.dataset.answer + '/answer', { answer: inp.value.trim(), category: cat ? cat.value : undefined });
@@ -173,7 +229,7 @@
       (!(j.transactions || []).length ? '<div class="bk-muted" style="padding:14px 0">No transactions yet — connect a bank under Connections, then Sync.</div>' : '') + '</div>';
     $('txnGo').onclick = loadTxns; v.querySelector('input[name=q]').onkeydown = (e) => { if (e.key === 'Enter') loadTxns(); };
     $('syncNow').onclick = async () => { $('syncNow').disabled = true; const r = await post('/api/bookkeeping/sync', {}); if (!r.ok) alert(r.error); loadTxns(); overview(); };
-    v.querySelectorAll('[data-tx]').forEach(b => b.onclick = async () => { const sel = b.previousElementSibling; await post('/api/bookkeeping/transactions/' + b.dataset.tx + '/category', { category: sel.value }); loadTxns(); overview(); });
+    v.querySelectorAll('[data-tx]').forEach(b => b.onclick = async () => { const sel = b.parentNode.querySelector('input.tx-cat'); await post('/api/bookkeeping/transactions/' + b.dataset.tx + '/category', { category: sel.value }); loadTxns(); overview(); });
     v.querySelectorAll('[data-setv]').forEach(a => a.onclick = async (e) => {
       e.preventDefault();
       const d = await api('/api/bookkeeping/directory');
@@ -211,7 +267,7 @@
     if (!ov) await overview();
     const j = await api('/api/bookkeeping/rules');
     v.innerHTML = '<div class="bk-card"><h2>Categorization rules<span class="sp"></span><span class="bk-muted">applied before the AI looks — made from your approvals, or here</span></h2>' +
-      '<div class="bk-row" style="margin-bottom:10px"><select class="bk" id="rKind"><option value="vendor">Vendor is</option><option value="keyword">Description contains</option></select><input class="bk" id="rPat" placeholder="e.g. Veritiv or AMAZON" style="min-width:220px">' + catSelect('', 'bk') + '<button class="bk-btn p" id="rAdd">Add rule</button></div>' +
+      '<div class="bk-row" style="margin-bottom:10px"><select class="bk" id="rKind"><option value="vendor">Vendor is</option><option value="keyword">Description contains</option></select><input class="bk" id="rPat" placeholder="e.g. Veritiv or AMAZON" style="min-width:220px">' + catSelect('', 'rcat', 'Category…') + '<button class="bk-btn p" id="rAdd">Add rule</button></div>' +
       '<table class="bk"><thead><tr><th>Rule</th><th>Category</th><th>From</th><th>Hits</th><th></th></tr></thead><tbody>' +
       (j.rules || []).map(r => '<tr><td>' + (r.kind === 'vendor' ? 'Vendor is ' : 'Contains ') + '<b>' + esc(r.pattern) + '</b></td><td>' + esc(r.category) + '</td><td>' + esc(r.source) + ' · ' + esc(r.created_by || '') + '</td><td>' + r.hits + '</td><td><button class="bk-btn sm bad" data-del="' + r.id + '">Remove</button></td></tr>').join('') + '</tbody></table>' +
       (!(j.rules || []).length ? '<div class="bk-muted" style="padding:14px 0">No rules yet — each approval with "remember" ticked adds one.</div>' : '') + '</div>' +
@@ -219,7 +275,7 @@
       '<div class="bk-card"><h2>Chart of accounts and notes for the AI</h2><div class="bk-muted">A tree: a line with no indent is a <b>type of expense</b>, an indented line (two spaces) is a <b>sub category</b> under it — transactions always get the sub category. Add one anywhere with “+ New category…” in a dropdown, or edit the text here. The notes tell BookkeeperAI how AxiomPrint books things.</div>' +
       '<div class="bk-chart"><textarea class="bk" id="sCats" style="min-height:300px;margin-top:8px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px">' + esc(ov.settings.categories) + '</textarea><div class="bk-tree" id="sTree"></div></div><textarea class="bk" id="sNotes" style="margin-top:8px">' + esc(ov.settings.notes) + '</textarea>' +
       '<div class="bk-row" style="margin-top:8px"><label class="bk-muted">Ask me when confidence is below <input class="bk" id="sThr" type="number" min="0.3" max="1" step="0.05" value="' + esc(ov.settings.threshold) + '" style="width:80px"></label><button class="bk-btn p" id="sSave">Save</button><span class="bk-muted" id="sMsg"></span></div></div>';
-    $('rAdd').onclick = async () => { const r = await post('/api/bookkeeping/rules', { kind: $('rKind').value, pattern: $('rPat').value.trim(), category: v.querySelector('select.bk:not(#rKind)').value }); if (!r.ok) alert(r.error); loadRules(); };
+    $('rAdd').onclick = async () => { const r = await post('/api/bookkeeping/rules', { kind: $('rKind').value, pattern: $('rPat').value.trim(), category: v.querySelector('input.rcat').value }); if (!r.ok) alert(r.error); loadRules(); };
     v.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await api('/api/bookkeeping/rules/' + b.dataset.del, { method: 'DELETE' }); loadRules(); });
     const tree = () => { let parent = null; const items = []; $('sCats').value.split('\n').forEach(l => { if (!l.trim()) return; const sub = /^[\s\-\*>]/.test(l) && parent; const name = l.replace(/^[\s\-\*>]+/, '').trim(); if (sub) parent.kids.push(name); else { parent = { name, kids: [] }; items.push(parent); } });
       $('sTree').innerHTML = '<div class="bk-muted" style="margin-bottom:6px">' + items.length + ' types · ' + items.reduce((a, t) => a + (t.kids.length || 1), 0) + ' categories</div>' + items.map(t => '<div class="bk-tree-t">' + esc(t.name) + (t.kids.length ? '' : ' <span class="bk-dim">(used as is)</span>') + '</div>' + t.kids.map(k => '<div class="bk-tree-k">' + esc(k) + '</div>').join('')).join(''); };
@@ -244,7 +300,7 @@
     const kindTag = (x) => '<span class="bk-src ' + esc(x.kind || 'other') + '">' + esc(label(x.kind)) + '</span>';
     const row = (x) => '<tr data-vid="' + x.id + '" data-kind="' + esc(x.kind || 'other') + '" data-q="' + esc((x.name + ' ' + (x.contact || '') + ' ' + (x.email || '') + ' ' + (x.specialty || '') + ' ' + (x.aliases || '')).toLowerCase()) + '"><td><a href="#" class="bk-open" data-vopen="' + x.id + '" title="Full details">' + logo(x) + '</a></td><td>' + kindTag(x) + '</td>' +
       '<td><a href="#" class="bk-open bk-name" data-vopen="' + x.id + '" title="Full details">' + esc(x.name) + '</a>' + (x.contact ? '<div class="bk-muted">' + esc(x.contact) + '</div>' : '') + '</td><td class="bk-muted">' + esc(x.email || '') + (x.phone ? '<br>' + esc(x.phone) : '') + '</td><td class="bk-muted">' + esc(x.specialty || '') + (x.materials ? '<div class="bk-dim"><a href="#" data-mats="' + x.id + '" title="See the materials in the catalog">' + x.materials + ' material' + (x.materials == 1 ? '' : 's') + '</a>: ' + esc((x.geo_types || []).join(', ')) + '</div>' : '') + '</td>' +
-      '<td>' + catSelect(x.default_category || '', 'vcat', '— not set —') + '</td><td><input type="text" class="bk valias" placeholder="bank names, one per line" value="' + esc(String(x.aliases || '').split('\n').join(' | ')) + '" title="How this vendor appears on bank statements (separate with |)"></td>' +
+      '<td>' + catSelect(x.default_category || '', 'vcat', 'not set', { multi: true }) + '</td><td><input type="text" class="bk valias" placeholder="bank names, one per line" value="' + esc(String(x.aliases || '').split('\n').join(' | ')) + '" title="How this vendor appears on bank statements (separate with |)"></td>' +
       '<td class="c"><label class="bk-check" title="Approved = BookkeeperAI may link bank lines and bills to this company without asking. CRM entries are approved by themselves; a company first seen on a bill waits here."><input type="checkbox" class="vappr"' + (x.approved ? ' checked' : '') + '></label></td>' +
       '<td class="num bk-muted" title="How many bank transactions and bills are linked to this company">' + (x.txns || 0) + ' <span class="bk-dim">txn' + (x.txns == 1 ? '' : 's') + '</span><br>' + (x.bills || 0) + ' <span class="bk-dim">bill' + (x.bills == 1 ? '' : 's') + '</span></td><td><button class="bk-btn sm" data-vsave="' + x.id + '">Save</button></td></tr>';
     // Full CRM record in a popup (everything the CRM holds for the company; edit it in the CRM).
@@ -284,7 +340,7 @@
     $('dirSync').onclick = async () => { $('dirSync').disabled = true; const r = await post('/api/bookkeeping/directory/sync', {}); if (!r.ok) alert(r.error); else if (r.errors && r.errors.length) alert(r.errors.join('\n')); loadVendors(); };
     v.querySelectorAll('[data-vsave]').forEach(b => b.onclick = async () => {
       const tr = b.closest('tr'); b.disabled = true;
-      await post('/api/bookkeeping/vendors/' + b.dataset.vsave, { approved: tr.querySelector('.vappr').checked, default_category: tr.querySelector('select.vcat').value, aliases: tr.querySelector('.valias').value.split('|').map(x => x.trim()).filter(Boolean).join('\n') });
+      await post('/api/bookkeeping/vendors/' + b.dataset.vsave, { approved: tr.querySelector('.vappr').checked, default_category: tr.querySelector('input.vcat').value, aliases: tr.querySelector('.valias').value.split('|').map(x => x.trim()).filter(Boolean).join('\n') });
       loadVendors();
     });
   }

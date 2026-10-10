@@ -112,6 +112,10 @@ category dropdown ends with "+ New category…" (name + type of expense, existin
 {name, parent}` → `addToChart()` inserts the line under the parent (creating the parent at the end when new); the chat tool
 `add_category` does the same; a category approved by hand that is not in the chart is appended as a type. Rules → "Chart of
 accounts" is the text editor with a live tree beside it; Transactions show "Type › Sub category".
+The category control everywhere is `catSelect()` in bookkeeping.js — a picker (button + hidden `input.<cls>` carrying the
+value, so `querySelector('input.pick').value` reads it): a popover with search, the types as collapsible groups (collapsed
+state per browser), round marks for a single choice, checkboxes + Done for `{ multi: true }` (a vendor's usual categories,
+stored "Paper; Freight & Shipping"), "+ New category…" in the footer.
 
 ## What the agent may do (its only tools)
 `list_pending`, `approve` (by id / all / with a corrected category), `reject`, `answer_question` (records the answer; with
