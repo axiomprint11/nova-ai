@@ -26,7 +26,7 @@ const fs = require('fs');
 const path = require('path');
 
 module.exports = function mountBookkeeping(app, deps) {
-  const { db, crypto, anthropic, auth, serveVersionedHtml, google, keyPath, jsonBody } = deps;
+  const { db, crypto, anthropic, auth, serveVersionedHtml, google, keyPath, runQuery } = deps;
   const MODEL = process.env.BOOKKEEPER_MODEL || deps.model;
   const env = (k) => String(process.env[k] || '').trim();
   const NOVA_URL = (env('NOVA_PUBLIC_URL') || 'https://nova.axiomprint.com').replace(/\/+$/, '');
@@ -71,6 +71,9 @@ module.exports = function mountBookkeeping(app, deps) {
     db.run(`CREATE TABLE IF NOT EXISTS bk_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT DEFAULT (datetime('now')), who TEXT, action TEXT, ref TEXT, detail TEXT)`);
     db.run(`CREATE TABLE IF NOT EXISTS bk_briefs (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT UNIQUE, text TEXT, stats TEXT, posted_at TEXT,
       post_error TEXT, created_at TEXT DEFAULT (datetime('now')))`);
+    // The vendor directory: the CRM's `suppliers` and `vendors` tables (read-only, synced), plus vendors first seen on a bill.
+    ['source TEXT', 'crm_id INTEGER', 'phone TEXT', 'specialty TEXT', 'contact TEXT', 'address TEXT', 'aliases TEXT', 'synced_at TEXT'].forEach(c => db.run('ALTER TABLE bk_vendors ADD COLUMN ' + c, () => {}));
+    db.run('ALTER TABLE bk_transactions ADD COLUMN vendor_id INTEGER', () => {});
     db.run(`CREATE TABLE IF NOT EXISTS bk_chat (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT DEFAULT (datetime('now')), channel TEXT, space TEXT,
       thread TEXT, sender TEXT, sender_email TEXT, direction TEXT, text TEXT, tools TEXT)`);
   });
@@ -297,6 +300,61 @@ module.exports = function mountBookkeeping(app, deps) {
     return r.data;
   }
 
+  // ---------------------------------------------------------------- the vendor directory (CRM suppliers + vendors)
+  // Pulled from the production `suppliers` and `vendors` tables (read-only). They are our known partners, so they come
+  // in approved; a transaction or bill that matches one is linked to it (vendor_id) and the AI is told who they are.
+  const normV = (t) => String(t || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9 ]+/g, ' ').replace(/\b(inc|llc|corp|corporation|co|company|ltd|the)\b/g, ' ').replace(/\s+/g, ' ').trim();
+  const domainOf = (e) => { const m = String(e || '').toLowerCase().match(/@([a-z0-9.-]+)/); return m ? m[1].replace(/^(www|mail|e)\./, '') : ''; };
+  const FREE_MAIL = /^(gmail|yahoo|hotmail|outlook|aol|icloud|me|live|msn)\./;
+  async function syncDirectory(who) {
+    if (!runQuery) return { error: 'No CRM connection' };
+    let n = 0, errors = [];
+    for (const t of ['suppliers', 'vendors']) {
+      let rows = [];
+      try { rows = await runQuery('SELECT id, company_name, contact_name, email, phone, specialty, address, city, state, zip FROM ' + t + ' ORDER BY id'); }
+      catch (e) { errors.push(t + ': ' + e.message); continue; }
+      for (const r of rows) {
+        const name = String(r.company_name || r.contact_name || '').trim().slice(0, 120);
+        if (!name) continue;
+        const addr = [r.address, r.city, r.state, r.zip].filter(Boolean).join(', ').slice(0, 200);
+        const ex = await dbGet('SELECT id FROM bk_vendors WHERE (source = ? AND crm_id = ?) OR (LOWER(name) = LOWER(?) AND (source IS NULL OR source IN (?, ?)))', [t, r.id, name, 'bill', t]);
+        if (ex) await dbRun("UPDATE bk_vendors SET name = ?, source = ?, crm_id = ?, email = ?, phone = ?, specialty = ?, contact = ?, address = ?, approved = 1, synced_at = datetime('now') WHERE id = ?",
+          [name, t, r.id, String(r.email || '').slice(0, 200), String(r.phone || '').slice(0, 40), String(r.specialty || '').slice(0, 200), String(r.contact_name || '').slice(0, 120), addr, ex.id]);
+        else await dbRun("INSERT INTO bk_vendors (name, approved, email, source, crm_id, phone, specialty, contact, address, approved_by, approved_at, synced_at) VALUES (?,1,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))",
+          [name, String(r.email || '').slice(0, 200), t, r.id, String(r.phone || '').slice(0, 40), String(r.specialty || '').slice(0, 200), String(r.contact_name || '').slice(0, 120), addr, 'crm']);
+        n++;
+      }
+    }
+    await audit(who, 'directory.sync', null, { synced: n, errors });
+    return { synced: n, errors };
+  }
+  let dirCache = { at: 0, list: [] };
+  async function directory() {
+    if (Date.now() - dirCache.at < 60000) return dirCache.list;
+    const rows = await dbAll('SELECT * FROM bk_vendors ORDER BY name');
+    dirCache = { at: Date.now(), list: rows.map(v => Object.assign({}, v, { _n: normV(v.name), _al: String(v.aliases || '').split('\n').map(normV).filter(Boolean), _dom: domainOf(v.email) })) };
+    return dirCache.list;
+  }
+  // The directory entry a bank line / bill belongs to: an alias or the full name inside the text, or the email domain.
+  async function matchVendor(text, email) {
+    const list = await directory();
+    const n = normV(text), dom = domainOf(email);
+    if (dom && !FREE_MAIL.test(dom)) { const byDom = list.find(v => v._dom && (v._dom === dom || dom.endsWith('.' + v._dom))); if (byDom) return byDom; }
+    if (!n) return null;
+    const hits = list.filter(v => v._n.length >= 3 && (n === v._n || (' ' + n + ' ').indexOf(' ' + v._n + ' ') > -1 || v._al.some(a => a.length >= 3 && (' ' + n + ' ').indexOf(' ' + a + ' ') > -1)));
+    if (hits.length) return hits.sort((a, b) => b._n.length - a._n.length)[0];
+    // First word of a multi-word vendor name on the bank line ("VERITIV CORP PAYMENT" → Veritiv) when it is distinctive.
+    const first = n.split(' ')[0];
+    if (first && first.length >= 5) { const h = list.filter(v => v._n.split(' ')[0] === first); if (h.length === 1) return h[0]; }
+    return null;
+  }
+  const dirLine = async () => {
+    const list = (await directory()).filter(v => v.approved);
+    if (!list.length) return '';
+    return 'OUR SUPPLIERS AND VENDORS (from the CRM; a transaction or bill from one of these is a normal purchase — use the specialty to pick the category):\n' +
+      list.slice(0, 120).map(v => '- ' + v.name + (v.specialty ? ' (' + v.specialty + ')' : '') + (v.default_category ? ' → ' + v.default_category : '')).join('\n');
+  };
+
   // ---------------------------------------------------------------- Claude: bills and categories
   const SYS = (s) => 'You are BookkeeperAI, the bookkeeping assistant of AxiomPrint (a print shop in Glendale, CA). You never decide anything: ' +
     'you PROPOSE, with a confidence from 0 to 1 and a one-line reason, and a person approves. Be precise, use only what is in the documents and data, never invent amounts or dates. ' +
@@ -322,7 +380,7 @@ module.exports = function mountBookkeeping(app, deps) {
       'Return ONLY JSON: {"is_bill": true|false, "kind": "invoice"|"statement"|"credit_memo"|"receipt"|"other", "vendor": "", "invoice_no": "", "invoice_date": "YYYY-MM-DD", "due_date": "YYYY-MM-DD" or null, "terms": "", ' +
       '"subtotal": 0, "tax": 0, "total": 0, "currency": "USD", "lines": [{"description": "", "qty": 1, "unit_price": 0, "amount": 0, "category": "<from the chart of accounts>"}], ' +
       '"confidence": 0.0, "reason": "", "note": "anything odd (handwritten, partial, foreign currency, past due)"}' });
-    const r = await anthropic.messages.create({ model: MODEL, max_tokens: 1800, system: SYS(s), messages: [{ role: 'user', content: content }] });
+    const r = await anthropic.messages.create({ model: MODEL, max_tokens: 1800, system: SYS(s) + '\n' + await dirLine(), messages: [{ role: 'user', content: content }] });
     const j = jsonOf((r.content || []).filter(b => b.type === 'text').map(b => b.text).join(''));
     if (!j) { await dbRun("UPDATE bk_emails SET status = 'error', note = ? WHERE id = ?", ['The AI gave no usable answer.', em.id]); return null; }
     if (!j.is_bill || ['invoice', 'credit_memo', 'statement'].indexOf(j.kind) === -1) {
@@ -333,8 +391,8 @@ module.exports = function mountBookkeeping(app, deps) {
     const invNo = String(j.invoice_no || '').trim().slice(0, 80);
     const dup = invNo ? await dbGet('SELECT id FROM bk_bills WHERE LOWER(vendor) = LOWER(?) AND invoice_no = ? AND status <> ?', [vendor, invNo, 'rejected'])
       : await dbGet('SELECT id FROM bk_bills WHERE LOWER(vendor) = LOWER(?) AND ABS(total - ?) < 0.01 AND invoice_date = ? AND status <> ?', [vendor, Number(j.total) || 0, j.invoice_date || '', 'rejected']);
-    let v = await dbGet('SELECT * FROM bk_vendors WHERE LOWER(name) = LOWER(?)', [vendor]);
-    if (!v) { await dbRun('INSERT OR IGNORE INTO bk_vendors (name, approved) VALUES (?, 0)', [vendor]); v = await dbGet('SELECT * FROM bk_vendors WHERE LOWER(name) = LOWER(?)', [vendor]); }
+    let v = (await matchVendor(vendor, em.from_addr)) || await dbGet('SELECT * FROM bk_vendors WHERE LOWER(name) = LOWER(?)', [vendor]);
+    if (!v) { await dbRun('INSERT OR IGNORE INTO bk_vendors (name, approved, source) VALUES (?, 0, ?)', [vendor, 'bill']); v = await dbGet('SELECT * FROM bk_vendors WHERE LOWER(name) = LOWER(?)', [vendor]); dirCache.at = 0; }
     const main = atts[0] || null;
     const ins = await dbRun('INSERT INTO bk_bills (email_id, vendor, vendor_id, invoice_no, invoice_date, due_date, terms, subtotal, tax, total, currency, kind, duplicate_of, lines, file, file_name, status, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       [em.id, vendor, v ? v.id : null, invNo || null, j.invoice_date || null, j.due_date || null, String(j.terms || '').slice(0, 60), Number(j.subtotal) || null, Number(j.tax) || null, Number(j.total) || 0,
@@ -378,6 +436,8 @@ module.exports = function mountBookkeeping(app, deps) {
     let byRule = 0, proposed = 0, asked = 0;
     const open = [];
     for (const t of txns) {
+      const dv = await matchVendor(t.merchant || t.name);
+      if (dv && !t.vendor_id) { await dbRun('UPDATE bk_transactions SET vendor_id = ? WHERE id = ?', [dv.id, t.id]); t.vendor_id = dv.id; t._vendor = dv; }
       const r = ruleMatch(rules, t);
       if (r) {
         await dbRun("UPDATE bk_transactions SET category = ?, category_source = 'rule', rule_id = ?, status = 'categorized', updated_at = datetime('now') WHERE id = ?", [r.category, r.id, t.id]);
@@ -388,12 +448,13 @@ module.exports = function mountBookkeeping(app, deps) {
     for (let i = 0; i < open.length; i += 40) {
       const batch = open.slice(i, i + 40);
       const listing = batch.map(t => t.id + ' | ' + t.date + ' | ' + (t.amount >= 0 ? '-' : '+') + '$' + Math.abs(t.amount).toFixed(2) + ' | ' + t.name + (t.merchant ? ' (' + t.merchant + ')' : '') +
+        (t._vendor ? ' | OUR VENDOR: ' + t._vendor.name + (t._vendor.specialty ? ' — ' + t._vendor.specialty : '') + (t._vendor.default_category ? ' → usually ' + t._vendor.default_category : '') : '') +
         (t.plaid_category ? ' | bank says: ' + t.plaid_category : '') + (t.account_name ? ' | ' + t.account_name : '')).join('\n');
       const prior = (await dbAll("SELECT merchant, name, category FROM bk_transactions WHERE status = 'categorized' ORDER BY updated_at DESC LIMIT 60"))
         .map(x => (x.merchant || x.name) + ' → ' + x.category).filter((v, k, a) => a.indexOf(v) === k).slice(0, 40).join('\n');
       let j = null;
       try {
-        const r = await anthropic.messages.create({ model: MODEL, max_tokens: 2500, system: SYS(s), messages: [{ role: 'user', content:
+        const r = await anthropic.messages.create({ model: MODEL, max_tokens: 2500, system: SYS(s) + '\n' + await dirLine(), messages: [{ role: 'user', content:
           'Bank transactions (amount: - means money out, + means money in). Propose a category for each from the chart of accounts.\n' + listing +
           (prior ? '\n\nHOW WE CATEGORIZED BEFORE (approved):\n' + prior : '') +
           '\n\nReturn ONLY JSON: {"items": [{"id": <id>, "category": "", "vendor": "<clean vendor name>", "confidence": 0.0, "reason": "<one short line>", "ask": "<a question for the owner ONLY if you cannot tell, else empty>"}]}' }] });
@@ -462,6 +523,8 @@ module.exports = function mountBookkeeping(app, deps) {
         }
       }
       await dbRun('UPDATE bk_proposals SET status = ?, decided_by = ?, decided_at = ?, decision = ? WHERE id = ?', [edited ? 'edited' : 'approved', who, now, JSON.stringify({ category, rule }), id]);
+      const tx = await dbGet('SELECT vendor_id FROM bk_transactions WHERE id = ?', [p.ref_id]);
+      if (tx && tx.vendor_id) { await dbRun('UPDATE bk_vendors SET default_category = ? WHERE id = ? AND (default_category IS NULL OR default_category = ?)', [category, tx.vendor_id, '']); dirCache.at = 0; }
       await audit(who, 'category.apply', p.ref_id, { category, edited, rule });
       if (categoriesOf(s).indexOf(category) === -1) await setSetting('categories', categoriesOf(s).concat([category]).join('\n'), who);
       return { ok: true, status: edited ? 'edited' : 'approved', category, rule };
@@ -657,6 +720,7 @@ module.exports = function mountBookkeeping(app, deps) {
     running = run.lastID;
     const parts = [], summary = {};
     try {
+      try { summary.directory = await syncDirectory(who); } catch (e) { parts.push('vendor directory: ' + e.message); }
       if (plaidReady()) { try { summary.plaid = await syncAll(who); parts.push(summary.plaid.added + ' new transaction' + (summary.plaid.added === 1 ? '' : 's') + (summary.plaid.errors.length ? ' (' + summary.plaid.errors.join('; ') + ')' : '')); } catch (e) { parts.push('bank sync failed: ' + e.message); } }
       else parts.push('banks not connected');
       try { summary.gmail = await scanInbox(who); parts.push(summary.gmail.new + ' new email' + (summary.gmail.new === 1 ? '' : 's')); } catch (e) { parts.push('inbox scan failed: ' + e.message); errlog('scan', e.message); }
@@ -781,10 +845,11 @@ module.exports = function mountBookkeeping(app, deps) {
   });
   app.get('/api/bookkeeping/transactions', ...guard, async (req, res) => {
     const st = String(req.query.status || ''), q = String(req.query.q || '').trim();
-    const where = ["status <> 'removed'"], p = [];
-    if (st) { where.push('status = ?'); p.push(st); }
-    if (q) { where.push('(name LIKE ? OR merchant LIKE ? OR category LIKE ?)'); p.push('%' + q + '%', '%' + q + '%', '%' + q + '%'); }
-    res.json({ ok: true, transactions: await dbAll('SELECT id, txn_id, account_name, date, name, merchant, amount, pending, plaid_category, category, category_source, rule_id, proposal_id, status FROM bk_transactions WHERE ' + where.join(' AND ') + ' ORDER BY date DESC, id DESC LIMIT 300', p) });
+    const where = ["t.status <> 'removed'"], p = [];
+    if (st) { where.push('t.status = ?'); p.push(st); }
+    if (q) { where.push('(t.name LIKE ? OR t.merchant LIKE ? OR t.category LIKE ? OR v.name LIKE ?)'); p.push('%' + q + '%', '%' + q + '%', '%' + q + '%', '%' + q + '%'); }
+    res.json({ ok: true, transactions: await dbAll('SELECT t.id, t.txn_id, t.account_name, t.date, t.name, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, v.name AS vendor_name, v.source AS vendor_source ' +
+      'FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id WHERE ' + where.join(' AND ') + ' ORDER BY t.date DESC, t.id DESC LIMIT 300', p) });
   });
   app.post('/api/bookkeeping/transactions/:id/category', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), category = String(req.body.category || '').trim();
@@ -828,9 +893,24 @@ module.exports = function mountBookkeeping(app, deps) {
     res.json({ ok: true, id: r.lastID });
   });
   app.delete('/api/bookkeeping/rules/:id', ...guard, async (req, res) => { await dbRun('UPDATE bk_rules SET active = 0 WHERE id = ?', [parseInt(req.params.id)]); await audit(userId(req), 'rule.remove', req.params.id); res.json({ ok: true }); });
+  app.get('/api/bookkeeping/directory', ...guard, async (req, res) => {
+    const rows = await dbAll('SELECT v.*, (SELECT COUNT(*) FROM bk_transactions t WHERE t.vendor_id = v.id) AS txns, (SELECT COUNT(*) FROM bk_bills b WHERE b.vendor_id = v.id AND b.status <> ?) AS bills FROM bk_vendors v ORDER BY v.source, v.name', ['rejected']);
+    const last = await dbGet("SELECT at FROM bk_audit WHERE action = 'directory.sync' ORDER BY id DESC LIMIT 1");
+    res.json({ ok: true, vendors: rows, synced_at: last ? last.at : null, crm: !!runQuery });
+  });
+  app.post('/api/bookkeeping/directory/sync', ...guard, async (req, res) => { try { dirCache.at = 0; res.json(Object.assign({ ok: true }, await syncDirectory(userId(req)))); } catch (e) { res.json({ ok: false, error: e.message }); } });
+  app.post('/api/bookkeeping/transactions/:id/vendor', ...guard, async (req, res) => {
+    const vid = parseInt(req.body.vendor_id) || null;
+    await dbRun('UPDATE bk_transactions SET vendor_id = ? WHERE id = ?', [vid, parseInt(req.params.id)]);
+    // Remember the bank line as an alias of that vendor, so the next one matches by itself.
+    if (vid && req.body.alias) { const v = await dbGet('SELECT aliases FROM bk_vendors WHERE id = ?', [vid]); const al = String(v && v.aliases || '').split('\n').filter(Boolean); if (al.indexOf(req.body.alias) < 0) { al.push(String(req.body.alias).slice(0, 120)); await dbRun('UPDATE bk_vendors SET aliases = ? WHERE id = ?', [al.join('\n'), vid]); dirCache.at = 0; } }
+    await audit(userId(req), 'transaction.vendor', req.params.id, { vendor_id: vid, alias: req.body.alias });
+    res.json({ ok: true });
+  });
   app.post('/api/bookkeeping/vendors/:id', ...guard, async (req, res) => {
     const b = req.body || {};
-    await dbRun('UPDATE bk_vendors SET approved = ?, default_category = ?, notes = ?, approved_by = ?, approved_at = ? WHERE id = ?', [b.approved ? 1 : 0, String(b.default_category || '').slice(0, 80) || null, String(b.notes || '').slice(0, 500) || null, userId(req), nowIso(), parseInt(req.params.id)]);
+    await dbRun('UPDATE bk_vendors SET approved = ?, default_category = ?, notes = ?, aliases = ?, approved_by = ?, approved_at = ? WHERE id = ?', [b.approved ? 1 : 0, String(b.default_category || '').slice(0, 80) || null, String(b.notes || '').slice(0, 500) || null, String(b.aliases || '').slice(0, 1000) || null, userId(req), nowIso(), parseInt(req.params.id)]);
+    dirCache.at = 0;
     await audit(userId(req), 'vendor.update', req.params.id, b); res.json({ ok: true });
   });
   app.get('/api/bookkeeping/activity', ...guard, async (req, res) => res.json({ ok: true, runs: await dbAll('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 40'), audit: await dbAll('SELECT * FROM bk_audit ORDER BY id DESC LIMIT 200'), briefs: await dbAll('SELECT day, stats, posted_at, post_error FROM bk_briefs ORDER BY day DESC LIMIT 30') }));

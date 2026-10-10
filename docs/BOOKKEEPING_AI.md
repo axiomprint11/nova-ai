@@ -66,6 +66,15 @@ Two ways; the tab's Connections card walks through both.
 
 The same conversation exists in the tab ("Talk to BookkeeperAI"), so Google Chat is optional on day one.
 
+## Suppliers & vendors (the directory)
+The CRM's `suppliers` and `vendors` tables are read (read-only) into `bk_vendors` (`source` = suppliers | vendors,
+`crm_id`, email, phone, specialty, contact, address) on every daily run and on **Refresh from CRM**; they come in
+approved. A bank line is linked to a directory entry (`bk_transactions.vendor_id`) when the entry's name, one of its
+bank-statement aliases, or (for bills) its email domain matches; the AI is told "OUR VENDOR: Veritiv — Paper → usually
+Paper" and gets the whole directory as context. Approving a category for a linked transaction fills the vendor's
+*usual category* (editable in the tab, with the aliases). Vendors first seen on a bill (`source` = bill) wait for
+approval in the tab's second list. Edit names, emails and specialties in the CRM, not here.
+
 ## What the agent may do (its only tools)
 `list_pending`, `approve` (by id / all / with a corrected category), `reject`, `answer_question` (records the answer; with
 a category it approves the proposal), `add_rule`, `run_now`, `balances`. No SQL, no vendor details, no payments.

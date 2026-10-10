@@ -16,11 +16,11 @@
   NovaNav.mount({ current: 'books' });
 
   let ov = null, categories = [];
-  document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => show(b.dataset.v));
+  document.querySelectorAll('.bk-tabs button').forEach(b => b.onclick = () => show(b.dataset.v));
   function show(v) {
-    document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+    document.querySelectorAll('.bk-tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
     document.querySelectorAll('.bk-view').forEach(s => s.classList.toggle('on', s.dataset.v === v));
-    ({ brief: loadBrief, txns: loadTxns, bills: loadBills, rules: loadRules, conn: loadConn, activity: loadActivity })[v]();
+    ({ brief: loadBrief, txns: loadTxns, bills: loadBills, vendors: loadVendors, rules: loadRules, conn: loadConn, activity: loadActivity })[v]();
     try { history.replaceState(null, '', '/bookkeeping?tab=' + v); } catch (e) {}
   }
   async function overview() {
@@ -33,7 +33,7 @@
     else { rs.className = 'bk-pill off'; rs.textContent = 'Not run yet'; }
     return ov;
   }
-  const catSelect = (cur, cls) => '<select class="' + (cls || '') + '">' + categories.concat(cur && categories.indexOf(cur) < 0 ? [cur] : []).map(c => '<option' + (c === cur ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>';
+  const catSelect = (cur, cls, blank) => '<select class="' + (cls || '') + '">' + (blank ? '<option value=""' + (cur ? '' : ' selected') + '>' + esc(blank) + '</option>' : '') + categories.concat(cur && categories.indexOf(cur) < 0 ? [cur] : []).map(c => '<option' + (c === cur ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>';
   const conf = (c) => '<span class="bk-conf' + (c < 0.75 ? ' lo' : '') + '">' + Math.round(c * 100) + '%</span>';
 
   // ---------------------------------------------------------------- Daily Brief
@@ -116,23 +116,38 @@
   // ---------------------------------------------------------------- Transactions
   async function loadTxns() {
     const v = $('vTxns');
+    if (!ov) await overview();
     const st = (v.querySelector('select[name=st]') || {}).value || '', q = (v.querySelector('input[name=q]') || {}).value || '';
     const j = await api('/api/bookkeeping/transactions?status=' + encodeURIComponent(st) + '&q=' + encodeURIComponent(q));
     v.innerHTML = '<div class="bk-card"><div class="bk-filters"><input name="q" placeholder="Search name, vendor or category" value="' + esc(q) + '"><select name="st"><option value="">All</option>' +
       ['new', 'pending', 'categorized'].map(s => '<option' + (s === st ? ' selected' : '') + '>' + s + '</option>').join('') + '</select><button class="bk-btn" id="txnGo">Filter</button><span class="sp"></span><button class="bk-btn" id="syncNow">Sync banks now</button></div>' +
       '<table class="bk"><thead><tr><th>Date</th><th>Description</th><th>Account</th><th class="num">Amount</th><th>Category</th><th></th></tr></thead><tbody>' +
-      (j.transactions || []).map(t => '<tr><td>' + esc(t.date) + (t.pending ? ' <span class="bk-tag">pending</span>' : '') + '</td><td>' + esc(t.merchant || t.name) + (t.merchant && t.merchant !== t.name ? '<div class="bk-muted">' + esc(t.name) + '</div>' : '') + (t.plaid_category ? '<div class="bk-muted">bank: ' + esc(t.plaid_category) + '</div>' : '') + '</td><td>' + esc(t.account_name || '') + '</td>' +
+      (j.transactions || []).map(t => '<tr><td>' + esc(t.date) + (t.pending ? ' <span class="bk-tag">pending</span>' : '') + '</td><td>' + esc(t.merchant || t.name) + (t.merchant && t.merchant !== t.name ? '<div class="bk-muted">' + esc(t.name) + '</div>' : '') +
+        (t.vendor_name ? '<div><span class="bk-src ' + esc(t.vendor_source || '') + '">' + (t.vendor_source === 'suppliers' ? 'supplier' : t.vendor_source === 'vendors' ? 'vendor' : 'from a bill') + '</span> ' + esc(t.vendor_name) + ' <a href="#" class="bk-muted" data-setv="' + t.id + '" title="Link to another supplier / vendor">change</a></div>' : '<div><a href="#" class="bk-muted" data-setv="' + t.id + '">link to a supplier / vendor</a></div>') +
+        (t.plaid_category ? '<div class="bk-muted">bank: ' + esc(t.plaid_category) + '</div>' : '') + '</td><td>' + esc(t.account_name || '') + '</td>' +
         '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '">' + usd(-t.amount) + '</td><td>' + (t.category ? esc(t.category) + ' <span class="bk-tag ' + esc(t.category_source || '') + '">' + esc(t.category_source || '') + '</span>' : '<span class="bk-tag ' + esc(t.status) + '">' + esc(t.status) + '</span>') + '</td>' +
         '<td>' + catSelect(t.category || '', 'tx-cat') + ' <button class="bk-btn sm" data-tx="' + t.id + '">Set</button></td></tr>').join('') + '</tbody></table>' +
       (!(j.transactions || []).length ? '<div class="bk-muted" style="padding:14px 0">No transactions yet — connect a bank under Connections, then Sync.</div>' : '') + '</div>';
     $('txnGo').onclick = loadTxns; v.querySelector('input[name=q]').onkeydown = (e) => { if (e.key === 'Enter') loadTxns(); };
     $('syncNow').onclick = async () => { $('syncNow').disabled = true; const r = await post('/api/bookkeeping/sync', {}); if (!r.ok) alert(r.error); loadTxns(); overview(); };
     v.querySelectorAll('[data-tx]').forEach(b => b.onclick = async () => { const sel = b.previousElementSibling; await post('/api/bookkeeping/transactions/' + b.dataset.tx + '/category', { category: sel.value }); loadTxns(); overview(); });
+    v.querySelectorAll('[data-setv]').forEach(a => a.onclick = async (e) => {
+      e.preventDefault();
+      const d = await api('/api/bookkeeping/directory');
+      const t = (j.transactions || []).find(x => String(x.id) === a.dataset.setv);
+      const names = d.vendors.map((x, i) => (i + 1) + '. ' + x.name).join('\n');
+      const pick = prompt('Which supplier / vendor is "' + (t.merchant || t.name) + '"? Type the number (0 = none):\n' + names);
+      if (pick === null) return;
+      const vx = d.vendors[parseInt(pick) - 1];
+      await post('/api/bookkeeping/transactions/' + t.id + '/vendor', { vendor_id: vx ? vx.id : null, alias: vx ? (t.merchant || t.name) : undefined });
+      loadTxns();
+    });
   }
 
   // ---------------------------------------------------------------- Bills
   async function loadBills() {
     const v = $('vBills');
+    if (!ov) await overview();
     const [j, e] = await Promise.all([api('/api/bookkeeping/bills'), api('/api/bookkeeping/emails')]);
     v.innerHTML = '<div class="bk-card"><h2>Bill drafts<span class="sp"></span><button class="bk-btn" id="scanNow">Scan the inbox now</button></h2>' +
       '<table class="bk"><thead><tr><th>#</th><th>Vendor</th><th>Invoice</th><th>Dates</th><th class="num">Total</th><th>Status</th><th></th></tr></thead><tbody>' +
@@ -157,15 +172,36 @@
       '<table class="bk"><thead><tr><th>Rule</th><th>Category</th><th>From</th><th>Hits</th><th></th></tr></thead><tbody>' +
       (j.rules || []).map(r => '<tr><td>' + (r.kind === 'vendor' ? 'Vendor is ' : 'Contains ') + '<b>' + esc(r.pattern) + '</b></td><td>' + esc(r.category) + '</td><td>' + esc(r.source) + ' · ' + esc(r.created_by || '') + '</td><td>' + r.hits + '</td><td><button class="bk-btn sm bad" data-del="' + r.id + '">Remove</button></td></tr>').join('') + '</tbody></table>' +
       (!(j.rules || []).length ? '<div class="bk-muted" style="padding:14px 0">No rules yet — each approval with "remember" ticked adds one.</div>' : '') + '</div>' +
-      '<div class="bk-card"><h2>Vendors</h2><table class="bk"><thead><tr><th>Vendor</th><th>Approved</th><th>Notes</th></tr></thead><tbody>' +
-      (j.vendors || []).map(x => '<tr><td>' + esc(x.name) + '</td><td><label><input type="checkbox" data-vendor="' + x.id + '"' + (x.approved ? ' checked' : '') + '> ' + (x.approved ? 'yes' + (x.approved_by ? ' · ' + esc(x.approved_by) : '') : 'no') + '</label></td><td class="bk-muted">' + esc(x.notes || '') + '</td></tr>').join('') + '</tbody></table></div>' +
+      
       '<div class="bk-card"><h2>Chart of accounts and notes for the AI</h2><div class="bk-muted">One category per line. The notes tell BookkeeperAI how AxiomPrint books things.</div>' +
       '<textarea class="bk" id="sCats" style="min-height:160px;margin-top:8px">' + esc(ov.settings.categories) + '</textarea><textarea class="bk" id="sNotes" style="margin-top:8px">' + esc(ov.settings.notes) + '</textarea>' +
       '<div class="bk-row" style="margin-top:8px"><label class="bk-muted">Ask me when confidence is below <input class="bk" id="sThr" type="number" min="0.3" max="1" step="0.05" value="' + esc(ov.settings.threshold) + '" style="width:80px"></label><button class="bk-btn p" id="sSave">Save</button><span class="bk-muted" id="sMsg"></span></div></div>';
     $('rAdd').onclick = async () => { const r = await post('/api/bookkeeping/rules', { kind: $('rKind').value, pattern: $('rPat').value.trim(), category: v.querySelector('select.bk:not(#rKind)').value }); if (!r.ok) alert(r.error); loadRules(); };
     v.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await api('/api/bookkeeping/rules/' + b.dataset.del, { method: 'DELETE' }); loadRules(); });
-    v.querySelectorAll('[data-vendor]').forEach(c => c.onchange = async () => { await post('/api/bookkeeping/vendors/' + c.dataset.vendor, { approved: c.checked }); loadRules(); });
     $('sSave').onclick = async () => { await post('/api/bookkeeping/settings', { categories: $('sCats').value, notes: $('sNotes').value, threshold: $('sThr').value }); $('sMsg').textContent = 'Saved.'; overview(); };
+  }
+
+  // ---------------------------------------------------------------- Suppliers & vendors (the CRM directory + vendors seen on bills)
+  async function loadVendors() {
+    const v = $('vVendors');
+    if (!ov) await overview();
+    const j = await api('/api/bookkeeping/directory');
+    const src = (x) => x.source === 'suppliers' ? '<span class="bk-src">supplier</span>' : x.source === 'vendors' ? '<span class="bk-src vendors">vendor</span>' : '<span class="bk-src bill">from a bill</span>';
+    const row = (x) => '<tr data-vid="' + x.id + '"><td>' + src(x) + ' <b>' + esc(x.name) + '</b>' + (x.contact ? '<div class="bk-muted">' + esc(x.contact) + '</div>' : '') + '</td><td class="bk-muted">' + esc(x.email || '') + (x.phone ? '<br>' + esc(x.phone) : '') + '</td><td class="bk-muted">' + esc(x.specialty || '') + '</td>' +
+      '<td>' + catSelect(x.default_category || '', 'vcat', '— not set —') + '</td><td><input type="text" class="bk valias" placeholder="bank names, one per line" value="' + esc(String(x.aliases || '').split('\n').join(' | ')) + '" title="How this vendor appears on bank statements (separate with |)"></td>' +
+      '<td><label><input type="checkbox" class="vappr"' + (x.approved ? ' checked' : '') + '> ' + (x.approved ? 'yes' : 'no') + '</label></td><td class="bk-muted">' + (x.txns || 0) + ' / ' + (x.bills || 0) + '</td><td><button class="bk-btn sm" data-vsave="' + x.id + '">Save</button></td></tr>';
+    const crm = (j.vendors || []).filter(x => x.source === 'suppliers' || x.source === 'vendors'), seen = (j.vendors || []).filter(x => !(x.source === 'suppliers' || x.source === 'vendors'));
+    const table = (rows) => '<table class="bk"><thead><tr><th>Name</th><th>Contact</th><th>Specialty</th><th>Usual category</th><th>On the bank statement as</th><th>Approved</th><th>Txns / bills</th><th></th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table>';
+    v.innerHTML = '<div class="bk-card"><h2>From the CRM — Suppliers and Vendors<span class="sp"></span><span class="bk-muted">' + (j.synced_at ? 'synced ' + when(j.synced_at) : 'not synced yet') + '</span><button class="bk-btn" id="dirSync"' + (j.crm ? '' : ' disabled') + '>Refresh from CRM</button></h2>' +
+      '<div class="bk-muted" style="margin-bottom:8px">Read from the CRM\u2019s Suppliers and Vendors lists (read-only, refreshed with every daily run). They are trusted: a bank line or bill that matches one is linked to it, and BookkeeperAI uses the specialty and the usual category when it proposes. Edit names, emails and specialties in the CRM; set the usual category and the bank-statement names here.</div>' +
+      (crm.length ? table(crm) : '<div class="bk-muted">Nothing synced yet — press Refresh from CRM.</div>') + '</div>' +
+      '<div class="bk-card"><h2>Seen on bills, not in the CRM<span class="sp"></span><span class="bk-muted">approve them here, or add them in the CRM</span></h2>' + (seen.length ? table(seen) : '<div class="bk-muted">None.</div>') + '</div>';
+    $('dirSync').onclick = async () => { $('dirSync').disabled = true; const r = await post('/api/bookkeeping/directory/sync', {}); if (!r.ok) alert(r.error); else if (r.errors && r.errors.length) alert(r.errors.join('\n')); loadVendors(); };
+    v.querySelectorAll('[data-vsave]').forEach(b => b.onclick = async () => {
+      const tr = b.closest('tr'); b.disabled = true;
+      await post('/api/bookkeeping/vendors/' + b.dataset.vsave, { approved: tr.querySelector('.vappr').checked, default_category: tr.querySelector('select.vcat').value, aliases: tr.querySelector('.valias').value.split('|').map(x => x.trim()).filter(Boolean).join('\n') });
+      loadVendors();
+    });
   }
 
   // ---------------------------------------------------------------- Connections
@@ -226,5 +262,5 @@
   }
 
   const want = new URLSearchParams(location.search).get('tab');
-  show(['brief', 'txns', 'bills', 'rules', 'conn', 'activity'].indexOf(want) > -1 ? want : 'brief');
+  show(['brief', 'txns', 'bills', 'vendors', 'rules', 'conn', 'activity'].indexOf(want) > -1 ? want : 'brief');
 })();
