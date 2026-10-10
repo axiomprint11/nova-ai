@@ -1088,6 +1088,8 @@ module.exports = function mountBookkeeping(app, deps) {
       questions: (await dbGet("SELECT COUNT(*) AS n FROM bk_questions WHERE answer IS NULL AND proposal_id IN (SELECT id FROM bk_proposals WHERE status = 'pending')")).n,
       transactions: (await dbGet('SELECT COUNT(*) AS n FROM bk_transactions')).n,
       bills: (await dbGet("SELECT COUNT(*) AS n FROM bk_bills WHERE status <> 'rejected'")).n,
+      bill_drafts: (await dbGet("SELECT COUNT(*) AS n FROM bk_bills WHERE status = 'draft'")).n,
+      inbox_new: (await dbGet("SELECT COUNT(*) AS n FROM bk_emails WHERE status = 'new'")).n,
       emails: (await dbGet('SELECT COUNT(*) AS n FROM bk_emails')).n, rules: (await dbGet('SELECT COUNT(*) AS n FROM bk_rules WHERE active = 1')).n
     };
     const lastRun = await dbGet('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 1');

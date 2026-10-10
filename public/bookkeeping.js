@@ -43,6 +43,8 @@
     chart = ov.chart || [];
     categories = chart.filter(c => c.parent || !c.children).map(c => c.name).filter((n, i, a) => a.indexOf(n) === i);
     $('nPending').textContent = ov.counts.pending || '';
+    $('nBills').textContent = ov.counts.bill_drafts || ''; $('nBills').title = (ov.counts.bill_drafts || 0) + ' bill drafts waiting';
+    $('nInbox').textContent = ov.counts.inbox_new || ''; $('nInbox').title = (ov.counts.inbox_new || 0) + ' emails not read yet';
     const rs = $('runState');
     if (ov.running) { rs.className = 'bk-pill off'; rs.textContent = 'Running…'; }
     else if (ov.last_run) { rs.className = 'bk-pill ' + (ov.last_run.ok ? 'on' : 'err'); rs.textContent = ov.last_run.ok ? 'Last run ' + when(ov.last_run.started_at) : 'Run failed ' + when(ov.last_run.started_at) + ' — ' + String(ov.last_run.summary || 'no details').slice(0, 70) + (String(ov.last_run.summary || '').length > 70 ? '…' : ''); rs.title = ov.last_run.summary || ''; rs.style.cursor = 'pointer';
@@ -354,7 +356,7 @@
     v.querySelectorAll('[data-parse]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/emails/' + b.dataset.parse + '/parse', {}); if (!r.ok) alert(r.error); loadInbox(); overview(); });
     v.querySelectorAll('[data-gobills]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); show('bills'); });
     $('scanNow2').onclick = async () => { $('scanNow2').disabled = true; const r = await post('/api/bookkeeping/scan', {}); if (!r.ok) alert(r.error); await overview(); loadInbox(); };
-    const nb = $('nInbox'); if (nb) nb.textContent = counts.new || '';
+    $('nInbox').textContent = counts.new || '';
   }
   // Pick a directory entry for a bill: near matches first, then search the whole directory.
   async function vendorPicker(anchor, bill, onPick) {
