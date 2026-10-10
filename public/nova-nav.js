@@ -18,6 +18,7 @@
     users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
     knowledge: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
     connections: '<path d="M9 7V2"/><path d="M15 7V2"/><path d="M6 7h12v4a6 6 0 0 1-12 0z"/><path d="M12 17v5"/>',
+    signout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
     pricing: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z"/>',
     delivery: '<path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>',
     templates: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/>',
@@ -72,6 +73,17 @@
 .nn-foot { padding: 10px; border-top: 1px solid #ececf3; flex: none; }
 .nn-foot .nn-item { color: #4f46e5; font-weight: 600; }
 .nn-foot .nn-item svg { color: #6366f1; }
+/* Who is signed in, and Sign out. */
+.nn-me { display: flex; align-items: center; gap: 9px; margin-top: 8px; padding: 8px 6px 2px 8px; border-top: 1px solid #ececf3; }
+.nn-av { width: 30px; height: 30px; flex: none; border-radius: 50%; object-fit: cover; background: #eef2ff; color: #4338ca; font-weight: 700; font-size: 12.5px; line-height: 30px;
+  text-align: center; overflow: hidden; }
+.nn-who { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.nn-who b { font-size: 13px; font-weight: 600; color: #1e1b2e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nn-who small { font-size: 11.5px; color: #8b88a3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nn-out { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 8px; background: none; color: #8b88a3; cursor: pointer; }
+.nn-out:hover { background: #fef2f2; color: #b91c1c; }
+.nn-out svg { width: 16px; height: 16px; }
+.nn-out:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
 /* A full page (TalkAi, Client ChatBot): the menu, then the page as it was. */
 body.nn-shell { flex-direction: row !important; }
 .nn-page { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
@@ -84,6 +96,8 @@ body.nn-shell { flex-direction: row !important; }
   .nn-item { justify-content: center; padding: 10px 0; }
   .nn-item .nn-l, .nn-soon { display: none; }
   .nn-n { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; line-height: 16px; font-size: 9.5px; padding: 0 4px; }
+  .nn-me { flex-direction: column; padding: 8px 0 0; gap: 6px; }
+  .nn-who { display: none; }
 }
 /* Phones: one strip across the top that scrolls sideways. */
 @media (max-width: 760px) {
@@ -98,7 +112,9 @@ body.nn-shell { flex-direction: row !important; }
   .nn-item { width: auto; padding: 7px 10px; font-size: 13px; gap: 7px; }
   .nn-item svg { width: 15px; height: 15px; }
   .nn-item.soon { display: none; }
-  .nn-foot { border-top: 0; padding: 0 8px 0 0; }
+  .nn-foot { border-top: 0; padding: 0 8px 0 0; display: flex; align-items: center; gap: 4px; }
+  .nn-me { margin: 0; padding: 0; border-top: 0; gap: 4px; }
+  .nn-who { display: none; }
 }`;
 
   const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -126,7 +142,9 @@ body.nn-shell { flex-direction: row !important; }
     }).join('') + '</div>').join('');
     root.innerHTML = '<a class="nn-logo" href="/admin?tab=history&amp;mine=1" title="Axiom AI">Axiom<span>AI</span></a>' +
       '<nav class="nn-groups" aria-label="Nova">' + groups + '</nav>' +
-      '<div class="nn-foot"><a class="nn-item" href="/chatbot" title="New chat in ChatBot">' + svg('chatbot') + '<span class="nn-l">New chat</span></a></div>';
+      '<div class="nn-foot"><a class="nn-item" href="/chatbot" title="New chat in ChatBot">' + svg('chatbot') + '<span class="nn-l">New chat</span></a>' + meHtml() + '</div>';
+    const out = root.querySelector('.nn-out');
+    if (out) out.onclick = () => signOut();
     root.querySelectorAll('a.nn-item[data-k]').forEach(a => {
       a.onclick = (e) => {
         const k = a.dataset.k;
@@ -138,6 +156,25 @@ body.nn-shell { flex-direction: row !important; }
     });
     setActive(opts.current);
     Object.keys(counts).forEach(k => set(k, counts[k]));
+  }
+  // Who is signed in: photo (or initial), name, email or role — and Sign out.
+  const photoUrl = (p) => !p ? '' : /^https?:\/\//.test(p) ? p : 'https://axiomprint.s3.us-west-1.amazonaws.com/MemberImages/' + String(p).replace(/^\/+/, '');
+  function meHtml() {
+    if (!me) return '';
+    const name = me.display_name || me.username || me.email || 'Signed in';
+    const sub = me.email || (me.is_admin ? 'Admin' : 'Member');
+    const initial = esc(String(name).trim().charAt(0).toUpperCase() || '?');
+    const av = me.photo
+      ? '<img class="nn-av" src="' + esc(photoUrl(me.photo)) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;nn-av&quot;>' + initial + '</span>\'">'
+      : '<span class="nn-av">' + initial + '</span>';
+    return '<div class="nn-me" title="Signed in as ' + esc(name) + (me.email ? ' (' + esc(me.email) + ')' : '') + '">' + av +
+      '<span class="nn-who"><b>' + esc(name) + '</b><small>' + esc(sub) + (me.is_admin && me.email ? ' \u00b7 Admin' : '') + '</small></span>' +
+      '<button type="button" class="nn-out" title="Sign out" aria-label="Sign out">' + svg('signout') + '</button></div>';
+  }
+  // Signing out forgets this browser's session (the 30-day sign-in) and goes back to the sign-in page.
+  function signOut() {
+    try { ['axiom_token', 'axiom_user', 'axiom_admin', 'axiom_agent'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
+    location.href = '/';
   }
   function setActive(k) {
     opts.current = k;
@@ -176,6 +213,8 @@ body.nn-shell { flex-direction: row !important; }
     if (!t) return;
     try {
       const r = await fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + t } });
+      // Expired (30 days) or a disabled account: back to sign-in.
+      if (r.status === 401) { signOut(); return; }
       const j = await r.json();
       if (j && j.success) { me = j; render(); refresh(); }
     } catch (e) {}
@@ -203,5 +242,5 @@ body.nn-shell { flex-direction: row !important; }
     timer = setInterval(() => { if (!document.hidden) refresh(); }, 60000);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
   }
-  window.NovaNav = { mount: mount, setActive: setActive, set: set, refresh: refresh, me: () => me };
+  window.NovaNav = { mount: mount, setActive: setActive, set: set, refresh: refresh, me: () => me, signOut: signOut };
 })();

@@ -185,7 +185,10 @@ has no Agents tab and Users has no per-member agents column: ChatBot's training 
 
 **One left menu.** `public/nova-nav.js` (`NovaNav.mount`) draws the same grouped menu on `/admin`, `/talk-ai` and
 `/client-bot`: CRM Chat · Client ChatBot · TalkAi (each with its unread count) / Users · Domain Knowledge · Connectors /
-Installation Pricing · Delivery Pricing and Templates (both "Soon"). On admin.html it fills `#novaNav` and its tabs switch in
+Installation Pricing · Delivery Pricing and Templates (both "Soon"); at the bottom New chat and who is signed in (photo or
+initial, name, email — from `/api/me`) with **Sign out** (`NovaNav.signOut()`: clears `axiom_token` / `axiom_user` /
+`axiom_admin` from this browser and goes to `/`; a 401 from `/api/me` — the 30-day token expired or the member was
+disabled — does the same). On admin.html it fills `#novaNav` and its tabs switch in
 place (`onTab`); on the other two pages it moves the page into a column beside itself. Icons only at 761–1100px, a strip
 across the top on phones. Members see CRM Chat and Domain Knowledge (when they have access). Pages update a count with
 `NovaNav.set(key, n)`. CRM Chat read state (admins): SQLite `crm_chat_reads`; a chat someone else had is unread until

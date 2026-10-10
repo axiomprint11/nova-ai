@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.14.6';
-const NOVA_BUILT = '10-09-2026 7:05pm';
+const NOVA_VERSION = '1.14.7';
+const NOVA_BUILT = '10-10-2026 7:45am';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 app.use((req, res, next) => req.path.indexOf('/api/talk/hook/') === 0 ? next() : jsonBody(req, res, next));
@@ -2520,16 +2520,17 @@ app.get('/api/me', auth, (req, res) => {
     email: key.indexOf('member:') === 0 ? email : null,
     photo: null
   };
-  if (req.user.is_admin) return res.json(Object.assign(base, { knowledge_access: 'all' }));
+  // A local admin account has no member row; an admin who is also a member gets their name and photo from it.
+  if (req.user.is_admin && key.indexOf('member:') !== 0) return res.json(Object.assign(base, { knowledge_access: 'all' }));
   db.get('SELECT display_name, photo, knowledge_access, is_admin, enabled FROM members WHERE email = ?',
     [email], (e, m) => {
       // A member row that has been disabled should not keep a working session.
       if (m && m.enabled === 0) return res.status(401).json({ error: 'Account disabled' });
       res.json(Object.assign(base, {
-        is_admin: !!(m && m.is_admin),
+        is_admin: !!(req.user.is_admin || (m && m.is_admin)),
         display_name: (m && m.display_name) || req.user.username || email,
         photo: (m && m.photo) || null,
-        knowledge_access: (m && m.knowledge_access) || 'none',
+        knowledge_access: req.user.is_admin ? 'all' : ((m && m.knowledge_access) || 'none'),
         email: email
       }));
     });
