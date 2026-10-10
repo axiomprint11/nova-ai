@@ -174,7 +174,16 @@
       close();
     };
   }
-  const conf = (c) => '<span class="bk-conf' + (c < 0.75 ? ' lo' : '') + '">' + Math.round(c * 100) + '%</span>';
+  const conf = (c, reason) => '<span class="bk-conf' + (c < 0.75 ? ' lo' : '') + (reason ? ' why' : '') + '"' + (reason ? ' data-why="' + esc(reason) + '"' : '') + '>' + Math.round(c * 100) + '%</span>';
+  // Hovering a confidence badge shows BookkeeperAI's reason for it.
+  document.addEventListener('mouseover', (e) => {
+    const b = e.target.closest && e.target.closest('.bk-conf.why'); if (!b || tipEl) return;
+    tipEl = document.createElement('div'); tipEl.className = 'bk-tip'; tipEl.innerHTML = '<b>Why ' + esc(b.textContent) + '</b><br>' + esc(b.dataset.why); document.body.appendChild(tipEl);
+    const r = b.getBoundingClientRect(), W = Math.min(460, window.innerWidth - 16);
+    tipEl.style.width = W + 'px'; tipEl.style.left = Math.max(8, Math.min(r.left - 8, window.innerWidth - W - 8)) + 'px'; tipEl.style.top = (r.bottom + 8) + 'px';
+    const off = () => { if (tipEl) { tipEl.remove(); tipEl = null; } b.removeEventListener('mouseleave', off); };
+    b.addEventListener('mouseleave', off);
+  });
 
   // ---------------------------------------------------------------- Daily Brief
   async function loadBrief() {
@@ -191,10 +200,10 @@
       '<div class="bk-tile"><b>' + (ov.counts.transactions || 0) + '</b><span>Transactions synced</span></div></div>';
     const propHtml = (p) => {
       const pl = p.payload || {};
-      let body = '<div class="t">' + esc(p.title) + ' ' + conf(p.confidence) + '</div><div class="r">' + esc(p.reason || '') + '</div>';
+      let body = '<div class="t">' + esc(p.title) + ' ' + conf(p.confidence, p.reason) + '</div>';
       if (p.type === 'bill' && pl.lines && pl.lines.length) body += '<div class="bk-lines">' + pl.lines.slice(0, 8).map(l => '<div><span>' + esc(l.description) + '</span><span>' + esc(l.category || '') + '</span><span>' + usd(l.amount) + '</span></div>').join('') + (pl.lines.length > 8 ? '<div><span>…' + (pl.lines.length - 8) + ' more</span></div>' : '') + '</div>';
       if (p.type === 'bill') body += '<div class="r"><a href="#" data-file="' + p.ref_id + '">Open the bill file</a>' + (pl.due_date ? ' · due ' + esc(pl.due_date) : '') + '</div>';
-      if (open(p)) body += '<div class="q">' + esc(p.question.question) + '</div>';
+      if (open(p)) body += '<div class="q">' + esc(String(p.question.question).replace(/^I am only (\d+)% sure about this bill from (.+?) \(.*\)\. Can you check the draft\?$/s, 'Can you check this draft from $2? I am only $1% sure.')) + '</div>';
       let acts;
       if (open(p)) acts = '<input type="text" placeholder="Optional note — e.g. “Uber rides are personal”" data-ans="' + p.question.id + '" style="min-width:220px">' + (p.type === 'category' ? catSelect(pl.category, 'ans-cat') : '') + '<button class="bk-btn sm p" data-answer="' + p.question.id + '" data-pid="' + p.id + '">Answer</button>';
       else if (p.type === 'category') acts = catSelect(pl.category, 'pick') + '<label class="bk-muted"><input type="checkbox" class="remember" checked> remember ' + esc(pl.vendor || '') + '</label><button class="bk-btn sm ok" data-approve="' + p.id + '">Approve</button><button class="bk-btn sm bad" data-reject="' + p.id + '">Reject</button>';

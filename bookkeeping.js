@@ -663,7 +663,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (conf < s.threshold || dup || newVendor) {
       const q = dup ? 'This looks like a duplicate of bill #' + dup.id + ' (' + vendor + (invNo ? ' #' + invNo : '') + '). Is it the same bill?'
         : newVendor ? vendor + ' is a new vendor. Is this a real vendor of ours, and should I approve them for future bills?'
-        : 'I am only ' + Math.round(conf * 100) + '% sure about this bill from ' + vendor + ' (' + (j.reason || 'see the draft') + '). Can you check the draft?';
+        : 'Can you check this draft from ' + vendor + '? I am only ' + Math.round(conf * 100) + '% sure.';
       await dbRun('INSERT INTO bk_questions (proposal_id, question) VALUES (?,?)', [p.lastID, q]);
     }
     await audit(who, 'bill.draft', billId, { vendor, total: j.total, confidence: conf });
