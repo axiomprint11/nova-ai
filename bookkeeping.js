@@ -1,0 +1,891 @@
+/**
+ * Bookkeeping AI ("BookkeeperAI") — Nova's bookkeeping agent. Spec: docs/BOOKKEEPING_AI.md.
+ *
+ * The agent PROPOSES, a person APPROVES, the executor applies. Every proposal has a confidence and a reason;
+ * nothing touches the books, a vendor's details or money without an approval, and every action is logged in
+ * bk_audit. The AI never runs SQL: it only has the narrow tools below (list / approve / reject / answer / rule).
+ *
+ * Intake
+ *   Plaid     — bank transactions (transactions/sync with a cursor). Webhook SYNC_UPDATES_AVAILABLE triggers a
+ *               sync straight away (signature verified with Plaid's JWK); the daily run syncs anyway.
+ *   Gmail     — the accounting inbox (BOOKKEEPER_INBOX, default accounting@axiomprint.com), read with the same
+ *               service-account key Nova already uses for order@ (domain-wide delegation; add the inbox's mailbox
+ *               to nothing — delegation covers every user of the domain). Polled every BOOKKEEPER_POLL_MIN
+ *               minutes; Gmail push (Pub/Sub → /api/bookkeeping/gmail/push) triggers a scan immediately when set up.
+ *   Daily run — BOOKKEEPER_RUN_AT (default 07:00 Los Angeles): sync, scan, categorize, write the Daily Brief,
+ *               post it to Google Chat.
+ *
+ * Google Chat — the brief and the conversation with Gary and Arsine. Either a Chat app (two-way: Nova posts
+ * with the service account, Google POSTs the people's messages to /api/bookkeeping/chat/events) or, until that
+ * is set up, a space's incoming-webhook URL (post only). The same conversation runs in the Nova tab.
+ *
+ * Who: BOOKKEEPER_USERS (emails / usernames; default gary@axiomprint.com) open the tab and the API; in Google
+ * Chat only BOOKKEEPER_CHAT_USERS (default gary@ and arsine@axiomprint.com) can approve or answer.
+ */
+const fs = require('fs');
+const path = require('path');
+
+module.exports = function mountBookkeeping(app, deps) {
+  const { db, crypto, anthropic, auth, serveVersionedHtml, google, keyPath, jsonBody } = deps;
+  const MODEL = process.env.BOOKKEEPER_MODEL || deps.model;
+  const env = (k) => String(process.env[k] || '').trim();
+  const NOVA_URL = (env('NOVA_PUBLIC_URL') || 'https://nova.axiomprint.com').replace(/\/+$/, '');
+  const FILES = process.env.BOOKKEEPER_FILES_DIR || path.join(deps.dataDir, 'bookkeeping-files');
+  const INBOX = env('BOOKKEEPER_INBOX') || 'accounting@axiomprint.com';
+  const USERS = (env('BOOKKEEPER_USERS') || 'gary@axiomprint.com').toLowerCase().split(/\s*,\s*/).filter(Boolean);
+  const CHAT_USERS = (env('BOOKKEEPER_CHAT_USERS') || 'gary@axiomprint.com,arsine@axiomprint.com').toLowerCase().split(/\s*,\s*/).filter(Boolean);
+  const PLAID_ENV = env('PLAID_ENV') || 'sandbox';
+  const PLAID_BASE = 'https://' + PLAID_ENV + '.plaid.com';
+  const log = (...a) => console.log('BOOKKEEPER', ...a);
+  const errlog = (...a) => console.error('BOOKKEEPER', ...a);
+
+  // ---------------------------------------------------------------- tables
+  db.serialize(() => {
+    db.run(`CREATE TABLE IF NOT EXISTS bk_settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT, updated_by TEXT)`);
+    db.run(`CREATE TABLE IF NOT EXISTS bk_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, item_id TEXT UNIQUE, access_token TEXT, institution TEXT,
+      accounts TEXT, cursor TEXT, status TEXT DEFAULT 'ok', error TEXT, last_sync_at TEXT, created_at TEXT DEFAULT (datetime('now')), created_by TEXT)`);
+    db.run(`CREATE TABLE IF NOT EXISTS bk_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, txn_id TEXT UNIQUE, item_id TEXT, account_ref TEXT,
+      account_name TEXT, date TEXT, name TEXT, merchant TEXT, amount REAL, pending INTEGER DEFAULT 0, plaid_category TEXT,
+      category TEXT, category_source TEXT, rule_id INTEGER, proposal_id INTEGER, status TEXT DEFAULT 'new', raw TEXT,
+      created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
+    db.run('CREATE INDEX IF NOT EXISTS bk_txn_date ON bk_transactions(date)');
+    db.run(`CREATE TABLE IF NOT EXISTS bk_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, pattern TEXT, category TEXT, vendor TEXT,
+      note TEXT, source TEXT, created_by TEXT, hits INTEGER DEFAULT 0, active INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')))`);
+    db.run(`CREATE TABLE IF NOT EXISTS bk_vendors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, approved INTEGER DEFAULT 0, email TEXT,
+      default_category TEXT, notes TEXT, created_at TEXT DEFAULT (datetime('now')), approved_by TEXT, approved_at TEXT)`);
+    db.run(`CREATE TABLE IF NOT EXISTS bk_emails (id INTEGER PRIMARY KEY AUTOINCREMENT, gmail_id TEXT UNIQUE, thread_id TEXT, from_addr TEXT,
+      subject TEXT, received_at TEXT, snippet TEXT, body TEXT, attachments TEXT, status TEXT DEFAULT 'new', note TEXT,
+      created_at TEXT DEFAULT (datetime('now')))`);
+    db.run(`CREATE TABLE IF NOT EXISTS bk_bills (id INTEGER PRIMARY KEY AUTOINCREMENT, email_id INTEGER, vendor TEXT, vendor_id INTEGER, invoice_no TEXT,
+      invoice_date TEXT, due_date TEXT, terms TEXT, subtotal REAL, tax REAL, total REAL, currency TEXT DEFAULT 'USD', kind TEXT DEFAULT 'invoice',
+      duplicate_of INTEGER, lines TEXT, file TEXT, file_name TEXT, status TEXT DEFAULT 'draft', proposal_id INTEGER, note TEXT,
+      created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
+    db.run(`CREATE TABLE IF NOT EXISTS bk_proposals (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, ref_table TEXT, ref_id INTEGER, title TEXT,
+      payload TEXT, confidence REAL, reason TEXT, status TEXT DEFAULT 'pending', decided_by TEXT, decided_at TEXT, decision TEXT,
+      created_at TEXT DEFAULT (datetime('now')))`);
+    db.run('CREATE INDEX IF NOT EXISTS bk_prop_status ON bk_proposals(status)');
+    db.run(`CREATE TABLE IF NOT EXISTS bk_questions (id INTEGER PRIMARY KEY AUTOINCREMENT, proposal_id INTEGER, question TEXT, answer TEXT,
+      answered_by TEXT, answered_at TEXT, created_at TEXT DEFAULT (datetime('now')))`);
+    db.run(`CREATE TABLE IF NOT EXISTS bk_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, started_at TEXT DEFAULT (datetime('now')), finished_at TEXT,
+      ok INTEGER, summary TEXT, started_by TEXT)`);
+    db.run(`CREATE TABLE IF NOT EXISTS bk_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT DEFAULT (datetime('now')), who TEXT, action TEXT, ref TEXT, detail TEXT)`);
+    db.run(`CREATE TABLE IF NOT EXISTS bk_briefs (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT UNIQUE, text TEXT, stats TEXT, posted_at TEXT,
+      post_error TEXT, created_at TEXT DEFAULT (datetime('now')))`);
+    db.run(`CREATE TABLE IF NOT EXISTS bk_chat (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT DEFAULT (datetime('now')), channel TEXT, space TEXT,
+      thread TEXT, sender TEXT, sender_email TEXT, direction TEXT, text TEXT, tools TEXT)`);
+  });
+  const dbGet = (sql, p) => new Promise((ok, no) => db.get(sql, p || [], (e, r) => e ? no(e) : ok(r)));
+  const dbAll = (sql, p) => new Promise((ok, no) => db.all(sql, p || [], (e, r) => e ? no(e) : ok(r)));
+  const dbRun = (sql, p) => new Promise((ok, no) => db.run(sql, p || [], function (e) { e ? no(e) : ok(this); }));
+  const nowIso = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+  // ---------------------------------------------------------------- settings, audit, access
+  const DEFAULT_CATEGORIES = [
+    'Paper', 'Inks & Toner', 'Printing Supplies', 'Outsourced Printing', 'Freight & Shipping', 'Equipment Repairs & Maintenance',
+    'Rent', 'Utilities', 'Payroll', 'Payroll Taxes', 'Insurance', 'Software & Subscriptions', 'Advertising & Marketing', 'Office Supplies',
+    'Vehicle & Fuel', 'Meals', 'Travel', 'Professional Fees', 'Bank Fees & Interest', 'Merchant Fees', 'Taxes & Licenses',
+    'Equipment (Fixed Asset)', 'Software Development (Capitalized)', 'Leasehold Improvements', 'Loan Payment (Principal)',
+    'Owner Distribution', 'Transfer Between Accounts', 'Credit Card Payment', 'Customer Payment (Income)', 'Sales Tax Payable', 'Refund'
+  ];
+  const SETTING_DEFAULTS = {
+    run_at: env('BOOKKEEPER_RUN_AT') || '07:00', poll_min: parseInt(env('BOOKKEEPER_POLL_MIN')) || 15, threshold: 0.75,
+    categories: DEFAULT_CATEGORIES.join('\n'), chat_webhook: env('BOOKKEEPER_CHAT_WEBHOOK') || '', chat_space: '',
+    backfill_days: parseInt(env('BOOKKEEPER_BACKFILL_DAYS')) || 7, gmail_history_id: '', gmail_watch_expires: '',
+    notes: 'AxiomPrint is a print shop in Glendale, CA. Inks, paper, printing supplies and outsourced printing are cost of goods. Equipment over $2,500 is a fixed asset, not an expense. Transfers between our own accounts and credit card payments are not expenses.'
+  };
+  let settingsCache = null;
+  async function settings() {
+    if (settingsCache) return settingsCache;
+    const rows = await dbAll('SELECT key, value FROM bk_settings');
+    const s = Object.assign({}, SETTING_DEFAULTS);
+    rows.forEach(r => { s[r.key] = r.value; });
+    s.poll_min = parseInt(s.poll_min) || 15; s.threshold = Number(s.threshold) || 0.75; s.backfill_days = parseInt(s.backfill_days) || 7;
+    settingsCache = s;
+    return s;
+  }
+  async function setSetting(key, value, who) {
+    await dbRun('INSERT INTO bk_settings (key, value, updated_at, updated_by) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by',
+      [key, value == null ? '' : String(value), nowIso(), who || 'system']);
+    settingsCache = null;
+  }
+  const categoriesOf = (s) => String(s.categories || '').split('\n').map(x => x.trim()).filter(Boolean);
+  async function audit(who, action, ref, detail) {
+    try { await dbRun('INSERT INTO bk_audit (who, action, ref, detail) VALUES (?,?,?,?)', [who || 'system', action, ref == null ? null : String(ref), detail == null ? null : (typeof detail === 'string' ? detail : JSON.stringify(detail)).slice(0, 4000)]); } catch (e) {}
+  }
+  const userId = (req) => String((req.user && (req.user.key || req.user.username)) || '').replace(/^(member|user):/, '').toLowerCase();
+  function isBookkeeper(req) {
+    const key = String((req.user && req.user.key) || '').toLowerCase();
+    const email = key.replace(/^(member|user):/, '');
+    const uname = String((req.user && req.user.username) || '').toLowerCase();
+    return USERS.indexOf(email) > -1 || USERS.indexOf(uname) > -1;
+  }
+  function bookkeeperOnly(req, res, next) {
+    if (!isBookkeeper(req)) return res.status(403).json({ ok: false, error: 'Bookkeeping AI is not open to this account.' });
+    next();
+  }
+  const guard = [auth, bookkeeperOnly];
+
+  // ---------------------------------------------------------------- secrets at rest
+  const encKey = crypto.createHash('sha256').update('bookkeeper:' + String(process.env.JWT_SECRET || 'nova')).digest();
+  function enc(text) {
+    const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', encKey, iv);
+    const out = Buffer.concat([c.update(String(text), 'utf8'), c.final()]);
+    return iv.toString('hex') + ':' + c.getAuthTag().toString('hex') + ':' + out.toString('hex');
+  }
+  function dec(blob) {
+    const [iv, tag, data] = String(blob || '').split(':');
+    if (!iv || !tag || !data) return '';
+    const d = crypto.createDecipheriv('aes-256-gcm', encKey, Buffer.from(iv, 'hex'));
+    d.setAuthTag(Buffer.from(tag, 'hex'));
+    return Buffer.concat([d.update(Buffer.from(data, 'hex')), d.final()]).toString('utf8');
+  }
+
+  // ---------------------------------------------------------------- Plaid
+  const plaidReady = () => !!(env('PLAID_CLIENT_ID') && env('PLAID_SECRET'));
+  async function plaid(pathPart, body) {
+    const r = await fetch(PLAID_BASE + pathPart, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ client_id: env('PLAID_CLIENT_ID'), secret: env('PLAID_SECRET') }, body || {})), signal: AbortSignal.timeout(30000) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error('Plaid ' + pathPart + ': ' + (j.error_message || j.error_code || r.status));
+    return j;
+  }
+  async function plaidItems() {
+    const rows = await dbAll('SELECT * FROM bk_accounts ORDER BY id');
+    return rows.map(r => { let a = []; try { a = JSON.parse(r.accounts || '[]'); } catch (e) {} return Object.assign({}, r, { access_token: undefined, accounts: a }); });
+  }
+  // Pull new / changed / removed transactions for one bank connection (cursor-based, so nothing is missed or doubled).
+  async function syncItem(row, who) {
+    const token = dec(row.access_token);
+    let cursor = row.cursor || undefined, added = 0, modified = 0, removed = 0, more = true, guardN = 0;
+    while (more && guardN++ < 50) {
+      const j = await plaid('/transactions/sync', { access_token: token, cursor: cursor, count: 500 });
+      const names = {}; let accts = [];
+      try { accts = JSON.parse(row.accounts || '[]'); } catch (e) {}
+      accts.forEach(a => { names[a.account_id] = a.name; });
+      for (const t of (j.added || []).concat(j.modified || [])) {
+        const isNew = !(await dbGet('SELECT id FROM bk_transactions WHERE txn_id = ?', [t.transaction_id]));
+        const cat = t.personal_finance_category ? (t.personal_finance_category.detailed || t.personal_finance_category.primary) : (t.category || []).join(' > ');
+        if (isNew) {
+          await dbRun('INSERT INTO bk_transactions (txn_id, item_id, account_ref, account_name, date, name, merchant, amount, pending, plaid_category, raw) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+            [t.transaction_id, row.item_id, t.account_id, names[t.account_id] || null, t.date, t.name, t.merchant_name || null, Number(t.amount), t.pending ? 1 : 0, cat, JSON.stringify(t).slice(0, 20000)]);
+          added++;
+        } else {
+          await dbRun("UPDATE bk_transactions SET date = ?, name = ?, merchant = ?, amount = ?, pending = ?, plaid_category = ?, raw = ?, updated_at = datetime('now') WHERE txn_id = ?",
+            [t.date, t.name, t.merchant_name || null, Number(t.amount), t.pending ? 1 : 0, cat, JSON.stringify(t).slice(0, 20000), t.transaction_id]);
+          modified++;
+        }
+      }
+      for (const t of (j.removed || [])) {
+        await dbRun("UPDATE bk_transactions SET status = 'removed', updated_at = datetime('now') WHERE txn_id = ?", [t.transaction_id]);
+        removed++;
+      }
+      cursor = j.next_cursor; more = !!j.has_more;
+      await dbRun("UPDATE bk_accounts SET cursor = ?, last_sync_at = datetime('now'), status = 'ok', error = NULL WHERE id = ?", [cursor, row.id]);
+    }
+    await audit(who, 'plaid.sync', row.item_id, { added, modified, removed });
+    return { added, modified, removed };
+  }
+  async function syncAll(who) {
+    const out = { added: 0, modified: 0, removed: 0, items: 0, errors: [] };
+    for (const row of await dbAll('SELECT * FROM bk_accounts')) {
+      try { const r = await syncItem(row, who); out.added += r.added; out.modified += r.modified; out.removed += r.removed; out.items++; }
+      catch (e) { out.errors.push(row.institution + ': ' + e.message); await dbRun("UPDATE bk_accounts SET status = 'error', error = ? WHERE id = ?", [e.message.slice(0, 300), row.id]); errlog('plaid sync', e.message); }
+    }
+    return out;
+  }
+  async function balances() {
+    const out = [];
+    for (const row of await dbAll('SELECT * FROM bk_accounts')) {
+      try {
+        const j = await plaid('/accounts/balance/get', { access_token: dec(row.access_token) });
+        (j.accounts || []).forEach(a => out.push({ institution: row.institution, name: a.name, mask: a.mask, type: a.subtype || a.type,
+          available: a.balances.available, current: a.balances.current }));
+      } catch (e) { out.push({ institution: row.institution, error: e.message }); }
+    }
+    return out;
+  }
+  // Plaid signs webhooks with ES256 (header Plaid-Verification); the key comes from /webhook_verification_key/get.
+  const plaidKeys = new Map();
+  async function verifyPlaidWebhook(req) {
+    const jwtTok = String(req.headers['plaid-verification'] || '');
+    if (!jwtTok) return false;
+    const [h, p, sig] = jwtTok.split('.');
+    if (!h || !p || !sig) return false;
+    const header = JSON.parse(Buffer.from(h, 'base64url').toString('utf8'));
+    if (header.alg !== 'ES256' || !header.kid) return false;
+    let key = plaidKeys.get(header.kid);
+    if (!key) { const j = await plaid('/webhook_verification_key/get', { key_id: header.kid }); key = j.key; plaidKeys.set(header.kid, key); }
+    const pub = crypto.createPublicKey({ key: key, format: 'jwk' });
+    const ok = crypto.verify('sha256', Buffer.from(h + '.' + p), { key: pub, dsaEncoding: 'ieee-p1363' }, Buffer.from(sig, 'base64url'));
+    if (!ok) return false;
+    const claims = JSON.parse(Buffer.from(p, 'base64url').toString('utf8'));
+    if (Math.abs(Date.now() / 1000 - Number(claims.iat || 0)) > 5 * 60) return false;
+    const bodyHash = crypto.createHash('sha256').update(req.rawBody || JSON.stringify(req.body)).digest('hex');
+    return bodyHash === claims.request_body_sha256;
+  }
+
+  // ---------------------------------------------------------------- the accounting inbox (Gmail)
+  let gmailClient = null;
+  function gmail() {
+    if (gmailClient) return gmailClient;
+    const key = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
+    const a = new google.auth.JWT({ email: key.client_email, key: key.private_key, scopes: ['https://www.googleapis.com/auth/gmail.readonly'], subject: INBOX });
+    gmailClient = google.gmail({ version: 'v1', auth: a });
+    return gmailClient;
+  }
+  const b64url = (s) => Buffer.from(String(s || '').replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+  function partsOf(payload) { const out = []; (function walk(p) { if (!p) return; out.push(p); (p.parts || []).forEach(walk); })(payload); return out; }
+  function emailText(payload) {
+    const parts = partsOf(payload);
+    const plain = parts.find(p => p.mimeType === 'text/plain' && p.body && p.body.data);
+    const html = parts.find(p => p.mimeType === 'text/html' && p.body && p.body.data);
+    let t = plain ? b64url(plain.body.data).toString('utf8') : html ? b64url(html.body.data).toString('utf8').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ') : '';
+    return t.replace(/\s+\n/g, '\n').replace(/[ \t]+/g, ' ').trim().slice(0, 8000);
+  }
+  // New mail in the inbox (since the last scan, or the last backfill_days days the first time) → bk_emails rows with
+  // their PDF / image attachments saved in FILES. Returns how many were new.
+  async function scanInbox(who) {
+    const s = await settings();
+    try { fs.mkdirSync(FILES, { recursive: true }); } catch (e) {}
+    const g = gmail();
+    const q = 'in:anywhere -in:spam -in:trash newer_than:' + Math.max(1, s.backfill_days) + 'd';
+    let pageToken, ids = [], n = 0;
+    do {
+      const r = await g.users.messages.list({ userId: 'me', q: q, maxResults: 100, pageToken: pageToken });
+      ids = ids.concat((r.data.messages || []).map(m => m.id)); pageToken = r.data.nextPageToken;
+    } while (pageToken && ids.length < 500);
+    const seen = new Set((await dbAll('SELECT gmail_id FROM bk_emails')).map(r => r.gmail_id));
+    for (const id of ids) {
+      if (seen.has(id)) continue;
+      try {
+        const m = (await g.users.messages.get({ userId: 'me', id: id, format: 'full' })).data;
+        const hdr = (name) => ((m.payload && m.payload.headers) || []).find(h => h.name.toLowerCase() === name.toLowerCase());
+        const from = (hdr('From') || {}).value || '', subject = (hdr('Subject') || {}).value || '';
+        const at = new Date(Number(m.internalDate)).toISOString().replace('T', ' ').slice(0, 19);
+        const atts = [];
+        for (const p of partsOf(m.payload)) {
+          const fn = p.filename || '';
+          const mt = String(p.mimeType || '').toLowerCase();
+          if (!fn || !p.body || !p.body.attachmentId) continue;
+          if (!/pdf|image\/(png|jpe?g|webp|tiff?)/.test(mt) && !/\.(pdf|png|jpe?g)$/i.test(fn)) continue;
+          if (atts.length >= 6) break;
+          const a = (await g.users.messages.attachments.get({ userId: 'me', messageId: id, id: p.body.attachmentId })).data;
+          const buf = b64url(a.data);
+          if (buf.length > 25 * 1024 * 1024) continue;
+          const file = crypto.randomBytes(10).toString('hex') + (/pdf/.test(mt) || /\.pdf$/i.test(fn) ? '.pdf' : path.extname(fn).toLowerCase() || '.bin');
+          fs.writeFileSync(path.join(FILES, file), buf);
+          atts.push({ file: file, name: fn, mime: mt, size: buf.length });
+        }
+        // Our own mail (the team writing to a vendor) is not a bill.
+        const ours = /@axiomprint\.com/i.test(from);
+        await dbRun('INSERT OR IGNORE INTO bk_emails (gmail_id, thread_id, from_addr, subject, received_at, snippet, body, attachments, status) VALUES (?,?,?,?,?,?,?,?,?)',
+          [id, m.threadId, from.slice(0, 200), subject.slice(0, 300), at, (m.snippet || '').slice(0, 300), emailText(m.payload), JSON.stringify(atts), ours ? 'skipped' : 'new']);
+        n++;
+      } catch (e) { errlog('gmail message', id, e.message); }
+    }
+    await audit(who, 'gmail.scan', INBOX, { looked_at: ids.length, new: n });
+    return { looked_at: ids.length, new: n };
+  }
+  // Gmail push (users.watch → Pub/Sub → this URL). The token in the URL is the only check; the body is not trusted
+  // — a push just starts a scan, which reads the inbox itself.
+  async function startWatch() {
+    const topic = env('BOOKKEEPER_PUBSUB_TOPIC');
+    if (!topic) throw new Error('BOOKKEEPER_PUBSUB_TOPIC is not set in .env (projects/<project>/topics/<topic>).');
+    const r = await gmail().users.watch({ userId: 'me', requestBody: { topicName: topic, labelIds: ['INBOX'] } });
+    await setSetting('gmail_history_id', r.data.historyId || '', 'system');
+    await setSetting('gmail_watch_expires', r.data.expiration ? new Date(Number(r.data.expiration)).toISOString() : '', 'system');
+    return r.data;
+  }
+
+  // ---------------------------------------------------------------- Claude: bills and categories
+  const SYS = (s) => 'You are BookkeeperAI, the bookkeeping assistant of AxiomPrint (a print shop in Glendale, CA). You never decide anything: ' +
+    'you PROPOSE, with a confidence from 0 to 1 and a one-line reason, and a person approves. Be precise, use only what is in the documents and data, never invent amounts or dates. ' +
+    'CHART OF ACCOUNTS (use these category names exactly): ' + categoriesOf(s).join('; ') + '. NOTES FROM THE OWNER: ' + String(s.notes || '');
+  async function fileBlock(att) {
+    const full = path.join(FILES, att.file);
+    if (!fs.existsSync(full)) return null;
+    const buf = fs.readFileSync(full);
+    if (/\.pdf$/i.test(att.file)) return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buf.toString('base64') } };
+    const mt = /\.png$/i.test(att.file) ? 'image/png' : /\.webp$/i.test(att.file) ? 'image/webp' : 'image/jpeg';
+    return { type: 'image', source: { type: 'base64', media_type: mt, data: buf.toString('base64') } };
+  }
+  const jsonOf = (txt) => { try { const m = String(txt).match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : null; } catch (e) { return null; } };
+  // One email → is it a bill? → a bill draft + a proposal (or skipped with a note).
+  async function parseEmail(em, who) {
+    const s = await settings();
+    let atts = []; try { atts = JSON.parse(em.attachments || '[]'); } catch (e) {}
+    const content = [];
+    for (const a of atts.slice(0, 4)) { const b = await fileBlock(a); if (b) content.push(b); }
+    content.push({ type: 'text', text: 'EMAIL\nFrom: ' + em.from_addr + '\nSubject: ' + em.subject + '\nReceived: ' + em.received_at + '\nAttachments: ' + (atts.map(a => a.name).join(', ') || 'none') +
+      '\n\n' + String(em.body || '').slice(0, 6000) +
+      '\n\nIs this a bill (vendor invoice), a statement, a credit memo, a receipt for something already paid, or not a bill at all (marketing, a reply, a notification)? ' +
+      'Return ONLY JSON: {"is_bill": true|false, "kind": "invoice"|"statement"|"credit_memo"|"receipt"|"other", "vendor": "", "invoice_no": "", "invoice_date": "YYYY-MM-DD", "due_date": "YYYY-MM-DD" or null, "terms": "", ' +
+      '"subtotal": 0, "tax": 0, "total": 0, "currency": "USD", "lines": [{"description": "", "qty": 1, "unit_price": 0, "amount": 0, "category": "<from the chart of accounts>"}], ' +
+      '"confidence": 0.0, "reason": "", "note": "anything odd (handwritten, partial, foreign currency, past due)"}' });
+    const r = await anthropic.messages.create({ model: MODEL, max_tokens: 1800, system: SYS(s), messages: [{ role: 'user', content: content }] });
+    const j = jsonOf((r.content || []).filter(b => b.type === 'text').map(b => b.text).join(''));
+    if (!j) { await dbRun("UPDATE bk_emails SET status = 'error', note = ? WHERE id = ?", ['The AI gave no usable answer.', em.id]); return null; }
+    if (!j.is_bill || ['invoice', 'credit_memo', 'statement'].indexOf(j.kind) === -1) {
+      await dbRun("UPDATE bk_emails SET status = 'skipped', note = ? WHERE id = ?", [(j.kind || 'other') + (j.reason ? ' — ' + j.reason : ''), em.id]);
+      return null;
+    }
+    const vendor = String(j.vendor || '').trim().slice(0, 120) || 'Unknown vendor';
+    const invNo = String(j.invoice_no || '').trim().slice(0, 80);
+    const dup = invNo ? await dbGet('SELECT id FROM bk_bills WHERE LOWER(vendor) = LOWER(?) AND invoice_no = ? AND status <> ?', [vendor, invNo, 'rejected'])
+      : await dbGet('SELECT id FROM bk_bills WHERE LOWER(vendor) = LOWER(?) AND ABS(total - ?) < 0.01 AND invoice_date = ? AND status <> ?', [vendor, Number(j.total) || 0, j.invoice_date || '', 'rejected']);
+    let v = await dbGet('SELECT * FROM bk_vendors WHERE LOWER(name) = LOWER(?)', [vendor]);
+    if (!v) { await dbRun('INSERT OR IGNORE INTO bk_vendors (name, approved) VALUES (?, 0)', [vendor]); v = await dbGet('SELECT * FROM bk_vendors WHERE LOWER(name) = LOWER(?)', [vendor]); }
+    const main = atts[0] || null;
+    const ins = await dbRun('INSERT INTO bk_bills (email_id, vendor, vendor_id, invoice_no, invoice_date, due_date, terms, subtotal, tax, total, currency, kind, duplicate_of, lines, file, file_name, status, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      [em.id, vendor, v ? v.id : null, invNo || null, j.invoice_date || null, j.due_date || null, String(j.terms || '').slice(0, 60), Number(j.subtotal) || null, Number(j.tax) || null, Number(j.total) || 0,
+        String(j.currency || 'USD').slice(0, 8), j.kind, dup ? dup.id : null, JSON.stringify((j.lines || []).slice(0, 60)), main ? main.file : null, main ? main.name : null, 'draft', String(j.note || '').slice(0, 500)]);
+    const billId = ins.lastID;
+    const conf = Math.max(0, Math.min(1, Number(j.confidence) || 0));
+    const newVendor = v && !v.approved;
+    const title = (j.kind === 'credit_memo' ? 'Credit memo' : j.kind === 'statement' ? 'Statement' : 'Bill') + ' from ' + vendor + (invNo ? ' #' + invNo : '') + ' — $' + (Number(j.total) || 0).toFixed(2) +
+      (dup ? ' (possible DUPLICATE of bill #' + dup.id + ')' : '') + (newVendor ? ' (NEW vendor — needs your approval)' : '');
+    const p = await dbRun('INSERT INTO bk_proposals (type, ref_table, ref_id, title, payload, confidence, reason) VALUES (?,?,?,?,?,?,?)',
+      ['bill', 'bk_bills', billId, title, JSON.stringify({ vendor, invoice_no: invNo, invoice_date: j.invoice_date, due_date: j.due_date, total: Number(j.total) || 0, kind: j.kind, duplicate_of: dup ? dup.id : null, new_vendor: !!newVendor, lines: (j.lines || []).slice(0, 60) }),
+        conf, String(j.reason || '').slice(0, 300)]);
+    await dbRun('UPDATE bk_bills SET proposal_id = ? WHERE id = ?', [p.lastID, billId]);
+    await dbRun("UPDATE bk_emails SET status = 'parsed', note = ? WHERE id = ?", ['Bill draft #' + billId, em.id]);
+    if (conf < s.threshold || dup || newVendor) {
+      const q = dup ? 'This looks like a duplicate of bill #' + dup.id + ' (' + vendor + (invNo ? ' #' + invNo : '') + '). Is it the same bill?'
+        : newVendor ? vendor + ' is a new vendor. Is this a real vendor of ours, and should I approve them for future bills?'
+        : 'I am only ' + Math.round(conf * 100) + '% sure about this bill from ' + vendor + ' (' + (j.reason || 'see the draft') + '). Can you check the draft?';
+      await dbRun('INSERT INTO bk_questions (proposal_id, question) VALUES (?,?)', [p.lastID, q]);
+    }
+    await audit(who, 'bill.draft', billId, { vendor, total: j.total, confidence: conf });
+    return billId;
+  }
+  async function parseNewEmails(who) {
+    const rows = await dbAll("SELECT * FROM bk_emails WHERE status = 'new' ORDER BY id LIMIT 30");
+    let bills = 0;
+    for (const em of rows) { try { if (await parseEmail(em, who)) bills++; } catch (e) { errlog('parse email', em.id, e.message); await dbRun("UPDATE bk_emails SET status = 'error', note = ? WHERE id = ?", [e.message.slice(0, 300), em.id]); } }
+    return { emails: rows.length, bills };
+  }
+
+  // Rules first (deterministic), then the AI for what is left, in one call per batch.
+  const normName = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  function ruleMatch(rules, t) {
+    const name = normName(t.merchant || t.name), full = normName(t.name + ' ' + (t.merchant || ''));
+    return rules.find(r => r.kind === 'vendor' ? normName(r.pattern) === name : full.indexOf(normName(r.pattern)) > -1) || null;
+  }
+  async function categorize(who) {
+    const s = await settings();
+    const rules = await dbAll('SELECT * FROM bk_rules WHERE active = 1 ORDER BY kind DESC, id');
+    const txns = await dbAll("SELECT * FROM bk_transactions WHERE status = 'new' AND pending = 0 ORDER BY date LIMIT 80");
+    let byRule = 0, proposed = 0, asked = 0;
+    const open = [];
+    for (const t of txns) {
+      const r = ruleMatch(rules, t);
+      if (r) {
+        await dbRun("UPDATE bk_transactions SET category = ?, category_source = 'rule', rule_id = ?, status = 'categorized', updated_at = datetime('now') WHERE id = ?", [r.category, r.id, t.id]);
+        await dbRun('UPDATE bk_rules SET hits = hits + 1 WHERE id = ?', [r.id]);
+        byRule++;
+      } else open.push(t);
+    }
+    for (let i = 0; i < open.length; i += 40) {
+      const batch = open.slice(i, i + 40);
+      const listing = batch.map(t => t.id + ' | ' + t.date + ' | ' + (t.amount >= 0 ? '-' : '+') + '$' + Math.abs(t.amount).toFixed(2) + ' | ' + t.name + (t.merchant ? ' (' + t.merchant + ')' : '') +
+        (t.plaid_category ? ' | bank says: ' + t.plaid_category : '') + (t.account_name ? ' | ' + t.account_name : '')).join('\n');
+      const prior = (await dbAll("SELECT merchant, name, category FROM bk_transactions WHERE status = 'categorized' ORDER BY updated_at DESC LIMIT 60"))
+        .map(x => (x.merchant || x.name) + ' → ' + x.category).filter((v, k, a) => a.indexOf(v) === k).slice(0, 40).join('\n');
+      let j = null;
+      try {
+        const r = await anthropic.messages.create({ model: MODEL, max_tokens: 2500, system: SYS(s), messages: [{ role: 'user', content:
+          'Bank transactions (amount: - means money out, + means money in). Propose a category for each from the chart of accounts.\n' + listing +
+          (prior ? '\n\nHOW WE CATEGORIZED BEFORE (approved):\n' + prior : '') +
+          '\n\nReturn ONLY JSON: {"items": [{"id": <id>, "category": "", "vendor": "<clean vendor name>", "confidence": 0.0, "reason": "<one short line>", "ask": "<a question for the owner ONLY if you cannot tell, else empty>"}]}' }] });
+        j = jsonOf((r.content || []).filter(b => b.type === 'text').map(b => b.text).join(''));
+      } catch (e) { errlog('categorize', e.message); }
+      for (const t of batch) {
+        const it = j && Array.isArray(j.items) ? j.items.find(x => Number(x.id) === t.id) : null;
+        const cats = categoriesOf(s);
+        const category = it && cats.indexOf(String(it.category)) > -1 ? String(it.category) : (it && it.category ? String(it.category).slice(0, 80) : 'Uncategorized');
+        const conf = it ? Math.max(0, Math.min(1, Number(it.confidence) || 0)) : 0;
+        const title = (t.amount >= 0 ? '-' : '+') + '$' + Math.abs(t.amount).toFixed(2) + ' ' + (t.merchant || t.name) + ' on ' + t.date + ' → ' + category;
+        const p = await dbRun('INSERT INTO bk_proposals (type, ref_table, ref_id, title, payload, confidence, reason) VALUES (?,?,?,?,?,?,?)',
+          ['category', 'bk_transactions', t.id, title, JSON.stringify({ category, vendor: it && it.vendor ? String(it.vendor).slice(0, 120) : (t.merchant || t.name), amount: t.amount, date: t.date, name: t.name }), conf, it ? String(it.reason || '').slice(0, 300) : 'The AI could not categorize this.']);
+        await dbRun("UPDATE bk_transactions SET proposal_id = ?, status = 'pending', updated_at = datetime('now') WHERE id = ?", [p.lastID, t.id]);
+        proposed++;
+        if (conf < s.threshold || (it && it.ask)) {
+          await dbRun('INSERT INTO bk_questions (proposal_id, question) VALUES (?,?)', [p.lastID, (it && it.ask) || ('What is this ' + (t.amount >= 0 ? 'payment to ' : 'deposit from ') + (t.merchant || t.name) + ' for? I guessed "' + category + '".')]);
+          asked++;
+        }
+      }
+    }
+    await audit(who, 'categorize', null, { by_rule: byRule, proposed, asked });
+    return { by_rule: byRule, proposed, asked };
+  }
+
+  // ---------------------------------------------------------------- the executor (approvals)
+  async function proposalView(p) {
+    let payload = {}; try { payload = JSON.parse(p.payload || '{}'); } catch (e) {}
+    const q = await dbGet('SELECT * FROM bk_questions WHERE proposal_id = ? ORDER BY id DESC LIMIT 1', [p.id]);
+    return Object.assign({}, p, { payload, question: q || null });
+  }
+  async function pending() {
+    const rows = await dbAll("SELECT * FROM bk_proposals WHERE status = 'pending' ORDER BY type, id");
+    const out = [];
+    for (const p of rows) out.push(await proposalView(p));
+    return out;
+  }
+  // Approve: category → the transaction is categorized (and a vendor rule is saved when asked); bill → the draft becomes
+  // an approved bill (and the vendor is approved when asked). Nothing is pushed to QuickBooks or BILL yet (later phases).
+  async function decide(id, action, who, opts) {
+    opts = opts || {};
+    const p = await dbGet('SELECT * FROM bk_proposals WHERE id = ?', [id]);
+    if (!p) return { ok: false, error: 'No proposal #' + id };
+    if (p.status !== 'pending') return { ok: false, error: 'Proposal #' + id + ' is already ' + p.status + '.' };
+    let payload = {}; try { payload = JSON.parse(p.payload || '{}'); } catch (e) {}
+    const now = nowIso();
+    if (action === 'reject') {
+      await dbRun('UPDATE bk_proposals SET status = ?, decided_by = ?, decided_at = ?, decision = ? WHERE id = ?', ['rejected', who, now, String(opts.note || '').slice(0, 500), id]);
+      if (p.type === 'category') await dbRun("UPDATE bk_transactions SET status = 'new', proposal_id = NULL, updated_at = datetime('now') WHERE id = ?", [p.ref_id]);
+      if (p.type === 'bill') await dbRun("UPDATE bk_bills SET status = 'rejected', updated_at = datetime('now') WHERE id = ?", [p.ref_id]);
+      await audit(who, 'proposal.reject', id, { type: p.type, note: opts.note });
+      return { ok: true, status: 'rejected' };
+    }
+    if (p.type === 'category') {
+      const s = await settings();
+      const category = String(opts.category || payload.category || '').trim();
+      if (!category) return { ok: false, error: 'No category.' };
+      const edited = category !== payload.category;
+      await dbRun("UPDATE bk_transactions SET category = ?, category_source = 'approved', status = 'categorized', updated_at = datetime('now') WHERE id = ?", [category, p.ref_id]);
+      let rule = null;
+      if (opts.remember !== false) {
+        const vendor = String(opts.vendor || payload.vendor || '').trim();
+        if (vendor && !(await dbGet('SELECT id FROM bk_rules WHERE kind = ? AND LOWER(pattern) = LOWER(?) AND active = 1', ['vendor', vendor]))) {
+          const r = await dbRun('INSERT INTO bk_rules (kind, pattern, category, vendor, source, created_by) VALUES (?,?,?,?,?,?)', ['vendor', vendor, category, vendor, 'approval', who]);
+          rule = r.lastID;
+        }
+      }
+      await dbRun('UPDATE bk_proposals SET status = ?, decided_by = ?, decided_at = ?, decision = ? WHERE id = ?', [edited ? 'edited' : 'approved', who, now, JSON.stringify({ category, rule }), id]);
+      await audit(who, 'category.apply', p.ref_id, { category, edited, rule });
+      if (categoriesOf(s).indexOf(category) === -1) await setSetting('categories', categoriesOf(s).concat([category]).join('\n'), who);
+      return { ok: true, status: edited ? 'edited' : 'approved', category, rule };
+    }
+    if (p.type === 'bill') {
+      await dbRun("UPDATE bk_bills SET status = 'approved', updated_at = datetime('now') WHERE id = ?", [p.ref_id]);
+      if (opts.approve_vendor || payload.new_vendor) {
+        const b = await dbGet('SELECT vendor_id FROM bk_bills WHERE id = ?', [p.ref_id]);
+        if (b && b.vendor_id && opts.approve_vendor !== false) await dbRun('UPDATE bk_vendors SET approved = 1, approved_by = ?, approved_at = ? WHERE id = ?', [who, now, b.vendor_id]);
+      }
+      await dbRun('UPDATE bk_proposals SET status = ?, decided_by = ?, decided_at = ?, decision = ? WHERE id = ?', ['approved', who, now, String(opts.note || '').slice(0, 500), id]);
+      await audit(who, 'bill.approve', p.ref_id, { vendor: payload.vendor, total: payload.total });
+      return { ok: true, status: 'approved' };
+    }
+    return { ok: false, error: 'Unknown proposal type.' };
+  }
+  async function answerQuestion(qid, answer, who) {
+    const q = await dbGet('SELECT * FROM bk_questions WHERE id = ?', [qid]);
+    if (!q) return { ok: false, error: 'No question #' + qid };
+    await dbRun('UPDATE bk_questions SET answer = ?, answered_by = ?, answered_at = ? WHERE id = ?', [String(answer).slice(0, 1000), who, nowIso(), qid]);
+    await audit(who, 'question.answer', qid, answer);
+    return { ok: true };
+  }
+
+  // ---------------------------------------------------------------- the Daily Brief
+  const usd = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  async function composeBrief(day, runSummary) {
+    const list = await pending();
+    const qs = list.filter(p => p.question && !p.question.answer);
+    const cats = list.filter(p => p.type === 'category' && !(p.question && !p.question.answer));
+    const bills = list.filter(p => p.type === 'bill' && !(p.question && !p.question.answer));
+    const bal = plaidReady() && (await dbGet('SELECT COUNT(*) AS n FROM bk_accounts')).n ? await balances() : [];
+    const lines = ['*BookkeeperAI — Daily Brief ' + day + '*'];
+    if (bal.length) lines.push('Cash: ' + bal.filter(b => !b.error).map(b => b.name + (b.mask ? ' ••' + b.mask : '') + ' ' + usd(b.available != null ? b.available : b.current)).join(' · '));
+    if (runSummary) lines.push('Overnight: ' + runSummary);
+    lines.push('');
+    lines.push('*Questions (' + qs.length + ')*' + (qs.length ? '' : ' — none'));
+    qs.slice(0, 15).forEach(p => lines.push('• Q' + p.question.id + ' · ' + p.question.question + '  _(' + p.title + ')_'));
+    lines.push('');
+    lines.push('*Suggestions (' + (cats.length + bills.length) + ')*' + (cats.length + bills.length ? '' : ' — none'));
+    cats.slice(0, 25).forEach(p => lines.push('• #' + p.id + ' ' + p.title + ' (' + Math.round(p.confidence * 100) + '%)'));
+    bills.slice(0, 15).forEach(p => lines.push('• #' + p.id + ' ' + p.title + ' (' + Math.round(p.confidence * 100) + '%)'));
+    const extra = (cats.length - 25) + (bills.length - 15);
+    if (cats.length > 25 || bills.length > 15) lines.push('• …and more in Nova');
+    lines.push('');
+    lines.push('*Payments* — not connected yet (BILL comes in a later phase).');
+    lines.push('');
+    lines.push('Reply here: "approve all", "approve #12 #14", "reject #15", "#12 is Paper", "Q3: that was the new cutter", or open ' + NOVA_URL + '/bookkeeping');
+    const text = lines.join('\n');
+    const stats = { questions: qs.length, categories: cats.length, bills: bills.length };
+    await dbRun('INSERT INTO bk_briefs (day, text, stats) VALUES (?,?,?) ON CONFLICT(day) DO UPDATE SET text = excluded.text, stats = excluded.stats', [day, text, JSON.stringify(stats)]);
+    return { text, stats };
+  }
+  const laDay = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+
+  // ---------------------------------------------------------------- Google Chat
+  let chatClient = null;
+  function chatApi() {
+    if (chatClient) return chatClient;
+    const key = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
+    const a = new google.auth.JWT({ email: key.client_email, key: key.private_key, scopes: ['https://www.googleapis.com/auth/chat.bot'] });
+    chatClient = google.chat({ version: 'v1', auth: a });
+    return chatClient;
+  }
+  // Post to the space: the Chat app when a space is known (someone has messaged it), else the incoming webhook URL.
+  async function postChat(text, thread) {
+    const s = await settings();
+    if (s.chat_space) {
+      const r = await chatApi().spaces.messages.create({ parent: s.chat_space, requestBody: Object.assign({ text: text }, thread ? { thread: { name: thread } } : {}),
+        messageReplyOption: thread ? 'REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD' : undefined });
+      await dbRun('INSERT INTO bk_chat (channel, space, thread, sender, direction, text) VALUES (?,?,?,?,?,?)', ['chat-app', s.chat_space, thread || null, 'BookkeeperAI', 'out', text]);
+      return { via: 'chat-app', name: r.data && r.data.name };
+    }
+    if (s.chat_webhook) {
+      const r = await fetch(s.chat_webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text }), signal: AbortSignal.timeout(15000) });
+      if (!r.ok) throw new Error('Google Chat webhook ' + r.status + ' ' + (await r.text().catch(() => '')).slice(0, 120));
+      await dbRun('INSERT INTO bk_chat (channel, sender, direction, text) VALUES (?,?,?,?)', ['webhook', 'BookkeeperAI', 'out', text]);
+      return { via: 'webhook' };
+    }
+    throw new Error('Google Chat is not connected: add the Chat app to a space and message it, or paste a space webhook URL in Connections.');
+  }
+  // Google signs Chat app events with a JWT from chat@system.gserviceaccount.com for the audience = the project number.
+  let googleCerts = { at: 0, certs: {} };
+  async function verifyChatEvent(req) {
+    const aud = env('BOOKKEEPER_CHAT_AUDIENCE');
+    const tok = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!aud || !tok) return env('BOOKKEEPER_CHAT_INSECURE') === '1';
+    try {
+      if (Date.now() - googleCerts.at > 60 * 60 * 1000) {
+        const r = await fetch('https://www.googleapis.com/service_accounts/v1/metadata/x509/chat@system.gserviceaccount.com', { signal: AbortSignal.timeout(10000) });
+        googleCerts = { at: Date.now(), certs: await r.json() };
+      }
+      const header = JSON.parse(Buffer.from(tok.split('.')[0], 'base64url').toString('utf8'));
+      const cert = googleCerts.certs[header.kid];
+      if (!cert) return false;
+      const claims = deps.jwt.verify(tok, cert, { algorithms: ['RS256'], audience: aud, issuer: 'chat@system.gserviceaccount.com' });
+      return !!claims;
+    } catch (e) { errlog('chat event verify', e.message); return false; }
+  }
+
+  // ---------------------------------------------------------------- the conversation (Google Chat and the Nova tab)
+  const CHAT_TOOLS = [
+    { name: 'list_pending', description: 'The pending proposals and open questions (what the Daily Brief lists).', input_schema: { type: 'object', properties: {} } },
+    { name: 'approve', description: 'Approve proposals by id (a category is applied to its transaction and a vendor rule is saved; a bill draft becomes an approved bill).',
+      input_schema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'integer' } }, all: { type: 'boolean', description: 'Every pending proposal that has no open question.' }, category: { type: 'string', description: 'For ONE category proposal: the category the person said instead.' } }, required: [] } },
+    { name: 'reject', description: 'Reject proposals by id.', input_schema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'integer' } }, note: { type: 'string' } }, required: ['ids'] } },
+    { name: 'answer_question', description: 'Record the person\u2019s answer to an open question (Q<id>). When the answer names a category, also approve its proposal with that category.',
+      input_schema: { type: 'object', properties: { question_id: { type: 'integer' }, answer: { type: 'string' }, category: { type: 'string', description: 'The category their answer amounts to, from the chart of accounts, if any.' } }, required: ['question_id', 'answer'] } },
+    { name: 'add_rule', description: 'Save a categorization rule: this vendor (or any transaction containing this keyword) is always this category.',
+      input_schema: { type: 'object', properties: { kind: { type: 'string', enum: ['vendor', 'keyword'] }, pattern: { type: 'string' }, category: { type: 'string' } }, required: ['kind', 'pattern', 'category'] } },
+    { name: 'run_now', description: 'Sync the banks, scan the inbox and categorize now, then rebuild the brief.', input_schema: { type: 'object', properties: {} } },
+    { name: 'balances', description: 'Current bank balances.', input_schema: { type: 'object', properties: {} } }
+  ];
+  async function runChatTool(name, input, who) {
+    input = input || {};
+    if (name === 'list_pending') {
+      const list = await pending();
+      return { pending: list.map(p => ({ id: p.id, type: p.type, title: p.title, confidence: p.confidence, reason: p.reason, question: p.question && !p.question.answer ? { id: p.question.id, text: p.question.question } : null })) };
+    }
+    if (name === 'approve') {
+      let ids = (input.ids || []).map(Number).filter(Boolean);
+      if (input.all) ids = (await pending()).filter(p => !(p.question && !p.question.answer)).map(p => p.id);
+      const out = [];
+      for (const id of ids) out.push(Object.assign({ id }, await decide(id, 'approve', who, ids.length === 1 && input.category ? { category: input.category } : {})));
+      return { results: out };
+    }
+    if (name === 'reject') { const out = []; for (const id of (input.ids || [])) out.push(Object.assign({ id }, await decide(Number(id), 'reject', who, { note: input.note }))); return { results: out }; }
+    if (name === 'answer_question') {
+      const r = await answerQuestion(Number(input.question_id), input.answer, who);
+      if (!r.ok) return r;
+      const q = await dbGet('SELECT proposal_id FROM bk_questions WHERE id = ?', [Number(input.question_id)]);
+      if (input.category && q) return Object.assign(r, { approved: await decide(q.proposal_id, 'approve', who, { category: input.category }) });
+      return r;
+    }
+    if (name === 'add_rule') {
+      const r = await dbRun('INSERT INTO bk_rules (kind, pattern, category, vendor, source, created_by) VALUES (?,?,?,?,?,?)', [input.kind === 'keyword' ? 'keyword' : 'vendor', String(input.pattern).slice(0, 120), String(input.category).slice(0, 80), input.kind === 'vendor' ? String(input.pattern).slice(0, 120) : null, 'chat', who]);
+      await audit(who, 'rule.add', r.lastID, input);
+      return { ok: true, rule_id: r.lastID };
+    }
+    if (name === 'run_now') return await runDaily('manual', who, { post: false });
+    if (name === 'balances') return { balances: await balances() };
+    return { error: 'Unknown tool' };
+  }
+  async function chatHistory(channel, n) {
+    return (await dbAll('SELECT sender, direction, text, at FROM bk_chat WHERE channel = ? ORDER BY id DESC LIMIT ?', [channel, n || 12])).reverse();
+  }
+  // One message from a person → BookkeeperAI's answer (Claude with the narrow tools). `who` is the person's email.
+  async function converse(channel, who, text, meta) {
+    const s = await settings();
+    const may = CHAT_USERS.indexOf(String(who).toLowerCase()) > -1 || USERS.indexOf(String(who).toLowerCase()) > -1;
+    await dbRun('INSERT INTO bk_chat (channel, space, thread, sender, sender_email, direction, text) VALUES (?,?,?,?,?,?,?)', [channel, meta && meta.space || null, meta && meta.thread || null, meta && meta.name || who, who, 'in', String(text).slice(0, 4000)]);
+    if (!may) return 'Sorry — only ' + CHAT_USERS.join(' and ') + ' can work with me here.';
+    const brief = await dbGet('SELECT text FROM bk_briefs ORDER BY day DESC LIMIT 1');
+    const hist = await chatHistory(channel, 12);
+    const messages = [];
+    hist.slice(0, -1).forEach(m => messages.push({ role: m.direction === 'in' ? 'user' : 'assistant', content: (m.direction === 'in' ? m.sender + ': ' : '') + m.text }));
+    messages.push({ role: 'user', content: (meta && meta.name ? meta.name + ': ' : '') + text });
+    // Two people share the thread; turns must alternate for the API.
+    const merged = [];
+    messages.forEach(m => { const last = merged[merged.length - 1]; if (last && last.role === m.role) last.content += '\n' + m.content; else merged.push(Object.assign({}, m)); });
+    if (merged[0] && merged[0].role !== 'user') merged.shift();
+    const system = SYS(s) + '\nYou are talking with ' + (meta && meta.name || who) + ' in ' + (channel === 'nova' ? 'the Nova Bookkeeping tab' : 'Google Chat') + '. Short, plain answers (no markdown headings; a short list is fine). ' +
+      'Use the tools for anything that changes state; never claim you approved or saved something without calling the tool. Proposal ids are "#12"; questions are "Q3". ' +
+      'When they answer a question, record it with answer_question (with the category when it is one). "Approve all" = approve with all: true. Money never moves through you: payments are approved in BILL by a person.\n' +
+      (brief ? 'TODAY\u2019S BRIEF:\n' + brief.text.slice(0, 6000) : 'No brief yet today.');
+    let reply = '', used = [];
+    for (let i = 0; i < 6; i++) {
+      const r = await anthropic.messages.create({ model: MODEL, max_tokens: 900, system: system, tools: CHAT_TOOLS, messages: merged });
+      const uses = (r.content || []).filter(b => b.type === 'tool_use');
+      const said = (r.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+      if (!uses.length) { reply = said; break; }
+      merged.push({ role: 'assistant', content: r.content });
+      const results = [];
+      for (const tu of uses) {
+        let out; try { out = await runChatTool(tu.name, tu.input, who); } catch (e) { out = { error: e.message }; }
+        used.push({ tool: tu.name, input: tu.input });
+        results.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(out).slice(0, 12000) });
+      }
+      merged.push({ role: 'user', content: results });
+      reply = said;
+    }
+    reply = reply || 'Done.';
+    await dbRun('INSERT INTO bk_chat (channel, space, thread, sender, direction, text, tools) VALUES (?,?,?,?,?,?,?)', [channel, meta && meta.space || null, meta && meta.thread || null, 'BookkeeperAI', 'out', reply, used.length ? JSON.stringify(used) : null]);
+    return reply;
+  }
+
+  // ---------------------------------------------------------------- the daily run and the clock
+  let running = null;
+  async function runDaily(kind, who, opts) {
+    if (running) return { ok: false, error: 'A run is already going.' };
+    opts = opts || {};
+    const run = await dbRun('INSERT INTO bk_runs (kind, started_by) VALUES (?,?)', [kind, who || 'clock']);
+    running = run.lastID;
+    const parts = [], summary = {};
+    try {
+      if (plaidReady()) { try { summary.plaid = await syncAll(who); parts.push(summary.plaid.added + ' new transaction' + (summary.plaid.added === 1 ? '' : 's') + (summary.plaid.errors.length ? ' (' + summary.plaid.errors.join('; ') + ')' : '')); } catch (e) { parts.push('bank sync failed: ' + e.message); } }
+      else parts.push('banks not connected');
+      try { summary.gmail = await scanInbox(who); parts.push(summary.gmail.new + ' new email' + (summary.gmail.new === 1 ? '' : 's')); } catch (e) { parts.push('inbox scan failed: ' + e.message); errlog('scan', e.message); }
+      try { summary.bills = await parseNewEmails(who); parts.push(summary.bills.bills + ' bill draft' + (summary.bills.bills === 1 ? '' : 's')); } catch (e) { parts.push('bill parsing failed: ' + e.message); }
+      try { summary.cat = await categorize(who); parts.push(summary.cat.by_rule + ' by rule, ' + summary.cat.proposed + ' proposed, ' + summary.cat.asked + ' question' + (summary.cat.asked === 1 ? '' : 's')); } catch (e) { parts.push('categorizing failed: ' + e.message); }
+      const brief = await composeBrief(laDay(), parts.join(' · '));
+      summary.brief = brief.stats;
+      if (opts.post !== false) {
+        try { await postChat(brief.text); await dbRun("UPDATE bk_briefs SET posted_at = datetime('now'), post_error = NULL WHERE day = ?", [laDay()]); }
+        catch (e) { await dbRun('UPDATE bk_briefs SET post_error = ? WHERE day = ?', [e.message.slice(0, 300), laDay()]); parts.push('not posted to Google Chat: ' + e.message); }
+      }
+      await dbRun("UPDATE bk_runs SET finished_at = datetime('now'), ok = 1, summary = ? WHERE id = ?", [parts.join(' · '), run.lastID]);
+      return { ok: true, summary: parts.join(' · '), detail: summary };
+    } catch (e) {
+      await dbRun("UPDATE bk_runs SET finished_at = datetime('now'), ok = 0, summary = ? WHERE id = ?", [e.message.slice(0, 500), run.lastID]);
+      return { ok: false, error: e.message };
+    } finally { running = null; }
+  }
+  // Every minute: the daily run at run_at (Los Angeles); the inbox poll every poll_min minutes (bills reach the queue
+  // during the day, the brief still comes once a day).
+  let lastDailyDay = '', lastPoll = 0;
+  async function tick() {
+    try {
+      const s = await settings();
+      const nowLA = new Date().toLocaleTimeString('en-GB', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit' });
+      const day = laDay();
+      if (nowLA === (s.run_at || '07:00') && lastDailyDay !== day) {
+        lastDailyDay = day;
+        const done = await dbGet('SELECT id FROM bk_runs WHERE kind = ? AND started_at >= ?', ['daily', day + ' 00:00:00']);
+        if (!done) runDaily('daily', 'clock').catch(e => errlog('daily', e.message));
+        return;
+      }
+      if (Date.now() - lastPoll > s.poll_min * 60000 && !running) {
+        lastPoll = Date.now();
+        if (await dbGet('SELECT 1 FROM bk_runs LIMIT 1')) {          // nothing polls until the first run (set-up time)
+          try { const r = await scanInbox('poll'); if (r.new) await parseNewEmails('poll'); } catch (e) { errlog('poll', e.message); }
+        }
+      }
+    } catch (e) { errlog('tick', e.message); }
+  }
+  if (env('BOOKKEEPER_CLOCK') !== '0') setInterval(tick, 60000).unref();
+
+  // ---------------------------------------------------------------- webhooks (no sign-in: verified their own way)
+  app.post('/api/bookkeeping/plaid/webhook', require('express').raw({ type: '*/*', limit: '2mb' }), (req, res) => {
+    (async () => {
+      req.rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body || {}));
+      try { req.body = JSON.parse(req.rawBody.toString('utf8') || '{}'); } catch (e) { req.body = {}; }
+      let ok = false;
+      try { ok = await verifyPlaidWebhook(req); } catch (e) { errlog('plaid webhook verify', e.message); }
+      if (!ok) { await audit('plaid', 'webhook.rejected', null, req.body && req.body.webhook_code); return res.status(401).json({ ok: false }); }
+      const b = req.body || {};
+      await audit('plaid', 'webhook', b.item_id, { type: b.webhook_type, code: b.webhook_code });
+      if (b.webhook_type === 'TRANSACTIONS' && /SYNC_UPDATES_AVAILABLE|DEFAULT_UPDATE|INITIAL_UPDATE|HISTORICAL_UPDATE/.test(b.webhook_code)) {
+        const row = await dbGet('SELECT * FROM bk_accounts WHERE item_id = ?', [b.item_id]);
+        if (row) setTimeout(() => syncItem(row, 'webhook').then(() => categorize('webhook')).catch(e => errlog('webhook sync', e.message)), 500).unref();
+      }
+      if (b.webhook_type === 'ITEM' && b.webhook_code === 'ERROR') await dbRun("UPDATE bk_accounts SET status = 'error', error = ? WHERE item_id = ?", [JSON.stringify(b.error || {}).slice(0, 300), b.item_id]);
+      res.json({ ok: true });
+    })().catch(e => res.status(500).json({ ok: false, error: e.message }));
+  });
+  app.post('/api/bookkeeping/gmail/push', (req, res) => {
+    const want = env('BOOKKEEPER_PUSH_TOKEN');
+    if (!want || String(req.query.token || '') !== want) return res.status(401).json({ ok: false });
+    res.json({ ok: true });
+    if (!running) setTimeout(() => scanInbox('push').then(r => r.new ? parseNewEmails('push') : null).catch(e => errlog('push', e.message)), 200).unref();
+  });
+  app.post('/api/bookkeeping/chat/events', (req, res) => {
+    (async () => {
+      if (!(await verifyChatEvent(req))) return res.status(401).json({ text: 'Unverified' });
+      const ev = req.body || {};
+      const space = ev.space && ev.space.name;
+      if (space) { const s = await settings(); if (s.chat_space !== space) await setSetting('chat_space', space, 'chat'); }
+      if (ev.type === 'ADDED_TO_SPACE') return res.json({ text: 'Hi — I\u2019m BookkeeperAI. I\u2019ll post the Daily Brief here every morning; reply to approve, reject or answer my questions.' });
+      if (ev.type !== 'MESSAGE') return res.json({});
+      const who = String((ev.user && ev.user.email) || '').toLowerCase();
+      const name = (ev.user && ev.user.displayName) || who;
+      const text = String((ev.message && (ev.message.argumentText || ev.message.text)) || '').trim();
+      const thread = ev.message && ev.message.thread && ev.message.thread.name;
+      const reply = await converse('google-chat', who, text, { name, space, thread });
+      res.json({ text: reply });
+    })().catch(e => { errlog('chat event', e.message); res.json({ text: 'Sorry, something went wrong on my side.' }); });
+  });
+
+  // ---------------------------------------------------------------- the page and its API
+  app.get('/bookkeeping', serveVersionedHtml('bookkeeping.html'));
+  app.get('/api/bookkeeping/overview', ...guard, async (req, res) => {
+    const s = await settings();
+    const items = await plaidItems();
+    const brief = await dbGet('SELECT * FROM bk_briefs ORDER BY day DESC LIMIT 1');
+    const counts = {
+      pending: (await dbGet("SELECT COUNT(*) AS n FROM bk_proposals WHERE status = 'pending'")).n,
+      questions: (await dbGet("SELECT COUNT(*) AS n FROM bk_questions WHERE answer IS NULL AND proposal_id IN (SELECT id FROM bk_proposals WHERE status = 'pending')")).n,
+      transactions: (await dbGet('SELECT COUNT(*) AS n FROM bk_transactions')).n,
+      bills: (await dbGet("SELECT COUNT(*) AS n FROM bk_bills WHERE status <> 'rejected'")).n,
+      emails: (await dbGet('SELECT COUNT(*) AS n FROM bk_emails')).n, rules: (await dbGet('SELECT COUNT(*) AS n FROM bk_rules WHERE active = 1')).n
+    };
+    const lastRun = await dbGet('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 1');
+    res.json({ ok: true, me: userId(req), settings: Object.assign({}, s, { chat_webhook: s.chat_webhook ? '(set)' : '' }), counts, brief, last_run: lastRun, running: !!running,
+      connections: {
+        plaid: { configured: plaidReady(), env: PLAID_ENV, items },
+        gmail: { inbox: INBOX, key: fs.existsSync(keyPath), last_scan: (await dbGet("SELECT at FROM bk_audit WHERE action = 'gmail.scan' ORDER BY id DESC LIMIT 1") || {}).at || null,
+          push: !!env('BOOKKEEPER_PUSH_TOKEN'), topic: !!env('BOOKKEEPER_PUBSUB_TOPIC'), watch_expires: s.gmail_watch_expires || null, poll_min: s.poll_min },
+        chat: { app_audience: !!env('BOOKKEEPER_CHAT_AUDIENCE'), space: s.chat_space || null, webhook: !!s.chat_webhook, events_url: NOVA_URL + '/api/bookkeeping/chat/events',
+          plaid_webhook_url: NOVA_URL + '/api/bookkeeping/plaid/webhook', push_url: NOVA_URL + '/api/bookkeeping/gmail/push?token=…' },
+        users: USERS, chat_users: CHAT_USERS
+      } });
+  });
+  app.get('/api/bookkeeping/pending', ...guard, async (req, res) => res.json({ ok: true, pending: await pending() }));
+  app.post('/api/bookkeeping/proposals/:id/decide', ...guard, async (req, res) => {
+    const b = req.body || {};
+    res.json(await decide(parseInt(req.params.id), b.action === 'reject' ? 'reject' : 'approve', userId(req), b));
+  });
+  app.post('/api/bookkeeping/proposals/decide-all', ...guard, async (req, res) => {
+    const list = (await pending()).filter(p => !(p.question && !p.question.answer) && (!req.body.type || p.type === req.body.type));
+    const out = []; for (const p of list) out.push(Object.assign({ id: p.id }, await decide(p.id, 'approve', userId(req), {})));
+    res.json({ ok: true, results: out });
+  });
+  app.post('/api/bookkeeping/questions/:id/answer', ...guard, async (req, res) => {
+    const r = await answerQuestion(parseInt(req.params.id), String(req.body.answer || ''), userId(req));
+    if (r.ok && req.body.category) { const q = await dbGet('SELECT proposal_id FROM bk_questions WHERE id = ?', [parseInt(req.params.id)]); r.approved = await decide(q.proposal_id, 'approve', userId(req), { category: req.body.category }); }
+    res.json(r);
+  });
+  app.get('/api/bookkeeping/transactions', ...guard, async (req, res) => {
+    const st = String(req.query.status || ''), q = String(req.query.q || '').trim();
+    const where = ["status <> 'removed'"], p = [];
+    if (st) { where.push('status = ?'); p.push(st); }
+    if (q) { where.push('(name LIKE ? OR merchant LIKE ? OR category LIKE ?)'); p.push('%' + q + '%', '%' + q + '%', '%' + q + '%'); }
+    res.json({ ok: true, transactions: await dbAll('SELECT id, txn_id, account_name, date, name, merchant, amount, pending, plaid_category, category, category_source, rule_id, proposal_id, status FROM bk_transactions WHERE ' + where.join(' AND ') + ' ORDER BY date DESC, id DESC LIMIT 300', p) });
+  });
+  app.post('/api/bookkeeping/transactions/:id/category', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), category = String(req.body.category || '').trim();
+    if (!category) return res.json({ ok: false, error: 'No category' });
+    await dbRun("UPDATE bk_transactions SET category = ?, category_source = 'manual', status = 'categorized', updated_at = datetime('now') WHERE id = ?", [category, id]);
+    await dbRun("UPDATE bk_proposals SET status = 'edited', decided_by = ?, decided_at = ? WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [userId(req), nowIso(), id]);
+    await audit(userId(req), 'category.manual', id, category);
+    res.json({ ok: true });
+  });
+  app.get('/api/bookkeeping/bills', ...guard, async (req, res) => {
+    const rows = await dbAll('SELECT b.*, e.from_addr, e.subject, e.received_at FROM bk_bills b LEFT JOIN bk_emails e ON e.id = b.email_id ORDER BY b.id DESC LIMIT 200');
+    rows.forEach(r => { try { r.lines = JSON.parse(r.lines || '[]'); } catch (e) { r.lines = []; } });
+    res.json({ ok: true, bills: rows });
+  });
+  app.get('/api/bookkeeping/bills/:id/file', ...guard, async (req, res) => {
+    const b = await dbGet('SELECT file, file_name FROM bk_bills WHERE id = ?', [parseInt(req.params.id)]);
+    if (!b || !b.file) return res.status(404).type('text/plain').send('No file');
+    const full = path.resolve(FILES, b.file);
+    if (full.indexOf(path.resolve(FILES)) !== 0 || !fs.existsSync(full)) return res.status(404).type('text/plain').send('No file');
+    res.setHeader('Content-Disposition', 'inline; filename="' + String(b.file_name || b.file).replace(/["\\]/g, '') + '"');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.type(/\.pdf$/i.test(b.file) ? 'application/pdf' : /\.png$/i.test(b.file) ? 'image/png' : 'image/jpeg');
+    fs.createReadStream(full).pipe(res);
+  });
+  app.get('/api/bookkeeping/emails', ...guard, async (req, res) => {
+    const rows = await dbAll('SELECT id, gmail_id, from_addr, subject, received_at, snippet, attachments, status, note FROM bk_emails ORDER BY received_at DESC LIMIT 200');
+    rows.forEach(r => { try { r.attachments = JSON.parse(r.attachments || '[]'); } catch (e) { r.attachments = []; } });
+    res.json({ ok: true, emails: rows });
+  });
+  app.post('/api/bookkeeping/emails/:id/parse', ...guard, async (req, res) => {
+    const em = await dbGet('SELECT * FROM bk_emails WHERE id = ?', [parseInt(req.params.id)]);
+    if (!em) return res.json({ ok: false, error: 'No such email' });
+    try { const id = await parseEmail(em, userId(req)); res.json({ ok: true, bill_id: id }); } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  app.get('/api/bookkeeping/rules', ...guard, async (req, res) => res.json({ ok: true, rules: await dbAll('SELECT * FROM bk_rules WHERE active = 1 ORDER BY id DESC'), vendors: await dbAll('SELECT * FROM bk_vendors ORDER BY name') }));
+  app.post('/api/bookkeeping/rules', ...guard, async (req, res) => {
+    const b = req.body || {};
+    if (!b.pattern || !b.category) return res.json({ ok: false, error: 'Pattern and category are needed.' });
+    const r = await dbRun('INSERT INTO bk_rules (kind, pattern, category, vendor, note, source, created_by) VALUES (?,?,?,?,?,?,?)', [b.kind === 'keyword' ? 'keyword' : 'vendor', String(b.pattern).slice(0, 120), String(b.category).slice(0, 80), b.kind === 'keyword' ? null : String(b.pattern).slice(0, 120), String(b.note || '').slice(0, 300), 'manual', userId(req)]);
+    await audit(userId(req), 'rule.add', r.lastID, b);
+    res.json({ ok: true, id: r.lastID });
+  });
+  app.delete('/api/bookkeeping/rules/:id', ...guard, async (req, res) => { await dbRun('UPDATE bk_rules SET active = 0 WHERE id = ?', [parseInt(req.params.id)]); await audit(userId(req), 'rule.remove', req.params.id); res.json({ ok: true }); });
+  app.post('/api/bookkeeping/vendors/:id', ...guard, async (req, res) => {
+    const b = req.body || {};
+    await dbRun('UPDATE bk_vendors SET approved = ?, default_category = ?, notes = ?, approved_by = ?, approved_at = ? WHERE id = ?', [b.approved ? 1 : 0, String(b.default_category || '').slice(0, 80) || null, String(b.notes || '').slice(0, 500) || null, userId(req), nowIso(), parseInt(req.params.id)]);
+    await audit(userId(req), 'vendor.update', req.params.id, b); res.json({ ok: true });
+  });
+  app.get('/api/bookkeeping/activity', ...guard, async (req, res) => res.json({ ok: true, runs: await dbAll('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 40'), audit: await dbAll('SELECT * FROM bk_audit ORDER BY id DESC LIMIT 200'), briefs: await dbAll('SELECT day, stats, posted_at, post_error FROM bk_briefs ORDER BY day DESC LIMIT 30') }));
+  app.post('/api/bookkeeping/settings', ...guard, async (req, res) => {
+    const b = req.body || {};
+    for (const k of ['run_at', 'poll_min', 'threshold', 'categories', 'notes', 'chat_webhook', 'backfill_days']) if (b[k] !== undefined) await setSetting(k, b[k], userId(req));
+    await audit(userId(req), 'settings', null, Object.keys(b));
+    res.json({ ok: true, settings: await settings() });
+  });
+  app.post('/api/bookkeeping/run', ...guard, async (req, res) => res.json(await runDaily('manual', userId(req), { post: !!(req.body && req.body.post) })));
+  app.post('/api/bookkeeping/scan', ...guard, async (req, res) => { try { const r = await scanInbox(userId(req)); const p = await parseNewEmails(userId(req)); res.json({ ok: true, scan: r, parsed: p }); } catch (e) { res.json({ ok: false, error: e.message }); } });
+  app.post('/api/bookkeeping/sync', ...guard, async (req, res) => { try { res.json({ ok: true, sync: await syncAll(userId(req)), categorized: await categorize(userId(req)) }); } catch (e) { res.json({ ok: false, error: e.message }); } });
+  app.post('/api/bookkeeping/brief', ...guard, async (req, res) => {
+    const b = await composeBrief(laDay(), null);
+    let posted = null;
+    if (req.body && req.body.post) { try { posted = await postChat(b.text); await dbRun("UPDATE bk_briefs SET posted_at = datetime('now'), post_error = NULL WHERE day = ?", [laDay()]); } catch (e) { posted = { error: e.message }; } }
+    res.json({ ok: true, brief: b, posted });
+  });
+  app.post('/api/bookkeeping/chat/test', ...guard, async (req, res) => { try { res.json({ ok: true, posted: await postChat('Hello from BookkeeperAI — the connection works. ' + userId(req) + ' sent this test from Nova.') }); } catch (e) { res.json({ ok: false, error: e.message }); } });
+  app.post('/api/bookkeeping/gmail/watch', ...guard, async (req, res) => { try { res.json({ ok: true, watch: await startWatch() }); } catch (e) { res.json({ ok: false, error: e.message }); } });
+  // The conversation in the tab (same brain as Google Chat).
+  app.get('/api/bookkeeping/chat', ...guard, async (req, res) => res.json({ ok: true, messages: await dbAll('SELECT id, at, channel, sender, direction, text FROM bk_chat ORDER BY id DESC LIMIT 60').then(r => r.reverse()) }));
+  app.post('/api/bookkeeping/chat', ...guard, async (req, res) => {
+    try { res.json({ ok: true, reply: await converse('nova', userId(req), String(req.body.text || ''), { name: req.user.username || userId(req) }) }); } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  // Plaid Link: a link token for the browser, then the public token comes back and is swapped for the access token.
+  app.post('/api/bookkeeping/plaid/link-token', ...guard, async (req, res) => {
+    if (!plaidReady()) return res.json({ ok: false, error: 'PLAID_CLIENT_ID and PLAID_SECRET are not in .env yet.' });
+    try {
+      const j = await plaid('/link/token/create', { user: { client_user_id: 'axiomprint-books' }, client_name: 'AxiomPrint BookkeeperAI', products: ['transactions'], country_codes: ['US'], language: 'en',
+        webhook: NOVA_URL + '/api/bookkeeping/plaid/webhook', transactions: { days_requested: 90 } });
+      res.json({ ok: true, link_token: j.link_token, env: PLAID_ENV });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  app.post('/api/bookkeeping/plaid/exchange', ...guard, async (req, res) => {
+    try {
+      const j = await plaid('/item/public_token/exchange', { public_token: String(req.body.public_token || '') });
+      let inst = String((req.body.metadata && req.body.metadata.institution && req.body.metadata.institution.name) || 'Bank');
+      const accts = (req.body.metadata && req.body.metadata.accounts || []).map(a => ({ account_id: a.id, name: a.name, mask: a.mask, type: a.subtype || a.type }));
+      await dbRun('INSERT INTO bk_accounts (item_id, access_token, institution, accounts, created_by) VALUES (?,?,?,?,?) ON CONFLICT(item_id) DO UPDATE SET access_token = excluded.access_token, institution = excluded.institution, accounts = excluded.accounts',
+        [j.item_id, enc(j.access_token), inst, JSON.stringify(accts), userId(req)]);
+      await audit(userId(req), 'plaid.connect', j.item_id, { institution: inst, accounts: accts.map(a => a.name) });
+      const row = await dbGet('SELECT * FROM bk_accounts WHERE item_id = ?', [j.item_id]);
+      let first = null; try { first = await syncItem(row, userId(req)); await categorize(userId(req)); } catch (e) { first = { error: e.message }; }
+      res.json({ ok: true, item_id: j.item_id, institution: inst, first_sync: first });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  app.delete('/api/bookkeeping/plaid/:id', ...guard, async (req, res) => {
+    const row = await dbGet('SELECT * FROM bk_accounts WHERE id = ?', [parseInt(req.params.id)]);
+    if (!row) return res.json({ ok: false, error: 'No such connection' });
+    try { await plaid('/item/remove', { access_token: dec(row.access_token) }); } catch (e) {}
+    await dbRun('DELETE FROM bk_accounts WHERE id = ?', [row.id]);
+    await audit(userId(req), 'plaid.disconnect', row.item_id, row.institution);
+    res.json({ ok: true });
+  });
+
+  return { isBookkeeper, runDaily, converse, settings };
+};

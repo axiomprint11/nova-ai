@@ -22,13 +22,16 @@
     pricing: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z"/>',
     delivery: '<path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>',
     templates: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/>',
+    books: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M7 15h4"/><path d="M15 15h2"/>',
     chatbot: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/>'
   };
-  // [key, label, href, who] — who: 'all' (everyone), 'admin', 'knowledge' (members with Domain Knowledge access).
+  // [key, label, href, who] — who: 'all' (everyone), 'admin', 'knowledge' (members with Domain Knowledge access),
+  // 'bookkeeper' (the people named in BOOKKEEPER_USERS — admin or not).
   const GROUPS = [
     [['history', 'CRM Chat', '/admin?tab=history', 'all'],
      ['client', 'Client ChatBot', '/client-bot', 'admin'],
-     ['talk', 'TalkAi', '/talk-ai', 'admin']],
+     ['talk', 'TalkAi', '/talk-ai', 'admin'],
+     ['books', 'Bookkeeping AI', '/bookkeeping', 'bookkeeper']],
     [['users', 'Users', '/admin?tab=users', 'admin'],
      ['knowledge', 'Domain Knowledge', '/admin?tab=knowledge', 'knowledge'],
      ['connections', 'Connectors', '/admin?tab=connections', 'admin']],
@@ -128,6 +131,7 @@ body.nn-shell { flex-direction: row !important; }
   }
   function allowed(who) {
     if (!me) return who === 'all';
+    if (who === 'bookkeeper') return !!me.bookkeeper;
     if (me.is_admin) return true;
     if (who === 'knowledge') return (me.knowledge_access || 'none') !== 'none';
     return who === 'all';

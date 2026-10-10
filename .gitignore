@@ -13,6 +13,7 @@ users.db-journal
 knowledge_files/
 client-uploads/
 chat-uploads/
+bookkeeping-files/
 talk-recordings/
 
 # Dependencies

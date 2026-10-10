@@ -25,11 +25,12 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.14.7';
-const NOVA_BUILT = '10-10-2026 7:45am';
+const NOVA_VERSION = '1.15.0';
+const NOVA_BUILT = '10-10-2026 11:20am';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
-app.use((req, res, next) => req.path.indexOf('/api/talk/hook/') === 0 ? next() : jsonBody(req, res, next));
+// Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
+app.use((req, res, next) => req.path.indexOf('/api/talk/hook/') === 0 || req.path === '/api/bookkeeping/plaid/webhook' ? next() : jsonBody(req, res, next));
 
 // --- Auto cache-busting HTML server ---
 // Serves an HTML page but rewrites every local .js/.css reference to include
@@ -2514,6 +2515,7 @@ app.get('/api/me', auth, (req, res) => {
   const base = {
     success: true,
     key: key,
+    bookkeeper: bookkeeping.isBookkeeper(req),
     username: req.user.username,
     is_admin: !!req.user.is_admin,
     display_name: req.user.username,
@@ -9219,6 +9221,10 @@ const clientBot = require('./client-bot')(app, { db, runQuery, mysql, jwt, crypt
 // TalkAi — NovaAI on the phone (Twilio + ElevenLabs), sharing the client bot's tools and rules (talk-ai.js).
 require('./talk-ai')(app, { db, runQuery, mysql, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly, serveVersionedHtml,
   sendMail, dataDir: __dirname, loadTalkTraining, closedDays }, clientBot);
+
+// Bookkeeping AI — bank transactions, the accounting inbox, bill drafts, the Daily Brief (bookkeeping.js).
+const bookkeeping = require('./bookkeeping')(app, { db, crypto, jwt, anthropic, model: MODEL_MAIN, auth, serveVersionedHtml, google,
+  keyPath: '/opt/axiom-ai/gmail-key.json', dataDir: __dirname });
 
 app.get(/^(?!\/api).*/, serveVersionedHtml('index.html'));
 
