@@ -17,10 +17,23 @@
 
   let ov = null, categories = [], chart = [];
   document.querySelectorAll('.bk-tabs button').forEach(b => b.onclick = () => show(b.dataset.v));
-  function show(v) {
+  document.querySelectorAll('#subAccounts button').forEach(b => b.onclick = () => show('accounts', b.dataset.s));
+  const SUBS = { vendors: loadVendors, chart: loadChart, rules: loadRules };
+  let lastSub = 'vendors'; try { lastSub = localStorage.getItem('bk_accounts_sub') || 'vendors'; } catch (e) {}
+  // show('accounts', 'chart'); show('vendors') / show('rules') / show('chart') open that part of Accounts.
+  function show(v, sub) {
+    if (SUBS[v]) { sub = v; v = 'accounts'; }
     document.querySelectorAll('.bk-tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
     document.querySelectorAll('.bk-view').forEach(s => s.classList.toggle('on', s.dataset.v === v));
-    ({ brief: loadBrief, txns: loadTxns, bills: loadBills, vendors: loadVendors, materials: loadMaterials, rules: loadRules, conn: loadConn, activity: loadActivity })[v]();
+    if (v === 'accounts') {
+      sub = SUBS[sub] ? sub : lastSub; lastSub = sub; try { localStorage.setItem('bk_accounts_sub', sub); } catch (e) {}
+      document.querySelectorAll('#subAccounts button').forEach(b => b.classList.toggle('on', b.dataset.s === sub));
+      document.querySelectorAll('.bk-subview').forEach(s => s.classList.toggle('on', s.dataset.s === sub));
+      SUBS[sub]();
+      try { history.replaceState(null, '', '/bookkeeping?tab=accounts&sub=' + sub); } catch (e) {}
+      return;
+    }
+    ({ brief: loadBrief, txns: loadTxns, bills: loadBills, materials: loadMaterials, conn: loadConn, activity: loadActivity })[v]();
     try { history.replaceState(null, '', '/bookkeeping?tab=' + v); } catch (e) {}
   }
   async function overview() {
@@ -47,8 +60,8 @@
   };
   const ckpFace = (vals, blank, multi) => {
     if (!vals.length) return '<span class="ckp-empty">' + esc(blank || 'Choose…') + '</span><span class="ckp-caret"></span>';
-    if (!multi) { const p = parentOf(vals[0]); return '<span class="ckp-one">' + (p ? '<small>' + esc(p) + '</small>' : '') + esc(vals[0]) + '</span><span class="ckp-caret"></span>'; }
-    return vals.map(v => '<span class="ckp-chip">' + esc(v) + '<i data-rm="' + esc(v) + '" title="Remove">×</i></span>').join('') + '<span class="ckp-caret"></span>';
+    if (!multi) { const p = parentOf(vals[0]), st = styleOf(p || vals[0]); return '<span class="ckp-one">' + (p ? '<small><span class="dot" style="background:' + esc(st.color) + '"></span>' + esc(p) + '</small>' : '') + esc(vals[0]) + '</span><span class="ckp-caret"></span>'; }
+    return vals.map(v => { const st = styleOf(parentOf(v) || v); return '<span class="ckp-chip"><span class="dot" style="background:' + esc(st.color) + '"></span>' + esc(v) + '<i data-rm="' + esc(v) + '" title="Remove">×</i></span>'; }).join('') + '<span class="ckp-caret"></span>';
   };
   const ckpSet = (wrap, vals) => { wrap.querySelector('.ckp-val').value = vals.join('; '); wrap.querySelector('.ckp-btn').innerHTML = ckpFace(vals, wrap.dataset.blank, wrap.classList.contains('multi')); wrap.dispatchEvent(new Event('change', { bubbles: true })); };
   let ckpOpen = null, ckpCollapsed = {}; try { ckpCollapsed = JSON.parse(localStorage.getItem('bk_ckp_collapsed') || '{}') || {}; } catch (e) {}
@@ -86,7 +99,7 @@
         if (!show.length) return;
         const col = !f && ckpCollapsed[t.name] && !show.some(k => vals.indexOf(k) > -1);
         const nSel = kids.filter(k => vals.indexOf(k) > -1).length;
-        html += '<div class="ckp-g' + (col ? ' col' : '') + '" data-g="' + esc(t.name) + '"><div class="ckp-gh"><span class="ckp-tri"></span>' + esc(t.name) + (nSel ? '<b>' + nSel + '</b>' : '') + '<small>' + kids.length + '</small></div>' +
+        html += '<div class="ckp-g' + (col ? ' col' : '') + '" data-g="' + esc(t.name) + '"><div class="ckp-gh"><span class="ckp-tri"></span><span class="coa-ic" style="background:' + esc(t.color || '#64748b') + '">' + esc(t.icon || '') + '</span>' + esc(t.name) + (nSel ? '<b>' + nSel + '</b>' : '') + '<small>' + kids.length + '</small></div>' +
           (t.children ? show.map(k => '<div class="ckp-i' + (vals.indexOf(k) > -1 ? ' on' : '') + '" data-v="' + esc(k) + '"><span class="ckp-ck"></span>' + esc(k) + '</div>').join('') : '<div class="ckp-i top' + (vals.indexOf(t.name) > -1 ? ' on' : '') + '" data-v="' + esc(t.name) + '"><span class="ckp-ck"></span>use as is</div>') + '</div>';
       });
       vals.filter(v => categories.indexOf(v) < 0).forEach(v => { html += '<div class="ckp-g"><div class="ckp-i on" data-v="' + esc(v) + '"><span class="ckp-ck"></span>' + esc(v) + ' <small class="bk-dim">not in the chart</small></div></div>'; });
@@ -272,15 +285,98 @@
       (j.rules || []).map(r => '<tr><td>' + (r.kind === 'vendor' ? 'Vendor is ' : 'Contains ') + '<b>' + esc(r.pattern) + '</b></td><td>' + esc(r.category) + '</td><td>' + esc(r.source) + ' · ' + esc(r.created_by || '') + '</td><td>' + r.hits + '</td><td><button class="bk-btn sm bad" data-del="' + r.id + '">Remove</button></td></tr>').join('') + '</tbody></table>' +
       (!(j.rules || []).length ? '<div class="bk-muted" style="padding:14px 0">No rules yet — each approval with "remember" ticked adds one.</div>' : '') + '</div>' +
       
-      '<div class="bk-card"><h2>Chart of accounts and notes for the AI</h2><div class="bk-muted">A tree: a line with no indent is a <b>type of expense</b>, an indented line (two spaces) is a <b>sub category</b> under it — transactions always get the sub category. Add one anywhere with “+ New category…” in a dropdown, or edit the text here. The notes tell BookkeeperAI how AxiomPrint books things.</div>' +
-      '<div class="bk-chart"><textarea class="bk" id="sCats" style="min-height:300px;margin-top:8px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px">' + esc(ov.settings.categories) + '</textarea><div class="bk-tree" id="sTree"></div></div><textarea class="bk" id="sNotes" style="margin-top:8px">' + esc(ov.settings.notes) + '</textarea>' +
+      '<div class="bk-card"><h2>Notes for the AI</h2><div class="bk-muted">How AxiomPrint books things — BookkeeperAI reads this with every proposal. The chart of accounts itself is edited under <a href="#" id="toChart">Chart of Accounts</a>.</div>' +
+      '<textarea class="bk" id="sNotes" style="margin-top:8px">' + esc(ov.settings.notes) + '</textarea>' +
       '<div class="bk-row" style="margin-top:8px"><label class="bk-muted">Ask me when confidence is below <input class="bk" id="sThr" type="number" min="0.3" max="1" step="0.05" value="' + esc(ov.settings.threshold) + '" style="width:80px"></label><button class="bk-btn p" id="sSave">Save</button><span class="bk-muted" id="sMsg"></span></div></div>';
+    $('toChart').onclick = (e) => { e.preventDefault(); show('accounts', 'chart'); };
     $('rAdd').onclick = async () => { const r = await post('/api/bookkeeping/rules', { kind: $('rKind').value, pattern: $('rPat').value.trim(), category: v.querySelector('input.rcat').value }); if (!r.ok) alert(r.error); loadRules(); };
     v.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await api('/api/bookkeeping/rules/' + b.dataset.del, { method: 'DELETE' }); loadRules(); });
-    const tree = () => { let parent = null; const items = []; $('sCats').value.split('\n').forEach(l => { if (!l.trim()) return; const sub = /^[\s\-\*>]/.test(l) && parent; const name = l.replace(/^[\s\-\*>]+/, '').trim(); if (sub) parent.kids.push(name); else { parent = { name, kids: [] }; items.push(parent); } });
-      $('sTree').innerHTML = '<div class="bk-muted" style="margin-bottom:6px">' + items.length + ' types · ' + items.reduce((a, t) => a + (t.kids.length || 1), 0) + ' categories</div>' + items.map(t => '<div class="bk-tree-t">' + esc(t.name) + (t.kids.length ? '' : ' <span class="bk-dim">(used as is)</span>') + '</div>' + t.kids.map(k => '<div class="bk-tree-k">' + esc(k) + '</div>').join('')).join(''); };
-    $('sCats').oninput = tree; tree();
-    $('sSave').onclick = async () => { await post('/api/bookkeeping/settings', { categories: $('sCats').value, notes: $('sNotes').value, threshold: $('sThr').value }); $('sMsg').textContent = 'Saved.'; await overview(); loadRules(); };
+    $('sSave').onclick = async () => { await post('/api/bookkeeping/settings', { notes: $('sNotes').value, threshold: $('sThr').value }); $('sMsg').textContent = 'Saved.'; await overview(); };
+  }
+
+  // ---------------------------------------------------------------- Chart of Accounts (types of expense → sub categories, with colors and icons)
+  const ICONS = ['🖨️', '📄', '🎨', '🧰', '🏭', '📦', '🚚', '🚐', '⛽', '🅿️', '🏠', '🏢', '⚡', '💡', '🛠️', '🧹', '👥', '👷', '💰', '🏛️', '🎁', '🛡️', '💻', '📎', '📞', '🌐', '📣', '🎯', '✈️', '🍽️', '☕', '⚖️', '🏦', '💳', '🧾', '🏗️', '🖥️', '↔️', '↩️', '💵', '📈', '📉', '🧮', '🔧', '🪚', '🧪', '🪣', '🧵', '🏷️', '📬', '🗂️', '📚', '🎓', '🚗', '🛒', '🔌', '🧯', '🔑', '⭐', '❓'];
+  const PALETTE = ['#4f46e5', '#2563eb', '#0891b2', '#0d9488', '#059669', '#16a34a', '#65a30d', '#d97706', '#ea580c', '#dc2626', '#be123c', '#db2777', '#9333ea', '#7c3aed', '#475569', '#64748b', '#b45309', '#0369a1'];
+  let coa = null, coaSel = 0, coaUsage = {}, coaTimer = null;
+  const styleOf = (name) => { const t = chart.find(c => !c.parent && c.name === name) || chart.find(c => c.name === name); return t ? { color: t.color || '#64748b', icon: t.icon || '' } : { color: '#64748b', icon: '' }; };
+  async function loadChart() {
+    const v = $('vChart');
+    if (!ov) await overview();
+    const j = await api('/api/bookkeeping/chart');
+    coa = j.tree || []; coaUsage = j.usage || {}; if (coaSel >= coa.length) coaSel = 0;
+    v.innerHTML = '<div class="bk-card" style="margin-bottom:14px"><h2>Chart of Accounts<span class="sp"></span><span class="coa-status" id="coaStatus"></span></h2>' +
+      '<div class="bk-muted">Every transaction and bill line gets a <b>sub category</b>; sub categories are grouped under a <b>type of expense</b> with its color and icon, so reports can roll up by type. Changes save as you make them. Renaming follows the name everywhere it is used; a sub category in use cannot be deleted — rename it instead.</div></div>' +
+      '<div class="coa"><div class="coa-list" id="coaList"></div><div class="coa-edit" id="coaEdit"></div></div>';
+    drawChart();
+  }
+  const useText = (u) => u ? [u.txns && u.txns + ' txn' + (u.txns === 1 ? '' : 's'), u.rules && u.rules + ' rule' + (u.rules === 1 ? '' : 's'), u.vendors && u.vendors + ' vendor' + (u.vendors === 1 ? '' : 's')].filter(Boolean).join(' · ') : '';
+  const inUse = (n) => { const u = coaUsage[n]; return !!(u && (u.txns || u.rules || u.vendors)); };
+  function drawChart() {
+    const list = $('coaList'), ed = $('coaEdit'); if (!list) return;
+    list.innerHTML = coa.map((t, i) => '<div class="coa-t' + (i === coaSel ? ' on' : '') + '" data-i="' + i + '"><span class="coa-ic" style="background:' + esc(t.color) + '">' + esc(t.icon || t.name.charAt(0)) + '</span><span class="nm">' + esc(t.name) + '<small>' + (t.children.length ? t.children.length + ' sub categor' + (t.children.length === 1 ? 'y' : 'ies') : 'used as is') + '</small></span>' +
+      '<span class="coa-mv"><button data-up="' + i + '" title="Move up"' + (i ? '' : ' disabled') + '>▲</button><button data-down="' + i + '" title="Move down"' + (i < coa.length - 1 ? '' : ' disabled') + '>▼</button></span></div>').join('') +
+      '<div class="coa-add"><input class="bk" id="coaNewType" placeholder="New type of expense…"><button class="bk-btn sm p" id="coaAddType">Add</button></div>';
+    list.querySelectorAll('.coa-t').forEach(el => el.onclick = (e) => { if (e.target.closest('button')) return; coaSel = Number(el.dataset.i); drawChart(); });
+    list.querySelectorAll('[data-up]').forEach(b => b.onclick = () => { const i = Number(b.dataset.up); [coa[i - 1], coa[i]] = [coa[i], coa[i - 1]]; coaSel = i - 1; drawChart(); saveChart(); });
+    list.querySelectorAll('[data-down]').forEach(b => b.onclick = () => { const i = Number(b.dataset.down); [coa[i + 1], coa[i]] = [coa[i], coa[i + 1]]; coaSel = i + 1; drawChart(); saveChart(); });
+    const addType = () => { const n = $('coaNewType').value.trim(); if (!n) return; if (coa.some(t => t.name === n)) { status('That type already exists.', true); return; } coa.push({ name: n, color: PALETTE[coa.length % PALETTE.length], icon: '', children: [] }); coaSel = coa.length - 1; drawChart(); saveChart(); };
+    $('coaAddType').onclick = addType; $('coaNewType').onkeydown = (e) => { if (e.key === 'Enter') addType(); };
+    const t = coa[coaSel];
+    if (!t) { ed.innerHTML = '<div class="bk-muted">Add a type of expense on the left.</div>'; return; }
+    ed.innerHTML = '<div class="coa-head"><button class="coa-big" id="coaIcon" style="background:' + esc(t.color) + '" title="Change icon">' + esc(t.icon || t.name.charAt(0)) + '</button><input class="name" id="coaName" value="' + esc(t.name) + '" title="Rename the type"></div>' +
+      '<div class="bk-muted" style="margin-bottom:4px">Color</div><div class="coa-colors">' + PALETTE.map(c => '<span class="coa-sw' + (c === t.color ? ' on' : '') + '" data-c="' + c + '" style="background:' + c + '"></span>').join('') + '<input type="color" id="coaCustom" value="' + esc(t.color) + '" title="Any color"></div>' +
+      '<div class="bk-muted" style="margin-bottom:4px">Sub categories' + (t.children.length ? '' : ' <span class="bk-dim">— none yet: the type itself is used on transactions until you add some</span>') + '</div>' +
+      '<div id="coaKids">' + t.children.map((k, i) => '<div class="coa-k" data-k="' + i + '"><span class="coa-ic' + (k.icon ? '' : ' empty') + '" data-kicon="' + i + '" title="Icon">' + esc(k.icon || '·') + '</span><input class="kn" value="' + esc(k.name) + '"><span class="use">' + esc(useText(coaUsage[k.name])) + '</span>' +
+        '<span class="coa-mv"><button data-kup="' + i + '"' + (i ? '' : ' disabled') + '>▲</button><button data-kdown="' + i + '"' + (i < t.children.length - 1 ? '' : ' disabled') + '>▼</button></span><button class="del" data-kdel="' + i + '" title="' + (inUse(k.name) ? 'In use — rename it instead' : 'Remove') + '"' + (inUse(k.name) ? ' disabled' : '') + '>×</button></div>').join('') + '</div>' +
+      '<div class="coa-foot"><input class="bk" id="coaNewKid" placeholder="New sub category under ' + esc(t.name) + '…"><button class="bk-btn sm p" id="coaAddKid">Add</button></div>' +
+      '<div class="coa-foot" style="border-top:0;margin-top:6px;justify-content:flex-end"><button class="bk-btn sm bad" id="coaDelType"' + (t.children.some(k => inUse(k.name)) || inUse(t.name) ? ' disabled title="Some of it is in use"' : '') + '>Delete this type</button></div>';
+    $('coaIcon').onclick = (e) => iconPicker(e.currentTarget, t.icon, (ic) => { t.icon = ic; drawChart(); saveChart(); });
+    ed.querySelectorAll('.coa-sw').forEach(sw => sw.onclick = () => { t.color = sw.dataset.c; drawChart(); saveChart(); });
+    $('coaCustom').oninput = (e) => { t.color = e.target.value; ed.querySelector('.coa-big').style.background = t.color; };
+    $('coaCustom').onchange = () => { drawChart(); saveChart(); };
+    $('coaName').onchange = () => rename(t.name, $('coaName').value.trim(), true);
+    ed.querySelectorAll('input.kn').forEach(inp => inp.onchange = () => { const i = Number(inp.closest('.coa-k').dataset.k); rename(t.children[i].name, inp.value.trim(), false); });
+    ed.querySelectorAll('[data-kicon]').forEach(el => el.onclick = (e) => { const i = Number(el.dataset.kicon); iconPicker(e.currentTarget, t.children[i].icon, (ic) => { t.children[i].icon = ic; drawChart(); saveChart(); }); });
+    ed.querySelectorAll('[data-kup]').forEach(b => b.onclick = () => { const i = Number(b.dataset.kup); [t.children[i - 1], t.children[i]] = [t.children[i], t.children[i - 1]]; drawChart(); saveChart(); });
+    ed.querySelectorAll('[data-kdown]').forEach(b => b.onclick = () => { const i = Number(b.dataset.kdown); [t.children[i + 1], t.children[i]] = [t.children[i], t.children[i + 1]]; drawChart(); saveChart(); });
+    ed.querySelectorAll('[data-kdel]').forEach(b => b.onclick = () => { const i = Number(b.dataset.kdel); if (!confirm('Remove "' + t.children[i].name + '"?')) return; t.children.splice(i, 1); drawChart(); saveChart(); });
+    const addKid = () => { const n = $('coaNewKid').value.trim(); if (!n) return; if (categories.indexOf(n) > -1 || t.children.some(k => k.name === n)) { status('"' + n + '" is already in the chart.', true); return; } t.children.push({ name: n, icon: '' }); drawChart(); saveChart(); setTimeout(() => $('coaNewKid') && $('coaNewKid').focus(), 0); };
+    $('coaAddKid').onclick = addKid; $('coaNewKid').onkeydown = (e) => { if (e.key === 'Enter') addKid(); };
+    $('coaDelType').onclick = () => { if (!confirm('Delete the type "' + t.name + '" and its sub categories?')) return; coa.splice(coaSel, 1); coaSel = Math.max(0, coaSel - 1); drawChart(); saveChart(); };
+  }
+  function status(msg, err) { const el = $('coaStatus'); if (!el) return; el.textContent = msg; el.className = 'coa-status' + (err ? ' err' : ''); if (!err) setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 2500); }
+  function saveChart() {
+    clearTimeout(coaTimer); status('Saving…');
+    coaTimer = setTimeout(async () => {
+      const r = await post('/api/bookkeeping/chart', { tree: coa });
+      if (!r.ok) { status(r.error, true); loadChart(); return; }
+      // keep the local objects (the open editor's handlers point at them); the server echo only refreshes the pickers
+      chart = r.chart; ov.chart = r.chart; categories = chart.filter(c => c.parent || !c.children).map(c => c.name).filter((n, i, a) => a.indexOf(n) === i);
+      status('Saved ✓');
+    }, 350);
+  }
+  async function rename(from, to, isType) {
+    if (!to || to === from) { drawChart(); return; }
+    if (categories.indexOf(to) > -1 || coa.some(t => t.name === to)) { status('"' + to + '" already exists.', true); drawChart(); return; }
+    clearTimeout(coaTimer);
+    const r = await post('/api/bookkeeping/chart/rename', { from, to });
+    if (!r.ok) { status(r.error, true); return; }
+    coa = r.tree; chart = r.chart; ov.chart = r.chart; categories = chart.filter(c => c.parent || !c.children).map(c => c.name).filter((n, i, a) => a.indexOf(n) === i);
+    if (coaUsage[from]) { coaUsage[to] = coaUsage[from]; delete coaUsage[from]; }
+    status('Renamed ✓' + (!isType && coaUsage[to] && (coaUsage[to].txns || coaUsage[to].rules) ? ' — updated on ' + useText(coaUsage[to]) : ''));
+    drawChart();
+  }
+  function iconPicker(anchor, cur, onPick) {
+    document.querySelectorAll('.ico-pop').forEach(p => p.remove());
+    const pop = document.createElement('div'); pop.className = 'ico-pop';
+    pop.innerHTML = '<div class="ico-grid">' + ICONS.map(i => '<button type="button" data-i="' + i + '"' + (i === cur ? ' style="background:#e0e7ff"' : '') + '>' + i + '</button>').join('') + '</div><button type="button" class="none">No icon</button>';
+    document.body.appendChild(pop);
+    const r = anchor.getBoundingClientRect(); pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 316)) + 'px'; pop.style.top = (r.bottom + 6 + 330 > window.innerHeight ? r.top - 6 - pop.offsetHeight : r.bottom + 6) + 'px';
+    const close = () => { pop.remove(); document.removeEventListener('click', away, true); };
+    const away = (e) => { if (!pop.contains(e.target) && e.target !== anchor) close(); };
+    setTimeout(() => document.addEventListener('click', away, true), 0);
+    pop.querySelectorAll('[data-i]').forEach(b => b.onclick = () => { onPick(b.dataset.i); close(); });
+    pop.querySelector('.none').onclick = () => { onPick(''); close(); };
   }
 
   // ---------------------------------------------------------------- Suppliers & vendors (the CRM directory + vendors seen on bills)
@@ -441,6 +537,6 @@
       (j.audit || []).map(a => '<tr><td>' + when(a.at) + '</td><td>' + esc(a.who) + '</td><td>' + esc(a.action) + '</td><td>' + esc(a.ref || '') + '</td><td class="bk-muted">' + esc(String(a.detail || '').slice(0, 200)) + '</td></tr>').join('') + '</tbody></table></div>';
   }
 
-  const want = new URLSearchParams(location.search).get('tab');
-  show(['brief', 'txns', 'bills', 'vendors', 'materials', 'rules', 'conn', 'activity'].indexOf(want) > -1 ? want : 'brief');
+  const qs = new URLSearchParams(location.search), want = qs.get('tab');
+  show(['brief', 'txns', 'bills', 'accounts', 'vendors', 'chart', 'rules', 'materials', 'conn', 'activity'].indexOf(want) > -1 ? want : 'brief', qs.get('sub'));
 })();

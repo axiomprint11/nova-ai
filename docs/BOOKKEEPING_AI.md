@@ -102,20 +102,32 @@ The AI sees it two ways: `dirLine()` adds "— supplies 57 materials: Sheets ×5
 vendor and a GEO TYPES line (purchases of catalog materials are production cost, not office supplies), and the chat has a
 read-only `materials` tool (by supplier and/or a name / GEO type / manufacturer query).
 
-## Chart of accounts — a tree
-`bk_settings.categories` is a text tree: a line with no indent is a **type of expense** (parent), an indented line (two
-spaces, or `- `) a **sub category** under it. `chartOf()` parses it, `categoriesOf()` gives the names a transaction may
-carry (sub categories, plus parents with no children — so the old flat list still works), `chartText()` is what the AI
-reads ("Cost of Goods Sold: Paper; Inks & Toner | Facilities: Rent; …", answer with the sub category). The default tree
-(`DEFAULT_CHART`) keeps every old flat name as a sub category; an untouched old default is upgraded at boot. Adding: every
-category dropdown ends with "+ New category…" (name + type of expense, existing or new) → `POST /api/bookkeeping/categories
-{name, parent}` → `addToChart()` inserts the line under the parent (creating the parent at the end when new); the chat tool
-`add_category` does the same; a category approved by hand that is not in the chart is appended as a type. Rules → "Chart of
-accounts" is the text editor with a live tree beside it; Transactions show "Type › Sub category".
+## Accounts tab — Vendors & suppliers · Chart of Accounts · Rules
+The fourth main tab, **Accounts**, holds the directory (Vendors & suppliers), the Chart of Accounts editor and the
+categorization Rules (`?tab=accounts&sub=chart`; `show('vendors')` etc. still work). Materials, Connections and
+Activity stay in the small row.
+
+### Chart of Accounts — a styled tree
+Canonical form `bk_settings.chart_json`: `[{ name, color, icon, children: [{ name, icon }] }]` — a **type of expense**
+with its color and icon, and its **sub categories**. `bk_settings.categories` (the indented text) is regenerated from it
+on every save for the AI prompt (`chartText()`: "Cost of Goods Sold: Paper; Inks & Toner | …", answer with the sub
+category) and for anything that still reads the text; posting `categories` text to `/settings` rebuilds the tree keeping
+colors by name. `chartTree()` / `chartOf()` (flat, with color/icon) / `categoriesOf()` (sub categories + childless types)
+/ `addCategory()` / `renameCategory()` / `categoryUsage()`. The old flat list and the 1.16.0 text tree are upgraded once
+at boot (`DEFAULT_STYLE`, `SUB_ICON` give the defaults their colors and icons).
+
+Editor (Accounts → Chart of Accounts): types on the left (icon tile, reorder), the selected type on the right — big icon
+button (emoji grid), name, color swatches + any color, the sub categories with icon / inline rename / reorder / delete,
+add a sub category, delete the type. Every change autosaves (`POST /api/bookkeeping/chart {tree}`); a sub category in
+use (transactions, rules, vendors' usual category) cannot vanish that way — the server answers "In use, rename instead" —
+and **rename** (`POST /api/bookkeeping/chart/rename {from, to}`) follows the name into `bk_transactions`, `bk_rules`,
+`bk_vendors.default_category` and pending proposals. `GET /api/bookkeeping/chart` returns the tree + usage counts.
+"+ New category…" in any picker and the chat tool `add_category` go through `addCategory()`.
+
 The category control everywhere is `catSelect()` in bookkeeping.js — a picker (button + hidden `input.<cls>` carrying the
-value, so `querySelector('input.pick').value` reads it): a popover with search, the types as collapsible groups (collapsed
-state per browser), round marks for a single choice, checkboxes + Done for `{ multi: true }` (a vendor's usual categories,
-stored "Paper; Freight & Shipping"), "+ New category…" in the footer.
+value, so `querySelector('input.pick').value` reads it): a popover with search, the types as collapsible groups with their
+icon and color, round marks for a single choice, checkboxes + Done for `{ multi: true }` (a vendor's usual categories,
+stored "Paper; Freight & Shipping"), "+ New category…" in the footer. Transactions show "Type › Sub category".
 
 ## What the agent may do (its only tools)
 `list_pending`, `approve` (by id / all / with a corrected category), `reject`, `answer_question` (records the answer; with

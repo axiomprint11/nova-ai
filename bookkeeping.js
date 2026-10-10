@@ -151,38 +151,105 @@ module.exports = function mountBookkeeping(app, deps) {
       [key, value == null ? '' : String(value), nowIso(), who || 'system']);
     settingsCache = null;
   }
-  // chartOf → [{ name, parent, children }] in file order; categoriesOf → the names a transaction may carry (sub categories,
-  // and parents that have no children — an old flat list is all parents without children, so it keeps working).
-  function chartOf(s) {
-    const out = []; let parent = null;
-    String(s.categories || '').split('\n').forEach(line => {
+  // ---------------------------------------------------------------- chart of accounts (a tree with colors and icons)
+  // Canonical form: bk_settings.chart_json = [{ name, color, icon, children: [{ name, icon }] }] (a type of expense and its
+  // sub categories). bk_settings.categories (the indented text) is kept in step for the AI prompt and old readers.
+  const PALETTE = ['#4f46e5', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777', '#2563eb', '#65a30d', '#ea580c', '#0d9488', '#9333ea', '#b45309', '#475569', '#be123c', '#0369a1'];
+  const DEFAULT_STYLE = { 'Cost of Goods Sold': ['#4f46e5', '🖨️'], 'Facilities': ['#0891b2', '🏢'], 'People': ['#059669', '👥'], 'Insurance': ['#475569', '🛡️'], 'Operations': ['#2563eb', '💻'],
+    'Vehicles': ['#d97706', '🚐'], 'Sales & Marketing': ['#db2777', '📣'], 'Travel & Meals': ['#ea580c', '✈️'], 'Fees & Taxes': ['#7c3aed', '🧾'], 'Assets & Capital': ['#0d9488', '🏗️'],
+    'Not an expense': ['#64748b', '↔️'], 'Income': ['#16a34a', '💵'], 'Delivery': ['#b45309', '🚚'] };
+  const SUB_ICON = { Paper: '📄', 'Inks & Toner': '🎨', 'Printing Supplies': '🧰', 'Outsourced Printing': '🏭', 'Freight & Shipping': '📦', 'Local Delivery': '🚚', Packaging: '📦', Rent: '🏠', Utilities: '⚡', 'Equipment Repairs & Maintenance': '🛠️',
+    Payroll: '💰', 'Payroll Taxes': '🏛️', Contractors: '👷', 'Software & Subscriptions': '💻', 'Office Supplies': '📎', 'Telephone & Internet': '📞', 'Vehicle & Fuel': '⛽', 'Parking & Tolls': '🅿️', 'Advertising & Marketing': '📣', 'Website & SEO': '🌐',
+    Travel: '✈️', Meals: '🍽️', 'Professional Fees': '⚖️', 'Bank Fees & Interest': '🏦', 'Merchant Fees': '💳', 'Taxes & Licenses': '🧾', 'Equipment (Fixed Asset)': '🏗️', 'Transfer Between Accounts': '↔️', 'Credit Card Payment': '💳', 'Customer Payment (Income)': '💵', Refund: '↩️' };
+  const cleanName = (n) => String(n || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 80);
+  // Text → tree ("Type" line, "  Sub" lines); colors and icons from `style` (an older tree) by name, else the defaults.
+  function parseChartText(text, style) {
+    const tree = []; let cur = null; const st = {}; (style || []).forEach(t => { st[t.name] = t; (t.children || []).forEach(c => { st['>' + t.name + '>' + c.name] = c; }); });
+    String(text || '').split('\n').forEach(line => {
       if (!line.trim()) return;
-      const sub = /^(\s+|-\s*|\*\s*|>\s*)/.test(line) && parent;
-      const name = line.replace(/^[\s\-\*>]+/, '').trim(); if (!name) return;
-      if (sub) { out.push({ name, parent: parent.name }); parent.children++; } else { parent = { name, parent: null, children: 0 }; out.push(parent); }
+      const sub = /^(\s+|-\s*|\*\s*|>\s*)/.test(line) && cur;
+      const name = cleanName(line.replace(/^[\s\-\*>]+/, '')); if (!name) return;
+      if (sub) { if (!cur.children.some(c => c.name === name)) { const o = st['>' + cur.name + '>' + name]; cur.children.push({ name, icon: o ? o.icon || '' : (SUB_ICON[name] || '') }); } }
+      else { const o = st[name] || null, d = DEFAULT_STYLE[name]; cur = { name, color: o ? o.color : (d ? d[0] : PALETTE[tree.length % PALETTE.length]), icon: o ? o.icon || '' : (d ? d[1] : ''), children: [] }; tree.push(cur); }
     });
+    return tree;
+  }
+  const treeToText = (tree) => tree.map(t => [t.name].concat((t.children || []).map(c => '  ' + c.name)).join('\n')).join('\n');
+  function normTree(tree) {
+    const out = []; const seenTop = {};
+    (Array.isArray(tree) ? tree : []).forEach((t, i) => {
+      const name = cleanName(t && t.name); if (!name || seenTop[name]) return; seenTop[name] = 1;
+      const color = /^#[0-9a-f]{6}$/i.test(String(t.color || '')) ? String(t.color).toLowerCase() : PALETTE[i % PALETTE.length];
+      const kids = []; const seen = {};
+      (Array.isArray(t.children) ? t.children : []).forEach(c => { const n = cleanName(c && c.name); if (n && !seen[n]) { seen[n] = 1; kids.push({ name: n, icon: String(c.icon || '').slice(0, 8) }); } });
+      out.push({ name, color, icon: String(t.icon || '').slice(0, 8), children: kids });
+    });
+    return out;
+  }
+  function chartTree(s) {
+    if (s.chart_json) { try { const t = JSON.parse(s.chart_json); if (Array.isArray(t)) return normTree(t); } catch (e) {} }
+    return parseChartText(s.categories);
+  }
+  // Flat view: [{ name, parent, children, color, icon }] — parents first, their subs after each (file order).
+  function chartOf(s) {
+    const out = [];
+    chartTree(s).forEach(t => { out.push({ name: t.name, parent: null, children: t.children.length, color: t.color, icon: t.icon }); t.children.forEach(c => out.push({ name: c.name, parent: t.name, color: t.color, icon: c.icon || '' })); });
     return out;
   }
   const categoriesOf = (s) => { const seen = {}; return chartOf(s).filter(c => c.parent || !c.children).map(c => c.name).filter(n => !seen[n] && (seen[n] = 1)); };
   const parentOf = (s, name) => { const c = chartOf(s).find(x => x.name === name && x.parent); return c ? c.parent : null; };
   // The chart as the AI reads it: "Cost of Goods Sold: Paper; Inks & Toner | Facilities: Rent; …"
-  const chartText = (s) => { const ch = chartOf(s), tops = ch.filter(c => !c.parent); return tops.map(t => t.children ? t.name + ': ' + ch.filter(c => c.parent === t.name).map(c => c.name).join('; ') : t.name).join(' | '); };
-  // Add a category (a sub category under a parent, a new parent, or both) to the saved chart text.
-  function addToChart(text, name, parent) {
-    const lines = String(text || '').split('\n');
-    name = String(name || '').trim(); parent = String(parent || '').trim();
-    if (!name) return text;
-    if (!parent) { if (lines.some(l => l.trim() === name)) return text; return lines.concat([name]).join('\n').replace(/^\n+/, ''); }
-    let pi = lines.findIndex(l => !/^[\s\-\*>]/.test(l) && l.trim() === parent);
-    if (pi < 0) { lines.push(parent); pi = lines.length - 1; }
-    let end = pi + 1; while (end < lines.length && (/^[\s\-\*>]/.test(lines[end]) || !lines[end].trim())) end++;
-    if (lines.slice(pi + 1, end).some(l => l.replace(/^[\s\-\*>]+/, '').trim() === name)) return lines.join('\n');
-    while (end > pi + 1 && !lines[end - 1].trim()) end--;
-    lines.splice(end, 0, '  ' + name);
-    return lines.join('\n');
+  const chartText = (s) => chartTree(s).map(t => t.children.length ? t.name + ': ' + t.children.map(c => c.name).join('; ') : t.name).join(' | ');
+  async function saveChart(tree, who) {
+    tree = normTree(tree);
+    await setSetting('chart_json', JSON.stringify(tree), who);
+    await setSetting('categories', treeToText(tree), who);
+    return tree;
   }
-  // 1.15.x shipped a flat list; an untouched flat default becomes the tree.
-  (async () => { try { const s = await settings(); if (s.categories === OLD_FLAT_CATEGORIES.join('\n')) await setSetting('categories', DEFAULT_CHART.join('\n'), 'system'); } catch (e) {} })();
+  // Add a sub category under a type (created when new), or a type on its own.
+  async function addCategory(name, parent, who) {
+    name = cleanName(name); parent = cleanName(parent);
+    const tree = chartTree(await settings());
+    if (!name) return tree;
+    if (!parent) { if (!tree.some(t => t.name === name)) tree.push({ name, color: DEFAULT_STYLE[name] ? DEFAULT_STYLE[name][0] : PALETTE[tree.length % PALETTE.length], icon: DEFAULT_STYLE[name] ? DEFAULT_STYLE[name][1] : '', children: [] }); }
+    else {
+      let t = tree.find(x => x.name === parent);
+      if (!t) { t = { name: parent, color: DEFAULT_STYLE[parent] ? DEFAULT_STYLE[parent][0] : PALETTE[tree.length % PALETTE.length], icon: DEFAULT_STYLE[parent] ? DEFAULT_STYLE[parent][1] : '', children: [] }; tree.push(t); }
+      if (!t.children.some(c => c.name === name)) t.children.push({ name, icon: SUB_ICON[name] || '' });
+    }
+    return saveChart(tree, who);
+  }
+  // Where a category name is in use (so a rename follows it and a delete is refused).
+  async function categoryUsage(name) {
+    const t = await dbGet('SELECT COUNT(*) n FROM bk_transactions WHERE category = ?', [name]);
+    const r = await dbGet('SELECT COUNT(*) n FROM bk_rules WHERE category = ?', [name]);
+    const v = await dbGet("SELECT COUNT(*) n FROM bk_vendors WHERE default_category = ? OR default_category LIKE ? OR default_category LIKE ? OR default_category LIKE ?", [name, name + ';%', '%; ' + name, '%; ' + name + ';%']);
+    return { txns: t ? t.n : 0, rules: r ? r.n : 0, vendors: v ? v.n : 0 };
+  }
+  async function renameCategory(from, to, who) {
+    from = cleanName(from); to = cleanName(to);
+    if (!from || !to || from === to) return { ok: false, error: 'Nothing to rename' };
+    const tree = chartTree(await settings());
+    let hit = false;
+    tree.forEach(t => { if (t.name === from) { t.name = to; hit = true; } t.children.forEach(c => { if (c.name === from) { c.name = to; hit = true; } }); });
+    if (!hit) return { ok: false, error: 'Not in the chart' };
+    await saveChart(tree, who);
+    await dbRun('UPDATE bk_transactions SET category = ? WHERE category = ?', [to, from]);
+    await dbRun('UPDATE bk_rules SET category = ? WHERE category = ?', [to, from]);
+    const vs = await dbAll("SELECT id, default_category FROM bk_vendors WHERE default_category LIKE ?", ['%' + from + '%']);
+    for (const v of vs) { const parts = String(v.default_category).split(/\s*;\s*/).map(x => x === from ? to : x); await dbRun('UPDATE bk_vendors SET default_category = ? WHERE id = ?', [parts.join('; '), v.id]); }
+    // pending proposals carry the category in their payload and title
+    const ps = await dbAll("SELECT id, title, payload FROM bk_proposals WHERE status = 'pending' AND type = 'category' AND payload LIKE ?", ['%' + from + '%']);
+    for (const pr of ps) { let pl = {}; try { pl = JSON.parse(pr.payload || '{}'); } catch (e) {} if (pl.category === from) { pl.category = to; await dbRun('UPDATE bk_proposals SET payload = ?, title = ? WHERE id = ?', [JSON.stringify(pl), String(pr.title || '').replace(new RegExp('→ ' + from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'), '→ ' + to), pr.id]); } }
+    dirCache.at = 0;
+    await audit(who, 'category.rename', null, { from, to });
+    return { ok: true, tree };
+  }
+  // 1.15.x shipped a flat list, 1.16.0 the text tree; both become the styled tree once.
+  (async () => { try {
+    const s = await settings();
+    if (!s.chart_json) await saveChart(s.categories === OLD_FLAT_CATEGORIES.join('\n') || !s.categories ? parseChartText(DEFAULT_CHART.join('\n')) : parseChartText(s.categories), 'system');
+  } catch (e) { errlog('chart migration', e.message); } })();
   async function audit(who, action, ref, detail) {
     try { await dbRun('INSERT INTO bk_audit (who, action, ref, detail) VALUES (?,?,?,?)', [who || 'system', action, ref == null ? null : String(ref), detail == null ? null : (typeof detail === 'string' ? detail : JSON.stringify(detail)).slice(0, 4000)]); } catch (e) {}
   }
@@ -676,7 +743,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const tx = await dbGet('SELECT vendor_id FROM bk_transactions WHERE id = ?', [p.ref_id]);
       if (tx && tx.vendor_id) { await dbRun('UPDATE bk_vendors SET default_category = ? WHERE id = ? AND (default_category IS NULL OR default_category = ?)', [category, tx.vendor_id, '']); dirCache.at = 0; }
       await audit(who, 'category.apply', p.ref_id, { category, edited, rule });
-      if (categoriesOf(s).indexOf(category) === -1) await setSetting('categories', addToChart(s.categories, category, opts.parent || ''), who);
+      if (categoriesOf(s).indexOf(category) === -1) await addCategory(category, opts.parent || '', who);
       return { ok: true, status: edited ? 'edited' : 'approved', category, rule };
     }
     if (p.type === 'bill') {
@@ -823,7 +890,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (name === 'add_category') {
       const nm = String(input.name || '').trim().slice(0, 80), parent = String(input.parent || '').trim().slice(0, 80);
       if (!nm) return { error: 'A name is needed' };
-      const s = await settings(); await setSetting('categories', addToChart(s.categories, nm, parent), who); await audit(who, 'category.add', null, { name: nm, parent, via: 'chat' });
+      await addCategory(nm, parent, who); await audit(who, 'category.add', null, { name: nm, parent, via: 'chat' });
       return { ok: true, chart: chartText(await settings()) };
     }
     if (name === 'materials') {
@@ -1098,9 +1165,35 @@ module.exports = function mountBookkeeping(app, deps) {
   app.get('/api/bookkeeping/activity', ...guard, async (req, res) => res.json({ ok: true, runs: await dbAll('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 40'), audit: await dbAll('SELECT * FROM bk_audit ORDER BY id DESC LIMIT 200'), briefs: await dbAll('SELECT day, stats, posted_at, post_error FROM bk_briefs ORDER BY day DESC LIMIT 30') }));
   app.post('/api/bookkeeping/settings', ...guard, async (req, res) => {
     const b = req.body || {};
-    for (const k of ['run_at', 'poll_min', 'threshold', 'categories', 'notes', 'chat_webhook', 'backfill_days']) if (b[k] !== undefined) await setSetting(k, b[k], userId(req));
+    for (const k of ['run_at', 'poll_min', 'threshold', 'notes', 'chat_webhook', 'backfill_days']) if (b[k] !== undefined) await setSetting(k, b[k], userId(req));
+    if (b.categories !== undefined) await saveChart(parseChartText(b.categories, chartTree(await settings())), userId(req));
     await audit(userId(req), 'settings', null, Object.keys(b));
     res.json({ ok: true, settings: await settings() });
+  });
+  // The chart as a tree with colors / icons, and where each name is used.
+  app.get('/api/bookkeeping/chart', ...guard, async (req, res) => {
+    const tree = chartTree(await settings()); const usage = {};
+    for (const n of categoriesOf({ chart_json: JSON.stringify(tree) })) usage[n] = await categoryUsage(n);
+    res.json({ ok: true, tree, usage });
+  });
+  // Replace the whole tree (order, colors, icons, additions). A sub category that is in use cannot vanish this way —
+  // rename it (POST /chart/rename) or keep it; this keeps every categorized transaction pointing at a real category.
+  app.post('/api/bookkeeping/chart', ...guard, async (req, res) => {
+    const next = normTree(req.body && req.body.tree);
+    if (!next.length) return res.json({ ok: false, error: 'The chart cannot be empty.' });
+    const before = categoriesOf(await settings()), after = categoriesOf({ chart_json: JSON.stringify(next) });
+    const gone = [];
+    for (const n of before) if (after.indexOf(n) < 0) { const u = await categoryUsage(n); if (u.txns || u.rules || u.vendors) gone.push(n + ' (' + [u.txns && u.txns + ' transactions', u.rules && u.rules + ' rules', u.vendors && u.vendors + ' vendors'].filter(Boolean).join(', ') + ')'); }
+    if (gone.length) return res.json({ ok: false, error: 'In use, rename instead of removing: ' + gone.join('; ') });
+    const tree = await saveChart(next, userId(req));
+    await audit(userId(req), 'chart.save', null, { types: tree.length, categories: after.length });
+    const s = await settings();
+    res.json({ ok: true, tree, chart: chartOf(s) });
+  });
+  app.post('/api/bookkeeping/chart/rename', ...guard, async (req, res) => {
+    const r = await renameCategory(req.body && req.body.from, req.body && req.body.to, userId(req));
+    if (!r.ok) return res.json(r);
+    res.json({ ok: true, tree: r.tree, chart: chartOf(await settings()) });
   });
   // Add a category: { name, parent } — a sub category under a type of expense (the parent is created when new), or a new type on its own.
   app.post('/api/bookkeeping/categories', ...guard, async (req, res) => {
@@ -1108,7 +1201,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!name) return res.json({ ok: false, error: 'A name is needed.' });
     const s = await settings();
     if (chartOf(s).some(c => c.name === name && (c.parent || '') === parent)) return res.json({ ok: true, settings: s, chart: chartOf(s), category: name });
-    await setSetting('categories', addToChart(s.categories, name, parent), userId(req));
+    await addCategory(name, parent, userId(req));
     await audit(userId(req), 'category.add', null, { name, parent });
     const s2 = await settings();
     res.json({ ok: true, settings: Object.assign({}, s2, { chat_webhook: s2.chat_webhook ? '(set)' : '' }), chart: chartOf(s2), category: name });
