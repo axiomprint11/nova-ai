@@ -323,32 +323,48 @@ module.exports = function mountBookkeeping(app, deps) {
   const normV = (t) => String(t || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9 ]+/g, ' ').replace(/\b(inc|llc|corp|corporation|co|company|ltd|the)\b/g, ' ').replace(/\s+/g, ' ').trim();
   const domainOf = (e) => { const m = String(e || '').toLowerCase().match(/@([a-z0-9.-]+)/); return m ? m[1].replace(/^(www|mail|e)\./, '') : ''; };
   const FREE_MAIL = /^(gmail|yahoo|hotmail|outlook|aol|icloud|me|live|msn)\./;
+  // The CRM lists that make up the directory. Each table is a type (suppliers → Supplier, vendors → Vendor); a new
+  // list in the CRM is added with BOOKKEEPER_CRM_LISTS=suppliers,vendors,contractors — same columns expected.
+  const CRM_LISTS = String(env('BOOKKEEPER_CRM_LISTS') || 'suppliers,vendors').split(',').map(x => x.trim().toLowerCase().replace(/[^a-z0-9_]/g, '')).filter(Boolean);
+  const kindOf = (t) => t === 'suppliers' ? 'supplier' : t === 'vendors' ? 'vendor' : t === 'bill' ? 'bill' : String(t || '').replace(/s$/, '') || 'other';
+  let dirSync = { at: 0, running: null, error: null };
   async function syncDirectory(who) {
     if (!runQuery) return { error: 'No CRM connection' };
+    if (dirSync.running) return dirSync.running;                        // one at a time (the tab, the clock and the daily run may ask together)
+    dirSync.running = (async () => {
     let n = 0, errors = [];
-    for (const t of ['suppliers', 'vendors']) {
+    for (const t of CRM_LISTS) {
       let rows = [];
       try { rows = await runQuery('SELECT id, company_name, contact_name, email, phone, specialty, address, city, state, zip, photo_url FROM ' + t + ' ORDER BY id'); }
       catch (e) { errors.push(t + ': ' + e.message); continue; }
       for (const r of rows) {
         const name = String(r.company_name || r.contact_name || '').trim().slice(0, 120);
         if (!name) continue;
+        try {
         const addr = [r.address, r.city, r.state, r.zip].filter(Boolean).join(', ').slice(0, 200);
         const photo = /^https?:\/\//.test(String(r.photo_url || '')) ? String(r.photo_url).slice(0, 300) : null;
         // The same CRM row again, or a vendor first seen on a bill that this CRM row is; never another CRM row.
         const ex = await dbGet('SELECT id FROM bk_vendors WHERE (source = ? AND crm_id = ?) OR (LOWER(name) = LOWER(?) AND (source IS NULL OR source = ?))', [t, r.id, name, 'bill']);
-        // kind (the Type column: supplier / vendor / …) comes from the CRM list the first time and is editable after.
-        const kind = t === 'suppliers' ? 'supplier' : 'vendor';
-        if (ex) await dbRun("UPDATE bk_vendors SET name = ?, source = ?, crm_id = ?, email = ?, phone = ?, specialty = ?, contact = ?, address = ?, photo = ?, kind = COALESCE(kind, ?), approved = 1, synced_at = datetime('now') WHERE id = ?",
+        // kind (the Type column) is the CRM list the row is in — read-only here, the CRM decides.
+        const kind = kindOf(t);
+        if (ex) await dbRun("UPDATE bk_vendors SET name = ?, source = ?, crm_id = ?, email = ?, phone = ?, specialty = ?, contact = ?, address = ?, photo = ?, kind = ?, approved = 1, synced_at = datetime('now') WHERE id = ?",
           [name, t, r.id, String(r.email || '').slice(0, 200), String(r.phone || '').slice(0, 40), String(r.specialty || '').slice(0, 200), String(r.contact_name || '').slice(0, 120), addr, photo, kind, ex.id]);
         else await dbRun("INSERT INTO bk_vendors (name, approved, email, source, crm_id, phone, specialty, contact, address, photo, kind, approved_by, approved_at, synced_at) VALUES (?,1,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))",
           [name, String(r.email || '').slice(0, 200), t, r.id, String(r.phone || '').slice(0, 40), String(r.specialty || '').slice(0, 200), String(r.contact_name || '').slice(0, 120), addr, photo, kind, 'crm']);
         n++;
+        } catch (e) { errors.push(t + ' #' + r.id + ' ' + name + ': ' + e.message); }
       }
     }
+    dirSync.at = Date.now(); dirSync.error = errors.length ? errors.slice(0, 3).join(' · ') : null; dirCache.at = 0;
+    if (errors.length) errlog('directory sync', errors.join(' | '));
     await audit(who, 'directory.sync', null, { synced: n, errors });
     return { synced: n, errors };
+    })();
+    try { return await dirSync.running; } finally { dirSync.running = null; }
   }
+  // Keep the directory current by itself: the tab syncs when it opens and the last sync is older than 10 minutes,
+  // the clock every hour, the daily run always.
+  async function syncDirectoryIfStale(who, maxAgeMs) { if (runQuery && Date.now() - dirSync.at > maxAgeMs) { try { await syncDirectory(who); } catch (e) { dirSync.error = e.message; errlog('directory sync', e.message); } } }
   let dirCache = { at: 0, list: [] };
   async function directory() {
     if (Date.now() - dirCache.at < 60000) return dirCache.list;
@@ -774,6 +790,7 @@ module.exports = function mountBookkeeping(app, deps) {
         if (!done) runDaily('daily', 'clock').catch(e => errlog('daily', e.message));
         return;
       }
+      if (!running) syncDirectoryIfStale('clock', 3600000);
       if (Date.now() - lastPoll > s.poll_min * 60000 && !running) {
         lastPoll = Date.now();
         if (await dbGet('SELECT 1 FROM bk_runs LIMIT 1')) {          // nothing polls until the first run (set-up time)
@@ -915,9 +932,10 @@ module.exports = function mountBookkeeping(app, deps) {
   });
   app.delete('/api/bookkeeping/rules/:id', ...guard, async (req, res) => { await dbRun('UPDATE bk_rules SET active = 0 WHERE id = ?', [parseInt(req.params.id)]); await audit(userId(req), 'rule.remove', req.params.id); res.json({ ok: true }); });
   app.get('/api/bookkeeping/directory', ...guard, async (req, res) => {
-    const rows = await dbAll("SELECT v.*, COALESCE(v.kind, CASE v.source WHEN 'suppliers' THEN 'supplier' WHEN 'vendors' THEN 'vendor' ELSE 'other' END) AS kind, (SELECT COUNT(*) FROM bk_transactions t WHERE t.vendor_id = v.id) AS txns, (SELECT COUNT(*) FROM bk_bills b WHERE b.vendor_id = v.id AND b.status <> ?) AS bills FROM bk_vendors v ORDER BY v.name", ['rejected']);
+    if (req.query.fresh !== '0') await syncDirectoryIfStale(userId(req), 10 * 60000);
+    const rows = await dbAll("SELECT v.*, CASE v.source WHEN 'suppliers' THEN 'supplier' WHEN 'vendors' THEN 'vendor' WHEN 'bill' THEN 'bill' ELSE COALESCE(v.kind, 'other') END AS kind, (SELECT COUNT(*) FROM bk_transactions t WHERE t.vendor_id = v.id) AS txns, (SELECT COUNT(*) FROM bk_bills b WHERE b.vendor_id = v.id AND b.status <> ?) AS bills FROM bk_vendors v ORDER BY v.name", ['rejected']);
     const last = await dbGet("SELECT at FROM bk_audit WHERE action = 'directory.sync' ORDER BY id DESC LIMIT 1");
-    res.json({ ok: true, vendors: rows, synced_at: last ? last.at : null, crm: !!runQuery });
+    res.json({ ok: true, vendors: rows, synced_at: last ? last.at : null, sync_error: dirSync.error, lists: CRM_LISTS.map(kindOf), crm: !!runQuery });
   });
   app.post('/api/bookkeeping/directory/sync', ...guard, async (req, res) => { try { dirCache.at = 0; res.json(Object.assign({ ok: true }, await syncDirectory(userId(req)))); } catch (e) { res.json({ ok: false, error: e.message }); } });
   app.post('/api/bookkeeping/transactions/:id/vendor', ...guard, async (req, res) => {
@@ -930,8 +948,7 @@ module.exports = function mountBookkeeping(app, deps) {
   });
   app.post('/api/bookkeeping/vendors/:id', ...guard, async (req, res) => {
     const b = req.body || {};
-    const kind = String(b.kind || '').trim().toLowerCase().replace(/[^a-z0-9 _-]/g, '').slice(0, 30) || null;
-    await dbRun('UPDATE bk_vendors SET approved = ?, default_category = ?, notes = ?, aliases = ?, kind = COALESCE(?, kind), approved_by = ?, approved_at = ? WHERE id = ?', [b.approved ? 1 : 0, String(b.default_category || '').slice(0, 80) || null, String(b.notes || '').slice(0, 500) || null, String(b.aliases || '').slice(0, 1000) || null, kind, userId(req), nowIso(), parseInt(req.params.id)]);
+    await dbRun('UPDATE bk_vendors SET approved = ?, default_category = ?, notes = ?, aliases = ?, approved_by = ?, approved_at = ? WHERE id = ?', [b.approved ? 1 : 0, String(b.default_category || '').slice(0, 80) || null, String(b.notes || '').slice(0, 500) || null, String(b.aliases || '').slice(0, 1000) || null, userId(req), nowIso(), parseInt(req.params.id)]);
     dirCache.at = 0;
     await audit(userId(req), 'vendor.update', req.params.id, b); res.json({ ok: true });
   });

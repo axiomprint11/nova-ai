@@ -71,9 +71,11 @@ The CRM's `suppliers` and `vendors` tables are read (read-only) into `bk_vendors
 `crm_id`, email, phone, specialty, contact, address, `photo` = the CRM's `photo_url`, shown on the left) on every daily run and on
 **Refresh from CRM**; they come in approved. The same company may be both a supplier and a vendor — `bk_vendors.name` is
 not unique (the 1.15.3 UNIQUE constraint is dropped at boot by rebuilding the table, ids kept).
-Each entry has a **type** (`bk_vendors.kind`: supplier / vendor from the CRM list it came from; contractor, service, other, or
-any new value) shown as its own dropdown in the row and as the Type filter above the list — a type set by hand is kept
-by later syncs. Vendors first seen on a bill are in the same list, tagged "from a bill", type Other until changed. A bank line is linked to a directory entry (`bk_transactions.vendor_id`) when the entry's name, one of its
+Each entry's **type** is the CRM list it is in (`bk_vendors.kind`: supplier / vendor) — read-only in Nova, shown as a tag and as
+the Type filter above the list; a new CRM list is a new type (`BOOKKEEPER_CRM_LISTS=suppliers,vendors,<table>`, same columns).
+Vendors first seen on a bill are in the same list, type "From a bill". The directory refreshes by itself: when the tab opens
+and the last sync is older than 10 minutes, hourly from the clock, and with every daily run — a company added in the CRM
+shows up without pressing anything. Sync errors are logged (`BOOKKEEPER directory sync`) and shown in the tab header. A bank line is linked to a directory entry (`bk_transactions.vendor_id`) when the entry's name, one of its
 bank-statement aliases, or (for bills) its email domain matches; the AI is told "OUR VENDOR: Veritiv — Paper → usually
 Paper" and gets the whole directory as context. Approving a category for a linked transaction fills the vendor's
 *usual category* (editable in the tab, with the aliases). Vendors first seen on a bill (`source` = bill) wait for
