@@ -20,7 +20,7 @@
   function show(v) {
     document.querySelectorAll('.bk-tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
     document.querySelectorAll('.bk-view').forEach(s => s.classList.toggle('on', s.dataset.v === v));
-    ({ brief: loadBrief, txns: loadTxns, bills: loadBills, vendors: loadVendors, rules: loadRules, conn: loadConn, activity: loadActivity })[v]();
+    ({ brief: loadBrief, txns: loadTxns, bills: loadBills, vendors: loadVendors, materials: loadMaterials, rules: loadRules, conn: loadConn, activity: loadActivity })[v]();
     try { history.replaceState(null, '', '/bookkeeping?tab=' + v); } catch (e) {}
   }
   async function overview() {
@@ -197,7 +197,7 @@
     const logo = (x) => x.photo ? '<img class="bk-logo" src="' + esc(x.photo) + '" alt="" loading="lazy" onerror="this.outerHTML=\'<span class=&quot;bk-logo ph&quot;>' + esc(String(x.name).charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo ph">' + esc(String(x.name).charAt(0).toUpperCase()) + '</span>';
     const kindTag = (x) => '<span class="bk-src ' + esc(x.kind || 'other') + '">' + esc(label(x.kind)) + '</span>';
     const row = (x) => '<tr data-vid="' + x.id + '" data-kind="' + esc(x.kind || 'other') + '" data-q="' + esc((x.name + ' ' + (x.contact || '') + ' ' + (x.email || '') + ' ' + (x.specialty || '') + ' ' + (x.aliases || '')).toLowerCase()) + '"><td><a href="#" class="bk-open" data-vopen="' + x.id + '" title="Full details">' + logo(x) + '</a></td><td>' + kindTag(x) + '</td>' +
-      '<td><a href="#" class="bk-open bk-name" data-vopen="' + x.id + '" title="Full details">' + esc(x.name) + '</a>' + (x.contact ? '<div class="bk-muted">' + esc(x.contact) + '</div>' : '') + '</td><td class="bk-muted">' + esc(x.email || '') + (x.phone ? '<br>' + esc(x.phone) : '') + '</td><td class="bk-muted">' + esc(x.specialty || '') + '</td>' +
+      '<td><a href="#" class="bk-open bk-name" data-vopen="' + x.id + '" title="Full details">' + esc(x.name) + '</a>' + (x.contact ? '<div class="bk-muted">' + esc(x.contact) + '</div>' : '') + '</td><td class="bk-muted">' + esc(x.email || '') + (x.phone ? '<br>' + esc(x.phone) : '') + '</td><td class="bk-muted">' + esc(x.specialty || '') + (x.materials ? '<div class="bk-dim"><a href="#" data-mats="' + x.id + '" title="See the materials in the catalog">' + x.materials + ' material' + (x.materials == 1 ? '' : 's') + '</a>: ' + esc((x.geo_types || []).join(', ')) + '</div>' : '') + '</td>' +
       '<td>' + catSelect(x.default_category || '', 'vcat', '— not set —') + '</td><td><input type="text" class="bk valias" placeholder="bank names, one per line" value="' + esc(String(x.aliases || '').split('\n').join(' | ')) + '" title="How this vendor appears on bank statements (separate with |)"></td>' +
       '<td class="c"><label class="bk-check" title="Approved = BookkeeperAI may link bank lines and bills to this company without asking. CRM entries are approved by themselves; a company first seen on a bill waits here."><input type="checkbox" class="vappr"' + (x.approved ? ' checked' : '') + '></label></td>' +
       '<td class="num bk-muted" title="How many bank transactions and bills are linked to this company">' + (x.txns || 0) + ' <span class="bk-dim">txn' + (x.txns == 1 ? '' : 's') + '</span><br>' + (x.bills || 0) + ' <span class="bk-dim">bill' + (x.bills == 1 ? '' : 's') + '</span></td><td><button class="bk-btn sm" data-vsave="' + x.id + '">Save</button></td></tr>';
@@ -210,11 +210,13 @@
       el.innerHTML = '<div class="bk-modal-box"><div class="bk-modal-head">' + logo(x) + '<div><div class="bk-modal-title">' + esc(x.name) + '</div><div>' + kindTag(x) + (x.approved ? ' <span class="bk-pill on">approved</span>' : ' <span class="bk-pill off">waiting for approval</span>') + '</div></div><button class="bk-btn sm bk-x" title="Close">✕</button></div>' +
         line('Contact', esc(x.contact || '')) + line('Email', x.email ? '<a href="mailto:' + esc(x.email) + '">' + esc(x.email) + '</a>' : '') + line('Phone', esc(x.phone || '')) + line('Specialty', esc(x.specialty || '')) +
         line('Address', (d.address || d.city) ? addr : '') + line('Hours', esc(d.hours || '')) + line('Usual category', esc(x.default_category || '')) + line('On the bank statement as', esc(String(x.aliases || '').split('\n').filter(Boolean).join(' · '))) +
-        line('Linked', (x.txns || 0) + ' transaction' + (x.txns == 1 ? '' : 's') + ', ' + (x.bills || 0) + ' bill' + (x.bills == 1 ? '' : 's')) + line('Notes', esc(x.notes || '')) +
+        line('Linked', (x.txns || 0) + ' transaction' + (x.txns == 1 ? '' : 's') + ', ' + (x.bills || 0) + ' bill' + (x.bills == 1 ? '' : 's')) +
+        line('Supplies', x.materials ? x.materials + ' material' + (x.materials == 1 ? '' : 's') + ' in the catalog — GEO types: ' + esc((x.geo_types || []).join(', ')) + ' <a href="#" data-mats="' + x.id + '">see them</a>' : '') + line('Notes', esc(x.notes || '')) +
         '<div class="bk-muted" style="margin-top:12px">' + (x.source === 'bill' ? 'First seen on a bill — not in the CRM yet. Add it to the CRM to fill this in.' : 'From the CRM ' + esc(d.list || x.source || '') + ' list (#' + esc(String(x.crm_id || '')) + '), synced ' + when(x.synced_at) + '. Edit the details in the CRM; they refresh here by themselves.') + '</div></div>';
       const close = () => el.remove();
       el.onclick = (e) => { if (e.target === el || e.target.classList.contains('bk-x')) close(); };
       document.addEventListener('keydown', function k(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', k); } });
+      el.querySelectorAll('[data-mats]').forEach(a => a.onclick = (e) => { e.preventDefault(); close(); matFilter = { vendor: a.dataset.mats }; show('materials'); });
       document.body.appendChild(el);
     };
     const unapproved = all.filter(x => !x.approved).length;
@@ -232,12 +234,52 @@
     };
     ['vKind', 'vAppr'].forEach(id => $(id).onchange = filter); $('vQ').oninput = filter; filter();
     v.querySelectorAll('[data-vopen]').forEach(a => a.onclick = (e) => { e.preventDefault(); const x = all.find(y => String(y.id) === a.dataset.vopen); if (x) openVendor(x); });
+    v.querySelectorAll('[data-mats]').forEach(a => a.onclick = (e) => { e.preventDefault(); matFilter = { vendor: a.dataset.mats }; show('materials'); });
     $('dirSync').onclick = async () => { $('dirSync').disabled = true; const r = await post('/api/bookkeeping/directory/sync', {}); if (!r.ok) alert(r.error); else if (r.errors && r.errors.length) alert(r.errors.join('\n')); loadVendors(); };
     v.querySelectorAll('[data-vsave]').forEach(b => b.onclick = async () => {
       const tr = b.closest('tr'); b.disabled = true;
       await post('/api/bookkeeping/vendors/' + b.dataset.vsave, { approved: tr.querySelector('.vappr').checked, default_category: tr.querySelector('select.vcat').value, aliases: tr.querySelector('.valias').value.split('|').map(x => x.trim()).filter(Boolean).join('\n') });
       loadVendors();
     });
+  }
+
+  // ---------------------------------------------------------------- Materials (CRM → Materials, with GEO types)
+  let matFilter = null;
+  async function loadMaterials() {
+    const v = $('vMaterials');
+    if (!ov) await overview();
+    const j = await api('/api/bookkeeping/materials');
+    const all = j.materials || [], geo = j.geo || {}, unlinked = j.unlinked || {};
+    const pre = matFilter || {}; matFilter = null;
+    const geoNames = Object.keys(geo).sort((a, b) => a.startsWith('—') - b.startsWith('—') || a.localeCompare(b));
+    const count = (g) => Object.values(geo[g]).reduce((a, b) => a + b, 0);
+    const suppliers = {}; all.forEach(m => { const k = m.vendor_id ? 'v' + m.vendor_id : (m.supplier_text ? 't' + m.supplier_text : ''); if (k) suppliers[k] = { label: m.supplier || m.supplier_text, n: (suppliers[k] ? suppliers[k].n : 0) + 1, linked: !!m.vendor_id }; });
+    const supKeys = Object.keys(suppliers).sort((a, b) => suppliers[b].n - suppliers[a].n);
+    const photo = (m) => m.photo ? '<img class="bk-logo bk-mat" src="' + esc(m.photo) + '" alt="" loading="lazy" onerror="this.outerHTML=\'<span class=&quot;bk-logo bk-mat ph&quot;></span>\'">' : '<span class="bk-logo bk-mat ph" style="color:#c7c7d6">·</span>';
+    const supCell = (m) => m.vendor_id ? '<a href="#" class="bk-name" data-vgo="' + m.vendor_id + '">' + esc(m.supplier) + '</a>' + (m.supplier_text && m.supplier_text !== m.supplier ? '<div class="bk-dim">in the CRM as “' + esc(m.supplier_text) + '”</div>' : '') : m.supplier_text ? esc(m.supplier_text) + '<div class="bk-dim" title="This supplier name is not in the Suppliers / Vendors lists yet">not in the directory</div>' : '<span class="bk-dim">—</span>';
+    const row = (m) => '<tr data-g="' + esc(m.geo_type || '— no GEO type —') + '" data-s="' + esc(m.geo_sub_type || '—') + '" data-sup="' + (m.vendor_id ? 'v' + m.vendor_id : (m.supplier_text ? 't' + esc(m.supplier_text) : '')) + '" data-q="' + esc([m.name, m.material, m.type, m.manufacturer, m.supplier, m.supplier_text, m.code, m.axiom_id, m.teams].filter(Boolean).join(' ').toLowerCase()) + '">' +
+      '<td>' + photo(m) + '</td><td><b>' + esc(m.name) + '</b>' + (m.code || m.axiom_id ? '<div class="bk-dim">' + esc([m.code, m.axiom_id].filter(Boolean).join(' · ')) + '</div>' : '') + '</td>' +
+      '<td>' + esc(m.geo_type || '—') + (m.geo_sub_type ? '<div class="bk-muted">' + esc(m.geo_sub_type) + '</div>' : '') + '</td>' +
+      '<td class="bk-muted">' + esc([m.material, m.type].filter(Boolean).map(x => x.replace(/_/g, ' ')).join(' · ')) + (m.size || m.thickness ? '<div class="bk-dim">' + esc([m.size, m.thickness ? m.thickness + ' thick' : ''].filter(Boolean).join(' · ')) + '</div>' : '') + '</td>' +
+      '<td class="bk-muted">' + esc(m.teams || '') + (m.step ? '<div class="bk-dim">' + esc(String(m.step).replace(/_/g, ' ')) + '</div>' : '') + '</td>' +
+      '<td>' + supCell(m) + '</td><td class="bk-muted">' + esc(m.manufacturer || '') + '</td><td class="num">' + (m.cost != null ? usd(m.cost) : '<span class="bk-dim">—</span>') + '</td></tr>';
+    v.innerHTML = '<div class="bk-card"><h2>Materials &amp; GEO types<span class="sp"></span><span class="bk-muted">' + all.length + ' materials · ' + (j.synced_at ? 'synced ' + when(j.synced_at) : 'not synced yet') + (j.sync_error ? ' · <span style="color:#b91c1c">' + esc(j.sync_error) + '</span>' : '') + '</span><button class="bk-btn" id="matSync"' + (j.crm ? '' : ' disabled') + '>Refresh from CRM</button></h2>' +
+      '<div class="bk-muted" style="margin-bottom:8px">The CRM\u2019s materials catalog (Products → Materials), read-only, refreshed with the directory. Every material carries its <b>GEO type</b> and sub type, the production team and step, and the supplier it is bought from. BookkeeperAI knows what each supplier supplies and treats purchases of catalog materials as production cost, not office supplies. The supplier on a material is still a typed name in the CRM; it is linked to the directory by name here' + (Object.keys(unlinked).length ? ' — <b>' + Object.keys(unlinked).length + ' name' + (Object.keys(unlinked).length === 1 ? '' : 's') + ' not in the directory</b>: ' + esc(Object.keys(unlinked).sort((a, b) => unlinked[b] - unlinked[a]).map(k => k + ' (' + unlinked[k] + ')').join(', ')) : '') + '.</div>' +
+      '<div class="bk-filters"><select id="mGeo"><option value="">All GEO types (' + all.length + ')</option>' + geoNames.map(g => '<option value="' + esc(g) + '"' + (pre.geo === g ? ' selected' : '') + '>' + esc(g) + ' (' + count(g) + ')</option>').join('') + '</select>' +
+      '<select id="mSub"><option value="">All sub types</option></select>' +
+      '<select id="mSup"><option value="">All suppliers</option>' + supKeys.map(k => '<option value="' + esc(k) + '"' + (pre.vendor && k === 'v' + pre.vendor ? ' selected' : '') + '>' + esc(suppliers[k].label) + ' (' + suppliers[k].n + ')' + (suppliers[k].linked ? '' : ' — not in the directory') + '</option>').join('') + '</select>' +
+      '<input name="q" id="mQ" placeholder="Search name, material, manufacturer, code…"></div>' +
+      (all.length ? '<table class="bk bk-dir bk-mats"><thead><tr><th></th><th>Material</th><th>GEO type</th><th>Kind · size</th><th>Team · step</th><th>Supplier</th><th>Manufacturer</th><th class="num">Cost</th></tr></thead><tbody>' + all.map(row).join('') + '</tbody></table><div class="bk-muted" id="mNone" style="display:none;padding:14px 0">Nothing matches.</div><div class="bk-muted" id="mCount" style="padding:10px 0 0"></div>'
+        : '<div class="bk-muted">Nothing synced yet — press Refresh from CRM.</div>') + '</div>';
+    const subs = () => { const g = $('mGeo').value, cur = $('mSub').value; const names = g ? Object.keys(geo[g] || {}).sort() : []; $('mSub').innerHTML = '<option value="">All sub types' + (g ? ' (' + count(g) + ')' : '') + '</option>' + names.map(n => '<option value="' + esc(n) + '"' + (cur === n ? ' selected' : '') + '>' + esc(n) + ' (' + geo[g][n] + ')</option>').join(''); $('mSub').disabled = !g; };
+    const filter = () => {
+      const g = $('mGeo').value, sb = $('mSub').value, sp = $('mSup').value, q = $('mQ').value.trim().toLowerCase(); let n = 0;
+      v.querySelectorAll('tr[data-g]').forEach(tr => { const on = (!g || tr.dataset.g === g) && (!sb || tr.dataset.s === sb) && (!sp || tr.dataset.sup === sp) && (!q || tr.dataset.q.indexOf(q) >= 0); tr.style.display = on ? '' : 'none'; if (on) n++; });
+      if ($('mNone')) { $('mNone').style.display = n ? 'none' : ''; $('mCount').textContent = n === all.length ? '' : n + ' of ' + all.length + ' materials'; }
+    };
+    $('mGeo').onchange = () => { subs(); filter(); }; $('mSub').onchange = filter; $('mSup').onchange = filter; $('mQ').oninput = filter; subs(); filter();
+    $('matSync').onclick = async () => { $('matSync').disabled = true; const r = await post('/api/bookkeeping/directory/sync', {}); if (!r.ok) alert(r.error); else if (r.errors && r.errors.length) alert(r.errors.join('\n')); loadMaterials(); };
+    v.querySelectorAll('[data-vgo]').forEach(a => a.onclick = (e) => { e.preventDefault(); show('vendors'); setTimeout(() => { const tr = document.querySelector('tr[data-vid="' + a.dataset.vgo + '"]'); if (tr) { tr.scrollIntoView({ block: 'center' }); tr.style.background = '#fffbeb'; } }, 900); });
   }
 
   // ---------------------------------------------------------------- Connections
@@ -298,5 +340,5 @@
   }
 
   const want = new URLSearchParams(location.search).get('tab');
-  show(['brief', 'txns', 'bills', 'vendors', 'rules', 'conn', 'activity'].indexOf(want) > -1 ? want : 'brief');
+  show(['brief', 'txns', 'bills', 'vendors', 'materials', 'rules', 'conn', 'activity'].indexOf(want) > -1 ? want : 'brief');
 })();

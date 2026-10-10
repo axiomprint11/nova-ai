@@ -40,7 +40,8 @@
   .bk-tabs .n:empty { display: none; }
   .bk-main { flex: 1; min-height: 0; overflow: auto; padding: 18px; }
   .bk-view { display: none; max-width: 1180px; margin: 0 auto; }
-  .bk-view[data-v=vendors] { max-width: none; margin: 0; }
+  .bk-view[data-v=vendors], .bk-view[data-v=materials] { max-width: none; margin: 0; }
+  .bk-logo.bk-mat { width: 48px; height: 48px; border-radius: 8px; } table.bk-mats td:first-child { width: 48px; }
   .bk-view.on { display: block; }
   .bk-card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; margin-bottom: 14px; }
   .bk-card h2 { font-size: 13.5px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
@@ -120,6 +121,7 @@
   </div>
   <div class="bk-tabs small" id="tabs2">
     <button data-v="vendors">Suppliers &amp; vendors</button>
+    <button data-v="materials">Materials &amp; GEO types</button>
     <button data-v="rules">Rules</button>
     <button data-v="conn">Connections</button>
     <button data-v="activity">Activity</button>
@@ -130,6 +132,7 @@
   <section class="bk-view" data-v="txns" id="vTxns"></section>
   <section class="bk-view" data-v="bills" id="vBills"></section>
   <section class="bk-view" data-v="vendors" id="vVendors"></section>
+  <section class="bk-view" data-v="materials" id="vMaterials"></section>
   <section class="bk-view" data-v="rules" id="vRules"></section>
   <section class="bk-view" data-v="conn" id="vConn"></section>
   <section class="bk-view" data-v="activity" id="vActivity"></section>

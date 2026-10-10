@@ -70,6 +70,12 @@ module.exports = function mountBookkeeping(app, deps) {
         });
       });
     });
+    // The CRM materials catalog (CRM → Products → Materials): every material with its GEO type / sub type, production
+    // team, step and the supplier it is bought from. Read-only mirror, synced with the directory.
+    db.run(`CREATE TABLE IF NOT EXISTS bk_materials (id INTEGER PRIMARY KEY AUTOINCREMENT, crm_id INTEGER UNIQUE, name TEXT, material TEXT, type TEXT, step TEXT,
+      geo_type_id INTEGER, geo_type TEXT, geo_sub_type_id INTEGER, geo_sub_type TEXT, teams TEXT, supplier_text TEXT, vendor_id INTEGER, manufacturer TEXT,
+      cost REAL, stock INTEGER, location TEXT, code TEXT, axiom_id TEXT, size TEXT, thickness REAL, color TEXT, photo TEXT, synced_at TEXT)`);
+    db.run('CREATE INDEX IF NOT EXISTS bk_mat_vendor ON bk_materials(vendor_id)');
     db.run(`CREATE TABLE IF NOT EXISTS bk_emails (id INTEGER PRIMARY KEY AUTOINCREMENT, gmail_id TEXT UNIQUE, thread_id TEXT, from_addr TEXT,
       subject TEXT, received_at TEXT, snippet TEXT, body TEXT, attachments TEXT, status TEXT DEFAULT 'new', note TEXT,
       created_at TEXT DEFAULT (datetime('now')))`);
@@ -357,13 +363,67 @@ module.exports = function mountBookkeeping(app, deps) {
         } catch (e) { errors.push(t + ' #' + r.id + ' ' + name + ': ' + e.message); }
       }
     }
+    dirCache.at = 0;
+    let materials = 0;
+    try { materials = await syncMaterials(); } catch (e) { errors.push('materials: ' + e.message); }
     dirSync.at = Date.now(); dirSync.error = errors.length ? errors.slice(0, 3).join(' · ') : null; dirCache.at = 0;
     if (errors.length) errlog('directory sync', errors.join(' | '));
-    await audit(who, 'directory.sync', null, { synced: n, errors });
-    return { synced: n, errors };
+    await audit(who, 'directory.sync', null, { synced: n, materials, errors });
+    return { synced: n, materials, errors };
     })();
     try { return await dirSync.running; } finally { dirSync.running = null; }
   }
+  // Materials: CRM `materials` with geo_type / geo_sub_type names and the production team names (`team`, the colored
+  // department chips). `materials.supplier` is free text today ("Kelly", "Kelly Paper", "KellyPaper" all mean Kelly Paper)
+  // — it is linked to the directory by name until the CRM gives it a supplier id (then use that column here).
+  const matNorm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\b(inc|llc|co|corp|corporation|company|the)\b/g, ' ').replace(/\s+/g, ' ').trim();
+  function supplierFor(text, list) {
+    const n = matNorm(text); if (!n) return null;
+    const cands = list.filter(v => v.source !== 'bill' && v._m);
+    let hit = cands.find(v => v._m === n) || cands.find(v => v._al.some(a => matNorm(a) === n));
+    if (!hit) { const starts = cands.filter(v => v._m.startsWith(n + ' ') || n.startsWith(v._m + ' ') || v._m.replace(/ /g, '') === n.replace(/ /g, '')); if (starts.length) hit = starts.sort((a, b) => a._m.length - b._m.length)[0]; }
+    if (!hit && n.length >= 4) { const inside = cands.filter(v => (' ' + v._m + ' ').indexOf(' ' + n + ' ') > -1 || (' ' + n + ' ').indexOf(' ' + v._m + ' ') > -1); if (inside.length === 1) hit = inside[0]; }
+    return hit || null;
+  }
+  async function syncMaterials() {
+    const rows = await runQuery('SELECT m.id, m.name, m.material, m.type, m.production_step, m.geo_type_id, gt.name AS geo_type, m.geo_sub_type_id, gs.name AS geo_sub_type, m.department_ids, m.supplier, m.manufacturer, m.cost, m.stock, m.location, m.code, m.axiom_id, m.size, m.size_w, m.size_h, m.thickness, m.color_name, m.photo_url ' +
+      'FROM materials m LEFT JOIN geo_type gt ON gt.id = m.geo_type_id LEFT JOIN geo_sub_type gs ON gs.id = m.geo_sub_type_id ORDER BY m.id');
+    let teams = {}; try { (await runQuery('SELECT id, name FROM team')).forEach(t => { teams[t.id] = t.name; }); } catch (e) {}
+    const list = (await dbAll('SELECT id, name, source, aliases FROM bk_vendors')).map(v => Object.assign(v, { _m: matNorm(v.name), _al: String(v.aliases || '').split('\n').filter(Boolean) }));
+    let n = 0;
+    const seen = [];
+    for (const r of rows) {
+      const name = String(r.name || '').trim().slice(0, 200); if (!name) continue;
+      let ids = []; try { ids = Array.isArray(r.department_ids) ? r.department_ids : JSON.parse(r.department_ids || '[]'); } catch (e) {}
+      const teamNames = (ids || []).map(id => teams[id] || null).filter(Boolean).join(', ');
+      const sup = supplierFor(r.supplier, list);
+      const size = String(r.size || '').trim() || (r.size_w && r.size_h ? Number(r.size_w) + ' × ' + Number(r.size_h) : '');
+      const photo = /^https?:\/\//.test(String(r.photo_url || '')) ? String(r.photo_url).slice(0, 300) : null;
+      await dbRun(`INSERT INTO bk_materials (crm_id, name, material, type, step, geo_type_id, geo_type, geo_sub_type_id, geo_sub_type, teams, supplier_text, vendor_id, manufacturer, cost, stock, location, code, axiom_id, size, thickness, color, photo, synced_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+        ON CONFLICT(crm_id) DO UPDATE SET name = excluded.name, material = excluded.material, type = excluded.type, step = excluded.step, geo_type_id = excluded.geo_type_id, geo_type = excluded.geo_type,
+          geo_sub_type_id = excluded.geo_sub_type_id, geo_sub_type = excluded.geo_sub_type, teams = excluded.teams, supplier_text = excluded.supplier_text, vendor_id = excluded.vendor_id, manufacturer = excluded.manufacturer,
+          cost = excluded.cost, stock = excluded.stock, location = excluded.location, code = excluded.code, axiom_id = excluded.axiom_id, size = excluded.size, thickness = excluded.thickness, color = excluded.color, photo = excluded.photo, synced_at = excluded.synced_at`,
+        [r.id, name, r.material || null, r.type || null, r.production_step || null, r.geo_type_id || null, r.geo_type || null, r.geo_sub_type_id || null, r.geo_sub_type || null, teamNames || null,
+          String(r.supplier || '').trim().slice(0, 200) || null, sup ? sup.id : null, String(r.manufacturer || '').trim().slice(0, 100) || null, r.cost != null ? Number(r.cost) : null, r.stock != null ? Number(r.stock) : null,
+          r.location || null, r.code || null, r.axiom_id || null, size || null, r.thickness != null ? Number(r.thickness) : null, r.color_name || null, photo]);
+      seen.push(r.id); n++;
+    }
+    if (seen.length) await dbRun('DELETE FROM bk_materials WHERE crm_id NOT IN (' + seen.map(() => '?').join(',') + ')', seen);   // deleted in the CRM
+    matCache.at = 0;
+    return n;
+  }
+  let matCache = { at: 0, byVendor: {} };
+  // What each vendor supplies, from the catalog: { vendor_id: { n, geo: {Sheets: 57, …}, materials: {paper_cover: 3, …} } }
+  async function suppliesByVendor() {
+    if (Date.now() - matCache.at < 60000) return matCache.byVendor;
+    const rows = await dbAll('SELECT vendor_id, geo_type, material FROM bk_materials WHERE vendor_id IS NOT NULL');
+    const by = {};
+    rows.forEach(r => { const v = by[r.vendor_id] || (by[r.vendor_id] = { n: 0, geo: {}, materials: {} }); v.n++; if (r.geo_type) v.geo[r.geo_type] = (v.geo[r.geo_type] || 0) + 1; if (r.material) v.materials[r.material] = (v.materials[r.material] || 0) + 1; });
+    matCache = { at: Date.now(), byVendor: by };
+    return by;
+  }
+  const topKeys = (o, k) => Object.keys(o).sort((a, b) => o[b] - o[a]).slice(0, k);
   // Keep the directory current by itself: the tab syncs when it opens and the last sync is older than 10 minutes,
   // the clock every hour, the daily run always.
   async function syncDirectoryIfStale(who, maxAgeMs) { if (runQuery && Date.now() - dirSync.at > maxAgeMs) { try { await syncDirectory(who); } catch (e) { dirSync.error = e.message; errlog('directory sync', e.message); } } }
@@ -390,8 +450,11 @@ module.exports = function mountBookkeeping(app, deps) {
   const dirLine = async () => {
     const list = (await directory()).filter(v => v.approved);
     if (!list.length) return '';
-    return 'OUR SUPPLIERS AND VENDORS (from the CRM; a transaction or bill from one of these is a normal purchase — use the specialty to pick the category):\n' +
-      list.slice(0, 120).map(v => '- ' + v.name + (v.specialty ? ' (' + v.specialty + ')' : '') + (v.default_category ? ' → ' + v.default_category : '')).join('\n');
+    const sup = await suppliesByVendor();
+    const geo = await dbAll('SELECT geo_type, COUNT(*) n FROM bk_materials WHERE geo_type IS NOT NULL GROUP BY geo_type ORDER BY n DESC');
+    return 'OUR SUPPLIERS AND VENDORS (from the CRM; a transaction or bill from one of these is a normal purchase — use the specialty and what they supply to pick the category):\n' +
+      list.slice(0, 120).map(v => { const s = sup[v.id]; return '- ' + v.name + (v.specialty ? ' (' + v.specialty + ')' : '') + (s ? ' — supplies ' + s.n + ' material' + (s.n === 1 ? '' : 's') + ': ' + topKeys(s.geo, 3).map(g => g + ' ×' + s.geo[g]).join(', ') + (Object.keys(s.materials).length ? ' [' + topKeys(s.materials, 3).join(', ') + ']' : '') : '') + (v.default_category ? ' → ' + v.default_category : ''); }).join('\n') +
+      (geo.length ? '\nMATERIALS CATALOG — GEO TYPES (how AxiomPrint groups what it buys for production; a purchase of any of these is cost of goods / production materials, not office supplies): ' + geo.map(g => g.geo_type + ' (' + g.n + ')').join(', ') + '.' : '');
   };
 
   // ---------------------------------------------------------------- Claude: bills and categories
@@ -675,7 +738,9 @@ module.exports = function mountBookkeeping(app, deps) {
     { name: 'add_rule', description: 'Save a categorization rule: this vendor (or any transaction containing this keyword) is always this category.',
       input_schema: { type: 'object', properties: { kind: { type: 'string', enum: ['vendor', 'keyword'] }, pattern: { type: 'string' }, category: { type: 'string' } }, required: ['kind', 'pattern', 'category'] } },
     { name: 'run_now', description: 'Sync the banks, scan the inbox and categorize now, then rebuild the brief.', input_schema: { type: 'object', properties: {} } },
-    { name: 'balances', description: 'Current bank balances.', input_schema: { type: 'object', properties: {} } }
+    { name: 'balances', description: 'Current bank balances.', input_schema: { type: 'object', properties: {} } },
+    { name: 'materials', description: 'Look up the CRM materials catalog (GEO types): what a supplier supplies, or which materials / suppliers match a name or GEO type. Read-only.',
+      input_schema: { type: 'object', properties: { supplier: { type: 'string', description: 'Supplier / vendor name' }, query: { type: 'string', description: 'Material name, GEO type, sub type, material kind or manufacturer' } }, required: [] } }
   ];
   async function runChatTool(name, input, who) {
     input = input || {};
@@ -705,6 +770,15 @@ module.exports = function mountBookkeeping(app, deps) {
     }
     if (name === 'run_now') return await runDaily('manual', who, { post: false });
     if (name === 'balances') return { balances: await balances() };
+    if (name === 'materials') {
+      const q = String(input.query || '').trim().toLowerCase(), supN = String(input.supplier || '').trim();
+      let where = [], args = [];
+      if (supN) { const v = supplierFor(supN, (await directory()).map(x => Object.assign({}, x, { _m: matNorm(x.name), _al: x._al || [] }))); if (v) { where.push('m.vendor_id = ?'); args.push(v.id); } else { where.push('LOWER(m.supplier_text) LIKE ?'); args.push('%' + supN.toLowerCase() + '%'); } }
+      if (q) { where.push('(LOWER(m.name) LIKE ? OR LOWER(m.geo_type) LIKE ? OR LOWER(m.geo_sub_type) LIKE ? OR LOWER(m.material) LIKE ? OR LOWER(m.manufacturer) LIKE ?)'); for (let i = 0; i < 5; i++) args.push('%' + q + '%'); }
+      const rows = await dbAll('SELECT m.name, m.geo_type, m.geo_sub_type, m.material, m.type, m.step, m.teams, m.supplier_text, m.manufacturer, m.cost, m.code, v.name AS supplier FROM bk_materials m LEFT JOIN bk_vendors v ON v.id = m.vendor_id' + (where.length ? ' WHERE ' + where.join(' AND ') : '') + ' ORDER BY m.geo_type, m.name LIMIT 60', args);
+      const total = await dbGet('SELECT COUNT(*) n FROM bk_materials');
+      return { catalog_size: total ? total.n : 0, matches: rows.length, materials: rows.map(r => ({ name: r.name, geo_type: r.geo_type, sub_type: r.geo_sub_type, material: r.material, form: r.type, production_step: r.step, team: r.teams, supplier: r.supplier || r.supplier_text, manufacturer: r.manufacturer, cost: r.cost, code: r.code })) };
+    }
     return { error: 'Unknown tool' };
   }
   async function chatHistory(channel, n) {
@@ -725,7 +799,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const merged = [];
     messages.forEach(m => { const last = merged[merged.length - 1]; if (last && last.role === m.role) last.content += '\n' + m.content; else merged.push(Object.assign({}, m)); });
     if (merged[0] && merged[0].role !== 'user') merged.shift();
-    const system = SYS(s) + '\nYou are talking with ' + (meta && meta.name || who) + ' in ' + (channel === 'nova' ? 'the Nova Bookkeeping tab' : 'Google Chat') + '. Short, plain answers (no markdown headings; a short list is fine). ' +
+    const system = SYS(s) + '\n' + await dirLine() + '\nYou are talking with ' + (meta && meta.name || who) + ' in ' + (channel === 'nova' ? 'the Nova Bookkeeping tab' : 'Google Chat') + '. Short, plain answers (no markdown headings; a short list is fine). Use the materials tool for questions about what we buy, from whom, or GEO types. ' +
       'Use the tools for anything that changes state; never claim you approved or saved something without calling the tool. Proposal ids are "#12"; questions are "Q3". ' +
       'When they answer a question, record it with answer_question (with the category when it is one). "Approve all" = approve with all: true. Money never moves through you: payments are approved in BILL by a person.\n' +
       (brief ? 'TODAY\u2019S BRIEF:\n' + brief.text.slice(0, 6000) : 'No brief yet today.');
@@ -937,7 +1011,18 @@ module.exports = function mountBookkeeping(app, deps) {
     if (req.query.fresh !== '0') await syncDirectoryIfStale(userId(req), 10 * 60000);
     const rows = await dbAll("SELECT v.*, CASE v.source WHEN 'suppliers' THEN 'supplier' WHEN 'vendors' THEN 'vendor' WHEN 'bill' THEN 'bill' ELSE COALESCE(v.kind, 'other') END AS kind, (SELECT COUNT(*) FROM bk_transactions t WHERE t.vendor_id = v.id) AS txns, (SELECT COUNT(*) FROM bk_bills b WHERE b.vendor_id = v.id AND b.status <> ?) AS bills FROM bk_vendors v ORDER BY v.name", ['rejected']);
     const last = await dbGet("SELECT at FROM bk_audit WHERE action = 'directory.sync' ORDER BY id DESC LIMIT 1");
+    const sup = await suppliesByVendor();
+    rows.forEach(v => { const s = sup[v.id]; v.materials = s ? s.n : 0; v.geo_types = s ? topKeys(s.geo, 4) : []; });
     res.json({ ok: true, vendors: rows, synced_at: last ? last.at : null, sync_error: dirSync.error, lists: CRM_LISTS.map(kindOf), crm: !!runQuery });
+  });
+  // The materials catalog with its GEO types (read-only mirror of CRM → Materials).
+  app.get('/api/bookkeeping/materials', ...guard, async (req, res) => {
+    if (req.query.fresh !== '0') await syncDirectoryIfStale(userId(req), 10 * 60000);
+    const rows = await dbAll('SELECT m.*, v.name AS supplier, v.photo AS supplier_photo FROM bk_materials m LEFT JOIN bk_vendors v ON v.id = m.vendor_id ORDER BY m.geo_type, m.geo_sub_type, m.name');
+    const geo = {}; rows.forEach(r => { const g = r.geo_type || '— no GEO type —'; (geo[g] = geo[g] || {}); const sb = r.geo_sub_type || '—'; geo[g][sb] = (geo[g][sb] || 0) + 1; });
+    const unlinked = {}; rows.filter(r => r.supplier_text && !r.vendor_id).forEach(r => { unlinked[r.supplier_text] = (unlinked[r.supplier_text] || 0) + 1; });
+    const last = await dbGet("SELECT at FROM bk_audit WHERE action = 'directory.sync' ORDER BY id DESC LIMIT 1");
+    res.json({ ok: true, materials: rows, geo, unlinked, synced_at: last ? last.at : null, sync_error: dirSync.error, crm: !!runQuery });
   });
   app.post('/api/bookkeeping/directory/sync', ...guard, async (req, res) => { try { dirCache.at = 0; res.json(Object.assign({ ok: true }, await syncDirectory(userId(req)))); } catch (e) { res.json({ ok: false, error: e.message }); } });
   app.post('/api/bookkeeping/transactions/:id/vendor', ...guard, async (req, res) => {
@@ -1008,5 +1093,5 @@ module.exports = function mountBookkeeping(app, deps) {
     res.json({ ok: true });
   });
 
-  return { isBookkeeper, runDaily, converse, settings };
+  return { isBookkeeper, runDaily, converse, settings, runChatTool };
 };

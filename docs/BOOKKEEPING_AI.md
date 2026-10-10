@@ -84,9 +84,26 @@ Paper" and gets the whole directory as context. Approving a category for a linke
 *usual category* (editable in the tab, with the aliases). Vendors first seen on a bill (`source` = bill) wait for
 approval in the tab's second list. Edit names, emails and specialties in the CRM, not here.
 
+## Materials & GEO types (the CRM materials catalog)
+CRM → Products → Materials is mirrored read-only into `bk_materials` with every sync of the directory: name, `material`
+(paper_cover, vinyl, foil…), `type` (sheet, role…), production step, **GEO type / sub type** (`geo_type`, `geo_sub_type`
+tables — Sheets, Rolls, Boards, Wide Format, Book Binding, Products, Accessories, Coating, Tooling, Digital, Packing), the
+production team(s) (`materials.department_ids` are `team` ids — the colored chips: Large Format Flatbed, Roll Labels,
+Digital / Sheetfed…), manufacturer, cost, code, size, thickness, photo and the supplier. Rows deleted in the CRM are
+dropped. The tab (Materials & GEO types) filters by GEO type → sub type, supplier and text; a vendor row / popup shows
+"n materials: Sheets, Rolls" with a link to them.
+
+`materials.supplier` is a **typed name** in the CRM today ("Kelly", "Kelly Paper", "KellyPaper"; "GWF"); `supplierFor()`
+links it to a directory entry by normalised name, alias, prefix or a unique containment, and the tab lists the names it
+could not link. When the CRM adds a real supplier id to materials, read that column in `syncMaterials()` instead.
+
+The AI sees it two ways: `dirLine()` adds "— supplies 57 materials: Sheets ×50, Rolls ×7 [paper_text, paper_cover]" to each
+vendor and a GEO TYPES line (purchases of catalog materials are production cost, not office supplies), and the chat has a
+read-only `materials` tool (by supplier and/or a name / GEO type / manufacturer query).
+
 ## What the agent may do (its only tools)
 `list_pending`, `approve` (by id / all / with a corrected category), `reject`, `answer_question` (records the answer; with
-a category it approves the proposal), `add_rule`, `run_now`, `balances`. No SQL, no vendor details, no payments.
+a category it approves the proposal), `add_rule`, `run_now`, `balances`, `materials` (catalog lookup). No SQL, no vendor details, no payments.
 
 ## Data
 `bk_accounts` (Plaid items), `bk_transactions`, `bk_rules` (vendor → category, keyword → category; made from approvals
