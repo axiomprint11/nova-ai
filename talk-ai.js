@@ -99,6 +99,9 @@ module.exports = function mountTalkAi(app, deps, bot) {
     // The team member the caller asked for ("Can I speak to Lulu?"), found in the production user table, and when
     // the call summary was relayed to them (talk-handoff.js relayStaff).
     ['for_staff TEXT', 'staff_sent_at TEXT', 'staff_to TEXT'].forEach(c => db.run('ALTER TABLE talk_calls ADD COLUMN ' + c, () => {}));
+    // The team's rating of a call (Good / Bad + a note), fed back into the phone prompt as lessons (callLessons()).
+    db.run(`CREATE TABLE IF NOT EXISTS talk_ratings (id INTEGER PRIMARY KEY AUTOINCREMENT, call_id INTEGER UNIQUE, rating TEXT, note TEXT,
+      rated_by TEXT, rated_at TEXT DEFAULT (datetime('now')), active INTEGER DEFAULT 1)`);
   });
   const dbGet = (sql, p) => new Promise((ok, no) => db.get(sql, p || [], (e, r) => e ? no(e) : ok(r)));
   const dbAll = (sql, p) => new Promise((ok, no) => db.all(sql, p || [], (e, r) => e ? no(e) : ok(r)));
@@ -850,6 +853,28 @@ module.exports = function mountTalkAi(app, deps, bot) {
     trainCache = { at: Date.now(), text: text || '' };
     return trainCache.text;
   }
+  // Lessons from rated calls: Bad ratings with a note become AVOID lines, Good ones short examples (cached a minute).
+  let lessonsCache = { at: 0, text: '' };
+  async function callLessons() {
+    if (Date.now() - lessonsCache.at < 60 * 1000) return lessonsCache.text;
+    let text = '';
+    try {
+      const rows = await dbAll("SELECT r.rating, r.note, c.ai_summary, c.summary, c.transcript FROM talk_ratings r JOIN talk_calls c ON c.id = r.call_id " +
+        "WHERE r.active = 1 AND (r.rating = 'bad' OR TRIM(COALESCE(r.note, '')) <> '') ORDER BY r.rated_at DESC LIMIT 24");
+      const cut = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '\u2026' : t; };
+      const firstAsk = (c) => { try { const t = JSON.parse(c.transcript || '[]'); const u = t.find(x => x.role === 'caller' || x.role === 'user'); return u ? u.text || u.message : ''; } catch (e) { return ''; } };
+      const bad = rows.filter(r => r.rating === 'bad' && String(r.note || '').trim()).slice(0, 15);
+      const good = rows.filter(r => r.rating === 'good').slice(0, 5);
+      const parts = [];
+      if (bad.length) parts.push('AVOID \u2014 the team marked these calls as bad (do not repeat these mistakes):\n' +
+        bad.map(r => '- ' + cut(r.note, 300) + (firstAsk(r) ? ' (the caller had asked: "' + cut(firstAsk(r), 120) + '")' : '')).join('\n'));
+      if (good.length) parts.push('GOOD CALLS \u2014 the team liked how these went; match the approach (not the prices, which change):\n' +
+        good.map(r => '- ' + cut(r.ai_summary || r.summary, 240) + (r.note ? ' (why it was good: ' + cut(r.note, 200) + ')' : '')).join('\n'));
+      if (parts.length) text = 'LESSONS FROM RATED CALLS (from the AxiomPrint team; follow them unless they conflict with the NON-NEGOTIABLE RULES):\n' + parts.join('\n\n');
+    } catch (e) { console.error('TALKAI lessons', e.message); }
+    lessonsCache = { at: Date.now(), text: text };
+    return text;
+  }
   // Fixed rules + AxiomPrint's knowledge (cached by the API between turns), then what changes each turn.
   async function phonePrompt(s, call, who, m, toolNames) {
     const rules = await bot.loadRules();
@@ -916,7 +941,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
       '',
       'WHAT YOU KNOW ABOUT AXIOMPRINT (answer from this; if it is not here or in the tools, say you will have the team follow up):',
       String(rules.knowledge || '').slice(0, 12000),
-      await (async () => { const t = await talkTraining(); return t ? '\nTALKAI TRAINING AND DOCUMENTS (from the team, for calls; follow them unless they conflict with the NON-NEGOTIABLE RULES; turn tables and long text into a short spoken answer):\n' + t : ''; })()
+      await (async () => { const t = await talkTraining(); return t ? '\nTALKAI TRAINING AND DOCUMENTS (from the team, for calls; follow them unless they conflict with the NON-NEGOTIABLE RULES; turn tables and long text into a short spoken answer):\n' + t : ''; })(),
+      await (async () => { const t = await callLessons(); return t ? '\n' + t : ''; })()
     ].join('\n');
     const c = who.customer;
     // The Save with Nova coupon: offered when they negotiate, unless their account already used it.
@@ -2027,7 +2053,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const rows = await dbAll('SELECT c.id, c.from_number, c.source, c.status, c.answered_by, c.customer_id, c.customer_name, c.company, c.verified, c.caller_match, c.owner, ' +
       'c.language, c.summary, c.outcome, c.duration_sec, c.created_at, c.updated_at, c.audio_path IS NOT NULL AS has_audio, c.tried_by, c.verified_by, c.caller_first, c.hours_mode, c.line_id, (SELECT am_name FROM talk_lines l WHERE l.id = c.line_id) AS line_name, ' +
       '(SELECT COUNT(*) FROM talk_turns t WHERE t.call_id = c.id AND t.role = \'caller\') AS turns, ' +
-      '(SELECT COUNT(*) FROM talk_emails m WHERE m.call_id = c.id AND m.ok = 1 AND COALESCE(m.kind, \'\') NOT IN (\'csr\', \'relay\', \'message\', \'summary\')) AS emails_n, c.callback, c.csr_sent_at, c.ai_summary, ' +
+      '(SELECT COUNT(*) FROM talk_emails m WHERE m.call_id = c.id AND m.ok = 1 AND COALESCE(m.kind, \'\') NOT IN (\'csr\', \'relay\', \'message\', \'summary\')) AS emails_n, c.callback, c.csr_sent_at, c.ai_summary, (SELECT rating FROM talk_ratings tr WHERE tr.call_id = c.id AND tr.active = 1) AS team_rating, ' +
       '(SELECT content FROM talk_turns t WHERE t.call_id = c.id AND t.role = \'caller\' ORDER BY t.id LIMIT 1) AS first_said, ' +
       '(r.read_at IS NULL OR r.read_at < c.updated_at) AS unread ' +
       'FROM talk_calls c LEFT JOIN talk_reads r ON r.call_id = c.id AND r.reader = ? ' + (where.length ? 'WHERE ' + where.join(' AND ') : '') +
@@ -2035,6 +2061,17 @@ module.exports = function mountTalkAi(app, deps, bot) {
     rows.forEach(r => { try { r.caller_match = r.caller_match ? JSON.parse(r.caller_match) : null; } catch (e) { r.caller_match = null; } r.unread = !!r.unread; r.has_audio = !!r.has_audio; });
     const u = await dbGet("SELECT COUNT(*) AS n FROM talk_calls c LEFT JOIN talk_reads r ON r.call_id = c.id AND r.reader = ? WHERE c.source <> 'try' AND (r.read_at IS NULL OR r.read_at < c.updated_at)", [reader]);
     res.json({ ok: true, calls: rows, unread: (u && u.n) || 0 });
+  });
+  // Good / Bad + a note for training: one rating per call (the latest wins); an empty rating clears it.
+  app.post('/api/admin/talk/calls/:id/rate', auth, adminOnly, async (req, res) => {
+    const id = parseInt(req.params.id) || 0, b = req.body || {};
+    const rating = b.rating === 'good' || b.rating === 'bad' ? b.rating : null;
+    const who = String(req.user.username || req.user.key || '').replace(/^(member|user):/, '');
+    if (!rating) { await dbRun('DELETE FROM talk_ratings WHERE call_id = ?', [id]); lessonsCache.at = 0; return res.json({ ok: true, rating: null }); }
+    await dbRun("INSERT INTO talk_ratings (call_id, rating, note, rated_by, rated_at) VALUES (?,?,?,?,datetime('now')) ON CONFLICT(call_id) DO UPDATE SET rating = excluded.rating, note = excluded.note, rated_by = excluded.rated_by, rated_at = excluded.rated_at, active = 1",
+      [id, rating, String(b.note || '').trim().slice(0, 1500) || null, who]);
+    lessonsCache.at = 0;
+    res.json({ ok: true, rating: rating });
   });
   app.get('/api/admin/talk/calls/:id', auth, adminOnly, async (req, res) => {
     const id = parseInt(req.params.id) || 0;
@@ -2048,6 +2085,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     c.has_audio = !!c.audio_path; delete c.audio_path;
     c.can_fetch_audio = !c.has_audio && !!c.conversation_id && c.source !== 'try' && !!env('ELEVENLABS_API_KEY');
     c.emails = await dbAll('SELECT id, kind, to_addr, bcc, subject, html, text, ok, error, created_at FROM talk_emails WHERE call_id = ? ORDER BY id', [id]).catch(() => []);
+    c.team_rating = await dbGet('SELECT rating, note, rated_by, rated_at FROM talk_ratings WHERE call_id = ? AND active = 1', [id]).catch(() => null) || null;
     try { c.quotes = c.quotes ? JSON.parse(c.quotes) : []; } catch (e) { c.quotes = []; }
     c.page_url = c.share_token ? NOVA_URL + '/talk/c/' + c.share_token : null; delete c.share_token;
     const ln = c.line_id ? await dbGet('SELECT am_name FROM talk_lines WHERE id = ?', [c.line_id]).catch(() => null) : null;
