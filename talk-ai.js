@@ -936,7 +936,13 @@ module.exports = function mountTalkAi(app, deps, bot) {
       Number(call.owner) === 2 && s._line ? 'This number is listed as ' + amFirst(s._line) + '\u2019s own phone, but it could not be verified on this call, so treat it as an ordinary call: ' +
         'if they ask for ' + amFirst(s._line) + '\u2019s messages or client details, say you can only give those when ' + amFirst(s._line) + ' calls from their own phone with caller ID on' +
         (s._line.owner_pin ? ' or enters their PIN' : '') + '.' : '',
-      m.facts.length ? '\nLOOKED UP EARLIER IN THIS CALL (use these; look up again only if something changed):\n' + m.facts.map(f => '- ' + f).join('\n').slice(-7000) : ''
+      m.facts.length ? '\nLOOKED UP EARLIER IN THIS CALL (use these; look up again only if something changed):\n' + m.facts.map(f => '- ' + f).join('\n').slice(-7000) : '',
+      await (async () => {
+        const msg = await messageTaken(call.id);
+        return msg ? '\nALREADY DONE ON THIS CALL: the message' + (msg.staff && msg.staff.first ? ' for ' + msg.staff.first : '') + ' ("' + String(msg.text).slice(0, 160) + '") is taken and passed on, and the caller was told. ' +
+          'Do NOT call take_message again and do NOT repeat "I\u2019ll relay your message" or any confirmation. If the caller says thanks, okay, bye or repeats themselves, say only a short goodbye ("You\u2019re welcome, have a great day!")' +
+          (has0('end_call', toolNames) ? ' and call end_call' : '') + '. If they add something genuinely NEW for the message, call take_message once more with only the new part.' : '';
+      })()
     ].join('\n');
     return [{ type: 'text', text: fixed, cache_control: { type: 'ephemeral' } }, { type: 'text', text: live }];
   }
@@ -1049,6 +1055,17 @@ module.exports = function mountTalkAi(app, deps, bot) {
     return { rows: rows, projects: projects };
   }
 
+  // The message already taken on this call (take_message events), if any — so NovaAI never takes it twice.
+  const has0 = (n, names) => (names || []).indexOf(n) > -1;
+  async function messageTaken(callId) {
+    const rows = await dbAll("SELECT content, tools FROM talk_turns WHERE call_id = ? AND role = 'event' AND tools LIKE '%take_message%' ORDER BY id", [callId]).catch(() => []);
+    if (!rows.length) return null;
+    const c = await dbGet('SELECT for_staff FROM talk_calls WHERE id = ?', [callId]).catch(() => null);
+    let staff = null; try { staff = c && c.for_staff ? JSON.parse(c.for_staff) : null; } catch (e) {}
+    const texts = rows.map(r => String(r.content || '').replace(/^Message (taken for the team|added)[^:]*:\s*/, '').split(' \u2014 ').slice(-1)[0]);
+    return { n: rows.length, text: texts.join(' / '), staff: staff };
+  }
+
   // The team member a caller asks for. "My account manager" = their account's manager; for a shared first name
   // the caller's account manager wins (team-directory.js).
   const team = require('./team-directory')({ runQuery });
@@ -1078,7 +1095,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const topic = String(input.topic || '').trim().slice(0, 100) || 'Message from a caller';
     const c = ctx.who.customer;
     // "Can I speak to Lulu?" — find Lulu on the team (production user table) so the call summary is relayed to her.
-    const asked = String(input.for_person || '').trim().slice(0, 80);
+    const prev = await messageTaken(ctx.call.id);
+    const asked = prev && prev.staff && prev.staff.email ? '' : String(input.for_person || '').trim().slice(0, 80);
     let staff = null;
     if (asked) {
       const r = await findStaff(asked, ctx).catch(e => { console.error('TALKAI team lookup', e.message); return { none: true }; });
@@ -1093,6 +1111,17 @@ module.exports = function mountTalkAi(app, deps, bot) {
       await dbRun("UPDATE talk_calls SET for_staff = ? WHERE id = ? AND (? = 1 OR for_staff IS NULL OR for_staff NOT LIKE '%\"email\":\"%')",
         [JSON.stringify(staff), ctx.call.id, staff.email ? 1 : 0]).catch(() => {});
     }
+    // Already taken on this call: never a second email. Something new is added to the same message (it reaches the
+    // team in the CSR summary and the relay after the call); a repeat is ignored.
+    if (prev) {
+      const key = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+      const fresh = key(msg).split(' ').filter(w => w.length > 3 && key(prev.text).indexOf(w) === -1);
+      if (fresh.length >= 3) await addTurn(ctx.call.id, 'event', 'Message added: ' + msg, [{ tool: 'take_message', input: { added: true } }]);
+      const who2 = (staff && staff.first) || (prev.staff && prev.staff.first) || '';
+      return { taken: true, already_taken: true, emailed_team: false, added: fresh.length >= 3,
+        say: 'The message was already passed on' + (who2 ? ' to ' + who2 : '') + ' earlier in this call' + (fresh.length >= 3 ? ' (the new part is added to it)' : '') +
+          '. Do NOT repeat the confirmation. If they just said thanks / okay / bye, say only a short goodbye and end the call; otherwise answer what they asked in one sentence.' };
+    }
     await addTurn(ctx.call.id, 'event', 'Message taken for the team: ' + topic + ' — ' + msg, [{ tool: 'take_message', input: { caller_name: name, callback_number: back, email: email, topic: topic } }]);
     await dbRun("UPDATE talk_calls SET outcome = 'message', updated_at = datetime('now') WHERE id = ?", [ctx.call.id]).catch(() => {});
     let sent = false;
@@ -1100,15 +1129,17 @@ module.exports = function mountTalkAi(app, deps, bot) {
       const rows = [['For', staff ? (staff.name ? staff.name + ' (' + staff.email + ') — the call summary is relayed to them after the call' : 'Asked for "' + staff.asked + '" — not found on the team list') : ''],
         ['Caller', name || '(no name given)'], ['Call back', back], ['Email', email], ['Customer', c ? (c.name || '') + (c.company ? ' — ' + c.company : '') + ' (verified, #' + c.id + ')' : 'not verified'],
         ['Topic', topic], ['Message', msg]].filter(r => r[1]);
-      try {
-        await deps.sendMail({ to: s.notify_to, subject: 'TalkAi message' + (staff && staff.name ? ' for ' + staff.name : s._line ? ' for ' + amFirst(s._line) : '') + ': ' + topic + (name ? ' — ' + name : '') + (back ? ' (' + back + ')' : ''),
+      const mail = { to: s.notify_to, subject: 'TalkAi message' + (staff && staff.name ? ' for ' + staff.name : s._line ? ' for ' + amFirst(s._line) : '') + ': ' + topic + (name ? ' — ' + name : '') + (back ? ' (' + back + ')' : ''),
           text: 'NovaAI took a message on the phone.\n\n' + rows.map(r => r[0] + ': ' + r[1]).join('\n') + '\n\nCall: ' + callLink(ctx.call.id),
           html: '<div style="font:14px/1.5 Arial,sans-serif;color:#1f2937"><p><b>NovaAI took a message on the phone.</b></p><table style="border-collapse:collapse;font-size:13px">' +
             rows.map(r => '<tr><td style="padding:4px 12px 4px 0;color:#6b7280;vertical-align:top">' + r[0] + '</td><td style="padding:4px 0">' + htmlEsc(r[1]) + '</td></tr>').join('') +
             '</table><p><a href="' + callLink(ctx.call.id) + '">Open the call in Nova</a></p></div>',
-          replyTo: email || undefined });
+          replyTo: email || undefined };
+      try {
+        await deps.sendMail(mail);
         sent = true;
-      } catch (e) { console.error('TALKAI message email', e.message); }
+        await saveEmail(ctx.call.id, 'message', mail, null);
+      } catch (e) { console.error('TALKAI message email', e.message); await saveEmail(ctx.call.id, 'message', mail, e.message); }
     }
     if (staff && staff.email) {
       // Relayed after the call with the AI summary (handoff.afterCall); this is the safety net if the post-call
@@ -1302,11 +1333,13 @@ module.exports = function mountTalkAi(app, deps, bot) {
       if (!quotes.length && !note) return { sent: false, error: 'Nothing has been priced on this call yet: price it first.' };
     }
     try {
-      await deps.sendMail({ to: to, subject: subject,
+      const mail = { to: to, subject: subject,
         text: (note ? note + '\n\n' : '') + (quotes.length ? '--- Ready to forward to your client ---\n\n' + quoteEmailText(quotes, '', null) + '\n\n' : '') + '— NovaAI, from your call ' + callLink(ctx.call.id),
         html: '<div style="font:14px/1.55 Arial,sans-serif;color:#1f2937">' + (note ? '<p style="white-space:pre-wrap">' + htmlEsc(note) + '</p>' : '') +
           (quotes.length ? '<p style="color:#6b7280;font-size:12.5px;margin:18px 0 6px">Ready to forward to your client:</p>' + quoteEmailHtml(quotes, '', null) : '') +
-          '<p style="color:#6b7280;font-size:12.5px">\u2014 NovaAI, from <a href="' + callLink(ctx.call.id) + '">your call</a></p></div>' });
+          '<p style="color:#6b7280;font-size:12.5px">\u2014 NovaAI, from <a href="' + callLink(ctx.call.id) + '">your call</a></p></div>' };
+      await deps.sendMail(mail);
+      await saveEmail(ctx.call.id, 'notes', mail, null);
     } catch (e) {
       console.error('TALKAI email_me', e.message);
       return { sent: false, error: 'The email could not be sent right now.' };
@@ -1802,11 +1835,13 @@ module.exports = function mountTalkAi(app, deps, bot) {
       const fresh = await dbGet('SELECT * FROM talk_calls WHERE id = ?', [call.id]);
       const who = fresh.customer_name ? fresh.customer_name + (fresh.company ? ' (' + fresh.company + ')' : '') : (fresh.from_number || 'Unknown caller');
       const lines = transcript.slice(0, 80).map(t => (t.role === 'caller' ? 'Caller: ' : 'NovaAI: ') + t.text);
-      deps.sendMail({ to: s.notify_to, subject: 'TalkAi call: ' + who + (fresh.duration_sec ? ' — ' + Math.round(fresh.duration_sec / 60 * 10) / 10 + ' min' : ''),
+      const mail = { to: s.notify_to, subject: 'TalkAi call: ' + who + (fresh.duration_sec ? ' — ' + Math.round(fresh.duration_sec / 60 * 10) / 10 + ' min' : ''),
         text: (fresh.summary || '') + '\n\n' + lines.join('\n') + '\n\nCall: ' + callLink(call.id),
         html: '<div style="font:14px/1.5 Arial,sans-serif;color:#1f2937"><p><b>' + htmlEsc(who) + '</b> · ' + htmlEsc(fresh.from_number || '') + '</p>' +
           (fresh.summary ? '<p>' + htmlEsc(fresh.summary) + '</p>' : '') + '<p style="color:#6b7280;font-size:13px">' + lines.map(htmlEsc).join('<br>') + '</p>' +
-          '<p><a href="' + callLink(call.id) + '">Open the call in Nova</a></p></div>' }).catch(e => console.error('TALKAI summary email', e.message));
+          '<p><a href="' + callLink(call.id) + '">Open the call in Nova</a></p></div>' };
+      deps.sendMail(mail).then(() => saveEmail(call.id, 'summary', mail, null))
+        .catch(e => { console.error('TALKAI summary email', e.message); saveEmail(call.id, 'summary', mail, e.message); });
     }
   }
 
@@ -1958,7 +1993,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const m0 = usageStats.startOf('month');
     const m = await dbGet("SELECT SUM(answered_by = 'ai') AS ai, SUM(hours_mode = 'missed') AS missed, SUM(outcome = 'message') AS msgs, " +
       "SUM(COALESCE(owner, 0) = 1) AS own, COUNT(DISTINCT from_number) AS callers FROM talk_calls WHERE source = 'phone' AND created_at >= ?", [m0]).catch(() => ({})) || {};
-    const e = await dbGet('SELECT COUNT(*) AS n FROM talk_emails m JOIN talk_calls c ON c.id = m.call_id WHERE m.ok = 1 AND COALESCE(m.kind, \'\') NOT IN (\'csr\', \'relay\') AND c.source = ? AND m.created_at >= ?', ['phone', m0]).catch(() => ({})) || {};
+    const e = await dbGet('SELECT COUNT(*) AS n FROM talk_emails m JOIN talk_calls c ON c.id = m.call_id WHERE m.ok = 1 AND COALESCE(m.kind, \'\') NOT IN (\'csr\', \'relay\', \'message\', \'summary\') AND c.source = ? AND m.created_at >= ?', ['phone', m0]).catch(() => ({})) || {};
     const t = (label, value, sub) => ({ label: label, value: value || 0, sub: sub });
     res.json({ ok: true, title: 'Calls', unit: 'calls', unit1: 'call', series: s, tiles: [
       t('Calls today', s.now.today, 'yesterday ' + s.now.yesterday), t('Calls this week', s.now.week, 'last week ' + s.now.last_week),
@@ -1991,7 +2026,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const rows = await dbAll('SELECT c.id, c.from_number, c.source, c.status, c.answered_by, c.customer_id, c.customer_name, c.company, c.verified, c.caller_match, c.owner, ' +
       'c.language, c.summary, c.outcome, c.duration_sec, c.created_at, c.updated_at, c.audio_path IS NOT NULL AS has_audio, c.tried_by, c.verified_by, c.caller_first, c.hours_mode, c.line_id, (SELECT am_name FROM talk_lines l WHERE l.id = c.line_id) AS line_name, ' +
       '(SELECT COUNT(*) FROM talk_turns t WHERE t.call_id = c.id AND t.role = \'caller\') AS turns, ' +
-      '(SELECT COUNT(*) FROM talk_emails m WHERE m.call_id = c.id AND m.ok = 1 AND COALESCE(m.kind, \'\') NOT IN (\'csr\', \'relay\')) AS emails_n, c.callback, c.csr_sent_at, c.ai_summary, ' +
+      '(SELECT COUNT(*) FROM talk_emails m WHERE m.call_id = c.id AND m.ok = 1 AND COALESCE(m.kind, \'\') NOT IN (\'csr\', \'relay\', \'message\', \'summary\')) AS emails_n, c.callback, c.csr_sent_at, c.ai_summary, ' +
       '(SELECT content FROM talk_turns t WHERE t.call_id = c.id AND t.role = \'caller\' ORDER BY t.id LIMIT 1) AS first_said, ' +
       '(r.read_at IS NULL OR r.read_at < c.updated_at) AS unread ' +
       'FROM talk_calls c LEFT JOIN talk_reads r ON r.call_id = c.id AND r.reader = ? ' + (where.length ? 'WHERE ' + where.join(' AND ') : '') +

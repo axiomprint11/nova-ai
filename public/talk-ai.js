@@ -192,9 +192,10 @@
     // Emails to the caller: one chip each. CSR summaries: one chip for all of them (opens the history).
     // The person the caller asked for: "Relayed to Lulu Alba" once their email went out (opens it).
     const staff = c.for_staff || null, relayed = (c.emails || []).some(m => m.kind === 'relay' && m.ok);
-    (c.emails || []).forEach((m, i) => { if (m.kind !== 'csr') chips.push('<button type="button" class="tk-mailbtn' + (m.ok ? '' : ' bad') + '" data-mail="' + i + '" title="Show the email">' +
-      '✉ ' + (m.kind === 'relay' ? (m.ok ? 'Relayed to ' : 'Relay failed \u00b7 ') + esc((staff && staff.name) || m.to_addr)
-        : m.ok ? 'Email sent \u00b7 ' + esc(m.to_addr) : 'Email failed \u00b7 ' + esc(m.to_addr)) + '</button>'); });
+    // Every email this call caused is shown in the conversation where it went out; the header only counts them.
+    const nMail = (c.emails || []).length, nBad = (c.emails || []).filter(m => !m.ok).length;
+    if (nMail) chips.push('<button type="button" class="tk-mailbtn' + (nBad ? ' bad' : '') + '" id="jumpMail" title="Show the emails in the conversation">' +
+      '✉ ' + nMail + ' email' + (nMail > 1 ? 's' : '') + ' sent' + (nBad ? ' \u00b7 ' + nBad + ' failed' : '') + '</button>');
     if (staff && !relayed) chips.push('<span class="tk-chip warn" title="' + esc(staff.name ? staff.email : 'Not found on the team list') + '">Asked for ' +
       esc(staff.name || '\u201c' + staff.asked + '\u201d') + (staff.name ? (c.source === 'phone' ? ' \u00b7 relayed after the call' : ' \u00b7 test, not emailed') : ' \u00b7 not on the team list') + '</span>');
     if (c.emailed_to && !(c.emails || []).length) chips.push('<span class="tk-chip ok">Quote emailed to ' + esc(c.emailed_to) + '</span>');
@@ -249,7 +250,7 @@
       const list = (c.emails || []).map((e, i) => ({ e: e, i: i })).filter(x => String(x.e.to_addr).toLowerCase() === to);
       const n = used[to] = (used[to] || 0) + 1;
       const hit = list[Math.min(n, list.length) - 1];
-      mailKey.set(t.id, hit ? 'saved:' + hit.i : 'rebuild:' + to);
+      if (!hit) mailKey.set(t.id, 'rebuild:' + to);
     });
     const mailFor = (t) => mailKey.get(t.id) || null;
     const evClass = (t) => /verified as|Transferred to|saved/i.test(t) ? ' ok' : /failed/i.test(t) ? ' bad' : '';
@@ -274,14 +275,33 @@
       const lkHtml = (list) => '<div class="tk-used tk-lk">' + list.map(x => '<span title="' + esc(JSON.stringify(x.input || {})) + '">' + esc(x.tool) +
         (x.found && x.found !== 'ok' ? ': ' + esc(x.found) : '') + '</span>').join('') + '</div>';
       const nLk = Object.keys(lk).reduce((n, k) => n + lk[k].length, 0);
+      // Events (message taken, verified…) and every email go where they happened: after the last line said before
+      // them; whatever came after the call (CSR summary, relay, call summary) under "After the call".
+      const t0 = toDate(c.created_at).getTime();
+      const lastAt = c.transcript.reduce((a, t) => t.at != null ? Math.max(a, t.at) : a, 0);
+      const endMs = t0 + Math.max(lastAt, Number(c.duration_sec) || 0) * 1000 + 5000;
+      const slot = {}, after = [];
+      const place = (ms, h) => {
+        if (isNaN(ms) || ms > endMs) { after.push({ ms: ms || 0, h: h }); return; }
+        let at = -1;
+        c.transcript.forEach((t, k) => { if (t.at != null && t0 + t.at * 1000 <= ms) at = k; });
+        (slot[at] = slot[at] || []).push({ ms: ms, h: h });
+      };
+      events.forEach(t => place(toDate(t.created_at).getTime(), evtHtml(t, evClass, mailFor)));
+      // Summaries and relays are always after the call (the transcript times are only approximate).
+      (c.emails || []).forEach((m, i) => place(/^(csr|relay|summary)$/.test(m.kind) ? NaN : toDate(m.created_at).getTime(), mailRow(m, i, c)));
+      const put = (k) => (slot[k] || []).sort((a, b) => a.ms - b.ms).map(x => x.h).join('');
       html += '<div class="tk-sec"><span>Transcript</span>' + (nLk ? '<button type="button" class="tk-link" id="showLog">Show NovaAI’s lookups (' + nLk + ')</button>' : '') + '</div><div class="tk-tx" id="callTx">' +
+        put(-1) +
         c.transcript.map((t, k) => '<div class="tk-say ' + (t.role === 'caller' ? 'caller' : 'agent') + '"><div class="who">' + (t.role === 'caller' ? 'Caller' : 'NovaAI') +
           '<small>' + (t.at != null ? Math.floor(t.at / 60) + ':' + String(Math.round(t.at % 60)).padStart(2, '0') : '') + '</small></div><div class="b">' + esc(t.text || '') + '</div></div>' +
           (t.tools && t.tools.length ? '<div class="tk-used">' + t.tools.map(x => '<span>' + esc(x) + '</span>').join('') + '</div>' : '') +
-          (lk[k] ? lkHtml(lk[k]) : '')).join('') +
-        events.map(t => evtHtml(t, evClass, mailFor)).join('') + '</div>';
+          (lk[k] ? lkHtml(lk[k]) : '') + put(k)).join('') +
+        (after.length ? '<div class="tk-after"><span>After the call</span></div>' + after.sort((a, b) => a.ms - b.ms).map(x => x.h).join('') : '') + '</div>';
     } else if (turns.length) {
-      html += '<div class="tk-sec"><span>' + (c.source === 'try' ? 'Conversation' : 'As it happened') + '</span></div><div class="tk-tx">' + turnsHtml(turns, evClass, mailFor) + '</div>';
+      const items = turns.map(t => ({ ms: toDate(t.created_at).getTime(), h: turnsHtml([t], evClass, mailFor) }))
+        .concat((c.emails || []).map((m, i) => ({ ms: toDate(m.created_at).getTime() + 1, h: mailRow(m, i, c) })));
+      html += '<div class="tk-sec"><span>' + (c.source === 'try' ? 'Conversation' : 'As it happened') + '</span></div><div class="tk-tx">' + items.sort((a, b) => a.ms - b.ms).map(x => x.h).join('') + '</div>';
       if (c.source === 'phone' && !/completed|failed|busy|no-answer|canceled/.test(c.status || '')) html += '<div class="tk-msg">The full transcript, summary and recording arrive from ElevenLabs a minute after the call ends.</div>';
     } else {
       html += '<div class="tk-empty">' + (c.answered_by === 'forward' ? 'This call was forwarded to the team.' : c.answered_by === 'message' ? 'The caller heard the closed message.' : 'Nothing was said on this call yet.') + '</div>';
@@ -296,6 +316,7 @@
     };
     if (c.has_audio || c.can_fetch_audio) loadAudio(id);
     v.querySelectorAll('[data-mail]').forEach(b => { b.onclick = () => showMail(c.emails[parseInt(b.dataset.mail)]); });
+    if ($('jumpMail')) $('jumpMail').onclick = () => { const r = v.querySelector('.tk-mailrow'); if (r) { r.scrollIntoView({ behavior: 'smooth', block: 'center' }); r.classList.add('flash'); setTimeout(() => r.classList.remove('flash'), 1400); } };
     v.querySelectorAll('[data-ho]').forEach(b => {
       b.onclick = async () => {
         const k = b.dataset.ho;
@@ -376,6 +397,26 @@
     document.addEventListener('keydown', key);
   }
   // An event line; a quote email gets a small envelope that opens it.
+  // One email this call caused, in the conversation: what kind, who got it, the subject — click to read it. The
+  // hint says which setting sends it, so the team can switch off the ones they don't need.
+  const MAIL_KIND = {
+    quote: ['Quote emailed to the caller', 'The caller asked for it'],
+    message: ['Message email to the team', 'Setup \u2192 Messages go to (sent when NovaAI takes a message)'],
+    summary: ['Call summary + transcript', 'Setup \u2192 \u201cAlso email a summary and the full transcript of every call\u201d'],
+    csr: ['AI summary to the CSR team', 'Setup \u2192 CSR team (after every call NovaAI answered)'],
+    relay: ['Relayed to the person they asked for', 'Sent after the call to the team member the caller asked for'],
+    notes: ['Notes emailed', 'Asked for on the call']
+  };
+  function mailRow(m, i, c) {
+    const k = MAIL_KIND[m.kind] || ['Email', ''];
+    const label = m.kind === 'relay' && c.for_staff && c.for_staff.name ? 'Relayed to ' + c.for_staff.name : k[0];
+    const when = toDate(m.created_at);
+    return '<button type="button" class="tk-mailrow' + (m.ok ? '' : ' bad') + '" data-mail="' + i + '" title="' + esc(k[1] ? 'Sent because: ' + k[1] : 'Show the email') + '">' +
+      '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>' +
+      '<span class="mr-main"><b>' + esc(label) + (m.ok ? '' : ' \u2014 failed') + '</b><span class="mr-to">to ' + esc(m.to_addr) + (m.bcc ? ' \u00b7 bcc ' + esc(m.bcc) : '') + '</span>' +
+      '<span class="mr-sub">' + esc(m.subject || '') + '</span>' + (k[1] ? '<span class="mr-why">' + esc(k[1]) + '</span>' : '') + '</span>' +
+      '<span class="mr-when">' + (isNaN(when) ? '' : esc(when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))) + '</span></button>';
+  }
   function evtHtml(t, evClass, mailFor) {
     const k = mailFor ? mailFor(t) : null;
     return '<div class="tk-evt' + evClass(t.content) + '">' + esc(t.content) +

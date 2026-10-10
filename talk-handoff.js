@@ -75,7 +75,9 @@ module.exports = function talkHandoff(o) {
     turns.filter(t => t.role === 'event').forEach(t => {
       let tl = []; try { tl = JSON.parse(t.tools || '[]') || []; } catch (e) {}
       const m = tl.find(x => x && x.tool === 'take_message');
-      if (m) {
+      if (m && m.input && m.input.added && message) {        // more for the same message ("Message added: …")
+        message.text += ' / ' + String(t.content || '').replace(/^Message added:\s*/, '');
+      } else if (m && !(m.input && m.input.added)) {
         const body = String(t.content || '').replace(/^Message taken for the team:\s*/, '');
         message = { topic: (m.input && m.input.topic) || null, caller_name: (m.input && m.input.caller_name) || null,
           callback_number: e164(m.input && m.input.callback_number) || null, email: (m.input && m.input.email) || null,
@@ -307,7 +309,7 @@ module.exports = function talkHandoff(o) {
         quotes: f.quotes.map(q => ({ product_id: q.product_id || null, product: q.product, options: (q.specs || []).map(sp => ({ name: sp.field, value: sp.value })),
           prices: (q.rows || []).map(r => ({ quantity: Number(r.quantity), price: Number(r.price), list_price: r.list_price != null ? Number(r.list_price) : null,
             discount_percent: r.discount != null ? Number(r.discount) : null, ready: r.ready || null, order_url: r.order_url || null })) })),
-        emails_sent: f.emails.filter(e => e.ok && e.kind !== 'csr' && e.kind !== 'relay').map(e => ({ kind: e.kind, to: e.to_addr, subject: e.subject, at: iso(e.created_at) })),
+        emails_sent: f.emails.filter(e => e.ok && ['csr', 'relay', 'message', 'summary'].indexOf(e.kind) === -1).map(e => ({ kind: e.kind, to: e.to_addr, subject: e.subject, at: iso(e.created_at) })),
         jobs_mentioned: f.jobs
       },
       recording: { ready: !!c.audio_path, url: rec.url, expires_at: rec.expires_at, content_type: 'audio/mpeg' },

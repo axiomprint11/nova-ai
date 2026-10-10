@@ -180,6 +180,21 @@
     font-size: 11.5px; color: #9a3412; background: #fff7ed; border: 1px solid #fed7aa; }
   .tk-evt.ok { color: #065f46; background: #ecfdf5; border-color: #a7f3d0; }
   .tk-evt.bad { color: #991b1b; background: #fef2f2; border-color: #fecaca; }
+  /* Emails the call caused, where they went out (click = read it) */
+  .tk-mailrow { display: flex; align-items: flex-start; gap: 9px; margin: 6px 0 12px 68px; width: calc(100% - 68px); max-width: 640px; padding: 8px 12px; text-align: left;
+    border: 1px solid #c7d2fe; background: #f5f7ff; color: #312e81; border-radius: 12px; font: inherit; font-size: 12.5px; cursor: pointer; transition: background .15s, box-shadow .3s; }
+  .tk-mailrow:hover { background: #eef2ff; }
+  .tk-mailrow svg { flex: none; margin-top: 2px; color: #4f46e5; }
+  .tk-mailrow .mr-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .tk-mailrow .mr-main b { font-weight: 600; }
+  .tk-mailrow .mr-to, .tk-mailrow .mr-sub { color: #4b5563; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tk-mailrow .mr-why { color: #9ca3af; font-size: 11.5px; }
+  .tk-mailrow .mr-when { flex: none; color: #6b7280; font-size: 11.5px; }
+  .tk-mailrow.bad { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
+  .tk-mailrow.bad svg { color: #dc2626; }
+  .tk-mailrow.flash { box-shadow: 0 0 0 3px rgba(79,70,229,.35); }
+  .tk-after { display: flex; align-items: center; gap: 10px; margin: 18px 0 8px; color: #9ca3af; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+  .tk-after::before, .tk-after::after { content: ''; flex: 1; height: 1px; background: var(--line, #e5e7eb); }
   .tk-sec { display: flex; align-items: center; justify-content: space-between; margin: 18px 0 10px; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
     letter-spacing: .05em; color: var(--muted); max-width: 760px; }
 
@@ -393,6 +408,7 @@
     .tk-detail, .tk-trylog { padding: 14px; }
     .tk-say { gap: 8px; } .tk-say .who { width: 46px; }
     .tk-used, .tk-evt { margin-left: 54px; }
+    .tk-mailrow { margin-left: 54px; width: calc(100% - 54px); }
     .tk-evt { border-radius: 12px; }
     .tk-list { width: 100%; }
     .tk-view#vCalls.detail .tk-list { display: none; }
