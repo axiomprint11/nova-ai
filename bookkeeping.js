@@ -1192,13 +1192,37 @@ module.exports = function mountBookkeeping(app, deps) {
     res.json(r);
   });
   app.get('/api/bookkeeping/transactions', ...guard, async (req, res) => {
-    const st = String(req.query.status || ''), q = String(req.query.q || '').trim();
+    // Filters: status, q, from/to (dates), category (sub category name), type (type of expense → all its sub categories),
+    // vendor_id, source (manual / approved / rule), min / max (absolute amount). Categorized views also get totals.
+    const st = String(req.query.status || ''), q = String(req.query.q || '').trim(), g = (k) => String(req.query[k] || '').trim();
     const where = ["t.status <> 'removed'"], p = [];
     if (st) { where.push('t.status = ?'); p.push(st); }
     if (q) { where.push('(t.name LIKE ? OR t.merchant LIKE ? OR t.category LIKE ? OR v.name LIKE ?)'); p.push('%' + q + '%', '%' + q + '%', '%' + q + '%', '%' + q + '%'); }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(g('from'))) { where.push('t.date >= ?'); p.push(g('from')); }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(g('to'))) { where.push('t.date <= ?'); p.push(g('to')); }
+    if (g('category')) { where.push('t.category = ?'); p.push(g('category')); }
+    if (g('type')) { const subs = chartOf(await settings()).filter(c => c.parent === g('type')).map(c => c.name); if (subs.length) { where.push('t.category IN (' + subs.map(() => '?').join(',') + ')'); p.push(...subs); } else { where.push('t.category = ?'); p.push(g('type')); } }
+    if (g('vendor_id')) { if (g('vendor_id') === 'none') where.push('t.vendor_id IS NULL'); else { where.push('t.vendor_id = ?'); p.push(parseInt(g('vendor_id')) || 0); } }
+    if (g('source')) { where.push('t.category_source = ?'); p.push(g('source')); }
+    if (g('min')) { where.push('ABS(t.amount) >= ?'); p.push(Number(g('min')) || 0); }
+    if (g('max')) { where.push('ABS(t.amount) <= ?'); p.push(Number(g('max')) || 0); }
+    if (g('account')) { where.push('t.account_name = ?'); p.push(g('account')); }
     const by_status = Object.fromEntries((await dbAll("SELECT status, COUNT(*) n FROM bk_transactions WHERE status <> 'removed' GROUP BY status")).map(r => [r.status, r.n]));
-    res.json({ ok: true, by_status, transactions: await dbAll('SELECT t.id, t.txn_id, t.account_name, t.date, t.name, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, v.name AS vendor_name, v.source AS vendor_source ' +
-      'FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id WHERE ' + where.join(' AND ') + ' ORDER BY t.date DESC, t.id DESC LIMIT 300', p) });
+    const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id WHERE ' + where.join(' AND ');
+    const rows = await dbAll('SELECT t.id, t.txn_id, t.account_name, t.date, t.name, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, v.name AS vendor_name, v.source AS vendor_source' + W + ' ORDER BY t.date DESC, t.id DESC LIMIT 500', p);
+    const out = { ok: true, by_status, transactions: rows };
+    if (st === 'categorized') {
+      const parentOfName = {}; chartOf(await settings()).forEach(c => { if (c.parent) parentOfName[c.name] = c.parent; });
+      const tot = await dbGet('SELECT COUNT(*) n, SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) spent, SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) received' + W, p);
+      const byCat = await dbAll('SELECT t.category, SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) spent, SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) received, COUNT(*) n' + W + ' GROUP BY t.category ORDER BY spent DESC', p);
+      const byType = {}; byCat.forEach(r => { const t = parentOfName[r.category] || r.category || '—'; const o = byType[t] || (byType[t] = { type: t, spent: 0, received: 0, n: 0 }); o.spent += r.spent; o.received += r.received; o.n += r.n; });
+      const byMonth = await dbAll("SELECT substr(t.date, 1, 7) m, SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) spent, SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) received, COUNT(*) n" + W + ' GROUP BY m ORDER BY m', p);
+      const byVendor = await dbAll('SELECT COALESCE(v.name, t.merchant, t.name) vendor, t.vendor_id, SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) spent, COUNT(*) n' + W + ' GROUP BY COALESCE(v.name, t.merchant, t.name), t.vendor_id ORDER BY spent DESC LIMIT 12', p);
+      out.totals = { count: tot.n, spent: tot.spent || 0, received: tot.received || 0, by_type: Object.values(byType).sort((a, b) => b.spent - a.spent), by_category: byCat, by_month: byMonth, by_vendor: byVendor };
+      out.accounts = (await dbAll("SELECT DISTINCT account_name FROM bk_transactions WHERE account_name IS NOT NULL ORDER BY 1")).map(r => r.account_name);
+      out.vendors = await dbAll("SELECT DISTINCT v.id, v.name FROM bk_transactions t JOIN bk_vendors v ON v.id = t.vendor_id WHERE t.status = 'categorized' ORDER BY v.name");
+    }
+    res.json(out);
   });
   app.post('/api/bookkeeping/transactions/:id/category', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), category = String(req.body.category || '').trim();

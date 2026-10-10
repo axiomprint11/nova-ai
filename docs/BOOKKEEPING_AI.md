@@ -166,8 +166,24 @@ the rating / verdict line (and the bill it became), the HTML body in a sandboxed
 scanned before 1.18.7 fetch it once on open; "Plain text" falls back to `body`), attachment cards (image thumbnails,
 PDF icon) that open a viewer (PDF in a frame, image as is, Download / Open in a tab), and Read it as a bill / Mark as read.
 `GET /api/bookkeeping/emails/:id` (full record + `bill`), `GET /api/bookkeeping/emails/:id/att/:i` (the file, inline).
-Transactions has All / New / Pending / Categorized chips with counts (`by_status` in the response) and the tab badge counts
-transactions still without a decided category (`txn_open`).
+### Transactions tab
+Tabs All / **Pending** (the default — BookkeeperAI proposed a category or asked a question and waits for you) / New (synced from
+the bank, not looked at yet) / Categorized, with counts (`by_status`) except on Categorized; the main-tab badge counts
+transactions still without a decided category (`txn_open`). Open rows have no Set button — picking a category sets it.
+The search sits at the right of the tab row, next to the "Sync with Bank" icon button (`POST /api/bookkeeping/sync`).
+**Categorized is a report** (1.18.8): a period row (Last 30 days default, This month, Last month, Last 90 days, This year,
+All time, Custom from/to), $ min–max, header filters on Vendor, Account, Category (type or sub category) and Set by
+(rule / approved / manual), Clear filters; tiles (spent · count, received, net out), spend by month bars, by type of
+expense bars (click to filter), top vendors (click to filter). Filters are query params of `GET /api/bookkeeping/transactions`
+(`status, q, from, to, category, type, vendor_id` ('none' = unlinked), `source, min, max, account`); with
+`status=categorized` the response adds `totals {count, spent, received, by_type, by_category, by_month, by_vendor}`,
+`accounts` and `vendors` for the filter menus. Filter state is remembered per browser (`bk_txn_filters`).
+
+### Page layout (1.18.8)
+Main tabs left-aligned in the header, "Bookkeeping AI" + the last-run pill at the right, Connections / Activity icons
+after them. Every view is full width, left aligned. Table headers (`table.bk th`) are 15.5px, dark, and **sticky**:
+the list scrolls under them (`.bk-main` scrolls; its top padding lives on `.bk-view` so a stuck header sits flush).
+Search boxes everywhere are regular weight and right-aligned on their row.
 
 ## Bills tab and vendor pairing
 The Bills tab has four sub-tabs by status — **Pending** (drafts; rejected folded below), **Approved**, **Scheduled**,
