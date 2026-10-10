@@ -357,7 +357,7 @@
     v.querySelectorAll('[data-link]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); const b = bills.find(x => String(x.id) === a.dataset.link); vendorPicker(a, b, (vid) => pair(b.id, vid)); });
   }
   // ---------------------------------------------------------------- Inbox (accounting@, Gmail-like)
-  let ibFilter = 'all', ibOpen = null;
+  let ibFilter = 'new', ibOpen = null;   // opens on what is not read yet; falls back to All when nothing is
   async function loadInbox() {
     const v = $('vInbox');
     if (!ov) await overview();
@@ -371,6 +371,10 @@
     const fromAddr = (f) => { const m = /<([^>]+)>/.exec(f || ''); return m ? m[1] : String(f || ''); };
     const clip = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.5 8.5a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8"/></svg>';
     const day = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$/.test(ts) ? '' : 'Z')); if (isNaN(d)) return ts; const now = new Date(); return d.toDateString() === now.toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric' }); };
+    if (ibFilter === 'new' && !counts.new) ibFilter = counts.message ? 'message' : 'all';
+    // Gmail snippets come HTML-escaped (&quot; &amp;): decode once, esc() re-escapes for display.
+    const dec = (t) => { const d = document.createElement('textarea'); d.innerHTML = String(t || ''); return d.value; };
+    all.forEach(m => { m.snippet = dec(m.snippet); m.subject = dec(m.subject); });
     const rank = (m) => ({ new: 0, message: 1 })[st(m)] ?? 2;
     all.sort((a, b) => rank(a) - rank(b) || String(b.received_at || '').localeCompare(String(a.received_at || '')));   // not read yet, then messages for a person, then the rest, newest first
     const row = (m) => { const k = st(m); return '<div class="ib-row ' + k + (ibOpen === m.id ? ' open' : '') + '" data-m="' + m.id + '" data-k="' + k + '" data-ai="' + (m.read_by === 'ai' ? 1 : 0) + '" data-q="' + esc((m.from_addr + ' ' + m.subject + ' ' + (m.snippet || '') + ' ' + (m.note || '')).toLowerCase()) + '">' +
