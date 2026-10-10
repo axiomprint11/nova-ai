@@ -43,7 +43,8 @@
     $('nPending').textContent = ov.counts.pending || '';
     const rs = $('runState');
     if (ov.running) { rs.className = 'bk-pill off'; rs.textContent = 'Running…'; }
-    else if (ov.last_run) { rs.className = 'bk-pill ' + (ov.last_run.ok ? 'on' : 'err'); rs.textContent = (ov.last_run.ok ? 'Last run ' : 'Last run failed ') + when(ov.last_run.started_at); }
+    else if (ov.last_run) { rs.className = 'bk-pill ' + (ov.last_run.ok ? 'on' : 'err'); rs.textContent = (ov.last_run.ok ? 'Last run ' : 'Last run failed ') + when(ov.last_run.started_at); rs.title = ov.last_run.summary || ''; rs.style.cursor = 'pointer';
+      rs.onclick = () => alert((ov.last_run.ok ? 'Last run ' : 'Last run FAILED ') + when(ov.last_run.started_at) + (ov.last_run.started_by ? ' (' + ov.last_run.started_by + ')' : '') + '\n\n' + (ov.last_run.summary || 'no details') + '\n\nEvery run is listed under Activity.'); }
     else { rs.className = 'bk-pill off'; rs.textContent = 'Not run yet'; }
     return ov;
   }

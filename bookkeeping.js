@@ -780,7 +780,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const qs = list.filter(p => p.question && !p.question.answer);
     const cats = list.filter(p => p.type === 'category' && !(p.question && !p.question.answer));
     const bills = list.filter(p => p.type === 'bill' && !(p.question && !p.question.answer));
-    const bal = plaidReady() && (await dbGet('SELECT COUNT(*) AS n FROM bk_accounts')).n ? await balances() : [];
+    let bal = []; try { bal = plaidReady() && (await dbGet('SELECT COUNT(*) AS n FROM bk_accounts')).n ? await balances() : []; } catch (e) { errlog('balances', e.message); }
     const lines = ['*BookkeeperAI — Daily Brief ' + day + '*'];
     if (bal.length) lines.push('Cash: ' + bal.filter(b => !b.error).map(b => b.name + (b.mask ? ' ••' + b.mask : '') + ' ' + usd(b.available != null ? b.available : b.current)).join(' · '));
     if (runSummary) lines.push('Overnight: ' + runSummary);
