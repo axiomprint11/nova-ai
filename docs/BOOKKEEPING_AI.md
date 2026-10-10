@@ -133,7 +133,11 @@ icon and color, round marks for a single choice, checkboxes + Done for `{ multi:
 stored "Paper; Freight & Shipping"), "+ New category…" in the footer. Transactions show "Type › Sub category".
 
 ## Bills tab and vendor pairing
-**Bills** and **Inbox** are two main tabs (`?tab=inbox`; the Inbox tab carries a badge with the not-yet-read count;
+The Bills tab has four sub-tabs by status — **Pending** (drafts; rejected folded below), **Approved**, **Scheduled**,
+**Paid** — each with a count. After approval a bill is moved by hand: "Schedule payment…" (a pay date →
+`bk_bills.scheduled_for`), "Mark paid…" (date + how → `paid_at`, `paid_note`), and back (`POST
+/api/bookkeeping/bills/:id/status {status, date, note}`, allowed moves approved ↔ scheduled ↔ paid, audited). Nothing
+moves money; this is the ledger until BILL / QuickBooks are connected. **Bills** and **Inbox** are two main tabs (`?tab=inbox`; the Inbox tab carries a badge with the not-yet-read count;
 emails not read yet sort to the top). Inbox is a Gmail-like list: status dot (green = read as a bill, grey = skipped, blue = not read,
 red = error), sender, subject — snippet on one line, attachment count, time; All / Bills / Skipped / Not read chips and a
 search box; a row opens in place with the full snippet, the files, BookkeeperAI's verdict and "Read it as a bill".

@@ -19,7 +19,10 @@
   document.querySelectorAll('.bk-tabs button').forEach(b => b.onclick = () => show(b.dataset.v));
   // Main tabs with sub-tabs: Accounts (vendors / chart / rules) and Bills (bills / inbox). show('chart') or
   // show('inbox') opens that sub-tab directly; the last sub-tab of each is remembered per browser.
-  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, chart: loadChart, rules: loadRules, materials: loadMaterials }, first: 'vendors' } };
+  const BILL_SUBS = { pending: ['draft', 'rejected'], approved: ['approved'], scheduled: ['scheduled'], paid: ['paid'] };
+  let billSub = 'pending';
+  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, chart: loadChart, rules: loadRules, materials: loadMaterials }, first: 'vendors' },
+    bills: { bar: 'subBills', subs: { pending: () => loadBills('pending'), approved: () => loadBills('approved'), scheduled: () => loadBills('scheduled'), paid: () => loadBills('paid') }, first: 'pending' } };
   document.querySelectorAll('.bk-sub button').forEach(b => b.onclick = () => show(b.closest('.bk-view').dataset.v, b.dataset.s));
   const lastSub = {}; Object.keys(TABS).forEach(k => { try { lastSub[k] = localStorage.getItem('bk_sub_' + k) || TABS[k].first; } catch (e) { lastSub[k] = TABS[k].first; } });
   function show(v, sub) {
@@ -30,12 +33,12 @@
     if (T) {
       sub = T.subs[sub] ? sub : lastSub[v]; lastSub[v] = sub; try { localStorage.setItem('bk_sub_' + v, sub); } catch (e) {}
       document.querySelectorAll('#' + T.bar + ' button').forEach(b => b.classList.toggle('on', b.dataset.s === sub));
-      document.querySelectorAll('.bk-view[data-v="' + v + '"] .bk-subview').forEach(s => s.classList.toggle('on', s.dataset.s === sub));
+      if (v !== 'bills') document.querySelectorAll('.bk-view[data-v="' + v + '"] .bk-subview').forEach(s => s.classList.toggle('on', s.dataset.s === sub));
       T.subs[sub]();
       try { history.replaceState(null, '', '/bookkeeping?tab=' + v + '&sub=' + sub); } catch (e) {}
       return;
     }
-    ({ brief: loadBrief, txns: loadTxns, bills: loadBills, inbox: loadInbox, conn: loadConn, activity: loadActivity })[v]();
+    ({ brief: loadBrief, txns: loadTxns, inbox: loadInbox, conn: loadConn, activity: loadActivity })[v]();
     try { history.replaceState(null, '', '/bookkeeping?tab=' + v); } catch (e) {}
   }
   async function overview() {
@@ -44,6 +47,7 @@
     categories = chart.filter(c => c.parent || !c.children).map(c => c.name).filter((n, i, a) => a.indexOf(n) === i);
     $('nPending').textContent = ov.counts.pending || '';
     $('nBills').textContent = ov.counts.bill_drafts || ''; $('nBills').title = (ov.counts.bill_drafts || 0) + ' bill drafts waiting';
+    const bs = ov.counts.bills_by_status || {}; $('nBillsPending').textContent = bs.draft || ''; $('nBillsApproved').textContent = bs.approved || ''; $('nBillsScheduled').textContent = bs.scheduled || ''; $('nBillsPaid').textContent = bs.paid || '';
     $('nInbox').textContent = ov.counts.inbox_new || ''; $('nInbox').title = (ov.counts.inbox_new || 0) + ' emails not read yet';
     const rs = $('runState');
     if (ov.running) { rs.className = 'bk-pill off'; rs.textContent = 'Running…'; }
@@ -295,7 +299,8 @@
   }
 
   // ---------------------------------------------------------------- Bills
-  async function loadBills() {
+  async function loadBills(sub) {
+    billSub = BILL_SUBS[sub] ? sub : billSub;
     const v = $('vBills');
     if (!ov) await overview();
     const j = await api('/api/bookkeeping/bills');
@@ -320,14 +325,31 @@
         (b.lines.length ? '<table class="bk bl-lines"><tbody>' + b.lines.map(l => '<tr><td>' + esc(l.description || '') + (l.qty && l.unit_price ? ' <span class="bk-dim">' + esc(l.qty) + ' × ' + usd(l.unit_price) + '</span>' : '') + '</td><td class="bk-muted">' + catLabel(l.category || '') + '</td><td class="num">' + usd(l.amount) + '</td></tr>').join('') +
           (b.subtotal != null || b.tax ? '<tr class="sum"><td></td><td class="bk-muted">' + (b.subtotal != null ? 'Subtotal ' + usd(b.subtotal) : '') + (b.tax ? ' · tax ' + usd(b.tax) : '') + '</td><td class="num">' + usd(b.total) + '</td></tr>' : (Math.abs(tot - b.total) > 0.01 && tot ? '<tr class="sum"><td></td><td class="bk-dim">lines add up to ' + usd(tot) + '</td><td></td></tr>' : '')) + '</tbody></table>' : '') +
         '<div class="bl-acts">' + (b.file ? '<a href="#" class="bk-btn sm" data-file="' + b.id + '">Open the file</a>' : '') + (b.subject ? '<span class="bk-dim bl-subj" title="' + esc(b.from_addr || '') + '">✉ ' + esc(b.subject) + '</span>' : '') + '<span class="sp"></span>' +
-          (pend ? '<button class="bk-btn sm ok" data-bapprove="' + b.proposal_id + '">Approve</button><button class="bk-btn sm bad" data-breject="' + b.proposal_id + '">Reject</button>' : '') + '</div></div>';
+          (pend ? '<button class="bk-btn sm ok" data-bapprove="' + b.proposal_id + '">Approve</button><button class="bk-btn sm bad" data-breject="' + b.proposal_id + '">Reject</button>' : '') +
+          (b.status === 'approved' ? '<button class="bk-btn sm" data-bstatus="scheduled" data-bid="' + b.id + '">Schedule payment…</button><button class="bk-btn sm ok" data-bstatus="paid" data-bid="' + b.id + '">Mark paid…</button>' : '') +
+          (b.status === 'scheduled' ? '<span class="bk-muted">to pay ' + esc(b.scheduled_for || '') + '</span><button class="bk-btn sm ok" data-bstatus="paid" data-bid="' + b.id + '">Mark paid…</button><button class="bk-btn sm" data-bstatus="approved" data-bid="' + b.id + '">Unschedule</button>' : '') +
+          (b.status === 'paid' ? '<span class="bk-muted">paid ' + esc(b.paid_at || '') + (b.paid_note ? ' · ' + esc(b.paid_note) : '') + '</span><button class="bk-btn sm" data-bstatus="approved" data-bid="' + b.id + '">Not paid after all</button>' : '') + '</div></div>';
     };
-    const bills = j.bills || [], open = bills.filter(b => b.status === 'draft'), done = bills.filter(b => b.status !== 'draft');
-    v.innerHTML = '<div class="bk-card"><h2>Bills ' + qHelp('bills', 'Bills', 'Bills BookkeeperAI read from ' + esc(ov ? ov.connections.gmail.inbox : 'the inbox') + '. Each one is paired with a CRM supplier or vendor — when the name is not an exact match, pick the right one once and the next bill from them links by itself.') + '<span class="sp"></span><span class="bk-muted">' + open.length + ' draft' + (open.length === 1 ? '' : 's') + (done.length ? ' · ' + done.length + ' decided' : '') + '</span><button class="bk-btn" id="scanNow">Scan the inbox now</button></h2>' +
-      (open.length ? open.map(billCard).join('') : '<div class="bk-muted" style="padding:10px 0">No bill drafts waiting.</div>') +
-      (done.length ? '<details class="bl-done"><summary>' + done.length + ' decided bill' + (done.length === 1 ? '' : 's') + '</summary>' + done.map(billCard).join('') + '</details>' : '') + '</div>';
-    $('scanNow').onclick = async () => { $('scanNow').disabled = true; const r = await post('/api/bookkeeping/scan', {}); if (!r.ok) alert(r.error); loadBills(); overview(); };
+    const bills = j.bills || [];
+    const TITLES = { pending: ['Pending', 'Bill drafts waiting for your decision.', 'No bill drafts waiting.'], approved: ['Approved', 'Approved and waiting to be paid — schedule a pay date or mark them paid as you go. (Paying through BILL comes in a later phase; nothing moves money here.)', 'Nothing approved and unpaid.'], scheduled: ['Scheduled', 'Approved bills with a pay date.', 'Nothing scheduled.'], paid: ['Paid', 'Paid bills, newest first.', 'Nothing paid yet.'] };
+    const t = TITLES[billSub];
+    const main = bills.filter(b => b.status === (billSub === 'pending' ? 'draft' : billSub)), rejected = billSub === 'pending' ? bills.filter(b => b.status === 'rejected') : [];
+    if (billSub === 'scheduled') main.sort((a, b) => String(a.scheduled_for || '').localeCompare(String(b.scheduled_for || '')));
+    if (billSub === 'paid') main.sort((a, b) => String(b.paid_at || '').localeCompare(String(a.paid_at || '')));
+    const total = main.reduce((a, b) => a + (Number(b.total) || 0), 0);
+    v.innerHTML = '<div class="bk-card"><h2>' + t[0] + ' bills ' + qHelp('bills', 'Bills', 'Bills BookkeeperAI read from ' + esc(ov ? ov.connections.gmail.inbox : 'the inbox') + '. Each one is paired with a CRM supplier or vendor — when the name is not an exact match, pick the right one once and the next bill from them links by itself. Pending → Approved → Scheduled → Paid.') + '<span class="sp"></span><span class="bk-muted">' + main.length + ' bill' + (main.length === 1 ? '' : 's') + (main.length ? ' · ' + usd(total) : '') + '</span>' + (billSub === 'pending' ? '<button class="bk-btn" id="scanNow">Scan the inbox now</button>' : '') + '</h2>' +
+      '<div class="bk-muted" style="margin-bottom:10px">' + t[1] + '</div>' +
+      (main.length ? main.map(billCard).join('') : '<div class="bk-muted" style="padding:10px 0">' + t[2] + '</div>') +
+      (rejected.length ? '<details class="bl-done"><summary>' + rejected.length + ' rejected</summary>' + rejected.map(billCard).join('') + '</details>' : '') + '</div>';
+    if ($('scanNow')) $('scanNow').onclick = async () => { $('scanNow').disabled = true; const r = await post('/api/bookkeeping/scan', {}); if (!r.ok) alert(r.error); loadBills(); overview(); };
     v.querySelectorAll('[data-file]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); openFile(a.dataset.file); });
+    v.querySelectorAll('[data-bstatus]').forEach(b => b.onclick = async () => {
+      const to = b.dataset.bstatus; let date = '', note = '';
+      const d7 = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10), d0 = new Date().toISOString().slice(0, 10);
+      if (to === 'scheduled') { date = prompt('Pay on (YYYY-MM-DD):', d7); if (date === null) return; date = date.trim() || d7; }
+      if (to === 'paid') { date = prompt('Paid on (YYYY-MM-DD):', d0); if (date === null) return; date = date.trim() || d0; note = prompt('How? (check #, card, ACH… optional)', '') || ''; }
+      b.disabled = true; const r = await post('/api/bookkeeping/bills/' + b.dataset.bid + '/status', { status: to, date, note }); if (!r.ok) alert(r.error); loadBills(); overview();
+    });
     v.querySelectorAll('[data-bapprove]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/proposals/' + b.dataset.bapprove + '/decide', { action: 'approve', approve_vendor: true }); if (!r.ok) alert(r.error); loadBills(); overview(); });
     v.querySelectorAll('[data-breject]').forEach(b => b.onclick = async () => { const note = prompt('Why? (optional)'); if (note === null) return; b.disabled = true; await post('/api/bookkeeping/proposals/' + b.dataset.breject + '/decide', { action: 'reject', note }); loadBills(); overview(); });
     const pair = async (billId, vid) => { const r = await post('/api/bookkeeping/bills/' + billId + '/vendor', { vendor_id: vid, remember: true }); if (!r.ok) alert(r.error); loadBills(); };

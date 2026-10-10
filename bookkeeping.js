@@ -83,6 +83,7 @@ module.exports = function mountBookkeeping(app, deps) {
       invoice_date TEXT, due_date TEXT, terms TEXT, subtotal REAL, tax REAL, total REAL, currency TEXT DEFAULT 'USD', kind TEXT DEFAULT 'invoice',
       duplicate_of INTEGER, lines TEXT, file TEXT, file_name TEXT, status TEXT DEFAULT 'draft', proposal_id INTEGER, note TEXT,
       created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
+    ['scheduled_for TEXT', 'paid_at TEXT', 'paid_note TEXT'].forEach(c => db.run('ALTER TABLE bk_bills ADD COLUMN ' + c, () => {}));
     db.run(`CREATE TABLE IF NOT EXISTS bk_proposals (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, ref_table TEXT, ref_id INTEGER, title TEXT,
       payload TEXT, confidence REAL, reason TEXT, status TEXT DEFAULT 'pending', decided_by TEXT, decided_at TEXT, decision TEXT,
       created_at TEXT DEFAULT (datetime('now')))`);
@@ -1093,6 +1094,7 @@ module.exports = function mountBookkeeping(app, deps) {
       transactions: (await dbGet('SELECT COUNT(*) AS n FROM bk_transactions')).n,
       bills: (await dbGet("SELECT COUNT(*) AS n FROM bk_bills WHERE status <> 'rejected'")).n,
       bill_drafts: (await dbGet("SELECT COUNT(*) AS n FROM bk_bills WHERE status = 'draft'")).n,
+      bills_by_status: Object.fromEntries((await dbAll('SELECT status, COUNT(*) n FROM bk_bills GROUP BY status')).map(r => [r.status, r.n])),
       inbox_new: (await dbGet("SELECT COUNT(*) AS n FROM bk_emails WHERE status = 'new'")).n,
       emails: (await dbGet('SELECT COUNT(*) AS n FROM bk_emails')).n, rules: (await dbGet('SELECT COUNT(*) AS n FROM bk_rules WHERE active = 1')).n
     };
@@ -1154,6 +1156,19 @@ module.exports = function mountBookkeeping(app, deps) {
       r.question = q && !q.answer ? q : null;
     }
     res.json({ ok: true, bills: rows });
+  });
+  // Bill life after approval: approved → scheduled (a pay date) → paid (date + how). Until BILL / QuickBooks are
+  // connected these are set by hand here; nothing moves money.
+  app.post('/api/bookkeeping/bills/:id/status', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), to = String(req.body && req.body.status || ''), date = String(req.body && req.body.date || '').slice(0, 10), note = String(req.body && req.body.note || '').slice(0, 200);
+    const b = await dbGet('SELECT * FROM bk_bills WHERE id = ?', [id]); if (!b) return res.json({ ok: false, error: 'No such bill' });
+    const allowed = { approved: ['scheduled', 'paid'], scheduled: ['paid', 'approved'], paid: ['approved'] };
+    if (!(allowed[b.status] || []).includes(to)) return res.json({ ok: false, error: 'A ' + b.status + ' bill cannot become ' + to + '.' });
+    if (to === 'scheduled') await dbRun("UPDATE bk_bills SET status = 'scheduled', scheduled_for = ?, updated_at = datetime('now') WHERE id = ?", [date || null, id]);
+    else if (to === 'paid') await dbRun("UPDATE bk_bills SET status = 'paid', paid_at = ?, paid_note = ?, updated_at = datetime('now') WHERE id = ?", [date || nowIso().slice(0, 10), note || null, id]);
+    else await dbRun("UPDATE bk_bills SET status = 'approved', scheduled_for = NULL, paid_at = NULL, paid_note = NULL, updated_at = datetime('now') WHERE id = ?", [id]);
+    await audit(userId(req), 'bill.' + to, id, { date, note, was: b.status });
+    res.json({ ok: true, status: to });
   });
   // Pair a bill with a directory entry: { vendor_id, remember } — remember keeps the bill's vendor name as an alias so
   // the next bill from them links by itself. A bill-source row left with nothing pointing at it is removed.
