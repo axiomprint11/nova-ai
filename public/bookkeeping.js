@@ -17,23 +17,25 @@
 
   let ov = null, categories = [], chart = [];
   document.querySelectorAll('.bk-tabs button').forEach(b => b.onclick = () => show(b.dataset.v));
-  document.querySelectorAll('#subAccounts button').forEach(b => b.onclick = () => show('accounts', b.dataset.s));
-  const SUBS = { vendors: loadVendors, chart: loadChart, rules: loadRules };
-  let lastSub = 'vendors'; try { lastSub = localStorage.getItem('bk_accounts_sub') || 'vendors'; } catch (e) {}
-  // show('accounts', 'chart'); show('vendors') / show('rules') / show('chart') open that part of Accounts.
+  // Main tabs with sub-tabs: Accounts (vendors / chart / rules) and Bills (bills / inbox). show('chart') or
+  // show('inbox') opens that sub-tab directly; the last sub-tab of each is remembered per browser.
+  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, chart: loadChart, rules: loadRules }, first: 'vendors' }, bills: { bar: 'subBills', subs: { bills: loadBills, inbox: loadInbox }, first: 'bills' } };
+  document.querySelectorAll('.bk-sub button').forEach(b => b.onclick = () => show(b.closest('.bk-view').dataset.v, b.dataset.s));
+  const lastSub = {}; Object.keys(TABS).forEach(k => { try { lastSub[k] = localStorage.getItem('bk_sub_' + k) || TABS[k].first; } catch (e) { lastSub[k] = TABS[k].first; } });
   function show(v, sub) {
-    if (SUBS[v]) { sub = v; v = 'accounts'; }
+    Object.keys(TABS).forEach(k => { if (TABS[k].subs[v] && v !== k) { sub = v; v = k; } });
     document.querySelectorAll('.bk-tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
     document.querySelectorAll('.bk-view').forEach(s => s.classList.toggle('on', s.dataset.v === v));
-    if (v === 'accounts') {
-      sub = SUBS[sub] ? sub : lastSub; lastSub = sub; try { localStorage.setItem('bk_accounts_sub', sub); } catch (e) {}
-      document.querySelectorAll('#subAccounts button').forEach(b => b.classList.toggle('on', b.dataset.s === sub));
-      document.querySelectorAll('.bk-subview').forEach(s => s.classList.toggle('on', s.dataset.s === sub));
-      SUBS[sub]();
-      try { history.replaceState(null, '', '/bookkeeping?tab=accounts&sub=' + sub); } catch (e) {}
+    const T = TABS[v];
+    if (T) {
+      sub = T.subs[sub] ? sub : lastSub[v]; lastSub[v] = sub; try { localStorage.setItem('bk_sub_' + v, sub); } catch (e) {}
+      document.querySelectorAll('#' + T.bar + ' button').forEach(b => b.classList.toggle('on', b.dataset.s === sub));
+      document.querySelectorAll('.bk-view[data-v="' + v + '"] .bk-subview').forEach(s => s.classList.toggle('on', s.dataset.s === sub));
+      T.subs[sub]();
+      try { history.replaceState(null, '', '/bookkeeping?tab=' + v + '&sub=' + sub); } catch (e) {}
       return;
     }
-    ({ brief: loadBrief, txns: loadTxns, bills: loadBills, materials: loadMaterials, conn: loadConn, activity: loadActivity })[v]();
+    ({ brief: loadBrief, txns: loadTxns, materials: loadMaterials, conn: loadConn, activity: loadActivity })[v]();
     try { history.replaceState(null, '', '/bookkeeping?tab=' + v); } catch (e) {}
   }
   async function overview() {
@@ -284,7 +286,7 @@
   async function loadBills() {
     const v = $('vBills');
     if (!ov) await overview();
-    const [j, e] = await Promise.all([api('/api/bookkeeping/bills'), api('/api/bookkeeping/emails')]);
+    const j = await api('/api/bookkeeping/bills');
     const KIND = { invoice: 'Invoice', credit_memo: 'Credit memo', statement: 'Statement' };
     const vlogo = (c) => c && c.photo ? '<img class="bk-logo bk-vl" src="' + esc(c.photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;bk-logo bk-vl ph&quot;>' + esc(String(c.name || '?').charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo bk-vl ph' + (c ? '' : ' none') + '">' + esc(c ? String(c.name).charAt(0).toUpperCase() : '?') + '</span>';
     const kindTag = (k) => k ? '<span class="bk-src ' + esc(k) + '">' + esc(k === 'bill' ? 'from a bill' : k) + '</span>' : '';
@@ -311,18 +313,47 @@
     const bills = j.bills || [], open = bills.filter(b => b.status === 'draft'), done = bills.filter(b => b.status !== 'draft');
     v.innerHTML = '<div class="bk-card"><h2>Bills ' + qHelp('bills', 'Bills', 'Bills BookkeeperAI read from ' + esc(ov ? ov.connections.gmail.inbox : 'the inbox') + '. Each one is paired with a CRM supplier or vendor — when the name is not an exact match, pick the right one once and the next bill from them links by itself.') + '<span class="sp"></span><span class="bk-muted">' + open.length + ' draft' + (open.length === 1 ? '' : 's') + (done.length ? ' · ' + done.length + ' decided' : '') + '</span><button class="bk-btn" id="scanNow">Scan the inbox now</button></h2>' +
       (open.length ? open.map(billCard).join('') : '<div class="bk-muted" style="padding:10px 0">No bill drafts waiting.</div>') +
-      (done.length ? '<details class="bl-done"><summary>' + done.length + ' decided bill' + (done.length === 1 ? '' : 's') + '</summary>' + done.map(billCard).join('') + '</details>' : '') + '</div>' +
-      '<div class="bk-card"><h2>Inbox — ' + esc(ov ? ov.connections.gmail.inbox : '') + '<span class="sp"></span><span class="bk-muted">' + (e.emails || []).length + ' recent emails</span></h2><table class="bk bl-inbox"><thead><tr><th>Received</th><th>From</th><th>Subject</th><th>Files</th><th>What NovaAI made of it</th><th></th></tr></thead><tbody>' +
-      (e.emails || []).map(m => '<tr><td class="bk-muted nowrap">' + when(m.received_at) + '</td><td class="bk-muted">' + esc(String(m.from_addr || '').replace(/<.*>/, '').trim() || m.from_addr) + '</td><td><div class="bl-subject">' + esc(m.subject) + '</div><div class="bk-dim bl-snip">' + esc(m.snippet) + '</div></td><td class="bk-muted">' + (m.attachments.length ? m.attachments.map(a => esc(a.name)).join('<br>') : '') + '</td><td><span class="bk-tag ' + esc(m.status) + '">' + esc(m.status) + '</span>' + (m.note ? ' <span class="bk-muted">' + esc(m.note) + '</span>' : '') + '</td><td>' + (m.status !== 'parsed' ? '<button class="bk-btn sm" data-parse="' + m.id + '">Read as a bill</button>' : '') + '</td></tr>').join('') + '</tbody></table>' +
-      (!(e.emails || []).length ? '<div class="bk-muted" style="padding:14px 0">Nothing scanned yet.</div>' : '') + '</div>';
+      (done.length ? '<details class="bl-done"><summary>' + done.length + ' decided bill' + (done.length === 1 ? '' : 's') + '</summary>' + done.map(billCard).join('') + '</details>' : '') + '</div>';
     $('scanNow').onclick = async () => { $('scanNow').disabled = true; const r = await post('/api/bookkeeping/scan', {}); if (!r.ok) alert(r.error); loadBills(); overview(); };
     v.querySelectorAll('[data-file]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); openFile(a.dataset.file); });
-    v.querySelectorAll('[data-parse]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/emails/' + b.dataset.parse + '/parse', {}); if (!r.ok) alert(r.error); loadBills(); overview(); });
     v.querySelectorAll('[data-bapprove]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/proposals/' + b.dataset.bapprove + '/decide', { action: 'approve', approve_vendor: true }); if (!r.ok) alert(r.error); loadBills(); overview(); });
     v.querySelectorAll('[data-breject]').forEach(b => b.onclick = async () => { const note = prompt('Why? (optional)'); if (note === null) return; b.disabled = true; await post('/api/bookkeeping/proposals/' + b.dataset.breject + '/decide', { action: 'reject', note }); loadBills(); overview(); });
     const pair = async (billId, vid) => { const r = await post('/api/bookkeeping/bills/' + billId + '/vendor', { vendor_id: vid, remember: true }); if (!r.ok) alert(r.error); loadBills(); };
     v.querySelectorAll('[data-pair]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); pair(a.dataset.pair, a.dataset.vid); });
     v.querySelectorAll('[data-link]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); const b = bills.find(x => String(x.id) === a.dataset.link); vendorPicker(a, b, (vid) => pair(b.id, vid)); });
+  }
+  // ---------------------------------------------------------------- Inbox (accounting@, Gmail-like)
+  let ibFilter = 'all', ibOpen = null;
+  async function loadInbox() {
+    const v = $('vInbox');
+    if (!ov) await overview();
+    const e = await api('/api/bookkeeping/emails');
+    const all = e.emails || [];
+    const st = (m) => m.status === 'parsed' ? 'parsed' : m.status === 'error' ? 'error' : m.status === 'new' ? 'new' : 'skipped';
+    const counts = { all: all.length, parsed: 0, skipped: 0, new: 0 }; all.forEach(m => { counts[st(m)] = (counts[st(m)] || 0) + 1; });
+    const fromName = (f) => { const m = /^\s*"?([^"<]*?)"?\s*<([^>]+)>/.exec(f || ''); return m ? (m[1].trim() || m[2]) : String(f || '').replace(/^"|"$/g, ''); };
+    const fromAddr = (f) => { const m = /<([^>]+)>/.exec(f || ''); return m ? m[1] : String(f || ''); };
+    const clip = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.5 8.5a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8"/></svg>';
+    const day = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$/.test(ts) ? '' : 'Z')); if (isNaN(d)) return ts; const now = new Date(); return d.toDateString() === now.toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric' }); };
+    const row = (m) => { const k = st(m); return '<div class="ib-row ' + k + (ibOpen === m.id ? ' open' : '') + '" data-m="' + m.id + '" data-k="' + k + '" data-q="' + esc((m.from_addr + ' ' + m.subject + ' ' + (m.snippet || '') + ' ' + (m.note || '')).toLowerCase()) + '">' +
+      '<span class="ib-dot ' + k + '" title="' + esc(k) + '"></span><span class="ib-from" title="' + esc(fromAddr(m.from_addr)) + '">' + esc(fromName(m.from_addr)) + '</span>' +
+      '<span class="ib-subj"><b>' + esc(m.subject || '(no subject)') + '</b> <span>— ' + esc(m.snippet || '') + '</span></span>' +
+      '<span class="ib-att">' + (m.attachments.length ? clip + ' ' + m.attachments.length : '') + '</span><span class="ib-time">' + esc(day(m.received_at)) + '</span>' +
+      (ibOpen === m.id ? '<div class="ib-detail"><div class="bk-muted">' + esc(m.from_addr) + ' · ' + when(m.received_at) + '</div><div class="snip">' + esc(m.snippet || '') + '</div>' +
+        (m.attachments.length ? '<div class="files">' + m.attachments.map(a => '<a>' + clip + ' ' + esc(a.name) + '</a>').join('') + '</div>' : '') +
+        '<div class="verdict"><span class="ib-tag ' + k + '">' + esc(k) + '</span>' + esc(m.note || (k === 'new' ? 'Not read yet.' : '')) + (k === 'parsed' ? ' <a href="#" data-gobills>open Bills</a>' : '') + '</div>' +
+        (k !== 'parsed' ? '<button class="bk-btn sm" data-parse="' + m.id + '">Read it as a bill</button>' : '') + '</div>' : '') + '</div>'; };
+    v.innerHTML = '<div class="bk-card"><h2>Inbox — ' + esc(ov ? ov.connections.gmail.inbox : '') + ' ' + qHelp('inbox', 'Inbox', 'Every email that reached the accounting inbox, newest first, with what BookkeeperAI made of it: <b>green</b> = read as a bill (it is under Bills), <b>grey</b> = skipped (newsletter, receipt for something already paid, shipping notice…), <b>blue</b> = not read yet. Open one to see why; "Read it as a bill" makes BookkeeperAI read it anyway.') + '<span class="sp"></span><span class="bk-muted">' + all.length + ' emails · ' + (ov && ov.connections.gmail.last_scan ? 'scanned ' + when(ov.connections.gmail.last_scan) : 'not scanned yet') + '</span><button class="bk-btn" id="scanNow2">Scan now</button></h2>' +
+      '<div class="ib-bar">' + [['all', 'All'], ['parsed', 'Bills'], ['skipped', 'Skipped'], ['new', 'Not read']].map(([k, l]) => '<button class="ib-chip' + (ibFilter === k ? ' on' : '') + '" data-f="' + k + '">' + l + ' (' + (counts[k] || 0) + ')</button>').join('') + '<input id="ibQ" placeholder="Search sender, subject, text…"></div>' +
+      '<div class="ib-list">' + all.map(row).join('') + '</div>' + (!all.length ? '<div class="bk-muted" style="padding:14px 0">Nothing scanned yet — press Scan now.</div>' : '') + '<div class="bk-muted" id="ibNone" style="display:none;padding:14px 0">Nothing matches.</div></div>';
+    const filter = () => { const q = $('ibQ').value.trim().toLowerCase(); let n = 0; v.querySelectorAll('.ib-row').forEach(r => { const on = (ibFilter === 'all' || r.dataset.k === ibFilter) && (!q || r.dataset.q.indexOf(q) > -1); r.style.display = on ? '' : 'none'; if (on) n++; }); $('ibNone').style.display = n || !all.length ? 'none' : ''; };
+    v.querySelectorAll('.ib-chip').forEach(c => c.onclick = () => { ibFilter = c.dataset.f; v.querySelectorAll('.ib-chip').forEach(x => x.classList.toggle('on', x === c)); filter(); });
+    $('ibQ').oninput = filter; filter();
+    v.querySelectorAll('.ib-row').forEach(r => r.onclick = (ev) => { if (ev.target.closest('.ib-detail')) return; ibOpen = ibOpen === Number(r.dataset.m) ? null : Number(r.dataset.m); loadInbox(); });
+    v.querySelectorAll('[data-parse]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/emails/' + b.dataset.parse + '/parse', {}); if (!r.ok) alert(r.error); loadInbox(); overview(); });
+    v.querySelectorAll('[data-gobills]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); show('bills', 'bills'); });
+    $('scanNow2').onclick = async () => { $('scanNow2').disabled = true; const r = await post('/api/bookkeeping/scan', {}); if (!r.ok) alert(r.error); await overview(); loadInbox(); };
+    const nb = $('nInbox'); if (nb) nb.textContent = counts.new || '';
   }
   // Pick a directory entry for a bill: near matches first, then search the whole directory.
   async function vendorPicker(anchor, bill, onPick) {
@@ -686,5 +717,5 @@
   }
 
   const qs = new URLSearchParams(location.search), want = qs.get('tab');
-  show(['brief', 'txns', 'bills', 'accounts', 'vendors', 'chart', 'rules', 'materials', 'conn', 'activity'].indexOf(want) > -1 ? want : 'brief', qs.get('sub'));
+  show(['brief', 'txns', 'bills', 'inbox', 'accounts', 'vendors', 'chart', 'rules', 'materials', 'conn', 'activity'].indexOf(want) > -1 ? want : 'brief', qs.get('sub'));
 })();

@@ -564,9 +564,8 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!n) return null;
     const hits = list.filter(v => v._n.length >= 3 && (n === v._n || (' ' + n + ' ').indexOf(' ' + v._n + ' ') > -1 || v._al.some(a => a.length >= 3 && (' ' + n + ' ').indexOf(' ' + a + ' ') > -1)));
     if (hits.length) return hits.sort((a, b) => b._n.length - a._n.length)[0];
-    // First word of a multi-word vendor name on the bank line ("VERITIV CORP PAYMENT" → Veritiv) when it is distinctive.
-    const first = n.split(' ')[0];
-    if (first && first.length >= 5) { const h = list.filter(v => v._n.split(' ')[0] === first); if (h.length === 1) return h[0]; }
+    // (No first-word guessing here: "Pacific Office Automation" must not land on "Pacific Engravers". Near matches are
+    // offered by suggestVendors() for a person to confirm.)
     return null;
   }
   // Near matches for a bill's vendor name: scored by shared name words (less the generic ones), prefix, and the email

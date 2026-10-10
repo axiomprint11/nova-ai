@@ -133,10 +133,14 @@ icon and color, round marks for a single choice, checkboxes + Done for `{ multi:
 stored "Paper; Freight & Shipping"), "+ New category…" in the footer. Transactions show "Type › Sub category".
 
 ## Bills tab and vendor pairing
+The Bills main tab has two sub-tabs, **Bills** and **Inbox** (`?tab=bills&sub=inbox`; the Inbox tab carries a badge with
+the not-yet-read count). Inbox is a Gmail-like list: status dot (green = read as a bill, grey = skipped, blue = not read,
+red = error), sender, subject — snippet on one line, attachment count, time; All / Bills / Skipped / Not read chips and a
+search box; a row opens in place with the full snippet, the files, BookkeeperAI's verdict and "Read it as a bill".
 Bills are cards: vendor (logo, CRM type, specialty), kind + number, dates, total, status, the AI's note, an open question,
 the line items with "Type › Sub category", Open the file, Approve / Reject (the bill's proposal). Decided bills fold under
 "n decided bills"; the inbox table sits below. A bill's vendor is paired with the directory: `matchVendor()` (name,
-alias, email domain) at parse time, then `suggestVendors()` — a word-overlap / prefix / initials / domain score over CRM
+alias, email domain — no first-word guessing, which once sent Pacific Office Automation to Pacific Engravers) at parse time, then `suggestVendors()` — a word-overlap / prefix / initials / domain score over CRM
 entries — and a score ≥ 0.85 links by itself ("Pacific Office Automation" ↔ "Pacific Office Automation Inc"). Anything
 weaker shows "Not in the CRM directory — is it X or Y?" with the near matches as one-click links and "pick another" (a
 searchable picker, near matches first). `POST /api/bookkeeping/bills/:id/vendor {vendor_id, remember}` pairs it, keeps the
