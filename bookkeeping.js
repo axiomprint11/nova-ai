@@ -136,6 +136,7 @@ module.exports = function mountBookkeeping(app, deps) {
   const SETTING_DEFAULTS = {
     run_at: env('BOOKKEEPER_RUN_AT') || '07:00', poll_min: parseInt(env('BOOKKEEPER_POLL_MIN')) || 5, threshold: 0.75,
     triage_ad: 0.95, triage_bill: 0.8, triage_notice: 0.75, triage_message: 0.6,   // inbox triage: when BookkeeperAI acts on its own
+    triage_auto: 0,   // 0 = BookkeeperAI only RATES emails; a person sets them aside ("Set aside all ads"). 1 = it sets aside by itself above the thresholds.
     categories: DEFAULT_CATEGORIES.join('\n'), chat_webhook: env('BOOKKEEPER_CHAT_WEBHOOK') || '', chat_space: '',
     backfill_days: parseInt(env('BOOKKEEPER_BACKFILL_DAYS')) || 7, gmail_history_id: '', gmail_watch_expires: '',
     notes: 'AxiomPrint is a print shop in Glendale, CA. Inks, paper, printing supplies and outsourced printing are cost of goods. Equipment over $2,500 is a fixed asset, not an expense. Transfers between our own accounts and credit card payments are not expenses.'
@@ -148,6 +149,7 @@ module.exports = function mountBookkeeping(app, deps) {
     rows.forEach(r => { s[r.key] = r.value; });
     s.poll_min = Math.max(2, parseInt(s.poll_min) || 5); s.threshold = Number(s.threshold) || 0.75; s.backfill_days = parseInt(s.backfill_days) || 7;
     ['triage_ad', 'triage_bill', 'triage_notice', 'triage_message'].forEach(k => { s[k] = Math.max(0.3, Math.min(1, Number(s[k]) || SETTING_DEFAULTS[k])); });
+    s.triage_auto = String(s.triage_auto) === '1' || s.triage_auto === true ? 1 : 0;
     settingsCache = s;
     return s;
   }
@@ -641,7 +643,8 @@ module.exports = function mountBookkeeping(app, deps) {
     const j = jsonOf((r.content || []).filter(b => b.type === 'text').map(b => b.text).join(''));
     if (!j) { await dbRun("UPDATE bk_emails SET status = 'error', note = ? WHERE id = ?", ['The AI gave no usable answer.', em.id]); return null; }
     if (!j.is_bill || ['invoice', 'credit_memo', 'statement'].indexOf(j.kind) === -1) {
-      await dbRun("UPDATE bk_emails SET status = 'skipped', read_by = 'ai', kind = COALESCE(kind, ?), note = ? WHERE id = ?", [j.kind === 'receipt' ? 'receipt' : 'other', (j.kind || 'other') + (j.reason ? ' — ' + j.reason : ''), em.id]);
+      if (s.triage_auto) await dbRun("UPDATE bk_emails SET status = 'skipped', read_by = 'ai', kind = COALESCE(kind, ?), note = ? WHERE id = ?", [j.kind === 'receipt' ? 'receipt' : 'other', (j.kind || 'other') + (j.reason ? ' — ' + j.reason : ''), em.id]);
+      else await dbRun("UPDATE bk_emails SET kind = ?, confidence = ?, triaged_at = COALESCE(triaged_at, datetime('now')), note = ? WHERE id = ?", [j.kind === 'receipt' ? 'receipt' : 'other', Math.max(0, Math.min(1, Number(j.confidence) || 0)), 'read in full: ' + (j.kind || 'other') + (j.reason ? ' — ' + j.reason : ''), em.id]);
       return null;
     }
     const vendor = String(j.vendor || '').trim().slice(0, 120) || 'Unknown vendor';
@@ -686,7 +689,8 @@ module.exports = function mountBookkeeping(app, deps) {
   async function triageEmails(who, limit) {
     const s = await settings();
     const rows = await dbAll("SELECT id, from_addr, subject, snippet, body, attachments FROM bk_emails WHERE status = 'new' AND triaged_at IS NULL ORDER BY id LIMIT ?", [limit || 150]);
-    const out = { looked: 0, read: 0, bills: 0, messages: 0, unsure: 0, by_kind: {} };
+    const out = { looked: 0, read: 0, bills: 0, messages: 0, unsure: 0, by_kind: {}, items: [] };
+    const auto = !!s.triage_auto;
     for (let i = 0; i < rows.length; i += 25) {
       const batch = rows.slice(i, i + 25);
       const listing = batch.map(m => { let atts = []; try { atts = JSON.parse(m.attachments || '[]'); } catch (e) {} return m.id + ' | from: ' + m.from_addr + ' | subject: ' + m.subject + ' | attachments: ' + (atts.map(a => a.name).join(', ') || 'none') + ' | text: ' + String(m.body || m.snippet || '').replace(/\s+/g, ' ').slice(0, 400); }).join('\n');
@@ -704,15 +708,17 @@ module.exports = function mountBookkeeping(app, deps) {
         const why = it ? String(it.why || '').slice(0, 200) : '';
         out.by_kind[kind] = (out.by_kind[kind] || 0) + 1;
         const pct = Math.round(conf * 100) + '%';
-        if ((kind === 'advertisement' || kind === 'receipt') && conf >= s.triage_ad || kind === 'notification' && conf >= s.triage_notice) {
-          await dbRun("UPDATE bk_emails SET status = 'skipped', kind = ?, confidence = ?, triaged_at = datetime('now'), read_by = 'ai', note = ? WHERE id = ?", [kind, conf, kind + ' — ' + why + ' (' + pct + ')', m.id]); out.read++;
+        let status = 'new';
+        if (auto && ((kind === 'advertisement' || kind === 'receipt') && conf >= s.triage_ad || kind === 'notification' && conf >= s.triage_notice)) {
+          await dbRun("UPDATE bk_emails SET status = 'skipped', kind = ?, confidence = ?, triaged_at = datetime('now'), read_by = 'ai', note = ? WHERE id = ?", [kind, conf, kind + ' — ' + why + ' (' + pct + ')', m.id]); out.read++; status = 'skipped';
         } else if (kind === 'message' && conf >= s.triage_message) {
-          await dbRun("UPDATE bk_emails SET status = 'message', kind = ?, confidence = ?, triaged_at = datetime('now'), note = ? WHERE id = ?", [kind, conf, 'message — ' + why + ' (' + pct + ') — for a person to answer', m.id]); out.messages++;
+          await dbRun("UPDATE bk_emails SET status = 'message', kind = ?, confidence = ?, triaged_at = datetime('now'), note = ? WHERE id = ?", [kind, conf, 'message — ' + why + ' (' + pct + ') — for a person to answer', m.id]); out.messages++; status = 'message';
         } else {
-          // bill (any confidence) and everything unsure: the full read decides
+          // rated only (and, with auto on, bills and anything unsure go to the full read next)
           await dbRun("UPDATE bk_emails SET kind = ?, confidence = ?, triaged_at = datetime('now'), note = ? WHERE id = ?", [kind, conf, kind + ' — ' + why + ' (' + pct + ')', m.id]);
           if (kind === 'bill' && conf >= s.triage_bill) out.bills++; else out.unsure++;
         }
+        out.items.push({ id: m.id, kind, confidence: conf, why, status });
       }
     }
     if (out.looked) await audit(who, 'gmail.triage', null, out);
@@ -720,7 +726,9 @@ module.exports = function mountBookkeeping(app, deps) {
   }
   async function parseNewEmails(who) {
     const triage = await triageEmails(who);
-    const rows = await dbAll("SELECT * FROM bk_emails WHERE status = 'new' ORDER BY id LIMIT 40");
+    const s = await settings();
+    const rows = s.triage_auto ? await dbAll("SELECT * FROM bk_emails WHERE status = 'new' ORDER BY id LIMIT 40")
+      : await dbAll("SELECT * FROM bk_emails WHERE status = 'new' AND kind = 'bill' AND confidence >= ? ORDER BY id LIMIT 40", [s.triage_bill]);
     let bills = 0;
     for (const em of rows) { try { if (await parseEmail(em, who)) bills++; } catch (e) { errlog('parse email', em.id, e.message); await dbRun("UPDATE bk_emails SET status = 'error', note = ? WHERE id = ?", [e.message.slice(0, 300), em.id]); } }
     return { emails: rows.length, bills, triage };
@@ -1313,7 +1321,7 @@ module.exports = function mountBookkeeping(app, deps) {
   app.get('/api/bookkeeping/activity', ...guard, async (req, res) => res.json({ ok: true, runs: await dbAll('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 40'), audit: await dbAll('SELECT * FROM bk_audit ORDER BY id DESC LIMIT 200'), briefs: await dbAll('SELECT day, stats, posted_at, post_error FROM bk_briefs ORDER BY day DESC LIMIT 30') }));
   app.post('/api/bookkeeping/settings', ...guard, async (req, res) => {
     const b = req.body || {};
-    for (const k of ['run_at', 'poll_min', 'threshold', 'notes', 'chat_webhook', 'backfill_days', 'triage_ad', 'triage_bill', 'triage_notice', 'triage_message']) if (b[k] !== undefined) await setSetting(k, b[k], userId(req));
+    for (const k of ['run_at', 'poll_min', 'threshold', 'notes', 'chat_webhook', 'backfill_days', 'triage_ad', 'triage_bill', 'triage_notice', 'triage_message', 'triage_auto']) if (b[k] !== undefined) await setSetting(k, b[k] === true ? 1 : b[k] === false ? 0 : b[k], userId(req));
     if (b.categories !== undefined) await saveChart(parseChartText(b.categories, chartTree(await settings())), userId(req));
     await audit(userId(req), 'settings', null, Object.keys(b));
     res.json({ ok: true, settings: await settings() });
@@ -1355,6 +1363,22 @@ module.exports = function mountBookkeeping(app, deps) {
     res.json({ ok: true, settings: Object.assign({}, s2, { chat_webhook: s2.chat_webhook ? '(set)' : '' }), chart: chartOf(s2), category: name });
   });
   app.post('/api/bookkeeping/run', ...guard, async (req, res) => res.json(await runDaily('manual', userId(req), { post: !!(req.body && req.body.post) })));
+  // The tab drives the rating itself so the person can watch: fetch → rate 25 at a time → read the rated bills one by one.
+  app.post('/api/bookkeeping/inbox/fetch', ...guard, async (req, res) => { try { const r = await scanInbox(userId(req)); const left = await dbGet("SELECT COUNT(*) n FROM bk_emails WHERE status = 'new' AND triaged_at IS NULL"); res.json({ ok: true, scan: r, to_rate: left.n }); } catch (e) { res.json({ ok: false, error: e.message }); } });
+  app.post('/api/bookkeeping/inbox/rate', ...guard, async (req, res) => {
+    try { const r = await triageEmails(userId(req), Math.min(50, parseInt(req.body && req.body.limit) || 25)); const left = await dbGet("SELECT COUNT(*) n FROM bk_emails WHERE status = 'new' AND triaged_at IS NULL"); const s = await settings();
+      const bills = await dbAll("SELECT id FROM bk_emails WHERE status = 'new' AND kind = 'bill' AND confidence >= ? ORDER BY id", [s.triage_bill]);
+      res.json({ ok: true, items: r.items, remaining: left.n, bills_to_read: bills.map(b => b.id) }); } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  // Set aside every rated email of these kinds at or above the confidence (a person's decision, in one click).
+  app.post('/api/bookkeeping/inbox/set-aside', ...guard, async (req, res) => {
+    const kinds = (Array.isArray(req.body && req.body.kinds) ? req.body.kinds : []).filter(k => ['advertisement', 'notification', 'receipt', 'other'].indexOf(k) > -1);
+    const min = Math.max(0, Math.min(1, Number(req.body && req.body.min) || 0));
+    if (!kinds.length) return res.json({ ok: false, error: 'Which kinds?' });
+    const r = await dbRun("UPDATE bk_emails SET status = 'skipped', read_by = 'user', note = COALESCE(note, '') || ' — set aside by ' || ? WHERE status = 'new' AND kind IN (" + kinds.map(() => '?').join(',') + ") AND COALESCE(confidence, 0) >= ?", [userId(req)].concat(kinds, [min]));
+    await audit(userId(req), 'email.set_aside', null, { kinds, min, n: r.changes });
+    res.json({ ok: true, n: r.changes });
+  });
   app.post('/api/bookkeeping/scan', ...guard, async (req, res) => { try { const r = await scanInbox(userId(req)); const p = await parseNewEmails(userId(req)); res.json({ ok: true, scan: r, parsed: p }); } catch (e) { res.json({ ok: false, error: e.message }); } });
   app.post('/api/bookkeeping/sync', ...guard, async (req, res) => { try { res.json({ ok: true, sync: await syncAll(userId(req)), categorized: await categorize(userId(req)) }); } catch (e) { res.json({ ok: false, error: e.message }); } });
   app.post('/api/bookkeeping/brief', ...guard, async (req, res) => {

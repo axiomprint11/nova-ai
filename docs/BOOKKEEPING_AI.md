@@ -136,6 +136,12 @@ stored "Paper; Freight & Shipping"), "+ New category…" in the footer. Transact
 
 ## Inbox triage
 The inbox is checked every `poll_min` minutes (default **5**, from the first boot — no longer gated on a first daily run).
+**By default BookkeeperAI only rates** (`triage_auto` = 0): every email gets its kind + confidence tag, nothing is set aside
+by itself, and only rated bills (≥ `triage_bill`) go to the full read. The person sets aside in one click — "Set aside all
+ads / notices / receipts" (`POST /api/bookkeeping/inbox/set-aside {kinds, min}`, `read_by = 'user'`) — or one at a time.
+Turning on "Let BookkeeperAI set emails aside by itself" (Connections) enables the threshold actions below. **Scan now** is
+driven by the page so the rating is visible: `POST /inbox/fetch` → `POST /inbox/rate {limit: 25}` in a loop (each rated row
+gets its tag live, progress line) → `POST /emails/:id/parse` for each rated bill.
 `triageEmails()` gives every unread email a **kind** and a **confidence** with the light model (`modelLight` =
 `MODEL_LIGHT`, text only, 25 per call, up to 150 per pass; stored in `bk_emails.kind / confidence / triaged_at`), then
 acts by the thresholds in settings (Connections → "When BookkeeperAI acts on its own"):

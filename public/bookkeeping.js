@@ -79,6 +79,24 @@
     document.body.appendChild(el);
   });
 
+  // ---------------------------------------------------------------- column filters (a header word that opens a small list)
+  // thFilter(key, label, options [{v, l, n}], cur) → header markup; thFilterBind(root, onChange) wires the popovers.
+  const thFilter = (key, label, options, cur) => { const o = options.find(x => x.v === cur); return '<button type="button" class="thf' + (cur ? ' on' : '') + '" data-thf="' + esc(key) + '" data-v="' + esc(cur || '') + '"><span class="thf-l">' + esc(label) + '</span>' + (o && cur ? ' <b>' + esc(o.l) + '</b>' : '') + '<span class="thf-c"></span></button>'; };
+  function thFilterBind(root, options, onChange) {
+    root.querySelectorAll('.thf').forEach(btn => btn.onclick = (e) => {
+      e.stopPropagation(); document.querySelectorAll('.thf-pop').forEach(p => p.remove());
+      const key = btn.dataset.thf, opts = options[key] || [], cur = btn.dataset.v;
+      const pop = document.createElement('div'); pop.className = 'thf-pop';
+      pop.innerHTML = (opts.length > 8 ? '<div class="ckp-search"><input type="text" placeholder="Filter…"></div>' : '') + '<div class="thf-list">' + opts.map(o => '<div class="thf-i' + (o.v === cur ? ' on' : '') + '" data-v="' + esc(o.v) + '"><span class="ckp-ck"></span><span class="thf-t">' + o.l + '</span>' + (o.n != null ? '<small>' + o.n + '</small>' : '') + '</div>').join('') + '</div>';
+      document.body.appendChild(pop);
+      const r = btn.getBoundingClientRect(), W = 260; pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) + 'px'; pop.style.top = (r.bottom + 6) + 'px'; pop.style.width = W + 'px';
+      const close = () => { pop.remove(); document.removeEventListener('click', away); };
+      const away = (ev) => { if (!pop.contains(ev.target)) close(); }; setTimeout(() => document.addEventListener('click', away), 0);
+      const q = pop.querySelector('input'); if (q) { q.focus(); q.oninput = () => { const f = q.value.toLowerCase(); pop.querySelectorAll('.thf-i').forEach(i => { i.style.display = !f || i.textContent.toLowerCase().indexOf(f) > -1 ? '' : 'none'; }); }; }
+      pop.querySelectorAll('.thf-i').forEach(i => i.onclick = () => { close(); onChange(key, i.dataset.v); });
+    });
+  }
+
   // ---------------------------------------------------------------- category picker
   // catSelect(cur, cls, blank, { multi }) draws a picker: a button with the choice (chips when multi) + a hidden input
   // carrying the value (`cls` on both the wrapper and the input, so `root.querySelector('.cls').value` still works; several
@@ -385,7 +403,13 @@
         (m.attachments.length ? '<div class="files">' + m.attachments.map(a => '<a>' + clip + ' ' + esc(a.name) + '</a>').join('') + '</div>' : '') +
         '<div class="verdict"><span class="ib-tag ' + k + '">' + esc(k === 'skipped' ? (m.read_by === 'ai' ? 'set aside by AI' : m.read_by === 'user' ? 'marked read' : 'set aside') : k === 'message' ? 'for a person' : k) + '</span>' + esc(m.note || (k === 'new' ? 'Not looked at yet — the next inbox check (every ' + esc(ov.settings.poll_min) + ' min) will.' : '')) + (k === 'parsed' ? ' <a href="#" data-gobills>open Bills</a>' : '') + '</div>' +
         (k !== 'parsed' ? '<button class="bk-btn sm" data-parse="' + m.id + '">Read it as a bill</button>' + (k === 'new' || k === 'message' ? ' <button class="bk-btn sm" data-read="' + m.id + '">Mark as read</button>' : '') : '') + '</div>' : '') + '</div>'; };
-    v.innerHTML = '<div class="bk-card"><h2>Inbox — ' + esc(ov ? ov.connections.gmail.inbox : '') + ' ' + qHelp('inbox', 'Inbox', 'The inbox is checked every ' + esc(ov.settings.poll_min) + ' minutes. Every new email gets a kind and a confidence: <b>Ad</b>, <b>Notice</b> (delivery, tracking, alerts) and <b>Receipt</b> are set aside by the AI when it is sure enough (the thresholds are under Connections); a <b>Bill</b> is read in full and becomes a draft under Bills; a <b>Message</b> from a person is kept for you. <b>Blue</b> = not looked at yet, <b>purple</b> = a message for a person, <b>green</b> = a bill, <b>grey</b> = set aside. "Set aside by AI" is the report of what it marked read on its own — open any row to see why; "Read it as a bill" overrides it.') + '<span class="sp"></span><span class="bk-muted">' + all.length + ' emails · ' + (ov && ov.connections.gmail.last_scan ? 'scanned ' + when(ov.connections.gmail.last_scan) : 'not scanned yet') + '</span><button class="bk-btn" id="scanNow2">Scan now</button></h2>' +
+    const rated = { advertisement: 0, notification: 0, receipt: 0 }; all.forEach(m => { if (st(m) === 'new' && rated[m.kind] !== undefined) rated[m.kind]++; });
+    const unrated = all.filter(m => st(m) === 'new' && !m.triaged_at).length;
+    v.innerHTML = '<div class="bk-card"><h2>Inbox — ' + esc(ov ? ov.connections.gmail.inbox : '') + ' ' + qHelp('inbox', 'Inbox', 'The inbox is checked every ' + esc(ov.settings.poll_min) + ' minutes. Every new email gets a kind and a confidence — <b>Ad</b>, <b>Notice</b> (delivery, tracking, alerts), <b>Receipt</b>, <b>Bill</b>, <b>Message</b> — shown as a tag on the row. ' + (ov.settings.triage_auto ? 'Ads, notices and receipts above the thresholds (Connections) are set aside by the AI by itself.' : 'Nothing is set aside by itself: BookkeeperAI only rates. You set aside all ads / notices / receipts in one click with the buttons, or one at a time.') + ' A <b>Bill</b> is read in full and becomes a draft under Bills; a <b>Message</b> from a person is kept for you. <b>Blue</b> = not read, <b>purple</b> = a message for a person, <b>green</b> = a bill, <b>grey</b> = set aside. Open any row to see why it was rated so; "Read it as a bill" overrides a rating.') + '<span class="sp"></span><span class="bk-muted">' + all.length + ' emails · ' + (ov && ov.connections.gmail.last_scan ? 'scanned ' + when(ov.connections.gmail.last_scan) : 'not scanned yet') + '</span><button class="bk-btn p" id="scanNow2">Scan now</button></h2>' +
+      '<div class="ib-progress" id="ibProg" style="display:none"><span class="ib-spin"></span><span id="ibProgText"></span></div>' +
+      ((rated.advertisement || rated.notification || rated.receipt || unrated) ? '<div class="ib-bar ib-acts">' + (unrated ? '<span class="bk-muted">' + unrated + ' not rated yet — press Scan now.</span>' : '') +
+        (rated.advertisement ? '<button class="bk-btn sm" data-aside="advertisement">Set aside all ads (' + rated.advertisement + ')</button>' : '') + (rated.notification ? '<button class="bk-btn sm" data-aside="notification">Set aside all notices (' + rated.notification + ')</button>' : '') + (rated.receipt ? '<button class="bk-btn sm" data-aside="receipt">Set aside all receipts (' + rated.receipt + ')</button>' : '') +
+        (rated.advertisement + rated.notification + rated.receipt > 1 ? '<button class="bk-btn sm ok" data-aside="all">Set aside all three (' + (rated.advertisement + rated.notification + rated.receipt) + ')</button>' : '') + '</div>' : '') +
       '<div class="ib-bar">' + [['all', 'All'], ['new', 'Not read'], ['message', 'Messages'], ['parsed', 'Bills'], ['ai', 'Set aside by AI'], ['skipped', 'All set aside']].map(([k, l]) => '<button class="ib-chip' + (ibFilter === k ? ' on' : '') + '" data-f="' + k + '">' + l + ' (' + (counts[k] || 0) + ')</button>').join('') + '<input id="ibQ" placeholder="Search sender, subject, text…"></div>' +
       '<div class="ib-list">' + all.map(row).join('') + '</div>' + (!all.length ? '<div class="bk-muted" style="padding:14px 0">Nothing scanned yet — press Scan now.</div>' : '') + '<div class="bk-muted" id="ibNone" style="display:none;padding:14px 0">Nothing matches.</div></div>';
     const filter = () => { const q = $('ibQ').value.trim().toLowerCase(); let n = 0; v.querySelectorAll('.ib-row').forEach(r => { const on = (ibFilter === 'all' || (ibFilter === 'ai' ? r.dataset.ai === '1' : r.dataset.k === ibFilter)) && (!q || r.dataset.q.indexOf(q) > -1); r.style.display = on ? '' : 'none'; if (on) n++; }); $('ibNone').style.display = n || !all.length ? 'none' : ''; };
@@ -395,7 +419,33 @@
     v.querySelectorAll('[data-parse]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/emails/' + b.dataset.parse + '/parse', {}); if (!r.ok) alert(r.error); loadInbox(); overview(); });
     v.querySelectorAll('[data-read]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/emails/' + b.dataset.read + '/read', {}); if (!r.ok) alert(r.error); loadInbox(); overview(); });
     v.querySelectorAll('[data-gobills]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); show('bills'); });
-    $('scanNow2').onclick = async () => { $('scanNow2').disabled = true; const r = await post('/api/bookkeeping/scan', {}); if (!r.ok) alert(r.error); await overview(); loadInbox(); };
+    // Scan now, visibly: fetch new mail → rate 25 at a time (each rated row gets its tag as it comes in) → read the rated bills one by one.
+    $('scanNow2').onclick = async () => {
+      const btn = $('scanNow2'), prog = $('ibProg'), txt = $('ibProgText'); btn.disabled = true; prog.style.display = '';
+      const say = (t) => { txt.textContent = t; };
+      try {
+        say('Checking ' + (ov ? ov.connections.gmail.inbox : 'the inbox') + ' for new mail…');
+        const f = await post('/api/bookkeeping/inbox/fetch', {}); if (!f.ok) throw new Error(f.error);
+        if (f.scan.new) { say(f.scan.new + ' new email' + (f.scan.new === 1 ? '' : 's') + ' — loading…'); await loadInbox(); return; }
+        let left = f.to_rate, done = 0, bills = [];
+        while (left > 0) {
+          say('Rating emails… ' + done + ' of ' + (done + left));
+          const r = await post('/api/bookkeeping/inbox/rate', { limit: 25 }); if (!r.ok) throw new Error(r.error);
+          (r.items || []).forEach(it => { const row = v.querySelector('.ib-row[data-m="' + it.id + '"]'); if (!row) return; const m = all.find(x => x.id === it.id); if (m) { m.kind = it.kind; m.confidence = it.confidence; m.triaged_at = 'now'; m.status = it.status === 'new' ? m.status : it.status; } const att = row.querySelector('.ib-att'); if (att) att.innerHTML = kindTag(m || { kind: it.kind, confidence: it.confidence }) + att.innerHTML.replace(/^<span class="ib-kind[^]*?<\/span>/, ''); row.classList.add('rated'); setTimeout(() => row.classList.remove('rated'), 900); });
+          done += (r.items || []).length; left = r.remaining; bills = r.bills_to_read || [];
+          if (!(r.items || []).length) break;
+        }
+        for (let i = 0; i < bills.length; i++) { say('Reading bill ' + (i + 1) + ' of ' + bills.length + ' in full…'); const row = v.querySelector('.ib-row[data-m="' + bills[i] + '"]'); if (row) row.classList.add('rated'); await post('/api/bookkeeping/emails/' + bills[i] + '/parse', {}); }
+        say('Done.');
+      } catch (e) { say('Stopped: ' + e.message); }
+      await overview(); setTimeout(loadInbox, 600);
+    };
+    v.querySelectorAll('[data-aside]').forEach(b => b.onclick = async () => {
+      const k = b.dataset.aside, kinds = k === 'all' ? ['advertisement', 'notification', 'receipt'] : [k];
+      const n = kinds.reduce((a, x) => a + rated[x], 0);
+      if (!confirm('Set aside ' + n + ' email' + (n === 1 ? '' : 's') + ' rated ' + kinds.map(x => ({ advertisement: 'ad', notification: 'notice', receipt: 'receipt' })[x]).join(' / ') + '? They move to "All set aside"; any of them can still be read as a bill later.')) return;
+      b.disabled = true; const r = await post('/api/bookkeeping/inbox/set-aside', { kinds, min: 0 }); if (!r.ok) alert(r.error); await overview(); loadInbox();
+    });
     $('nInbox').textContent = (counts.new + counts.message) || '';
   }
   // Pick a directory entry for a bill: near matches first, then search the whole directory.
@@ -612,11 +662,18 @@
     // The types are the CRM lists (read-only here — a row's type is the list it is in), then "from a bill".
     const kinds = (j.lists || ['supplier', 'vendor']).slice(); all.forEach(x => { if (x.kind && kinds.indexOf(x.kind) < 0) kinds.push(x.kind); }); if (kinds.indexOf('bill') < 0) kinds.push('bill');
     const counts = {}; all.forEach(x => { counts[x.kind || 'other'] = (counts[x.kind || 'other'] || 0) + 1; });
-    let kindF = ''; try { kindF = localStorage.getItem('bk_vendor_kind') || ''; } catch (e) {}
-    if (kindF && !counts[kindF]) kindF = '';
+    let F = { kind: '', cat: '', ap: '' }; try { F = Object.assign(F, JSON.parse(localStorage.getItem('bk_vendor_filters') || '{}')); } catch (e) {}
+    if (F.kind && !counts[F.kind]) F.kind = '';
+    const catCounts = { '': 0 }; all.forEach(x => { const cs = splitCats(x.default_category); if (!cs.length) catCounts['']++; cs.forEach(c => { catCounts[c] = (catCounts[c] || 0) + 1; }); });
+    const FOPTS = {
+      kind: [{ v: '', l: 'All types', n: all.length }].concat(kinds.filter(k => counts[k]).map(k => ({ v: k, l: esc(label(k)), n: counts[k] }))),
+      cat: [{ v: '', l: 'All', n: all.length }, { v: '__none', l: 'Not set', n: catCounts[''] }].concat(Object.keys(catCounts).filter(c => c).sort().map(c => ({ v: c, l: catLabel(c), n: catCounts[c] }))),
+      ap: [{ v: '', l: 'All', n: all.length }, { v: '1', l: 'Approved', n: all.length - unapproved0() }, { v: '0', l: 'Waiting for approval', n: unapproved0() }]
+    };
+    function unapproved0() { return all.filter(x => !x.approved).length; }
     const logo = (x) => x.photo ? '<img class="bk-logo" src="' + esc(x.photo) + '" alt="" loading="lazy" onerror="this.outerHTML=\'<span class=&quot;bk-logo ph&quot;>' + esc(String(x.name).charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo ph">' + esc(String(x.name).charAt(0).toUpperCase()) + '</span>';
     const kindTag = (x) => '<span class="bk-src ' + esc(x.kind || 'other') + '">' + esc(label(x.kind)) + '</span>';
-    const row = (x) => '<tr data-vid="' + x.id + '" data-kind="' + esc(x.kind || 'other') + '" data-ap="' + (x.approved ? 1 : 0) + '" data-q="' + esc((x.name + ' ' + (x.contact || '') + ' ' + (x.email || '') + ' ' + (x.specialty || '') + ' ' + (x.aliases || '')).toLowerCase()) + '"><td><a href="#" class="bk-open" data-vopen="' + x.id + '" title="Full details">' + logo(x) + '</a></td><td>' + kindTag(x) + '</td>' +
+    const row = (x) => '<tr data-vid="' + x.id + '" data-kind="' + esc(x.kind || 'other') + '" data-ap="' + (x.approved ? 1 : 0) + '" data-cats="' + esc('|' + splitCats(x.default_category).join('|') + '|') + '" data-q="' + esc((x.name + ' ' + (x.contact || '') + ' ' + (x.email || '') + ' ' + (x.specialty || '') + ' ' + (x.aliases || '')).toLowerCase()) + '"><td><a href="#" class="bk-open" data-vopen="' + x.id + '" title="Full details">' + logo(x) + '</a></td><td>' + kindTag(x) + '</td>' +
       '<td><a href="#" class="bk-open bk-name" data-vopen="' + x.id + '" title="Full details">' + esc(x.name) + '</a>' + (x.contact ? '<div class="bk-muted">' + esc(x.contact) + '</div>' : '') + '</td><td class="bk-muted">' + esc(x.email || '') + (x.phone ? '<br>' + esc(x.phone) : '') + '</td><td class="bk-muted">' + esc(x.specialty || '') + (x.materials ? '<div class="bk-dim"><a href="#" data-mats="' + x.id + '" title="See the materials in the catalog">' + x.materials + ' material' + (x.materials == 1 ? '' : 's') + '</a>: ' + esc((x.geo_types || []).join(', ')) + '</div>' : '') + '</td>' +
       '<td>' + catSelect(x.default_category || '', 'vcat', 'not set', { multi: true }) + '</td><td><input type="text" class="bk valias" placeholder="bank names, one per line" value="' + esc(String(x.aliases || '').split('\n').join(' | ')) + '" title="How this vendor appears on bank statements (separate with |)"></td>' +
       '<td class="c">' + (x.approved ? '<span class="bk-ok" title="Approved — BookkeeperAI may link bank lines and bills to this company without asking">✓</span>' : '<a href="#" class="bk-approve" data-vappr="' + x.id + '" title="First seen on a bill — approve so BookkeeperAI may link to it without asking">Approve</a>') + '</td>' +
@@ -640,18 +697,21 @@
       document.body.appendChild(el);
     };
     const unapproved = all.filter(x => !x.approved).length;
-    v.innerHTML = '<div class="bk-card"><h2>Vendors &amp; suppliers ' + qHelp('vendors', 'Vendors & suppliers', 'Read from the CRM’s Suppliers and Vendors lists (read-only, refreshed with every daily run); the photo is the CRM’s. They are trusted: a bank line or bill that matches one is linked to it, and BookkeeperAI uses the specialty and the usual category when it proposes. The type is the CRM list the company is in (Supplier, Vendor — new lists appear as new types). Edit names, emails and specialties in the CRM; set the usual category and the bank-statement names here; click a name or logo for the full record. The list refreshes by itself: when you open this tab, hourly, and with every daily run. <b>Approved</b> means BookkeeperAI may link bank lines and bills to the company without asking (CRM entries are approved by themselves); <b>Linked</b> counts the transactions and bills matched to it so far. Vendors first seen on a bill are <span class="bk-src bill">from a bill</span> and wait for your approval.') + '<span class="sp"></span><span class="bk-muted">' + (j.synced_at ? 'synced ' + when(j.synced_at) : 'not synced yet') + (j.sync_error ? ' · <span style="color:#b91c1c">' + esc(j.sync_error) + '</span>' : '') + '</span><button class="bk-btn" id="dirSync"' + (j.crm ? '' : ' disabled') + '>Refresh from CRM</button></h2>' +
-            '<div class="bk-filters"><input name="q" id="vQ" placeholder="Search name, contact, email, specialty…"></div>' +
-      (all.length ? '<table class="bk bk-dir"><thead><tr><th></th><th><select class="th-sel" id="vKind"><option value="">Type · all (' + all.length + ')</option>' + kinds.filter(k => counts[k]).map(k => '<option value="' + esc(k) + '"' + (kindF === k ? ' selected' : '') + '>' + esc(label(k)) + ' (' + counts[k] + ')</option>').join('') + '</select></th><th>Name</th><th>Contact</th><th>Specialty</th><th>Usual category <span class="bk-dim" style="font-weight:500">saves as you pick</span></th><th>On the bank statement as</th>' +
-        '<th class="c"><select class="th-sel" id="vAppr" title="BookkeeperAI may link bank lines and bills to an approved company without asking"><option value="">Approved · all</option><option value="1">Approved</option><option value="0">Waiting' + (unapproved ? ' (' + unapproved + ')' : '') + '</option></select></th><th class="num" title="Bank transactions and bills linked to this company">Linked</th></tr></thead><tbody>' + all.map(row).join('') + '</tbody></table><div class="bk-muted" id="vNone" style="display:none;padding:14px 0">Nothing matches.</div>'
+    v.innerHTML = '<div class="bk-card"><h2>Vendors &amp; suppliers ' + qHelp('vendors', 'Vendors & suppliers', 'Read from the CRM’s Suppliers and Vendors lists (read-only, refreshed with every daily run); the photo is the CRM’s. They are trusted: a bank line or bill that matches one is linked to it, and BookkeeperAI uses the specialty and the usual category when it proposes. The type is the CRM list the company is in (Supplier, Vendor — new lists appear as new types). Edit names, emails and specialties in the CRM; set the usual category and the bank-statement names here; click a name or logo for the full record. The list refreshes by itself: when you open this tab, hourly, and with every daily run. <b>Approved</b> means BookkeeperAI may link bank lines and bills to the company without asking (CRM entries are approved by themselves); <b>Linked</b> counts the transactions and bills matched to it so far. Vendors first seen on a bill are <span class="bk-src bill">from a bill</span> and wait for your approval.') + '<input class="bk h2-search" name="q" id="vQ" placeholder="Search name, contact, email, specialty…"><span class="sp"></span><span class="bk-muted">' + (j.synced_at ? 'synced ' + when(j.synced_at) : 'not synced yet') + (j.sync_error ? ' · <span style="color:#b91c1c">' + esc(j.sync_error) + '</span>' : '') + '</span><button class="bk-btn" id="dirSync"' + (j.crm ? '' : ' disabled') + '>Refresh from CRM</button></h2>' +
+            (all.length ? '<table class="bk bk-dir"><thead><tr><th></th><th>' + thFilter('kind', 'Type', FOPTS.kind, F.kind) + '</th><th>Name</th><th>Contact</th><th>Specialty</th><th>' + thFilter('cat', 'Usual category', FOPTS.cat, F.cat) + ' <span class="bk-dim" style="font-weight:500">saves as you pick</span></th><th>On the bank statement as</th>' +
+        '<th class="c">' + thFilter('ap', 'Approved', FOPTS.ap, F.ap) + '</th><th class="num" title="Bank transactions and bills linked to this company">Linked</th></tr></thead><tbody>' + all.map(row).join('') + '</tbody></table><div class="bk-muted" id="vNone" style="display:none;padding:14px 0">Nothing matches.</div>'
         : '<div class="bk-muted">Nothing synced yet — press Refresh from CRM.</div>') + '</div>';
     const filter = () => {
-      const k = $('vKind').value, ap = $('vAppr').value, q = $('vQ').value.trim().toLowerCase(); let n = 0;
-      try { localStorage.setItem('bk_vendor_kind', k); } catch (e) {}
-      v.querySelectorAll('tr[data-vid]').forEach(tr => { const on = (!k || tr.dataset.kind === k) && (!ap || tr.dataset.ap === ap) && (!q || tr.dataset.q.indexOf(q) >= 0); tr.style.display = on ? '' : 'none'; if (on) n++; });
+      const q = $('vQ').value.trim().toLowerCase(); let n = 0;
+      try { localStorage.setItem('bk_vendor_filters', JSON.stringify(F)); } catch (e) {}
+      v.querySelectorAll('tr[data-vid]').forEach(tr => {
+        const catOk = !F.cat || (F.cat === '__none' ? tr.dataset.cats === '||' : tr.dataset.cats.indexOf('|' + F.cat + '|') > -1);
+        const on = (!F.kind || tr.dataset.kind === F.kind) && (!F.ap || tr.dataset.ap === F.ap) && catOk && (!q || tr.dataset.q.indexOf(q) >= 0); tr.style.display = on ? '' : 'none'; if (on) n++; });
       if ($('vNone')) $('vNone').style.display = n ? 'none' : '';
     };
-    ['vKind', 'vAppr'].forEach(id => $(id).onchange = filter); $('vQ').oninput = filter; filter();
+    const onF = (key, val) => { F[key] = val; filter(); const th = v.querySelector('.thf[data-thf="' + key + '"]'); if (th) th.outerHTML = thFilter(key, { kind: 'Type', cat: 'Usual category', ap: 'Approved' }[key], FOPTS[key], val); thFilterBind(v, FOPTS, onF); };
+    thFilterBind(v, FOPTS, onF);
+    $('vQ').oninput = filter; filter();
     v.querySelectorAll('[data-vopen]').forEach(a => a.onclick = (e) => { e.preventDefault(); const x = all.find(y => String(y.id) === a.dataset.vopen); if (x) openVendor(x); });
     v.querySelectorAll('[data-mats]').forEach(a => a.onclick = (e) => { e.preventDefault(); matFilter = { vendor: a.dataset.mats }; show('materials'); });
     $('dirSync').onclick = async () => { $('dirSync').disabled = true; const r = await post('/api/bookkeeping/directory/sync', {}); if (!r.ok) alert(r.error); else if (r.errors && r.errors.length) alert(r.errors.join('\n')); loadVendors(); };
@@ -727,7 +787,8 @@
       '<ol class="bk-steps"><li>Nothing to do for reading: the delegation that covers order@ covers accounting@ too (scope gmail.readonly). If scanning fails with "unauthorized_client", add the scope in Google Admin → Security → API controls → Domain-wide delegation.</li>' +
       '<li>Optional, for instant pickup: in the Google Cloud project of the service account enable Pub/Sub, create a topic, give <code>gmail-api-push@system.gserviceaccount.com</code> the Publisher role on it, add a push subscription to <code>' + esc(c.chat.push_url) + '</code>, then set <code>BOOKKEEPER_PUBSUB_TOPIC</code> and <code>BOOKKEEPER_PUSH_TOKEN</code> in .env and press <button class="bk-btn sm" id="watchBtn">Start watch</button> (it renews daily).</li></ol>' +
       '<div class="bk-row" style="margin-top:8px"><label class="bk-muted">Check every <input class="bk" id="sPoll" type="number" min="2" max="120" value="' + esc(s.poll_min) + '" style="width:70px"> min</label><label class="bk-muted">First scan looks back <input class="bk" id="sBack" type="number" min="1" max="90" value="' + esc(s.backfill_days) + '" style="width:70px"> days</label></div>' +
-      '<div class="bk-muted" style="margin-top:12px"><b>When BookkeeperAI acts on its own</b> — the confidence it needs to…</div>' +
+      '<div class="bk-muted" style="margin-top:12px"><label><input type="checkbox" id="tAuto"' + (s.triage_auto ? ' checked' : '') + '> <b>Let BookkeeperAI set emails aside by itself</b> (off: it only rates them and you click "Set aside all ads" in the Inbox)</label></div>' +
+      '<div class="bk-muted" style="margin-top:8px"><b>Confidence it needs</b> to…</div>' +
       '<div class="bk-row" style="margin-top:6px;gap:16px"><label class="bk-muted">set an <b>ad / receipt</b> aside <input class="bk" id="tAd" type="number" min="30" max="100" value="' + Math.round(s.triage_ad * 100) + '" style="width:64px">%</label>' +
       '<label class="bk-muted">set a <b>delivery / notice</b> aside <input class="bk" id="tNotice" type="number" min="30" max="100" value="' + Math.round(s.triage_notice * 100) + '" style="width:64px">%</label>' +
       '<label class="bk-muted">treat as a <b>bill</b> to be paid <input class="bk" id="tBill" type="number" min="30" max="100" value="' + Math.round(s.triage_bill * 100) + '" style="width:64px">%</label>' +
@@ -743,7 +804,7 @@
       '<div class="bk-muted">A bookkeeperAI@axiomprint.com mailbox is not needed for this — the app posts as itself in the space. (If you still want that address, create it in Google Admin and it can be the sender of email copies later.)</div>' +
       '<div class="bk-row" style="margin-top:10px"><button class="bk-btn p" id="connSave">Save</button><span class="bk-muted" id="connMsg"></span></div></div>' +
       '<div class="bk-card"><h2>Who can open this tab</h2><div class="bk-muted">' + esc(c.users.join(', ')) + ' (BOOKKEEPER_USERS in .env; you are signed in as ' + esc(ov.me) + ').</div></div></div>';
-    $('connSave').onclick = async () => { const b = { run_at: $('sRunAt').value, poll_min: $('sPoll').value, backfill_days: $('sBack').value, triage_ad: $('tAd').value / 100, triage_notice: $('tNotice').value / 100, triage_bill: $('tBill').value / 100, triage_message: $('tMsg').value / 100 }; if ($('sHook').value.trim()) b.chat_webhook = $('sHook').value.trim(); await post('/api/bookkeeping/settings', b); $('connMsg').textContent = 'Saved.'; loadConn(); };
+    $('connSave').onclick = async () => { const b = { run_at: $('sRunAt').value, poll_min: $('sPoll').value, backfill_days: $('sBack').value, triage_ad: $('tAd').value / 100, triage_notice: $('tNotice').value / 100, triage_bill: $('tBill').value / 100, triage_message: $('tMsg').value / 100, triage_auto: $('tAuto').checked ? 1 : 0 }; if ($('sHook').value.trim()) b.chat_webhook = $('sHook').value.trim(); await post('/api/bookkeeping/settings', b); $('connMsg').textContent = 'Saved.'; loadConn(); };
     $('chatTest').onclick = async () => { $('chatTest').disabled = true; const r = await post('/api/bookkeeping/chat/test', {}); $('connMsg').textContent = r.ok ? 'Sent via ' + r.posted.via + '.' : r.error; $('chatTest').disabled = false; };
     $('scanNow2').onclick = async () => { $('scanNow2').disabled = true; const r = await post('/api/bookkeeping/scan', {}); $('connMsg').textContent = r.ok ? 'Scanned: ' + r.scan.new + ' new email(s), ' + r.parsed.bills + ' bill draft(s).' : r.error; loadConn(); };
     if ($('watchBtn')) $('watchBtn').onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/gmail/watch', {}); $('connMsg').textContent = r.ok ? 'Watching.' : r.error; loadConn(); };

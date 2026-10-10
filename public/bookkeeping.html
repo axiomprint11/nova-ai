@@ -31,6 +31,12 @@
   a.bk-open { color: inherit; text-decoration: none; } a.bk-open:hover .bk-logo { box-shadow: 0 0 0 2px var(--indigo-light); } a.bk-name { font-weight: 700; } a.bk-name:hover { color: var(--indigo-dark); text-decoration: underline; }
   table.bk-dir td.c, table.bk-dir th.c { text-align: center; } table.bk-dir td { vertical-align: middle; } table.bk-dir td:first-child { width: 60px; padding-right: 4px; }
   table.bk-dir .valias { width: 150px; }
+  .thf { font: 600 11.5px/1.2 inherit; color: var(--muted); border: 0; background: transparent; padding: 2px 4px; margin: -2px -4px; border-radius: 6px; cursor: pointer; white-space: nowrap; } .thf:hover { background: #eef2ff; color: var(--indigo-dark); }
+  .thf.on { color: var(--indigo-dark); } .thf b { font-weight: 700; } .thf-c { display: inline-block; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(45deg); margin-left: 6px; }
+  .thf-pop { position: fixed; z-index: 60; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 16px 48px rgba(20,20,40,.18); overflow: hidden; max-height: 380px; display: flex; flex-direction: column; }
+  .thf-list { overflow: auto; padding: 4px 0; } .thf-i { display: flex; align-items: center; gap: 8px; padding: 7px 12px; font-size: 13px; cursor: pointer; } .thf-i:hover { background: #f3f3fa; } .thf-i.on { color: var(--indigo-dark); font-weight: 600; }
+  .thf-i .ckp-ck { border-radius: 50%; } .thf-i.on .ckp-ck { background: var(--indigo); border-color: var(--indigo); } .thf-i.on .ckp-ck::after { left: 3px; top: 3px; width: 6px; height: 6px; border: 0; border-radius: 50%; background: #fff; transform: none; }
+  .thf-t { flex: 1; } .thf-i small { color: #b0b0c3; font-weight: 500; }
   .th-sel { font: 600 11.5px/1.2 inherit; color: var(--muted); border: 0; background: transparent; padding: 0; cursor: pointer; max-width: 150px; } .th-sel:hover { color: var(--indigo-dark); }
   .bk-ok { color: #9a99ad; font-size: 13px; } a.bk-approve { font-size: 12px; font-weight: 600; color: #b45309; text-decoration: none; background: #fef3c7; padding: 2px 8px; border-radius: 12px; } a.bk-approve:hover { background: #fde68a; }
   tr.saved td { background: #f0fdf4; transition: background .3s; } tr.failed td { background: #fef2f2; } .bk-check input { width: 16px; height: 16px; cursor: pointer; } .bk-dim { color: #9a99ad; font-size: 11px; }
@@ -97,6 +103,10 @@
   .ib-att { color: var(--muted); font-size: 12px; white-space: nowrap; } .ib-att svg { width: 14px; height: 14px; vertical-align: -2px; }
   .ib-time { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }
   .ib-tag { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-right: 6px; text-transform: uppercase; letter-spacing: .03em; } .ib-tag.message { background: #ede9fe; color: #5b21b6; } .ib-tag.parsed { background: #dcfce7; color: #166534; } .ib-tag.skipped { background: #f1f1f8; color: #6b6b85; } .ib-tag.new { background: #dbeafe; color: #1d4ed8; } .ib-tag.error { background: #fef2f2; color: #991b1b; }
+  .h2-search { font: inherit; font-size: 13px; font-weight: 400; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; width: 300px; margin-left: 10px; }
+  .ib-progress { display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-bottom: 10px; border-radius: 9px; background: #eef2ff; color: var(--indigo-dark); font-size: 13px; font-weight: 600; }
+  .ib-spin { width: 14px; height: 14px; border: 2px solid #c7d2fe; border-top-color: var(--indigo); border-radius: 50%; animation: ibspin .8s linear infinite; } @keyframes ibspin { to { transform: rotate(360deg); } }
+  .ib-acts { gap: 6px; } .ib-row.rated { background: #fefce8; transition: background .4s; }
   .ib-detail { grid-column: 1 / -1; padding: 6px 4px 10px 34px; cursor: default; }
   .ib-detail .snip { font-size: 13px; color: var(--ink-soft); margin: 4px 0 8px; white-space: pre-wrap; }
   .ib-detail .verdict { font-size: 12.5px; padding: 8px 10px; border-radius: 8px; background: #fafafe; border: 1px solid #f0f0f6; margin-bottom: 8px; }
