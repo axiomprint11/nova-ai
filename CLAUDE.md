@@ -301,7 +301,7 @@ in the Admin menu with an unread badge. Full write-up: `docs/TALK_AI.md`.
 gary@axiomprint.com; `/api/me` returns `bookkeeper`, the menu item is gated on it, not on admin). The agent **proposes**
 (`bk_proposals` with confidence + reason, `bk_questions` below the threshold), a person **approves** (tab or Google Chat),
 the executor applies (category → transaction + a vendor rule; bill draft → approved bill) and logs to `bk_audit`. No SQL
-tools for the AI. Intake: Plaid `transactions/sync` (access tokens AES-GCM encrypted; webhook `/api/bookkeeping/plaid/webhook`
+tools for the AI. The chart of accounts (`bk_settings.categories`) is a text tree — parent line = type of expense, indented line = sub category; `chartOf()` / `categoriesOf()` / `addToChart()`; dropdowns end with "+ New category…" (`POST /api/bookkeeping/categories`). Intake: Plaid `transactions/sync` (access tokens AES-GCM encrypted; webhook `/api/bookkeeping/plaid/webhook`
 verified with Plaid's JWK over the raw body — that route is excluded from the JSON parser), the accounting inbox
 (`BOOKKEEPER_INBOX`, same service-account key as order@, polled every `poll_min`, optional Pub/Sub push
 `/api/bookkeeping/gmail/push?token=`), Claude reads PDF/image attachments into `bk_bills` (duplicates, new vendors and low

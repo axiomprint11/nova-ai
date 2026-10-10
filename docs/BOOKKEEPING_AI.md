@@ -102,9 +102,20 @@ The AI sees it two ways: `dirLine()` adds "— supplies 57 materials: Sheets ×5
 vendor and a GEO TYPES line (purchases of catalog materials are production cost, not office supplies), and the chat has a
 read-only `materials` tool (by supplier and/or a name / GEO type / manufacturer query).
 
+## Chart of accounts — a tree
+`bk_settings.categories` is a text tree: a line with no indent is a **type of expense** (parent), an indented line (two
+spaces, or `- `) a **sub category** under it. `chartOf()` parses it, `categoriesOf()` gives the names a transaction may
+carry (sub categories, plus parents with no children — so the old flat list still works), `chartText()` is what the AI
+reads ("Cost of Goods Sold: Paper; Inks & Toner | Facilities: Rent; …", answer with the sub category). The default tree
+(`DEFAULT_CHART`) keeps every old flat name as a sub category; an untouched old default is upgraded at boot. Adding: every
+category dropdown ends with "+ New category…" (name + type of expense, existing or new) → `POST /api/bookkeeping/categories
+{name, parent}` → `addToChart()` inserts the line under the parent (creating the parent at the end when new); the chat tool
+`add_category` does the same; a category approved by hand that is not in the chart is appended as a type. Rules → "Chart of
+accounts" is the text editor with a live tree beside it; Transactions show "Type › Sub category".
+
 ## What the agent may do (its only tools)
 `list_pending`, `approve` (by id / all / with a corrected category), `reject`, `answer_question` (records the answer; with
-a category it approves the proposal), `add_rule`, `run_now`, `balances`, `materials` (catalog lookup). No SQL, no vendor details, no payments.
+a category it approves the proposal), `add_rule`, `add_category`, `run_now`, `balances`, `materials` (catalog lookup). No SQL, no vendor details, no payments.
 
 ## Data
 `bk_accounts` (Plaid items), `bk_transactions`, `bk_rules` (vendor → category, keyword → category; made from approvals

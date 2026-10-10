@@ -15,7 +15,7 @@
   const post = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body || {}) });
   NovaNav.mount({ current: 'books' });
 
-  let ov = null, categories = [];
+  let ov = null, categories = [], chart = [];
   document.querySelectorAll('.bk-tabs button').forEach(b => b.onclick = () => show(b.dataset.v));
   function show(v) {
     document.querySelectorAll('.bk-tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
@@ -25,7 +25,8 @@
   }
   async function overview() {
     ov = await api('/api/bookkeeping/overview');
-    categories = String(ov.settings.categories || '').split('\n').map(x => x.trim()).filter(Boolean);
+    chart = ov.chart || [];
+    categories = chart.filter(c => c.parent || !c.children).map(c => c.name).filter((n, i, a) => a.indexOf(n) === i);
     $('nPending').textContent = ov.counts.pending || '';
     const rs = $('runState');
     if (ov.running) { rs.className = 'bk-pill off'; rs.textContent = 'Running…'; }
@@ -33,7 +34,49 @@
     else { rs.className = 'bk-pill off'; rs.textContent = 'Not run yet'; }
     return ov;
   }
-  const catSelect = (cur, cls, blank) => '<select class="' + (cls || '') + '">' + (blank ? '<option value=""' + (cur ? '' : ' selected') + '>' + esc(blank) + '</option>' : '') + categories.concat(cur && categories.indexOf(cur) < 0 ? [cur] : []).map(c => '<option' + (c === cur ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>';
+  // Category dropdown: grouped by type of expense (parent), with "+ New category…" at the end (see newCategory).
+  const parentOf = (name) => { const c = chart.find(x => x.name === name && x.parent); return c ? c.parent : ''; };
+  const catLabel = (name) => { const p = parentOf(name); return p ? esc(p) + ' <span class="bk-dim">›</span> ' + esc(name) : esc(name || ''); };
+  const catSelect = (cur, cls, blank) => {
+    const opt = (c) => '<option value="' + esc(c) + '"' + (c === cur ? ' selected' : '') + '>' + esc(c) + '</option>';
+    const tops = chart.filter(c => !c.parent); let html = '';
+    tops.forEach(t => { html += t.children ? '<optgroup label="' + esc(t.name) + '">' + chart.filter(c => c.parent === t.name).map(c => opt(c.name)).join('') + '</optgroup>' : opt(t.name); });
+    if (cur && categories.indexOf(cur) < 0) html += opt(cur);
+    return '<select class="' + (cls || '') + ' catsel">' + (blank ? '<option value=""' + (cur ? '' : ' selected') + '>' + esc(blank) + '</option>' : '') + html + '<option value="__new">+ New category…</option></select>';
+  };
+  // Picking "+ New category…" in any category dropdown opens a small form: name + type of expense (an existing one or a new one).
+  document.addEventListener('change', (e) => {
+    const sel = e.target; if (!sel.matches || !sel.matches('select.catsel') || sel.value !== '__new') return;
+    const prev = sel.dataset.prev || ''; sel.value = prev;
+    newCategory(sel);
+  });
+  document.addEventListener('focusin', (e) => { if (e.target.matches && e.target.matches('select.catsel')) e.target.dataset.prev = e.target.value; });
+  function newCategory(sel) {
+    const tops = chart.filter(c => !c.parent && c.children).map(c => c.name);
+    const el = document.createElement('div'); el.className = 'bk-modal';
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(440px,100%)"><div class="bk-modal-title">New category</div><div class="bk-muted" style="margin-bottom:10px">A sub category under a type of expense. Pick the type, or type a new one to start a new branch of the tree.</div>' +
+      '<label class="bk-muted">Type of expense</label><div class="bk-row" style="margin:4px 0 10px"><select class="bk" id="ncParent" style="flex:1"><option value="">— new type —</option>' + tops.map(t => '<option>' + esc(t) + '</option>').join('') + '</select></div>' +
+      '<div id="ncNewTypeWrap" style="margin-bottom:10px"><label class="bk-muted">New type of expense</label><input class="bk" id="ncNewType" placeholder="e.g. Delivery" style="width:100%;box-sizing:border-box;margin-top:4px"></div>' +
+      '<label class="bk-muted">Sub category</label><input class="bk" id="ncName" placeholder="e.g. Local Delivery" style="width:100%;box-sizing:border-box;margin:4px 0 12px">' +
+      '<div class="bk-row"><button class="bk-btn p" id="ncSave">Add</button><button class="bk-btn bk-x">Cancel</button><span class="bk-muted" id="ncMsg"></span></div></div>';
+    const close = () => el.remove();
+    el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
+    document.body.appendChild(el);
+    const par = el.querySelector('#ncParent'), wrap = el.querySelector('#ncNewTypeWrap');
+    par.onchange = () => { wrap.style.display = par.value ? 'none' : ''; };
+    el.querySelector('#ncName').focus();
+    el.querySelector('#ncSave').onclick = async () => {
+      const name = el.querySelector('#ncName').value.trim(), parent = par.value || el.querySelector('#ncNewType').value.trim();
+      if (!name) { el.querySelector('#ncMsg').textContent = 'Give it a name.'; return; }
+      const r = await post('/api/bookkeeping/categories', { name, parent });
+      if (!r.ok) { el.querySelector('#ncMsg').textContent = r.error; return; }
+      ov.chart = r.chart; ov.settings.categories = r.settings.categories; chart = r.chart;
+      categories = chart.filter(c => c.parent || !c.children).map(c => c.name).filter((n, i, a) => a.indexOf(n) === i);
+      // Re-draw every category dropdown on the page with the new one, keeping each one's choice; select it in the one that asked.
+      document.querySelectorAll('select.catsel').forEach(o => { const blank = o.options[0] && o.options[0].value === '' ? o.options[0].textContent : ''; const cur = o === sel ? name : o.value; const tmp = document.createElement('div'); tmp.innerHTML = catSelect(cur, o.className.replace(/\bcatsel\b/, '').trim(), blank); o.replaceWith(tmp.firstChild); });
+      close();
+    };
+  }
   const conf = (c) => '<span class="bk-conf' + (c < 0.75 ? ' lo' : '') + '">' + Math.round(c * 100) + '%</span>';
 
   // ---------------------------------------------------------------- Daily Brief
@@ -125,7 +168,7 @@
       (j.transactions || []).map(t => '<tr><td>' + esc(t.date) + (t.pending ? ' <span class="bk-tag">pending</span>' : '') + '</td><td>' + esc(t.merchant || t.name) + (t.merchant && t.merchant !== t.name ? '<div class="bk-muted">' + esc(t.name) + '</div>' : '') +
         (t.vendor_name ? '<div><span class="bk-src ' + esc(t.vendor_source || '') + '">' + (t.vendor_source === 'suppliers' ? 'supplier' : t.vendor_source === 'vendors' ? 'vendor' : 'from a bill') + '</span> ' + esc(t.vendor_name) + ' <a href="#" class="bk-muted" data-setv="' + t.id + '" title="Link to another supplier / vendor">change</a></div>' : '<div><a href="#" class="bk-muted" data-setv="' + t.id + '">link to a supplier / vendor</a></div>') +
         (t.plaid_category ? '<div class="bk-muted">bank: ' + esc(t.plaid_category) + '</div>' : '') + '</td><td>' + esc(t.account_name || '') + '</td>' +
-        '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '">' + usd(-t.amount) + '</td><td>' + (t.category ? esc(t.category) + ' <span class="bk-tag ' + esc(t.category_source || '') + '">' + esc(t.category_source || '') + '</span>' : '<span class="bk-tag ' + esc(t.status) + '">' + esc(t.status) + '</span>') + '</td>' +
+        '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '">' + usd(-t.amount) + '</td><td>' + (t.category ? catLabel(t.category) + ' <span class="bk-tag ' + esc(t.category_source || '') + '">' + esc(t.category_source || '') + '</span>' : '<span class="bk-tag ' + esc(t.status) + '">' + esc(t.status) + '</span>') + '</td>' +
         '<td>' + catSelect(t.category || '', 'tx-cat') + ' <button class="bk-btn sm" data-tx="' + t.id + '">Set</button></td></tr>').join('') + '</tbody></table>' +
       (!(j.transactions || []).length ? '<div class="bk-muted" style="padding:14px 0">No transactions yet — connect a bank under Connections, then Sync.</div>' : '') + '</div>';
     $('txnGo').onclick = loadTxns; v.querySelector('input[name=q]').onkeydown = (e) => { if (e.key === 'Enter') loadTxns(); };
@@ -173,12 +216,15 @@
       (j.rules || []).map(r => '<tr><td>' + (r.kind === 'vendor' ? 'Vendor is ' : 'Contains ') + '<b>' + esc(r.pattern) + '</b></td><td>' + esc(r.category) + '</td><td>' + esc(r.source) + ' · ' + esc(r.created_by || '') + '</td><td>' + r.hits + '</td><td><button class="bk-btn sm bad" data-del="' + r.id + '">Remove</button></td></tr>').join('') + '</tbody></table>' +
       (!(j.rules || []).length ? '<div class="bk-muted" style="padding:14px 0">No rules yet — each approval with "remember" ticked adds one.</div>' : '') + '</div>' +
       
-      '<div class="bk-card"><h2>Chart of accounts and notes for the AI</h2><div class="bk-muted">One category per line. The notes tell BookkeeperAI how AxiomPrint books things.</div>' +
-      '<textarea class="bk" id="sCats" style="min-height:160px;margin-top:8px">' + esc(ov.settings.categories) + '</textarea><textarea class="bk" id="sNotes" style="margin-top:8px">' + esc(ov.settings.notes) + '</textarea>' +
+      '<div class="bk-card"><h2>Chart of accounts and notes for the AI</h2><div class="bk-muted">A tree: a line with no indent is a <b>type of expense</b>, an indented line (two spaces) is a <b>sub category</b> under it — transactions always get the sub category. Add one anywhere with “+ New category…” in a dropdown, or edit the text here. The notes tell BookkeeperAI how AxiomPrint books things.</div>' +
+      '<div class="bk-chart"><textarea class="bk" id="sCats" style="min-height:300px;margin-top:8px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px">' + esc(ov.settings.categories) + '</textarea><div class="bk-tree" id="sTree"></div></div><textarea class="bk" id="sNotes" style="margin-top:8px">' + esc(ov.settings.notes) + '</textarea>' +
       '<div class="bk-row" style="margin-top:8px"><label class="bk-muted">Ask me when confidence is below <input class="bk" id="sThr" type="number" min="0.3" max="1" step="0.05" value="' + esc(ov.settings.threshold) + '" style="width:80px"></label><button class="bk-btn p" id="sSave">Save</button><span class="bk-muted" id="sMsg"></span></div></div>';
     $('rAdd').onclick = async () => { const r = await post('/api/bookkeeping/rules', { kind: $('rKind').value, pattern: $('rPat').value.trim(), category: v.querySelector('select.bk:not(#rKind)').value }); if (!r.ok) alert(r.error); loadRules(); };
     v.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await api('/api/bookkeeping/rules/' + b.dataset.del, { method: 'DELETE' }); loadRules(); });
-    $('sSave').onclick = async () => { await post('/api/bookkeeping/settings', { categories: $('sCats').value, notes: $('sNotes').value, threshold: $('sThr').value }); $('sMsg').textContent = 'Saved.'; overview(); };
+    const tree = () => { let parent = null; const items = []; $('sCats').value.split('\n').forEach(l => { if (!l.trim()) return; const sub = /^[\s\-\*>]/.test(l) && parent; const name = l.replace(/^[\s\-\*>]+/, '').trim(); if (sub) parent.kids.push(name); else { parent = { name, kids: [] }; items.push(parent); } });
+      $('sTree').innerHTML = '<div class="bk-muted" style="margin-bottom:6px">' + items.length + ' types · ' + items.reduce((a, t) => a + (t.kids.length || 1), 0) + ' categories</div>' + items.map(t => '<div class="bk-tree-t">' + esc(t.name) + (t.kids.length ? '' : ' <span class="bk-dim">(used as is)</span>') + '</div>' + t.kids.map(k => '<div class="bk-tree-k">' + esc(k) + '</div>').join('')).join(''); };
+    $('sCats').oninput = tree; tree();
+    $('sSave').onclick = async () => { await post('/api/bookkeeping/settings', { categories: $('sCats').value, notes: $('sNotes').value, threshold: $('sThr').value }); $('sMsg').textContent = 'Saved.'; await overview(); loadRules(); };
   }
 
   // ---------------------------------------------------------------- Suppliers & vendors (the CRM directory + vendors seen on bills)

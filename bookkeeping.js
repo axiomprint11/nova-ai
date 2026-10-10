@@ -106,13 +106,30 @@ module.exports = function mountBookkeeping(app, deps) {
   const nowIso = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
 
   // ---------------------------------------------------------------- settings, audit, access
-  const DEFAULT_CATEGORIES = [
+  // The chart of accounts is a tree: a line with no indent is a parent (type of expense), an indented line ("  Paper" or
+  // "- Paper") is a sub category under it. Only sub categories (and parents without children) are used on transactions.
+  const OLD_FLAT_CATEGORIES = [
     'Paper', 'Inks & Toner', 'Printing Supplies', 'Outsourced Printing', 'Freight & Shipping', 'Equipment Repairs & Maintenance',
     'Rent', 'Utilities', 'Payroll', 'Payroll Taxes', 'Insurance', 'Software & Subscriptions', 'Advertising & Marketing', 'Office Supplies',
     'Vehicle & Fuel', 'Meals', 'Travel', 'Professional Fees', 'Bank Fees & Interest', 'Merchant Fees', 'Taxes & Licenses',
     'Equipment (Fixed Asset)', 'Software Development (Capitalized)', 'Leasehold Improvements', 'Loan Payment (Principal)',
     'Owner Distribution', 'Transfer Between Accounts', 'Credit Card Payment', 'Customer Payment (Income)', 'Sales Tax Payable', 'Refund'
   ];
+  const DEFAULT_CHART = [
+    'Cost of Goods Sold', '  Paper', '  Inks & Toner', '  Printing Supplies', '  Outsourced Printing', '  Freight & Shipping', '  Local Delivery', '  Packaging',
+    'Facilities', '  Rent', '  Utilities', '  Equipment Repairs & Maintenance', '  Janitorial & Building',
+    'People', '  Payroll', '  Payroll Taxes', '  Employee Benefits', '  Contractors',
+    'Insurance', '  Business Insurance', '  Workers Comp', '  Vehicle Insurance',
+    'Operations', '  Software & Subscriptions', '  Office Supplies', '  Telephone & Internet',
+    'Vehicles', '  Vehicle & Fuel', '  Vehicle Repairs', '  Parking & Tolls',
+    'Sales & Marketing', '  Advertising & Marketing', '  Website & SEO', '  Samples & Promotion',
+    'Travel & Meals', '  Travel', '  Meals',
+    'Fees & Taxes', '  Professional Fees', '  Bank Fees & Interest', '  Merchant Fees', '  Taxes & Licenses',
+    'Assets & Capital', '  Equipment (Fixed Asset)', '  Software Development (Capitalized)', '  Leasehold Improvements',
+    'Not an expense', '  Loan Payment (Principal)', '  Owner Distribution', '  Transfer Between Accounts', '  Credit Card Payment', '  Sales Tax Payable',
+    'Income', '  Customer Payment (Income)', '  Refund', '  Other Income'
+  ];
+  const DEFAULT_CATEGORIES = DEFAULT_CHART;
   const SETTING_DEFAULTS = {
     run_at: env('BOOKKEEPER_RUN_AT') || '07:00', poll_min: parseInt(env('BOOKKEEPER_POLL_MIN')) || 15, threshold: 0.75,
     categories: DEFAULT_CATEGORIES.join('\n'), chat_webhook: env('BOOKKEEPER_CHAT_WEBHOOK') || '', chat_space: '',
@@ -134,7 +151,38 @@ module.exports = function mountBookkeeping(app, deps) {
       [key, value == null ? '' : String(value), nowIso(), who || 'system']);
     settingsCache = null;
   }
-  const categoriesOf = (s) => String(s.categories || '').split('\n').map(x => x.trim()).filter(Boolean);
+  // chartOf → [{ name, parent, children }] in file order; categoriesOf → the names a transaction may carry (sub categories,
+  // and parents that have no children — an old flat list is all parents without children, so it keeps working).
+  function chartOf(s) {
+    const out = []; let parent = null;
+    String(s.categories || '').split('\n').forEach(line => {
+      if (!line.trim()) return;
+      const sub = /^(\s+|-\s*|\*\s*|>\s*)/.test(line) && parent;
+      const name = line.replace(/^[\s\-\*>]+/, '').trim(); if (!name) return;
+      if (sub) { out.push({ name, parent: parent.name }); parent.children++; } else { parent = { name, parent: null, children: 0 }; out.push(parent); }
+    });
+    return out;
+  }
+  const categoriesOf = (s) => { const seen = {}; return chartOf(s).filter(c => c.parent || !c.children).map(c => c.name).filter(n => !seen[n] && (seen[n] = 1)); };
+  const parentOf = (s, name) => { const c = chartOf(s).find(x => x.name === name && x.parent); return c ? c.parent : null; };
+  // The chart as the AI reads it: "Cost of Goods Sold: Paper; Inks & Toner | Facilities: Rent; …"
+  const chartText = (s) => { const ch = chartOf(s), tops = ch.filter(c => !c.parent); return tops.map(t => t.children ? t.name + ': ' + ch.filter(c => c.parent === t.name).map(c => c.name).join('; ') : t.name).join(' | '); };
+  // Add a category (a sub category under a parent, a new parent, or both) to the saved chart text.
+  function addToChart(text, name, parent) {
+    const lines = String(text || '').split('\n');
+    name = String(name || '').trim(); parent = String(parent || '').trim();
+    if (!name) return text;
+    if (!parent) { if (lines.some(l => l.trim() === name)) return text; return lines.concat([name]).join('\n').replace(/^\n+/, ''); }
+    let pi = lines.findIndex(l => !/^[\s\-\*>]/.test(l) && l.trim() === parent);
+    if (pi < 0) { lines.push(parent); pi = lines.length - 1; }
+    let end = pi + 1; while (end < lines.length && (/^[\s\-\*>]/.test(lines[end]) || !lines[end].trim())) end++;
+    if (lines.slice(pi + 1, end).some(l => l.replace(/^[\s\-\*>]+/, '').trim() === name)) return lines.join('\n');
+    while (end > pi + 1 && !lines[end - 1].trim()) end--;
+    lines.splice(end, 0, '  ' + name);
+    return lines.join('\n');
+  }
+  // 1.15.x shipped a flat list; an untouched flat default becomes the tree.
+  (async () => { try { const s = await settings(); if (s.categories === OLD_FLAT_CATEGORIES.join('\n')) await setSetting('categories', DEFAULT_CHART.join('\n'), 'system'); } catch (e) {} })();
   async function audit(who, action, ref, detail) {
     try { await dbRun('INSERT INTO bk_audit (who, action, ref, detail) VALUES (?,?,?,?)', [who || 'system', action, ref == null ? null : String(ref), detail == null ? null : (typeof detail === 'string' ? detail : JSON.stringify(detail)).slice(0, 4000)]); } catch (e) {}
   }
@@ -460,7 +508,7 @@ module.exports = function mountBookkeeping(app, deps) {
   // ---------------------------------------------------------------- Claude: bills and categories
   const SYS = (s) => 'You are BookkeeperAI, the bookkeeping assistant of AxiomPrint (a print shop in Glendale, CA). You never decide anything: ' +
     'you PROPOSE, with a confidence from 0 to 1 and a one-line reason, and a person approves. Be precise, use only what is in the documents and data, never invent amounts or dates. ' +
-    'CHART OF ACCOUNTS (use these category names exactly): ' + categoriesOf(s).join('; ') + '. NOTES FROM THE OWNER: ' + String(s.notes || '');
+    'CHART OF ACCOUNTS — type of expense: its sub categories (always answer with the SUB category name exactly as written; a type with no sub categories is used by its own name): ' + chartText(s) + '. NOTES FROM THE OWNER: ' + String(s.notes || '');
   async function fileBlock(att) {
     const full = path.join(FILES, att.file);
     if (!fs.existsSync(full)) return null;
@@ -628,7 +676,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const tx = await dbGet('SELECT vendor_id FROM bk_transactions WHERE id = ?', [p.ref_id]);
       if (tx && tx.vendor_id) { await dbRun('UPDATE bk_vendors SET default_category = ? WHERE id = ? AND (default_category IS NULL OR default_category = ?)', [category, tx.vendor_id, '']); dirCache.at = 0; }
       await audit(who, 'category.apply', p.ref_id, { category, edited, rule });
-      if (categoriesOf(s).indexOf(category) === -1) await setSetting('categories', categoriesOf(s).concat([category]).join('\n'), who);
+      if (categoriesOf(s).indexOf(category) === -1) await setSetting('categories', addToChart(s.categories, category, opts.parent || ''), who);
       return { ok: true, status: edited ? 'edited' : 'approved', category, rule };
     }
     if (p.type === 'bill') {
@@ -739,6 +787,8 @@ module.exports = function mountBookkeeping(app, deps) {
       input_schema: { type: 'object', properties: { kind: { type: 'string', enum: ['vendor', 'keyword'] }, pattern: { type: 'string' }, category: { type: 'string' } }, required: ['kind', 'pattern', 'category'] } },
     { name: 'run_now', description: 'Sync the banks, scan the inbox and categorize now, then rebuild the brief.', input_schema: { type: 'object', properties: {} } },
     { name: 'balances', description: 'Current bank balances.', input_schema: { type: 'object', properties: {} } },
+    { name: 'add_category', description: 'Add a category to the chart of accounts: a sub category under a type of expense (the type is created if new).',
+      input_schema: { type: 'object', properties: { name: { type: 'string', description: 'The sub category' }, parent: { type: 'string', description: 'The type of expense it belongs to' } }, required: ['name'] } },
     { name: 'materials', description: 'Look up the CRM materials catalog (GEO types): what a supplier supplies, or which materials / suppliers match a name or GEO type. Read-only.',
       input_schema: { type: 'object', properties: { supplier: { type: 'string', description: 'Supplier / vendor name' }, query: { type: 'string', description: 'Material name, GEO type, sub type, material kind or manufacturer' } }, required: [] } }
   ];
@@ -770,6 +820,12 @@ module.exports = function mountBookkeeping(app, deps) {
     }
     if (name === 'run_now') return await runDaily('manual', who, { post: false });
     if (name === 'balances') return { balances: await balances() };
+    if (name === 'add_category') {
+      const nm = String(input.name || '').trim().slice(0, 80), parent = String(input.parent || '').trim().slice(0, 80);
+      if (!nm) return { error: 'A name is needed' };
+      const s = await settings(); await setSetting('categories', addToChart(s.categories, nm, parent), who); await audit(who, 'category.add', null, { name: nm, parent, via: 'chat' });
+      return { ok: true, chart: chartText(await settings()) };
+    }
     if (name === 'materials') {
       const q = String(input.query || '').trim().toLowerCase(), supN = String(input.supplier || '').trim();
       let where = [], args = [];
@@ -932,7 +988,7 @@ module.exports = function mountBookkeeping(app, deps) {
       emails: (await dbGet('SELECT COUNT(*) AS n FROM bk_emails')).n, rules: (await dbGet('SELECT COUNT(*) AS n FROM bk_rules WHERE active = 1')).n
     };
     const lastRun = await dbGet('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 1');
-    res.json({ ok: true, me: userId(req), settings: Object.assign({}, s, { chat_webhook: s.chat_webhook ? '(set)' : '' }), counts, brief, last_run: lastRun, running: !!running,
+    res.json({ ok: true, me: userId(req), settings: Object.assign({}, s, { chat_webhook: s.chat_webhook ? '(set)' : '' }), chart: chartOf(s), counts, brief, last_run: lastRun, running: !!running,
       connections: {
         plaid: { configured: plaidReady(), env: PLAID_ENV, items },
         gmail: { inbox: INBOX, key: fs.existsSync(keyPath), last_scan: (await dbGet("SELECT at FROM bk_audit WHERE action = 'gmail.scan' ORDER BY id DESC LIMIT 1") || {}).at || null,
@@ -1045,6 +1101,17 @@ module.exports = function mountBookkeeping(app, deps) {
     for (const k of ['run_at', 'poll_min', 'threshold', 'categories', 'notes', 'chat_webhook', 'backfill_days']) if (b[k] !== undefined) await setSetting(k, b[k], userId(req));
     await audit(userId(req), 'settings', null, Object.keys(b));
     res.json({ ok: true, settings: await settings() });
+  });
+  // Add a category: { name, parent } — a sub category under a type of expense (the parent is created when new), or a new type on its own.
+  app.post('/api/bookkeeping/categories', ...guard, async (req, res) => {
+    const name = String(req.body && req.body.name || '').trim().slice(0, 80), parent = String(req.body && req.body.parent || '').trim().slice(0, 80);
+    if (!name) return res.json({ ok: false, error: 'A name is needed.' });
+    const s = await settings();
+    if (chartOf(s).some(c => c.name === name && (c.parent || '') === parent)) return res.json({ ok: true, settings: s, chart: chartOf(s), category: name });
+    await setSetting('categories', addToChart(s.categories, name, parent), userId(req));
+    await audit(userId(req), 'category.add', null, { name, parent });
+    const s2 = await settings();
+    res.json({ ok: true, settings: Object.assign({}, s2, { chat_webhook: s2.chat_webhook ? '(set)' : '' }), chart: chartOf(s2), category: name });
   });
   app.post('/api/bookkeeping/run', ...guard, async (req, res) => res.json(await runDaily('manual', userId(req), { post: !!(req.body && req.body.post) })));
   app.post('/api/bookkeeping/scan', ...guard, async (req, res) => { try { const r = await scanInbox(userId(req)); const p = await parseNewEmails(userId(req)); res.json({ ok: true, scan: r, parsed: p }); } catch (e) { res.json({ ok: false, error: e.message }); } });

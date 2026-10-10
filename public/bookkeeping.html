@@ -31,6 +31,10 @@
   .bk-modal-box { background: #fff; border-radius: 14px; padding: 18px 20px; width: min(520px, 100%); max-height: 90vh; overflow: auto; box-shadow: 0 20px 60px rgba(0,0,0,.25); }
   .bk-modal-head { display: flex; gap: 14px; align-items: center; margin-bottom: 14px; } .bk-modal-head > div { flex: 1; } .bk-modal-head .bk-logo { width: 72px; height: 72px; }
   .bk-modal-title { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+  .bk-chart { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; } @media (max-width: 760px) { .bk-chart { grid-template-columns: 1fr; } }
+  .bk-tree { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fafafe; font-size: 13px; max-height: 320px; overflow: auto; }
+  .bk-tree-t { font-weight: 700; margin-top: 6px; } .bk-tree-t:first-of-type { margin-top: 0; } .bk-tree-k { padding-left: 16px; color: var(--ink-soft); } .bk-tree-k::before { content: '└ '; color: #c7c7d6; }
+  select.catsel optgroup { font-style: normal; font-weight: 700; color: var(--muted); }
   .bk-dl { display: grid; grid-template-columns: 150px 1fr; gap: 10px; padding: 7px 0; border-top: 1px solid #f0f0f6; font-size: 13.5px; } .bk-dl span { color: var(--muted); font-size: 12.5px; }
   .bk-src { font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px; text-transform: uppercase; letter-spacing: .03em; background: #eef2ff; color: #3730a3; }
   .bk-src.vendor { background: #ecfeff; color: #155e75; } .bk-src.bill { background: #fef3c7; color: #92400e; } .bk-src.other { background: #f1f1f8; color: #4b4869; }
