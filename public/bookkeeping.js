@@ -186,21 +186,38 @@
     const v = $('vVendors');
     if (!ov) await overview();
     const j = await api('/api/bookkeeping/directory');
-    const src = (x) => x.source === 'suppliers' ? '<span class="bk-src">supplier</span>' : x.source === 'vendors' ? '<span class="bk-src vendors">vendor</span>' : '<span class="bk-src bill">from a bill</span>';
+    const all = j.vendors || [];
+    const KIND_LABEL = { supplier: 'Supplier', vendor: 'Vendor', contractor: 'Contractor', service: 'Service', other: 'Other' };
+    const label = (k) => KIND_LABEL[k] || (String(k || 'other').charAt(0).toUpperCase() + String(k || 'other').slice(1));
+    // The types: the built-in ones plus any that already exist on a row (so a new type never disappears from the list).
+    const kinds = Object.keys(KIND_LABEL).filter(k => k !== 'other'); all.forEach(x => { if (x.kind && kinds.indexOf(x.kind) < 0) kinds.push(x.kind); }); kinds.push('other');
+    const counts = {}; all.forEach(x => { counts[x.kind || 'other'] = (counts[x.kind || 'other'] || 0) + 1; });
+    let kindF = ''; try { kindF = localStorage.getItem('bk_vendor_kind') || ''; } catch (e) {}
+    if (kindF && !counts[kindF]) kindF = '';
     const logo = (x) => x.photo ? '<img class="bk-logo" src="' + esc(x.photo) + '" alt="" loading="lazy" onerror="this.outerHTML=\'<span class=&quot;bk-logo ph&quot;>' + esc(String(x.name).charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo ph">' + esc(String(x.name).charAt(0).toUpperCase()) + '</span>';
-    const row = (x) => '<tr data-vid="' + x.id + '"><td>' + logo(x) + '</td><td>' + src(x) + ' <b>' + esc(x.name) + '</b>' + (x.contact ? '<div class="bk-muted">' + esc(x.contact) + '</div>' : '') + '</td><td class="bk-muted">' + esc(x.email || '') + (x.phone ? '<br>' + esc(x.phone) : '') + '</td><td class="bk-muted">' + esc(x.specialty || '') + '</td>' +
+    const kindSel = (x) => '<select class="bk vkind">' + kinds.map(k => '<option value="' + esc(k) + '"' + ((x.kind || 'other') === k ? ' selected' : '') + '>' + esc(label(k)) + '</option>').join('') + '</select>';
+    const row = (x) => '<tr data-vid="' + x.id + '" data-kind="' + esc(x.kind || 'other') + '" data-q="' + esc((x.name + ' ' + (x.contact || '') + ' ' + (x.email || '') + ' ' + (x.specialty || '') + ' ' + (x.aliases || '')).toLowerCase()) + '"><td>' + logo(x) + '</td><td>' + kindSel(x) + (x.source === 'bill' ? '<div><span class="bk-src bill">from a bill</span></div>' : '') + '</td>' +
+      '<td><b>' + esc(x.name) + '</b>' + (x.contact ? '<div class="bk-muted">' + esc(x.contact) + '</div>' : '') + '</td><td class="bk-muted">' + esc(x.email || '') + (x.phone ? '<br>' + esc(x.phone) : '') + '</td><td class="bk-muted">' + esc(x.specialty || '') + '</td>' +
       '<td>' + catSelect(x.default_category || '', 'vcat', '— not set —') + '</td><td><input type="text" class="bk valias" placeholder="bank names, one per line" value="' + esc(String(x.aliases || '').split('\n').join(' | ')) + '" title="How this vendor appears on bank statements (separate with |)"></td>' +
       '<td><label><input type="checkbox" class="vappr"' + (x.approved ? ' checked' : '') + '> ' + (x.approved ? 'yes' : 'no') + '</label></td><td class="bk-muted">' + (x.txns || 0) + ' / ' + (x.bills || 0) + '</td><td><button class="bk-btn sm" data-vsave="' + x.id + '">Save</button></td></tr>';
-    const crm = (j.vendors || []).filter(x => x.source === 'suppliers' || x.source === 'vendors'), seen = (j.vendors || []).filter(x => !(x.source === 'suppliers' || x.source === 'vendors'));
-    const table = (rows) => '<table class="bk"><thead><tr><th></th><th>Name</th><th>Contact</th><th>Specialty</th><th>Usual category</th><th>On the bank statement as</th><th>Approved</th><th>Txns / bills</th><th></th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table>';
-    v.innerHTML = '<div class="bk-card"><h2>From the CRM — Suppliers and Vendors<span class="sp"></span><span class="bk-muted">' + (j.synced_at ? 'synced ' + when(j.synced_at) : 'not synced yet') + '</span><button class="bk-btn" id="dirSync"' + (j.crm ? '' : ' disabled') + '>Refresh from CRM</button></h2>' +
-      '<div class="bk-muted" style="margin-bottom:8px">Read from the CRM\u2019s Suppliers and Vendors lists (read-only, refreshed with every daily run). They are trusted: a bank line or bill that matches one is linked to it, and BookkeeperAI uses the specialty and the usual category when it proposes. Edit names, emails and specialties in the CRM; set the usual category and the bank-statement names here.</div>' +
-      (crm.length ? table(crm) : '<div class="bk-muted">Nothing synced yet — press Refresh from CRM.</div>') + '</div>' +
-      '<div class="bk-card"><h2>Seen on bills, not in the CRM<span class="sp"></span><span class="bk-muted">approve them here, or add them in the CRM</span></h2>' + (seen.length ? table(seen) : '<div class="bk-muted">None.</div>') + '</div>';
+    const unapproved = all.filter(x => !x.approved).length;
+    v.innerHTML = '<div class="bk-card"><h2>Suppliers &amp; vendors<span class="sp"></span><span class="bk-muted">' + (j.synced_at ? 'synced ' + when(j.synced_at) : 'not synced yet') + '</span><button class="bk-btn" id="dirSync"' + (j.crm ? '' : ' disabled') + '>Refresh from CRM</button></h2>' +
+      '<div class="bk-muted" style="margin-bottom:8px">Read from the CRM’s Suppliers and Vendors lists (read-only, refreshed with every daily run); the photo is the CRM’s. They are trusted: a bank line or bill that matches one is linked to it, and BookkeeperAI uses the specialty and the usual category when it proposes. Edit names, emails and specialties in the CRM; set the type, the usual category and the bank-statement names here. Vendors first seen on a bill are <span class="bk-src bill">from a bill</span> and wait for your approval' + (unapproved ? ' (' + unapproved + ' waiting)' : '') + '.</div>' +
+      '<div class="bk-filters"><select id="vKind"><option value="">All types (' + all.length + ')</option>' + kinds.filter(k => counts[k]).map(k => '<option value="' + esc(k) + '"' + (kindF === k ? ' selected' : '') + '>' + esc(label(k)) + ' (' + counts[k] + ')</option>').join('') + '</select>' +
+      '<select id="vAppr"><option value="">Approved and waiting</option><option value="0">Waiting for approval' + (unapproved ? ' (' + unapproved + ')' : '') + '</option><option value="1">Approved</option></select><input name="q" id="vQ" placeholder="Search name, contact, email, specialty…"></div>' +
+      (all.length ? '<table class="bk"><thead><tr><th></th><th>Type</th><th>Name</th><th>Contact</th><th>Specialty</th><th>Usual category</th><th>On the bank statement as</th><th>Approved</th><th>Txns / bills</th><th></th></tr></thead><tbody>' + all.map(row).join('') + '</tbody></table><div class="bk-muted" id="vNone" style="display:none;padding:14px 0">Nothing matches.</div>'
+        : '<div class="bk-muted">Nothing synced yet — press Refresh from CRM.</div>') + '</div>';
+    const filter = () => {
+      const k = $('vKind').value, ap = $('vAppr').value, q = $('vQ').value.trim().toLowerCase(); let n = 0;
+      try { localStorage.setItem('bk_vendor_kind', k); } catch (e) {}
+      v.querySelectorAll('tr[data-vid]').forEach(tr => { const on = (!k || tr.dataset.kind === k) && (!ap || (tr.querySelector('.vappr').checked ? '1' : '0') === ap) && (!q || tr.dataset.q.indexOf(q) >= 0); tr.style.display = on ? '' : 'none'; if (on) n++; });
+      if ($('vNone')) $('vNone').style.display = n ? 'none' : '';
+    };
+    ['vKind', 'vAppr'].forEach(id => $(id).onchange = filter); $('vQ').oninput = filter; filter();
     $('dirSync').onclick = async () => { $('dirSync').disabled = true; const r = await post('/api/bookkeeping/directory/sync', {}); if (!r.ok) alert(r.error); else if (r.errors && r.errors.length) alert(r.errors.join('\n')); loadVendors(); };
     v.querySelectorAll('[data-vsave]').forEach(b => b.onclick = async () => {
       const tr = b.closest('tr'); b.disabled = true;
-      await post('/api/bookkeeping/vendors/' + b.dataset.vsave, { approved: tr.querySelector('.vappr').checked, default_category: tr.querySelector('select.vcat').value, aliases: tr.querySelector('.valias').value.split('|').map(x => x.trim()).filter(Boolean).join('\n') });
+      await post('/api/bookkeeping/vendors/' + b.dataset.vsave, { approved: tr.querySelector('.vappr').checked, kind: tr.querySelector('.vkind').value, default_category: tr.querySelector('select.vcat').value, aliases: tr.querySelector('.valias').value.split('|').map(x => x.trim()).filter(Boolean).join('\n') });
       loadVendors();
     });
   }
