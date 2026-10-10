@@ -511,9 +511,17 @@
     const close = () => { el.innerHTML = '<div class="ib-empty">Select an email to read it</div>'; };
     if (e.body_html) {
       const fr = el.querySelector('.em-html');
-      const base = '<base target="_blank"><style>body{margin:0;padding:16px 22px;font:14px/1.5 -apple-system,Segoe UI,Roboto,Inter,sans-serif;color:#1f1f33;word-break:break-word}img{max-width:100%;height:auto}a{color:#4338ca}</style>';
+      // One scrollbar only: the frame never scrolls itself — it grows to its content and the reading pane scrolls.
+      const base = '<base target="_blank"><style>html,body{height:auto!important;overflow:visible!important}body{margin:0;padding:16px 22px;font:14px/1.5 -apple-system,Segoe UI,Roboto,Inter,sans-serif;color:#1f1f33;word-break:break-word}img{max-width:100%;height:auto}a{color:#4338ca}</style>';
+      fr.setAttribute('scrolling', 'no');
+      fr.onload = () => { try {
+        const d = fr.contentDocument;
+        const fit = () => { let h = d.body.offsetHeight; Array.from(d.body.children).forEach(c => { const r = c.getBoundingClientRect(); h = Math.max(h, r.bottom + (d.documentElement.scrollTop || 0)); }); fr.style.height = Math.min(Math.max(h, 60) + 32, 20000) + 'px'; };   // measure the content, not the viewport, so the frame can shrink too
+        fit(); setTimeout(fit, 300); setTimeout(fit, 1200); setTimeout(fit, 3000);
+        if (window.ResizeObserver) new ResizeObserver(fit).observe(d.body);
+        d.querySelectorAll('img').forEach(im => { im.addEventListener('load', fit); im.addEventListener('error', fit); });
+      } catch (er) {} };
       fr.srcdoc = base + e.body_html;
-      fr.onload = () => { try { const d = fr.contentDocument; const fit = () => { fr.style.height = Math.min(Math.max(d.documentElement.scrollHeight, d.body.scrollHeight) + 20, 4000) + 'px'; }; fit(); setTimeout(fit, 400); setTimeout(fit, 1500); } catch (er) {} };
       const pl = el.querySelector('[data-plain]'); if (pl) pl.onclick = () => { fr.outerHTML = '<div class="em-body">' + esc(body).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>') + '</div>'; pl.remove(); };
     }
     // image thumbnails

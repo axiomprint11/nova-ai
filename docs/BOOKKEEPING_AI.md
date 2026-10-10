@@ -181,7 +181,7 @@ expense bars (click to filter), top vendors (click to filter). Filters are query
 
 ### Page layout (1.18.8)
 Main tabs left-aligned in the header, "Bookkeeping AI" + the last-run pill at the right, Connections / Activity icons
-after them. Every view is full width, left aligned. Table headers (`table.bk th`) are 15.5px, dark, and **sticky**:
+after them. Every view is left aligned and capped at 1120px (`.bk-view`), except the Inbox split view which keeps the full width. The email body frame grows to its content (`scrolling=no`, measured from the body's children, ResizeObserver) so the reading pane is the only scrollbar. Table headers (`table.bk th`) are 15.5px, dark, and **sticky**:
 the list scrolls under them (`.bk-main` scrolls; its top padding lives on `.bk-view` so a stuck header sits flush).
 Search boxes everywhere are regular weight and right-aligned on their row.
 
