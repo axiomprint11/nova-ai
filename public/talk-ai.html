@@ -504,17 +504,17 @@
           <!-- Opening hours + closed days: one accordion card, two tabs inside; closed shows only "right now". -->
           <div class="tk-card tk-acc" id="hoursCard">
             <button type="button" class="tk-acc-hd" id="hoursToggle" aria-expanded="false" aria-controls="hoursBody">
-              <span class="tk-acc-t">Opening hours &amp; closed days</span>
+              <span class="tk-acc-t">Call routing hours &amp; closed days</span>
               <span class="tk-acc-now" id="sNowShort"></span>
               <svg class="tk-acc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
             </button>
             <div class="tk-acc-body" id="hoursBody" hidden>
               <div class="tk-mtabs" id="sHoursTabs" role="tablist">
-                <button type="button" data-h="hours" class="on" role="tab">Opening hours</button>
+                <button type="button" data-h="hours" class="on" role="tab">Call routing hours</button>
                 <button type="button" data-h="closed" role="tab">Closed days <b class="tk-ucount tk-calcount" id="sCalCount"></b></button>
               </div>
               <div data-hp="hours">
-                <p class="sub" style="margin-top:12px">Los Angeles time. Inside these hours the <b>Regular hours</b> setups answer; outside them (and on closed days) the <b>After Hours</b> setup.</p>
+                <p class="sub" style="margin-top:12px">Los Angeles time. The phone is answered 24/7: inside these hours the <b>Regular hours</b> setups answer; outside them (and on closed days) the <b>After Hours</b> setup. These are routing times only — the hours NovaAI tells callers come from <a href="/admin?tab=knowledge" style="color:var(--indigo-dark)">Domain Knowledge → Company info</a> (office 9–6, Sat 10–2).</p>
                 <div class="tk-hours" id="sHours"></div>
               </div>
               <div data-hp="closed" hidden>

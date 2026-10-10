@@ -355,6 +355,12 @@ pattern for any new report over a large log table. To add a report, add an entry
   production status, lose `estimate_invoiceid`, and their invoice stays only on the project (`invoice_projectid`, total 0,
   `payment_status` may still say paid). The client bot's `projectCards()` marks them CANCELED, `my_orders` returns
   `latest_order` = newest job that is neither canceled nor a quote, and the staff job card / hover use `boardStatus()`.
+- **Office hours are company data, not the TalkAi routing hours.** `office-hours.js` (SQLite `company_info`, key
+  `office_hours`; Admin → Domain Knowledge → Company info; `GET /api/office-hours`, `POST /api/admin/office-hours`)
+  holds what customers are told (default Mon–Fri 9–6, Sat 10–2, Sun closed + a note); `officeHours.line(closedDays)`
+  is an OFFICE HOURS line in the CRM Chat, website chat and TalkAi prompts (the only hours they may state). TalkAi's
+  `talk_settings.hours` (8:00–6:55) only decides which setup answers — the phone is answered 24/7 — and reaches the
+  prompt as an internal TEAM AVAILABILITY line, never as opening hours.
 - **Closed days come from the production `holidays` table** (the website's "Closed days" panel), not a hard-coded
   list. `closed-days.js` expands each row (one-off, or `recurrence` yearly / monthly / weekly) into dates for last
   year .. three years ahead, keeps them in memory and reloads hourly. `usHolidays(year)` in server.js returns those

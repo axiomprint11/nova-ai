@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.15.1';
-const NOVA_BUILT = '10-10-2026 11:35am';
+const NOVA_VERSION = '1.15.2';
+const NOVA_BUILT = '10-10-2026 11:50am';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -994,6 +994,13 @@ function num(v) { const n = Number(v); return isFinite(n) && n > 0 ? n : null; }
 // AxiomPrint's closed days come from its own calendar: the production `holidays` table (the website's "Closed days"
 // panel — "New jobs' due dates skip these days"), loaded into memory by closed-days.js and reloaded hourly.
 const closedDays = require('./closed-days')(runQuery);
+// Office hours — company data for every assistant (Admin → Domain Knowledge → Company info). Not the TalkAi routing hours.
+const officeHours = require('./office-hours')(db);
+app.get('/api/office-hours', auth, async (req, res) => res.json({ ok: true, hours: await officeHours.get(), text: officeHours.weekText(await officeHours.get()), status: officeHours.status(await officeHours.get(), closedDays) }));
+app.post('/api/admin/office-hours', auth, adminOnly, async (req, res) => {
+  try { const v = await officeHours.set(req.body || {}, String(req.user.username || req.user.key || '')); res.json({ ok: true, hours: v, text: officeHours.weekText(v) }); }
+  catch (e) { res.json({ ok: false, error: e.message }); }
+});
 const { artworkSpecs } = require('./artwork-specs');
 // The closed days of a year as a Set of 'YYYY-MM-DD' — every business-day count (timelines, due dates, quotes) uses
 // this. Until the calendar has loaded once (or if the database is unreachable at boot), the built-in list below.
@@ -6751,6 +6758,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     } catch (e) { /* thumbnails are a nicety - never break the answer over them */ }
   }
 
+  const officeHoursLine = await officeHours.line(closedDays).catch(() => '');
   const systemPrompt =
     'You are ChatBot, the AxiomPrint company brain. AxiomPrint is a Los Angeles commercial printing and ' +
     'fulfillment company. You answer questions from AxiomPrint STAFF - account managers, production, sales, ' +
@@ -6838,6 +6846,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     '      following business day.\n' +
     '    AXIOMPRINT CLOSED DAYS (the shop calendar; no production or pick-up, never counted; "are you open on …?" is\n' +
     '      answered from this): ' + (closedDays.text(400) || 'see the calendar') + '.\n' +
+    '    ' + officeHoursLine + '\n' +
     '    Worked example, because this is the one people get wrong: approved Wednesday at 10PM, 5 business\n' +
     '      days. After the cutoff, so Wednesday is out. Thursday is the start day. Friday is Day 1, Monday\n' +
     '      Day 2, Tuesday Day 3, Wednesday Day 4, Thursday Day 5 — READY THURSDAY.\n' +
@@ -9217,10 +9226,10 @@ mountMcp(app, { runQuery, dataDictionary: DATA_DICTIONARY });
 const clientBot = require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly,
   quoteProduct, buildOrderLink, stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming,
   InstallPricing, getInstallPricing: () => installPricing, routeLookup, toTime24, driveFileBytes,
-  extractAttachmentText, relatedRules, sendMail, closedDays, loadClientTraining, dataDir: __dirname });
+  extractAttachmentText, relatedRules, sendMail, closedDays, officeHours, loadClientTraining, dataDir: __dirname });
 // TalkAi — NovaAI on the phone (Twilio + ElevenLabs), sharing the client bot's tools and rules (talk-ai.js).
 require('./talk-ai')(app, { db, runQuery, mysql, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly, serveVersionedHtml,
-  sendMail, dataDir: __dirname, loadTalkTraining, closedDays }, clientBot);
+  sendMail, dataDir: __dirname, loadTalkTraining, closedDays, officeHours }, clientBot);
 
 // Bookkeeping AI — bank transactions, the accounting inbox, bill drafts, the Daily Brief (bookkeeping.js).
 const bookkeeping = require('./bookkeeping')(app, { db, crypto, jwt, anthropic, model: MODEL_MAIN, auth, serveVersionedHtml, google,

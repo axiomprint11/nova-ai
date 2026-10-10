@@ -171,6 +171,16 @@ tr:last-child td { border-bottom: none; }
 .ip-hist-who { color:var(--ink-soft); }
 .ip-hist-when { color:var(--muted); font-size:11px; }
 /* chat panel */
+.ci-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 18px; margin-bottom: 18px; }
+.ci-hd { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; font-size: 14px; }
+.ci-hd span { color: var(--muted); font-size: 12.5px; }
+.ci-grid { display: grid; grid-template-columns: auto auto auto 1fr; gap: 6px 12px; align-items: center; max-width: 560px; font-size: 13px; }
+.ci-grid input[type=time] { padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; font: inherit; font-size: 13px; }
+.ci-grid input[type=time]:disabled { opacity: .45; }
+.ci-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.ci-row input[type=text] { flex: 1; min-width: 220px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 13px; }
+.ci-now { font-size: 12.5px; color: var(--ink-soft); margin-top: 8px; }
+.ci-now b.on { color: #166534; } .ci-now b.off { color: #92400e; }
 .panel { position: fixed; inset: 0; background: rgba(30,27,46,0.5); display: none; align-items: center; justify-content: center; z-index: 200; }
 .panel-inner { background: var(--surface); border-radius: 16px; width: 720px; max-width: 92vw; max-height: 84vh; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(0,0,0,0.3); }
 .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--line); font-weight: 600; font-size: 15px; }
@@ -288,6 +298,12 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
       </div>
       <div id="tabKnowledge" style="display:none">
         <h2 class="h2">Domain Knowledge</h2>
+
+        <!-- Company info: the facts every assistant states to customers (office hours). Admins edit; members see. -->
+        <div class="ci-card" id="companyInfo">
+          <div class="ci-hd"><b>Company info</b><span>What NovaAI tells customers in CRM Chat, the website chat and on the phone. Not the TalkAi call-routing hours.</span></div>
+          <div class="ci-body" id="ciBody"><span style="color:var(--muted);font-size:13px">Loading…</span></div>
+        </div>
 
         <div class="dk-tabs">
           <button class="dk-tab active" id="dkTabDocs" onclick="dkSwitch('docs')">Documents</button>
@@ -1263,7 +1279,34 @@ async function deleteMeeting(id) {
 let knowledgeAgentList = [];   // [{slug,name}] for the assignment checkboxes
 let knowledgeDocs = [];
 
+// Company info (office hours): one card above the documents; admins edit, members read.
+async function loadCompanyInfo() {
+  const box = document.getElementById('ciBody'); if (!box) return;
+  try {
+    const r = await fetch('/api/office-hours', { headers: { 'Authorization': 'Bearer ' + token } }); const j = await r.json();
+    if (!j.ok) { box.textContent = 'Could not load.'; return; }
+    const h = j.hours, DAYS = ['mon','tue','wed','thu','fri','sat','sun'], NAMES = { mon:'Monday', tue:'Tuesday', wed:'Wednesday', thu:'Thursday', fri:'Friday', sat:'Saturday', sun:'Sunday' };
+    const ro = IS_ADMIN ? '' : ' disabled';
+    box.innerHTML = '<div class="ci-grid">' + DAYS.map(k => '<label><input type="checkbox" data-ci-open="' + k + '"' + (h.days[k].open ? ' checked' : '') + ro + '> ' + NAMES[k] + '</label>' +
+      '<span style="color:var(--muted)">' + (h.days[k].open ? 'Open' : 'Closed') + '</span><input type="time" data-ci-from="' + k + '" value="' + h.days[k].from + '"' + (h.days[k].open ? '' : ' disabled') + ro + '><span>to <input type="time" data-ci-to="' + k + '" value="' + h.days[k].to + '"' + (h.days[k].open ? '' : ' disabled') + ro + '></span>').join('') + '</div>' +
+      '<div class="ci-row"><input type="text" id="ciNote" placeholder="Note for customers, e.g. Pick-ups until 6 PM; closed on major holidays" value="' + esc(h.note || '') + '"' + ro + '></div>' +
+      '<div class="ci-row"><input type="text" id="ciAddress" placeholder="Address (optional)" value="' + esc(h.address || '') + '"' + ro + '><input type="text" id="ciPhone" placeholder="Phone (optional)" value="' + esc(h.phone || '') + '" style="max-width:200px"' + ro + '></div>' +
+      '<div class="ci-now">Customers are told: <b>' + esc(j.text) + '</b> · right now <b class="' + (j.status.open ? 'on' : 'off') + '">' + (j.status.open ? 'open until ' + esc(j.status.closes) : 'closed' + (j.status.holiday ? ' (' + esc(j.status.holiday) + ')' : '')) + '</b></div>' +
+      (IS_ADMIN ? '<div class="ci-row"><button class="btn-solid" id="ciSave" style="font-size:12.5px;padding:7px 14px">Save company info</button><span id="ciMsg" style="font-size:12.5px;color:var(--muted)"></span></div>' : '');
+    box.querySelectorAll('[data-ci-open]').forEach(c => c.onchange = () => { const k = c.dataset.ciOpen; box.querySelector('[data-ci-from="' + k + '"]').disabled = !c.checked; box.querySelector('[data-ci-to="' + k + '"]').disabled = !c.checked; c.parentElement.nextElementSibling.textContent = c.checked ? 'Open' : 'Closed'; });
+    const save = document.getElementById('ciSave');
+    if (save) save.onclick = async () => {
+      const days = {}; DAYS.forEach(k => { days[k] = { open: box.querySelector('[data-ci-open="' + k + '"]').checked ? 1 : 0, from: box.querySelector('[data-ci-from="' + k + '"]').value, to: box.querySelector('[data-ci-to="' + k + '"]').value }; });
+      save.disabled = true;
+      const r2 = await fetch('/api/admin/office-hours', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ days, note: document.getElementById('ciNote').value, address: document.getElementById('ciAddress').value, phone: document.getElementById('ciPhone').value }) });
+      const j2 = await r2.json(); save.disabled = false;
+      document.getElementById('ciMsg').textContent = j2.ok ? 'Saved — every assistant uses it from its next answer.' : (j2.error || 'Could not save');
+      if (j2.ok) loadCompanyInfo();
+    };
+  } catch (e) { box.textContent = 'Could not load.'; }
+}
 async function loadKnowledge() {
+  loadCompanyInfo();
   document.getElementById('knowledgeEditor').style.display = 'none';
   document.getElementById('knowledgeList').style.display = 'block';
   const box = document.getElementById('knowledgeList');

@@ -146,7 +146,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
       greeting_returning: 'Hi {name}, NovaAI here, on a recorded line. The team is out, but I\u2019m happy to help \u2014 what can I do for you?',
       greeting: 'Hi, you\u2019ve reached AxiomPrint. Our team is out right now, but I\u2019m NovaAI, an AI assistant, and this call is recorded. How can I help you?',
       greeting_known: 'Hi {name}, thanks for calling AxiomPrint! Our team is out right now, but I\u2019m NovaAI, an AI assistant, and this call is recorded. How can I help you?',
-      rules: '- The team is closed now: when the caller needs a person, say when we open again (the HOURS line) and take a message so the team calls back first thing.\n- Prices, products, turnaround and order status work as usual.' },
+      rules: '- The team is closed now: when the caller needs a person, say when the office opens again (the OFFICE HOURS line) and take a message so the team calls back first thing.\n- Prices, products, turnaround and order status work as usual.' },
     // A call the team didn't pick up in business hours (Dialpad forwards it to the missed-call number).
     missed: { answer: 'ai',
       greeting_returning: 'Hi {name}, sorry for the wait \u2014 NovaAI here, on a recorded line. Happy to help!',
@@ -953,9 +953,10 @@ module.exports = function mountTalkAi(app, deps, bot) {
       'NOW: ' + nowLA() + ' (Los Angeles time).',
       langCode(call.language) && langCode(call.language) !== 'en' ? 'LANGUAGE: the caller chose ' + LANGS[langCode(call.language)].name + ' — speak ' + LANGS[langCode(call.language)].name +
         ' for the whole call unless they switch. Product names and prices stay as the tools give them.' : '',
-      'HOURS: ' + (s._hours && s._hours.open ? 'the team is IN until ' + s._hours.closes + ' today.' : 'the team is CLOSED now' +
-        (s._hours && s._hours.closed_today ? ' (closed today: ' + s._hours.closed_today + ')' : '') + (s._hours && s._hours.next ? '; we open again ' + s._hours.next + '.' : '.')) +
-        ' Opening hours: ' + weekText(s.hours) + ' (Los Angeles).',
+      (deps.officeHours ? await deps.officeHours.line(deps.closedDays).catch(() => '') : ''),
+      'TEAM AVAILABILITY (internal \u2014 for transfers and "the team will call you back"; never read these times out as our opening hours): ' +
+        (s._hours && s._hours.open ? 'the team is answering until ' + s._hours.closes + ' today.' : 'the team is not answering now' +
+        (s._hours && s._hours.closed_today ? ' (closed today: ' + s._hours.closed_today + ')' : '') + (s._hours && s._hours.next ? '; they are back ' + s._hours.next + '.' : '.')),
       deps.closedDays && deps.closedDays.text(400) ? 'CLOSED DAYS (the shop is closed all day \u2014 no production, no pick-up; they never count as business days; ' +
         'answer "are you open on \u2026?" from this): ' + deps.closedDays.text(400) + '.' : '',
       'CALLER: calling from ' + (call.from_number || 'an unknown number') + '. ' + callerLine(call, c),
