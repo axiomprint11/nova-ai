@@ -75,7 +75,10 @@ Each entry's **type** is the CRM list it is in (`bk_vendors.kind`: supplier / ve
 the Type filter above the list; a new CRM list is a new type (`BOOKKEEPER_CRM_LISTS=suppliers,vendors,<table>`, same columns).
 Vendors first seen on a bill are in the same list, type "From a bill". The directory refreshes by itself: when the tab opens
 and the last sync is older than 10 minutes, hourly from the clock, and with every daily run — a company added in the CRM
-shows up without pressing anything. Sync errors are logged (`BOOKKEEPER directory sync`) and shown in the tab header. A bank line is linked to a directory entry (`bk_transactions.vendor_id`) when the entry's name, one of its
+shows up without pressing anything. Sync errors are logged (`BOOKKEEPER directory sync`) and shown in the tab header.
+The list shows the essentials; clicking a name or logo opens the full CRM record (`bk_vendors.details` JSON: address, unit,
+city/state/zip, country, hours, list, CRM id). **Approved** = BookkeeperAI may link bank lines and bills to the company
+without asking (CRM entries come approved; bill-seen ones wait); **Linked** = transactions / bills matched to it so far. A bank line is linked to a directory entry (`bk_transactions.vendor_id`) when the entry's name, one of its
 bank-statement aliases, or (for bills) its email domain matches; the AI is told "OUR VENDOR: Veritiv — Paper → usually
 Paper" and gets the whole directory as context. Approving a category for a linked transaction fills the vendor's
 *usual category* (editable in the tab, with the aliases). Vendors first seen on a bill (`source` = bill) wait for
