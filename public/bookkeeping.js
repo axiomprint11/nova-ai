@@ -287,7 +287,7 @@
   }
 
   // ---------------------------------------------------------------- Transactions
-  let txnSt = 'pending'; try { txnSt = localStorage.getItem('bk_txn_st') ?? 'pending'; } catch (e) {}
+  let txnSt = 'pending';   // Pending every time the tab opens (not remembered)
   // Categorized view filters (period defaults to the last 30 days); kept per browser.
   let TF = { period: '30', from: '', to: '', type: '', category: '', vendor_id: '', source: '', min: '', max: '', account: '' };
   try { TF = Object.assign(TF, JSON.parse(localStorage.getItem('bk_txn_filters') || '{}')); } catch (e) {}
@@ -312,7 +312,7 @@
     let qs = '?status=' + encodeURIComponent(st) + '&q=' + encodeURIComponent(q);
     if (cat) { const [f, t] = periodRange(TF.period); qs += '&from=' + f + '&to=' + t + ['type', 'category', 'vendor_id', 'source', 'min', 'max', 'account'].map(k => TF[k] ? '&' + k + '=' + encodeURIComponent(TF[k]) : '').join(''); }
     const j = await api('/api/bookkeeping/transactions' + qs);
-    const bs = j.by_status || {}, total = Object.values(bs).reduce((a, b) => a + b, 0);
+    const bs = j.by_status || {};
     const chip = (k, l, n) => '<button class="ib-chip' + (st === k ? ' on' : '') + '" data-st="' + k + '">' + l + (n == null ? '' : ' (' + n + ')') + '</button>';
     const syncIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/></svg>';
     const T = j.totals || {}, chart = cat ? report(T) : '';
@@ -326,7 +326,7 @@
       source: [{ v: '', l: 'Any' }, { v: 'approved', l: 'Approved (AI proposed)' }, { v: 'manual', l: 'Manual' }, { v: 'rule', l: 'By rule' }],
       account: [{ v: '', l: 'All accounts' }].concat((j.accounts || []).map(a => ({ v: a, l: esc(a) })))
     } : null;
-    v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top">' + chip('', 'All', total) + chip('pending', 'Pending', bs.pending || 0) + chip('new', 'New', bs.new || 0) + chip('categorized', 'Categorized') + '<span class="sp"></span><input name="q" placeholder="Search name, vendor or category" value="' + esc(q) + '"><button class="bk-btn ico" id="syncNow" title="Sync with Bank" aria-label="Sync with Bank">' + syncIcon + '</button></div>' + fbar + chart +
+    v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top">' + chip('', 'All') + chip('pending', 'Pending', bs.pending || 0) + chip('new', 'New', bs.new || 0) + chip('categorized', 'Categorized') + '<span class="sp"></span><input name="q" placeholder="Search name, vendor or category" value="' + esc(q) + '"><button class="bk-btn ico" id="syncNow" title="Sync with Bank" aria-label="Sync with Bank">' + syncIcon + '</button></div>' + fbar + chart +
       '<table class="bk tx-table"><thead><tr><th>Date</th><th>Description' + (cat ? ' · ' + thFilter('vendor', 'Vendor', FO.vendor, TF.vendor_id) : '') + '</th><th>' + (cat ? thFilter('account', 'Account', FO.account, TF.account) : 'Account') + '</th><th class="num">Amount</th><th>' + (cat ? thFilter('type', 'Category', FO.type, TF.type ? 'T:' + TF.type : TF.category ? 'C:' + TF.category : '') + ' · ' + thFilter('source', 'Set by', FO.source, TF.source) : 'Category <span class="bk-dim" style="font-weight:500">pick to set</span>') + '</th></tr></thead><tbody>' +
       (j.transactions || []).map(t => '<tr><td>' + esc(t.date) + (t.pending ? ' <span class="bk-tag">pending</span>' : '') + '</td><td>' + esc(t.merchant || t.name) + (t.merchant && t.merchant !== t.name ? '<div class="bk-muted">' + esc(t.name) + '</div>' : '') +
         (t.vendor_name ? '<div><span class="bk-src ' + esc(t.vendor_source || '') + '">' + (t.vendor_source === 'suppliers' ? 'supplier' : t.vendor_source === 'vendors' ? 'vendor' : 'from a bill') + '</span> ' + esc(t.vendor_name) + ' <a href="#" class="bk-muted" data-setv="' + t.id + '" title="Link to another supplier / vendor">change</a></div>' : '<div><a href="#" class="bk-muted" data-setv="' + t.id + '">link to a supplier / vendor</a></div>') +
@@ -334,7 +334,7 @@
         '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '">' + usd(-t.amount) + '</td>' +
         '<td data-txid="' + t.id + '"><div class="bk-row" style="gap:8px;flex-wrap:nowrap">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : 'Choose…') + (t.category ? '<span class="bk-tag ' + esc(t.category_source || '') + '" title="How it was set">' + esc(t.category_source || '') + '</span>' : '<span class="bk-tag ' + esc(t.status) + '">' + esc(t.status) + '</span>') + '</div></td></tr>').join('') + '</tbody></table>' +
       (!(j.transactions || []).length ? '<div class="bk-muted" style="padding:14px 0">No transactions yet — connect a bank under Connections, then Sync.</div>' : '') + '</div>';
-    v.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { txnSt = b.dataset.st; try { localStorage.setItem('bk_txn_st', txnSt); } catch (e) {} loadTxns(); });
+    v.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { txnSt = b.dataset.st; loadTxns(); });
     v.querySelector('input[name=q]').onkeydown = (e) => { if (e.key === 'Enter') loadTxns(); };
     const saveTF = () => { try { localStorage.setItem('bk_txn_filters', JSON.stringify(TF)); } catch (e) {} loadTxns(); };
     v.querySelectorAll('[data-period]').forEach(b => b.onclick = () => { TF.period = b.dataset.period; saveTF(); });
