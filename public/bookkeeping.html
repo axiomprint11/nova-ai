@@ -103,6 +103,21 @@
   .ib-att { color: var(--muted); font-size: 12px; white-space: nowrap; } .ib-att svg { width: 14px; height: 14px; vertical-align: -2px; }
   .ib-time { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }
   .ib-tag { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-right: 6px; text-transform: uppercase; letter-spacing: .03em; } .ib-tag.message { background: #ede9fe; color: #5b21b6; } .ib-tag.parsed { background: #dcfce7; color: #166534; } .ib-tag.skipped { background: #f1f1f8; color: #6b6b85; } .ib-tag.new { background: #dbeafe; color: #1d4ed8; } .ib-tag.error { background: #fef2f2; color: #991b1b; }
+  /* reading pane */
+  .em-box { width: min(860px, 100%); padding: 0; overflow: hidden; display: flex; flex-direction: column; max-height: 92vh; }
+  .em-head { display: flex; align-items: flex-start; gap: 12px; padding: 18px 22px 10px; } .em-subject { flex: 1; font-size: 20px; font-weight: 600; line-height: 1.3; }
+  .em-meta { display: flex; align-items: center; gap: 12px; padding: 6px 22px 12px; border-bottom: 1px solid var(--line); } .em-av { width: 40px; height: 40px; border-radius: 50%; background: #e0e7ff; color: #3730a3; display: grid; place-items: center; font-weight: 700; font-size: 16px; flex: none; }
+  .em-who { flex: 1; min-width: 0; font-size: 13.5px; } .em-who .bk-muted { font-size: 12.5px; } .em-date { font-size: 12.5px; white-space: nowrap; }
+  .em-verdict { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 22px; background: #fafafe; border-bottom: 1px solid var(--line); font-size: 12.5px; } .em-verdict a { color: var(--indigo-dark); font-weight: 600; }
+  .em-body { padding: 18px 22px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow: auto; flex: 1; min-height: 80px; color: var(--ink); }
+  .em-atts { display: flex; gap: 10px; flex-wrap: wrap; padding: 4px 22px 14px; border-top: 1px solid var(--line); margin-top: 0; padding-top: 14px; }
+  .em-att { display: flex; flex-direction: column; width: 180px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; text-decoration: none; color: inherit; background: #fff; } .em-att:hover { border-color: #a5b4fc; box-shadow: 0 2px 10px rgba(79,70,229,.12); }
+  .em-thumb { height: 110px; background: #f3f3fa center / cover no-repeat; display: grid; place-items: center; color: #dc2626; } .em-thumb svg { width: 40px; height: 40px; } .em-thumb.pdf { background: #fff5f5; }
+  .em-attn { padding: 8px 10px; display: flex; flex-direction: column; min-width: 0; } .em-attn b { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .em-attn small { color: var(--muted); font-size: 11.5px; }
+  .em-acts { display: flex; align-items: center; gap: 8px; padding: 12px 22px; border-top: 1px solid var(--line); background: #fff; } .em-acts .sp { flex: 1; }
+  .em-viewer { z-index: 70; background: rgba(10,10,20,.75); } .em-vbox { width: min(1100px, 100%); height: 92vh; background: #fff; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }
+  .em-vhead { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px; } .em-vhead .sp { flex: 1; } .em-vhead a.bk-btn { text-decoration: none; }
+  .em-frame { flex: 1; border: 0; width: 100%; } .em-img { flex: 1; overflow: auto; display: grid; place-items: center; background: #1f1f33; } .em-img img { max-width: 100%; max-height: 100%; }
   .h2-search { font: inherit; font-size: 13px; font-weight: 400; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; width: 300px; margin-left: 10px; }
   .ib-progress { display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-bottom: 10px; border-radius: 9px; background: #eef2ff; color: var(--indigo-dark); font-size: 13px; font-weight: 600; }
   .ib-spin { width: 14px; height: 14px; border: 2px solid #c7d2fe; border-top-color: var(--indigo); border-radius: 50%; animation: ibspin .8s linear infinite; } @keyframes ibspin { to { transform: rotate(360deg); } }
@@ -237,7 +252,7 @@
   </div>
   <div class="bk-tabs main" id="tabs">
     <button data-v="brief" class="on">Daily Brief<span class="n" id="nPending"></span></button>
-    <button data-v="txns">Transactions</button>
+    <button data-v="txns">Transactions<span class="n" id="nTxns"></span></button>
     <button data-v="bills">Bills<span class="n" id="nBills"></span></button>
     <button data-v="inbox">Inbox<span class="n" id="nInbox"></span></button>
     <button data-v="accounts">Accounts</button>

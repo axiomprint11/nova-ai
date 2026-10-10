@@ -1147,6 +1147,7 @@ module.exports = function mountBookkeeping(app, deps) {
       pending: (await dbGet("SELECT COUNT(*) AS n FROM bk_proposals WHERE status = 'pending'")).n,
       questions: (await dbGet("SELECT COUNT(*) AS n FROM bk_questions WHERE answer IS NULL AND proposal_id IN (SELECT id FROM bk_proposals WHERE status = 'pending')")).n,
       transactions: (await dbGet('SELECT COUNT(*) AS n FROM bk_transactions')).n,
+      txn_open: (await dbGet("SELECT COUNT(*) AS n FROM bk_transactions WHERE status IN ('new', 'pending')")).n,
       bills: (await dbGet("SELECT COUNT(*) AS n FROM bk_bills WHERE status <> 'rejected'")).n,
       bill_drafts: (await dbGet("SELECT COUNT(*) AS n FROM bk_bills WHERE status = 'draft'")).n,
       bills_by_status: Object.fromEntries((await dbAll('SELECT status, COUNT(*) n FROM bk_bills GROUP BY status')).map(r => [r.status, r.n])),
@@ -1189,7 +1190,8 @@ module.exports = function mountBookkeeping(app, deps) {
     const where = ["t.status <> 'removed'"], p = [];
     if (st) { where.push('t.status = ?'); p.push(st); }
     if (q) { where.push('(t.name LIKE ? OR t.merchant LIKE ? OR t.category LIKE ? OR v.name LIKE ?)'); p.push('%' + q + '%', '%' + q + '%', '%' + q + '%', '%' + q + '%'); }
-    res.json({ ok: true, transactions: await dbAll('SELECT t.id, t.txn_id, t.account_name, t.date, t.name, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, v.name AS vendor_name, v.source AS vendor_source ' +
+    const by_status = Object.fromEntries((await dbAll("SELECT status, COUNT(*) n FROM bk_transactions WHERE status <> 'removed' GROUP BY status")).map(r => [r.status, r.n]));
+    res.json({ ok: true, by_status, transactions: await dbAll('SELECT t.id, t.txn_id, t.account_name, t.date, t.name, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, v.name AS vendor_name, v.source AS vendor_source ' +
       'FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id WHERE ' + where.join(' AND ') + ' ORDER BY t.date DESC, t.id DESC LIMIT 300', p) });
   });
   app.post('/api/bookkeeping/transactions/:id/category', ...guard, async (req, res) => {
@@ -1258,6 +1260,24 @@ module.exports = function mountBookkeeping(app, deps) {
     const rows = await dbAll('SELECT id, gmail_id, from_addr, subject, received_at, snippet, attachments, status, note, kind, confidence, read_by, triaged_at FROM bk_emails ORDER BY received_at DESC LIMIT 300');
     rows.forEach(r => { try { r.attachments = JSON.parse(r.attachments || '[]'); } catch (e) { r.attachments = []; } });
     res.json({ ok: true, emails: rows });
+  });
+  // One email in full (the reading pane) and its attachments (inline, for the viewer).
+  app.get('/api/bookkeeping/emails/:id', ...guard, async (req, res) => {
+    const m = await dbGet('SELECT * FROM bk_emails WHERE id = ?', [parseInt(req.params.id)]); if (!m) return res.json({ ok: false, error: 'No such email' });
+    try { m.attachments = JSON.parse(m.attachments || '[]'); } catch (e) { m.attachments = []; }
+    m.attachments = m.attachments.map((a, i) => ({ i, name: a.name, mime: a.mime, size: a.size, kind: /\.pdf$/i.test(a.file || '') || /pdf/.test(a.mime || '') ? 'pdf' : 'image' }));
+    const bill = await dbGet('SELECT id, status FROM bk_bills WHERE email_id = ? ORDER BY id DESC LIMIT 1', [m.id]);
+    res.json({ ok: true, email: m, bill: bill || null, inbox: INBOX });
+  });
+  app.get('/api/bookkeeping/emails/:id/att/:i', ...guard, async (req, res) => {
+    const m = await dbGet('SELECT attachments FROM bk_emails WHERE id = ?', [parseInt(req.params.id)]); let atts = []; try { atts = JSON.parse(m && m.attachments || '[]'); } catch (e) {}
+    const a = atts[parseInt(req.params.i)]; if (!a || !a.file) return res.status(404).type('text/plain').send('No file');
+    const full = path.resolve(FILES, a.file);
+    if (full.indexOf(path.resolve(FILES)) !== 0 || !fs.existsSync(full)) return res.status(404).type('text/plain').send('No file');
+    res.setHeader('Content-Disposition', 'inline; filename="' + String(a.name || a.file).replace(/["\\]/g, '') + '"');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.type(/\.pdf$/i.test(a.file) ? 'application/pdf' : /\.png$/i.test(a.file) ? 'image/png' : /\.webp$/i.test(a.file) ? 'image/webp' : 'image/jpeg');
+    fs.createReadStream(full).pipe(res);
   });
   app.post('/api/bookkeeping/emails/:id/read', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), em = await dbGet('SELECT id, status FROM bk_emails WHERE id = ?', [id]);

@@ -46,6 +46,7 @@
     chart = ov.chart || [];
     categories = chart.filter(c => c.parent || !c.children).map(c => c.name).filter((n, i, a) => a.indexOf(n) === i);
     $('nPending').textContent = ov.counts.pending || '';
+    $('nTxns').textContent = ov.counts.txn_open || ''; $('nTxns').title = (ov.counts.txn_open || 0) + ' transactions without a decided category';
     $('nBills').textContent = ov.counts.bill_drafts || ''; $('nBills').title = (ov.counts.bill_drafts || 0) + ' bill drafts waiting';
     const bs = ov.counts.bills_by_status || {}; $('nBillsPending').textContent = bs.draft || ''; $('nBillsApproved').textContent = bs.approved || ''; $('nBillsScheduled').textContent = bs.scheduled || ''; $('nBillsPaid').textContent = bs.paid || '';
     $('nInbox').textContent = (ov.counts.inbox_new || 0) + (ov.counts.inbox_messages || 0) || ''; $('nInbox').title = (ov.counts.inbox_new || 0) + ' not looked at yet, ' + (ov.counts.inbox_messages || 0) + ' messages for a person';
@@ -286,13 +287,15 @@
   }
 
   // ---------------------------------------------------------------- Transactions
+  let txnSt = ''; try { txnSt = localStorage.getItem('bk_txn_st') || ''; } catch (e) {}
   async function loadTxns() {
     const v = $('vTxns');
     if (!ov) await overview();
-    const st = (v.querySelector('select[name=st]') || {}).value || '', q = (v.querySelector('input[name=q]') || {}).value || '';
+    const st = txnSt, q = (v.querySelector('input[name=q]') || {}).value || '';
     const j = await api('/api/bookkeeping/transactions?status=' + encodeURIComponent(st) + '&q=' + encodeURIComponent(q));
-    v.innerHTML = '<div class="bk-card"><div class="bk-filters"><input name="q" placeholder="Search name, vendor or category" value="' + esc(q) + '"><select name="st"><option value="">All</option>' +
-      ['new', 'pending', 'categorized'].map(s => '<option' + (s === st ? ' selected' : '') + '>' + s + '</option>').join('') + '</select><button class="bk-btn" id="txnGo">Filter</button><span class="sp"></span><button class="bk-btn" id="syncNow">Sync banks now</button></div>' +
+    const bs = j.by_status || {}, total = Object.values(bs).reduce((a, b) => a + b, 0);
+    const chip = (k, l) => '<button class="ib-chip' + (st === k ? ' on' : '') + '" data-st="' + k + '">' + l + ' (' + (k ? (bs[k] || 0) : total) + ')</button>';
+    v.innerHTML = '<div class="bk-card"><div class="bk-filters" style="align-items:center">' + chip('', 'All') + chip('new', 'New') + chip('pending', 'Pending') + chip('categorized', 'Categorized') + '<input name="q" placeholder="Search name, vendor or category" value="' + esc(q) + '" style="margin-left:8px"><span class="sp"></span><button class="bk-btn" id="syncNow">Sync banks now</button></div>' +
       '<table class="bk"><thead><tr><th>Date</th><th>Description</th><th>Account</th><th class="num">Amount</th><th>Category</th><th></th></tr></thead><tbody>' +
       (j.transactions || []).map(t => '<tr><td>' + esc(t.date) + (t.pending ? ' <span class="bk-tag">pending</span>' : '') + '</td><td>' + esc(t.merchant || t.name) + (t.merchant && t.merchant !== t.name ? '<div class="bk-muted">' + esc(t.name) + '</div>' : '') +
         (t.vendor_name ? '<div><span class="bk-src ' + esc(t.vendor_source || '') + '">' + (t.vendor_source === 'suppliers' ? 'supplier' : t.vendor_source === 'vendors' ? 'vendor' : 'from a bill') + '</span> ' + esc(t.vendor_name) + ' <a href="#" class="bk-muted" data-setv="' + t.id + '" title="Link to another supplier / vendor">change</a></div>' : '<div><a href="#" class="bk-muted" data-setv="' + t.id + '">link to a supplier / vendor</a></div>') +
@@ -300,7 +303,8 @@
         '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '">' + usd(-t.amount) + '</td><td>' + (t.category ? catLabel(t.category) + ' <span class="bk-tag ' + esc(t.category_source || '') + '">' + esc(t.category_source || '') + '</span>' : '<span class="bk-tag ' + esc(t.status) + '">' + esc(t.status) + '</span>') + '</td>' +
         '<td>' + catSelect(t.category || '', 'tx-cat') + ' <button class="bk-btn sm" data-tx="' + t.id + '">Set</button></td></tr>').join('') + '</tbody></table>' +
       (!(j.transactions || []).length ? '<div class="bk-muted" style="padding:14px 0">No transactions yet — connect a bank under Connections, then Sync.</div>' : '') + '</div>';
-    $('txnGo').onclick = loadTxns; v.querySelector('input[name=q]').onkeydown = (e) => { if (e.key === 'Enter') loadTxns(); };
+    v.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { txnSt = b.dataset.st; try { localStorage.setItem('bk_txn_st', txnSt); } catch (e) {} loadTxns(); });
+    v.querySelector('input[name=q]').onkeydown = (e) => { if (e.key === 'Enter') loadTxns(); };
     $('syncNow').onclick = async () => { $('syncNow').disabled = true; const r = await post('/api/bookkeeping/sync', {}); if (!r.ok) alert(r.error); loadTxns(); overview(); };
     v.querySelectorAll('[data-tx]').forEach(b => b.onclick = async () => { const sel = b.parentNode.querySelector('input.tx-cat'); await post('/api/bookkeeping/transactions/' + b.dataset.tx + '/category', { category: sel.value }); loadTxns(); overview(); });
     v.querySelectorAll('[data-setv]').forEach(a => a.onclick = async (e) => {
@@ -399,10 +403,7 @@
       '<span class="ib-dot ' + k + '" title="' + esc(k) + '"></span><span class="ib-from" title="' + esc(fromAddr(m.from_addr)) + '">' + esc(fromName(m.from_addr)) + '</span>' +
       '<span class="ib-subj"><b>' + esc(m.subject || '(no subject)') + '</b> <span>— ' + esc(m.snippet || '') + '</span></span>' +
       '<span class="ib-att">' + kindTag(m) + (m.attachments.length ? ' ' + clip + ' ' + m.attachments.length : '') + '</span><span class="ib-time">' + esc(day(m.received_at)) + '</span>' +
-      (ibOpen === m.id ? '<div class="ib-detail"><div class="bk-muted">' + esc(m.from_addr) + ' · ' + when(m.received_at) + '</div><div class="snip">' + esc(m.snippet || '') + '</div>' +
-        (m.attachments.length ? '<div class="files">' + m.attachments.map(a => '<a>' + clip + ' ' + esc(a.name) + '</a>').join('') + '</div>' : '') +
-        '<div class="verdict"><span class="ib-tag ' + k + '">' + esc(k === 'skipped' ? (m.read_by === 'ai' ? 'set aside by AI' : m.read_by === 'user' ? 'marked read' : 'set aside') : k === 'message' ? 'for a person' : k) + '</span>' + esc(m.note || (k === 'new' ? 'Not looked at yet — the next inbox check (every ' + esc(ov.settings.poll_min) + ' min) will.' : '')) + (k === 'parsed' ? ' <a href="#" data-gobills>open Bills</a>' : '') + '</div>' +
-        (k !== 'parsed' ? '<button class="bk-btn sm" data-parse="' + m.id + '">Read it as a bill</button>' + (k === 'new' || k === 'message' ? ' <button class="bk-btn sm" data-read="' + m.id + '">Mark as read</button>' : '') : '') + '</div>' : '') + '</div>'; };
+      '</div>'; };
     const rated = { advertisement: 0, notification: 0, receipt: 0 }; all.forEach(m => { if (st(m) === 'new' && rated[m.kind] !== undefined) rated[m.kind]++; });
     const unrated = all.filter(m => st(m) === 'new' && !m.triaged_at).length;
     v.innerHTML = '<div class="bk-card"><h2>Inbox — ' + esc(ov ? ov.connections.gmail.inbox : '') + ' ' + qHelp('inbox', 'Inbox', 'The inbox is checked every ' + esc(ov.settings.poll_min) + ' minutes. Every new email gets a kind and a confidence — <b>Ad</b>, <b>Notice</b> (delivery, tracking, alerts), <b>Receipt</b>, <b>Bill</b>, <b>Message</b> — shown as a tag on the row. ' + (ov.settings.triage_auto ? 'Ads, notices and receipts above the thresholds (Connections) are set aside by the AI by itself.' : 'Nothing is set aside by itself: BookkeeperAI only rates. You set aside all ads / notices / receipts in one click with the buttons, or one at a time.') + ' A <b>Bill</b> is read in full and becomes a draft under Bills; a <b>Message</b> from a person is kept for you. <b>Blue</b> = not read, <b>purple</b> = a message for a person, <b>green</b> = a bill, <b>grey</b> = set aside. Open any row to see why it was rated so; "Read it as a bill" overrides a rating.') + '<span class="sp"></span><span class="bk-muted">' + all.length + ' emails · ' + (ov && ov.connections.gmail.last_scan ? 'scanned ' + when(ov.connections.gmail.last_scan) : 'not scanned yet') + '</span><button class="bk-btn p" id="scanNow2">Scan now</button></h2>' +
@@ -415,10 +416,7 @@
     const filter = () => { const q = $('ibQ').value.trim().toLowerCase(); let n = 0; v.querySelectorAll('.ib-row').forEach(r => { const on = (ibFilter === 'all' || (ibFilter === 'ai' ? r.dataset.ai === '1' : r.dataset.k === ibFilter)) && (!q || r.dataset.q.indexOf(q) > -1); r.style.display = on ? '' : 'none'; if (on) n++; }); $('ibNone').style.display = n || !all.length ? 'none' : ''; };
     v.querySelectorAll('.ib-chip').forEach(c => c.onclick = () => { ibFilter = c.dataset.f; v.querySelectorAll('.ib-chip').forEach(x => x.classList.toggle('on', x === c)); filter(); });
     $('ibQ').oninput = filter; filter();
-    v.querySelectorAll('.ib-row').forEach(r => r.onclick = (ev) => { if (ev.target.closest('.ib-detail')) return; ibOpen = ibOpen === Number(r.dataset.m) ? null : Number(r.dataset.m); loadInbox(); });
-    v.querySelectorAll('[data-parse]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/emails/' + b.dataset.parse + '/parse', {}); if (!r.ok) alert(r.error); loadInbox(); overview(); });
-    v.querySelectorAll('[data-read]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/emails/' + b.dataset.read + '/read', {}); if (!r.ok) alert(r.error); loadInbox(); overview(); });
-    v.querySelectorAll('[data-gobills]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); show('bills'); });
+    v.querySelectorAll('.ib-row').forEach(r => r.onclick = () => { ibOpen = Number(r.dataset.m); v.querySelectorAll('.ib-row').forEach(x => x.classList.toggle('open', x === r)); openEmail(ibOpen, all.find(x => x.id === ibOpen)); });
     // Scan now, visibly: fetch new mail → rate 25 at a time (each rated row gets its tag as it comes in) → read the rated bills one by one.
     $('scanNow2').onclick = async () => {
       const btn = $('scanNow2'), prog = $('ibProg'), txt = $('ibProgText'); btn.disabled = true; prog.style.display = '';
@@ -447,6 +445,46 @@
       b.disabled = true; const r = await post('/api/bookkeeping/inbox/set-aside', { kinds, min: 0 }); if (!r.ok) alert(r.error); await overview(); loadInbox();
     });
     $('nInbox').textContent = (counts.new + counts.message) || '';
+  }
+  // The reading pane — an email the way Gmail shows it: subject, sender, date, the text, attachment cards that open a viewer.
+  async function openEmail(id, m) {
+    const j = await api('/api/bookkeeping/emails/' + id); if (!j.ok) return alert(j.error);
+    const e = j.email, k = e.status === 'parsed' ? 'parsed' : e.status === 'error' ? 'error' : e.status === 'new' ? 'new' : e.status === 'message' ? 'message' : 'skipped';
+    const KIND = { advertisement: 'Ad', notification: 'Notice', receipt: 'Receipt', bill: 'Bill', message: 'Message', other: 'Other' };
+    const dec = (t) => { const d = document.createElement('textarea'); d.innerHTML = String(t || ''); return d.value; };
+    const fromName = (f) => { const mm = /^\s*"?([^"<]*?)"?\s*<([^>]+)>/.exec(f || ''); return mm ? (mm[1].trim() || mm[2]) : String(f || '').replace(/^"|"$/g, ''); };
+    const fromAddr = (f) => { const mm = /<([^>]+)>/.exec(f || ''); return mm ? mm[1] : String(f || ''); };
+    const fmtDate = (ts) => { const d = new Date(String(ts).replace(' ', 'T') + (/Z$/.test(ts || '') ? '' : 'Z')); return isNaN(d) ? ts : d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }); };
+    const body = dec(e.body || e.snippet || '').replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').replace(/[-_=]{8,}/g, '');
+    const authHdr = { 'Authorization': 'Bearer ' + token };
+    const att = (a) => '<a href="#" class="em-att" data-i="' + a.i + '" data-kind="' + a.kind + '" title="' + esc(a.name) + '"><span class="em-thumb ' + a.kind + '">' + (a.kind === 'pdf' ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>' : '') + '</span><span class="em-attn"><b>' + esc(a.name) + '</b><small>' + (a.kind === 'pdf' ? 'PDF' : 'Image') + (a.size ? ' · ' + (a.size > 1048576 ? (a.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(a.size / 1024)) + ' KB') : '') + '</small></span></a>';
+    const el = document.createElement('div'); el.className = 'bk-modal em-modal';
+    el.innerHTML = '<div class="bk-modal-box em-box"><div class="em-head"><div class="em-subject">' + esc(dec(e.subject) || '(no subject)') + '</div><button class="bk-btn sm bk-x" title="Close">✕</button></div>' +
+      '<div class="em-meta"><span class="em-av">' + esc(fromName(e.from_addr).charAt(0).toUpperCase()) + '</span><div class="em-who"><b>' + esc(fromName(e.from_addr)) + '</b> <span class="bk-muted">&lt;' + esc(fromAddr(e.from_addr)) + '&gt;</span><div class="bk-muted">to ' + esc(j.inbox) + '</div></div><div class="em-date bk-muted">' + esc(fmtDate(e.received_at)) + '</div></div>' +
+      '<div class="em-verdict"><span class="ib-tag ' + k + '">' + esc(k === 'skipped' ? (e.read_by === 'ai' ? 'set aside by AI' : e.read_by === 'user' ? 'set aside' : 'set aside') : k === 'message' ? 'for a person' : k === 'parsed' ? 'bill' : k) + '</span>' + (e.kind ? '<span class="ib-kind ' + esc(e.kind) + '">' + esc(KIND[e.kind] || e.kind) + (e.confidence != null ? ' ' + Math.round(e.confidence * 100) + '%' : '') + '</span>' : '') + '<span class="bk-muted">' + esc(e.note || (k === 'new' ? 'Not rated yet.' : '')) + '</span>' + (j.bill ? ' <a href="#" data-gobills>bill #' + j.bill.id + ' (' + esc(j.bill.status) + ')</a>' : '') + '</div>' +
+      '<div class="em-body">' + esc(body) + '</div>' +
+      (e.attachments.length ? '<div class="em-atts">' + e.attachments.map(att).join('') + '</div>' : '') +
+      '<div class="em-acts">' + (k !== 'parsed' ? '<button class="bk-btn sm p" data-parse>Read it as a bill</button>' : '') + (k === 'new' || k === 'message' ? '<button class="bk-btn sm" data-read>Mark as read</button>' : '') + '<span class="sp"></span><span class="bk-dim">#' + e.id + '</span></div></div>';
+    const close = () => { el.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = (ev) => { if (ev.key === 'Escape') close(); };
+    el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
+    document.addEventListener('keydown', onKey); document.body.appendChild(el);
+    // image thumbnails
+    e.attachments.filter(a => a.kind === 'image').forEach(async a => { try { const r = await fetch('/api/bookkeeping/emails/' + id + '/att/' + a.i, { headers: authHdr }); if (r.ok) { const u = URL.createObjectURL(await r.blob()); const t = el.querySelector('.em-att[data-i="' + a.i + '"] .em-thumb'); if (t) t.style.backgroundImage = 'url(' + u + ')'; } } catch (er) {} });
+    el.querySelectorAll('.em-att').forEach(a => a.onclick = async (ev) => { ev.preventDefault(); const r = await fetch('/api/bookkeeping/emails/' + id + '/att/' + a.dataset.i, { headers: authHdr }); if (!r.ok) return alert('File not available.'); const u = URL.createObjectURL(await r.blob()); viewFile(u, a.dataset.kind, a.title); });
+    const p1 = el.querySelector('[data-parse]'); if (p1) p1.onclick = async () => { p1.disabled = true; p1.textContent = 'Reading…'; const r = await post('/api/bookkeeping/emails/' + id + '/parse', {}); if (!r.ok) alert(r.error); close(); await overview(); loadInbox(); };
+    const r1 = el.querySelector('[data-read]'); if (r1) r1.onclick = async () => { r1.disabled = true; const r = await post('/api/bookkeeping/emails/' + id + '/read', {}); if (!r.ok) alert(r.error); close(); await overview(); loadInbox(); };
+    const g1 = el.querySelector('[data-gobills]'); if (g1) g1.onclick = (ev) => { ev.preventDefault(); close(); show('bills'); };
+  }
+  // Attachment viewer: PDFs in a frame, images as is; opens above the reading pane.
+  function viewFile(url, kind, name) {
+    const el = document.createElement('div'); el.className = 'bk-modal em-viewer';
+    el.innerHTML = '<div class="em-vbox"><div class="em-vhead"><b>' + esc(name || '') + '</b><span class="sp"></span><a class="bk-btn sm" href="' + url + '" download="' + esc(name || 'file') + '">Download</a><a class="bk-btn sm" href="' + url + '" target="_blank" rel="noopener">Open in a tab</a><button class="bk-btn sm bk-x">✕</button></div>' +
+      (kind === 'pdf' ? '<iframe class="em-frame" src="' + url + '#toolbar=1"></iframe>' : '<div class="em-img"><img src="' + url + '" alt=""></div>') + '</div>';
+    const close = () => { el.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); close(); } };
+    el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
+    document.addEventListener('keydown', onKey, true); document.body.appendChild(el);
   }
   // Pick a directory entry for a bill: near matches first, then search the whole directory.
   async function vendorPicker(anchor, bill, onPick) {

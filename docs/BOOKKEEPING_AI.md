@@ -159,6 +159,14 @@ Messages · Bills · **Set aside by AI** (the report of what it marked read on i
 All set aside; "Mark as read" by hand sets `read_by = 'user'`. The daily run's summary line counts emails set aside and
 messages kept; the overview has `inbox_messages` and `ai_read_today`.
 
+### Reading pane
+A click on an inbox row opens the email the way Gmail shows it: subject, sender (name + address, "to accounting@"), date,
+the rating / verdict line (and the bill it became), the full text (`bk_emails.body`), attachment cards (image thumbnails,
+PDF icon) that open a viewer (PDF in a frame, image as is, Download / Open in a tab), and Read it as a bill / Mark as read.
+`GET /api/bookkeeping/emails/:id` (full record + `bill`), `GET /api/bookkeeping/emails/:id/att/:i` (the file, inline).
+Transactions has All / New / Pending / Categorized chips with counts (`by_status` in the response) and the tab badge counts
+transactions still without a decided category (`txn_open`).
+
 ## Bills tab and vendor pairing
 The Bills tab has four sub-tabs by status — **Pending** (drafts; rejected folded below), **Approved**, **Scheduled**,
 **Paid** — each with a count. After approval a bill is moved by hand: "Schedule payment…" (a pay date →
