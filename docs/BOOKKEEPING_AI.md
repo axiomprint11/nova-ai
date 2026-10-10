@@ -166,7 +166,7 @@ open rows (`new` / `message`) whose Gmail id is no longer unread are set aside w
 only — Gmail is never written), "Turn all N into bills" (parses each → Bills), "Rate them now". The reading pane has
 **Turn into a bill** (or **Open in Bills →** for a draft), Mark as read, and **Move to…** (`POST /api/bookkeeping/emails/:id/kind`
 — replaces the rating with confidence 1, `message` sets status `message`). `POST /api/bookkeeping/inbox/reset` (no button any more; curl it with a bookkeeper token) deletes every `bk_emails` row with no bill (and its saved attachments) and audits `gmail.reset`. People are shown as a face (`whoHtml`: member photo or initial, from `overview.people`) in notes ("moved to … by"), the Runs table and the audit log; the agent / executor / poll keep their word. No Plain text button — text is the fallback when an email has no HTML.
-The header line reads "N not read · checked <time>".
+The last-checked time is the Scan now button's tooltip. Yes/no questions use the styled `ask()` dialog (title, text, named button), never the browser confirm().
 
 ### Reading pane
 The Inbox is a split view: the list on the left (two-line rows: sender + time, subject, snippet + kind tag + attachments),

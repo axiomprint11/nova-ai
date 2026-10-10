@@ -51,6 +51,22 @@
     return '<span class="bk-who" title="' + esc(name) + (m && m.email && m.email !== name ? ' · ' + esc(m.email) : '') + '">' + (m && m.photo ? '<img src="' + esc(m.photo) + '" alt="" onerror="this.replaceWith(document.createTextNode(\'' + init + '\'))">' : init) + '</span>';
   }
   const noteHtml = (n) => esc(n || '').replace(/((?:marked read|moved to \S+|set aside|approved|rejected|answered) by )(\S+)/g, (_, pre, w) => pre + whoHtml(w));
+  // A styled yes / no instead of the browser's confirm(). Resolves true on the main button, false on Cancel / Esc / backdrop.
+  function ask(text, opt) {
+    opt = opt || {};
+    return new Promise((resolve) => {
+      const el = document.createElement('div'); el.className = 'bk-modal bk-ask';
+      el.innerHTML = '<div class="bk-modal-box bk-ask-box">' + (opt.title ? '<div class="bk-modal-title">' + esc(opt.title) + '</div>' : '') + '<div class="bk-ask-text">' + esc(text) + '</div>' +
+        '<div class="bk-ask-acts"><button class="bk-btn" data-no>' + esc(opt.cancel || 'Cancel') + '</button><button class="bk-btn ' + (opt.danger ? 'bad' : 'p') + '" data-yes>' + esc(opt.ok || 'OK') + '</button></div></div>';
+      document.body.appendChild(el);
+      const done = (v) => { el.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
+      const onKey = (e) => { if (e.key === 'Escape') done(false); if (e.key === 'Enter') done(true); };
+      document.addEventListener('keydown', onKey);
+      el.onclick = (e) => { if (e.target === el) done(false); };
+      el.querySelector('[data-no]').onclick = () => done(false); el.querySelector('[data-yes]').onclick = () => done(true);
+      el.querySelector('[data-yes]').focus();
+    });
+  }
   async function overview() {
     ov = await api('/api/bookkeeping/overview');
     chart = ov.chart || [];
@@ -269,7 +285,7 @@
       refresh();
     });
     v.querySelectorAll('[data-file]').forEach(a => a.onclick = (e) => { e.preventDefault(); openFile(a.dataset.file); });
-    if ($('approveAll')) $('approveAll').onclick = async () => { if (!confirm('Approve every suggestion that has no open question?')) return; await post('/api/bookkeeping/proposals/decide-all', {}); refresh(); };
+    if ($('approveAll')) $('approveAll').onclick = async () => { if (!await ask('Every suggested category without an open question is approved and a rule is made for each vendor.', { title: 'Approve all?', ok: 'Approve all' })) return; await post('/api/bookkeeping/proposals/decide-all', {}); refresh(); };
     $('runNow').onclick = async () => { $('runNow').disabled = true; $('runMsg').textContent = 'Running — syncing banks, scanning the inbox, categorizing…'; const r = await post('/api/bookkeeping/run', { post: false }); $('runMsg').textContent = r.ok ? r.summary : (r.error || 'Failed'); $('runNow').disabled = false; loadBrief(); };
     $('postBrief').onclick = async () => { $('postBrief').disabled = true; const r = await post('/api/bookkeeping/brief', { post: true }); $('runMsg').textContent = r.posted && !r.posted.error ? 'Posted to Google Chat.' : 'Not posted: ' + ((r.posted && r.posted.error) || 'unknown'); $('postBrief').disabled = false; };
     loadChat();
@@ -461,7 +477,7 @@
       '<span class="ib-l2"><b>' + esc(m.subject || '(no subject)') + '</b></span><span class="ib-l3"><span class="ib-snip">' + esc(m.snippet || '') + '</span><span class="ib-att">' + kindTag(m) + (m.attachments.length ? ' ' + clip + ' ' + m.attachments.length : '') + '</span></span></span>' +
       '<span class="ib-line"><span class="ib-from" title="' + esc(fromAddr(m.from_addr)) + '">' + esc(fromName(m.from_addr)) + '</span><span class="ib-text"><b>' + esc(m.subject || '(no subject)') + '</b><span class="ib-snip"> — ' + esc(m.snippet || '') + '</span></span><span class="ib-att">' + kindTag(m) + (m.attachments.length ? ' ' + clip + ' ' + m.attachments.length : '') + '</span><span class="ib-time">' + esc(day(m.received_at)) + '</span></span>' +
       '</div>'; };
-    v.innerHTML = '<div class="bk-card"><h2>Inbox — ' + esc(ov ? ov.connections.gmail.inbox : '') + ' ' + qHelp('inbox', 'Inbox', 'Only mail that is still <b>unread in Gmail</b> is scanned (every ' + esc(ov.settings.poll_min) + ' minutes), so the count here follows the team\'s unread count; an email someone reads in Gmail is set aside here too. BookkeeperAI rates every email and sorts it into a basket — <b>Bills</b>, <b>Direct messages</b>, <b>Ads</b>, <b>Confirmations</b> (delivery, shipping, payment), <b>Other</b> — with how sure it is. Nothing is marked read by itself: review a basket, then one click marks the whole basket read here (Gmail is not changed), or turn the bills into bill drafts. "Move to" puts an email in another basket. <b>Start fresh</b> forgets everything scanned that is not a bill and scans the unread mail again.') + '<span class="sp"></span><span class="bk-muted">' + openN + ' not read · ' + (ov && ov.connections.gmail.last_scan ? 'checked ' + when(ov.connections.gmail.last_scan) : 'not checked yet') + '</span><button class="bk-btn p" id="scanNow2">Scan now</button></h2>' +
+    v.innerHTML = '<div class="bk-card"><h2>Inbox — ' + esc(ov ? ov.connections.gmail.inbox : '') + ' ' + qHelp('inbox', 'Inbox', 'Only mail that is still <b>unread in Gmail</b> is scanned (every ' + esc(ov.settings.poll_min) + ' minutes), so the count here follows the team\'s unread count; an email someone reads in Gmail is set aside here too. BookkeeperAI rates every email and sorts it into a basket — <b>Bills</b>, <b>Direct messages</b>, <b>Ads</b>, <b>Confirmations</b> (delivery, shipping, payment), <b>Other</b> — with how sure it is. Nothing is marked read by itself: review a basket, then one click marks the whole basket read here (Gmail is not changed), or turn the bills into bill drafts. "Move to" puts an email in another basket. <b>Start fresh</b> forgets everything scanned that is not a bill and scans the unread mail again.') + '<span class="sp"></span><button class="bk-btn p" id="scanNow2" title="' + esc(ov && ov.connections.gmail.last_scan ? 'Last checked ' + when(ov.connections.gmail.last_scan) : 'Not checked yet') + '">Scan now</button></h2>' +
       '<div class="ib-progress" id="ibProg" style="display:none"><span class="ib-spin"></span><span id="ibProgText"></span></div>' +
       '<div class="ib-bar"><span class="ib-chips">' + BASKETS.filter(([k]) => k === 'open' || k === 'done' || bc[k]).map(([k, l]) => '<button class="ib-chip' + (ibFilter === k ? ' on' : '') + '" data-f="' + k + '">' + l + (k === 'done' ? '' : ' (' + (bc[k] || 0) + ')') + '</button>').join('') + '</span><input id="ibQ" placeholder="Search sender, subject, text…"></div>' +
       // one action bar per basket: review, then one click for the whole basket
@@ -506,12 +522,12 @@
     v.querySelectorAll('[data-aside]').forEach(b => b.onclick = async () => {
       const k = b.dataset.aside, kinds = k === 'confirm' ? ['notification', 'receipt'] : [k];
       const n = k === 'confirm' ? bc.confirm : k === 'advertisement' ? bc.ads : bc.other;
-      if (!confirm('Mark ' + n + ' email' + (n === 1 ? '' : 's') + ' as read here? They move to "Set aside"; any of them can still be turned into a bill later. (Gmail itself is not changed.)')) return;
+      if (!await ask('They move to "Set aside". Any of them can still be turned into a bill later, and Gmail itself is not changed.', { title: 'Mark ' + n + ' email' + (n === 1 ? '' : 's') + ' as read?', ok: 'Mark as read' })) return;
       b.disabled = true; const r = await post('/api/bookkeeping/inbox/set-aside', { kinds, min: 0 }); if (!r.ok) alert(r.error); await overview(); loadInbox();
     });
     const pa = v.querySelector('[data-parseall]'); if (pa) pa.onclick = async () => {
       const ids = all.filter(m => basket(m) === 'bill' && st(m) !== 'parsed').map(m => m.id);
-      if (!confirm('Read ' + ids.length + ' email' + (ids.length === 1 ? '' : 's') + ' in full and file each as a bill draft under Bills?')) return;
+      if (!await ask('BookkeeperAI reads each one in full and files a draft under Bills for you to approve.', { title: 'Turn ' + ids.length + ' email' + (ids.length === 1 ? '' : 's') + ' into bills?', ok: 'Turn into bills' })) return;
       pa.disabled = true; const prog = $('ibProg'), txt = $('ibProgText'); prog.style.display = '';
       for (let i = 0; i < ids.length; i++) { txt.textContent = 'Reading bill ' + (i + 1) + ' of ' + ids.length + ' in full…'; const row = v.querySelector('.ib-row[data-m="' + ids[i] + '"]'); if (row) row.classList.add('rated'); const r = await post('/api/bookkeeping/emails/' + ids[i] + '/parse', {}); if (!r.ok) console.warn(r.error); }
       txt.textContent = 'Done — see Bills.'; await overview(); setTimeout(loadInbox, 600);
@@ -738,10 +754,10 @@
     ed.querySelectorAll('[data-kicon]').forEach(el => el.onclick = (e) => { const i = Number(el.dataset.kicon); iconPicker(e.currentTarget, t.children[i].icon, (ic) => { t.children[i].icon = ic; drawChart(); saveChart(); }); });
     ed.querySelectorAll('[data-kup]').forEach(b => b.onclick = () => { const i = Number(b.dataset.kup); [t.children[i - 1], t.children[i]] = [t.children[i], t.children[i - 1]]; drawChart(); saveChart(); });
     ed.querySelectorAll('[data-kdown]').forEach(b => b.onclick = () => { const i = Number(b.dataset.kdown); [t.children[i + 1], t.children[i]] = [t.children[i], t.children[i + 1]]; drawChart(); saveChart(); });
-    ed.querySelectorAll('[data-kdel]').forEach(b => b.onclick = () => { const i = Number(b.dataset.kdel); if (!confirm('Remove "' + t.children[i].name + '"?')) return; t.children.splice(i, 1); drawChart(); saveChart(); });
+    ed.querySelectorAll('[data-kdel]').forEach(b => b.onclick = async () => { const i = Number(b.dataset.kdel); if (!await ask('Remove "' + t.children[i].name + '"?')) return; t.children.splice(i, 1); drawChart(); saveChart(); });
     const addKid = () => { const n = $('coaNewKid').value.trim(); if (!n) return; if (categories.indexOf(n) > -1 || t.children.some(k => k.name === n)) { status('"' + n + '" is already in the chart.', true); return; } t.children.push({ name: n, icon: '' }); drawChart(); saveChart(); setTimeout(() => $('coaNewKid') && $('coaNewKid').focus(), 0); };
     $('coaAddKid').onclick = addKid; $('coaNewKid').onkeydown = (e) => { if (e.key === 'Enter') addKid(); };
-    $('coaDelType').onclick = () => { if (!confirm('Delete the type "' + t.name + '" and its sub categories?')) return; coa.splice(coaSel, 1); coaSel = Math.max(0, coaSel - 1); drawChart(); saveChart(); };
+    $('coaDelType').onclick = async () => { if (!await ask('Delete the type "' + t.name + '" and its sub categories?')) return; coa.splice(coaSel, 1); coaSel = Math.max(0, coaSel - 1); drawChart(); saveChart(); };
   }
   function status(msg, err) { const el = $('coaStatus'); if (!el) return; el.textContent = msg; el.className = 'coa-status' + (err ? ' err' : ''); if (!err) setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 2500); }
   function saveChart() {
@@ -849,7 +865,7 @@
       let last = inp.value;
       wrap.addEventListener('change', async () => {
         const now = inp.value, was = splitCats(last), is = splitCats(now), removed = was.filter(x => is.indexOf(x) < 0);
-        if (removed.length && !confirm('Remove ' + removed.join(', ') + ' from the usual categories?')) { ckpSet(wrap, was); return; }
+        if (removed.length && !await ask('Remove ' + removed.join(', ') + ' from the usual categories?')) { ckpSet(wrap, was); return; }
         last = now; const r = await post('/api/bookkeeping/vendors/' + id, { default_category: now }); flash(tr, r.ok); if (!r.ok) alert(r.error);
       });
       const al = tr.querySelector('.valias'); let lastAl = al.value;
@@ -934,7 +950,7 @@
     $('chatTest').onclick = async () => { $('chatTest').disabled = true; const r = await post('/api/bookkeeping/chat/test', {}); $('connMsg').textContent = r.ok ? 'Sent via ' + r.posted.via + '.' : r.error; $('chatTest').disabled = false; };
     $('scanNow2').onclick = async () => { $('scanNow2').disabled = true; const r = await post('/api/bookkeeping/scan', {}); $('connMsg').textContent = r.ok ? 'Scanned: ' + r.scan.new + ' new email(s), ' + r.parsed.bills + ' bill draft(s).' : r.error; loadConn(); };
     if ($('watchBtn')) $('watchBtn').onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/gmail/watch', {}); $('connMsg').textContent = r.ok ? 'Watching.' : r.error; loadConn(); };
-    v.querySelectorAll('[data-unlink]').forEach(b => b.onclick = async () => { if (!confirm('Disconnect this bank? Its transactions stay.')) return; await api('/api/bookkeeping/plaid/' + b.dataset.unlink, { method: 'DELETE' }); loadConn(); });
+    v.querySelectorAll('[data-unlink]').forEach(b => b.onclick = async () => { if (!await ask('Its transactions stay; new ones stop coming in.', { title: 'Disconnect this bank?', ok: 'Disconnect', danger: true })) return; await api('/api/bookkeeping/plaid/' + b.dataset.unlink, { method: 'DELETE' }); loadConn(); });
     $('plaidLink').onclick = async () => {
       $('plaidLink').disabled = true;
       const r = await post('/api/bookkeeping/plaid/link-token', {});
