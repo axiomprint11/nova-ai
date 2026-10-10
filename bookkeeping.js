@@ -154,13 +154,19 @@ module.exports = function mountBookkeeping(app, deps) {
   // ---------------------------------------------------------------- chart of accounts (a tree with colors and icons)
   // Canonical form: bk_settings.chart_json = [{ name, color, icon, children: [{ name, icon }] }] (a type of expense and its
   // sub categories). bk_settings.categories (the indented text) is kept in step for the AI prompt and old readers.
-  const PALETTE = ['#4f46e5', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777', '#2563eb', '#65a30d', '#ea580c', '#0d9488', '#9333ea', '#b45309', '#475569', '#be123c', '#0369a1'];
-  const DEFAULT_STYLE = { 'Cost of Goods Sold': ['#4f46e5', '🖨️'], 'Facilities': ['#0891b2', '🏢'], 'People': ['#059669', '👥'], 'Insurance': ['#475569', '🛡️'], 'Operations': ['#2563eb', '💻'],
-    'Vehicles': ['#d97706', '🚐'], 'Sales & Marketing': ['#db2777', '📣'], 'Travel & Meals': ['#ea580c', '✈️'], 'Fees & Taxes': ['#7c3aed', '🧾'], 'Assets & Capital': ['#0d9488', '🏗️'],
-    'Not an expense': ['#64748b', '↔️'], 'Income': ['#16a34a', '💵'], 'Delivery': ['#b45309', '🚚'] };
-  const SUB_ICON = { Paper: '📄', 'Inks & Toner': '🎨', 'Printing Supplies': '🧰', 'Outsourced Printing': '🏭', 'Freight & Shipping': '📦', 'Local Delivery': '🚚', Packaging: '📦', Rent: '🏠', Utilities: '⚡', 'Equipment Repairs & Maintenance': '🛠️',
-    Payroll: '💰', 'Payroll Taxes': '🏛️', Contractors: '👷', 'Software & Subscriptions': '💻', 'Office Supplies': '📎', 'Telephone & Internet': '📞', 'Vehicle & Fuel': '⛽', 'Parking & Tolls': '🅿️', 'Advertising & Marketing': '📣', 'Website & SEO': '🌐',
-    Travel: '✈️', Meals: '🍽️', 'Professional Fees': '⚖️', 'Bank Fees & Interest': '🏦', 'Merchant Fees': '💳', 'Taxes & Licenses': '🧾', 'Equipment (Fixed Asset)': '🏗️', 'Transfer Between Accounts': '↔️', 'Credit Card Payment': '💳', 'Customer Payment (Income)': '💵', Refund: '↩️' };
+  const PALETTE = ['#2563eb', '#0ea5e9', '#06b6d4', '#14b8a6', '#22c55e', '#84cc16', '#eab308', '#f97316', '#ef4444', '#ec4899', '#a855f7', '#6366f1', '#8b5cf6', '#64748b', '#0d9488', '#d946ef'];
+  // Icons are keys of the line-icon set in public/bookkeeping.js (ICON_PATH); emoji from 1.16.2 are mapped to keys.
+  const DEFAULT_STYLE = { 'Cost of Goods Sold': ['#6366f1', 'printer'], 'Facilities': ['#0ea5e9', 'building'], 'People': ['#22c55e', 'users'], 'Insurance': ['#64748b', 'shield'], 'Operations': ['#2563eb', 'laptop'],
+    'Vehicles': ['#f97316', 'car'], 'Sales & Marketing': ['#ec4899', 'megaphone'], 'Travel & Meals': ['#eab308', 'plane'], 'Fees & Taxes': ['#a855f7', 'receipt'], 'Assets & Capital': ['#14b8a6', 'hammer'],
+    'Not an expense': ['#64748b', 'arrows'], 'Income': ['#22c55e', 'dollar'], 'Delivery': ['#f97316', 'truck'] };
+  const SUB_ICON = { Paper: 'file', 'Inks & Toner': 'droplet', 'Printing Supplies': 'briefcase', 'Outsourced Printing': 'factory', 'Freight & Shipping': 'package', 'Local Delivery': 'truck', Packaging: 'box', Rent: 'home', Utilities: 'zap', 'Equipment Repairs & Maintenance': 'wrench',
+    'Janitorial & Building': 'sparkles', Payroll: 'banknote', 'Payroll Taxes': 'landmark', 'Employee Benefits': 'gift', Contractors: 'hardhat', 'Business Insurance': 'shield', 'Workers Comp': 'hardhat', 'Vehicle Insurance': 'car',
+    'Software & Subscriptions': 'laptop', 'Office Supplies': 'paperclip', 'Telephone & Internet': 'phone', 'Vehicle & Fuel': 'fuel', 'Vehicle Repairs': 'wrench', 'Parking & Tolls': 'parking', 'Advertising & Marketing': 'megaphone', 'Website & SEO': 'globe', 'Samples & Promotion': 'gift',
+    Travel: 'plane', Meals: 'utensils', 'Professional Fees': 'scale', 'Bank Fees & Interest': 'landmark', 'Merchant Fees': 'card', 'Taxes & Licenses': 'receipt', 'Equipment (Fixed Asset)': 'hammer', 'Software Development (Capitalized)': 'monitor', 'Leasehold Improvements': 'building',
+    'Loan Payment (Principal)': 'landmark', 'Owner Distribution': 'banknote', 'Transfer Between Accounts': 'arrows', 'Credit Card Payment': 'card', 'Sales Tax Payable': 'percent', 'Customer Payment (Income)': 'dollar', Refund: 'undo', 'Other Income': 'trendup' };
+  const LEGACY_ICON = { '🖨️': 'printer', '📄': 'file', '🎨': 'droplet', '🧰': 'briefcase', '🏭': 'factory', '📦': 'package', '🚚': 'truck', '🚐': 'car', '⛽': 'fuel', '🅿️': 'parking', '🏠': 'home', '🏢': 'building', '⚡': 'zap', '💡': 'bulb', '🛠️': 'wrench', '🧹': 'sparkles', '👥': 'users', '👷': 'hardhat', '💰': 'banknote', '🏛️': 'landmark', '🎁': 'gift', '🛡️': 'shield', '💻': 'laptop', '📎': 'paperclip', '📞': 'phone', '🌐': 'globe', '📣': 'megaphone', '🎯': 'target', '✈️': 'plane', '🍽️': 'utensils', '☕': 'coffee', '⚖️': 'scale', '🏦': 'landmark', '💳': 'card', '🧾': 'receipt', '🏗️': 'hammer', '🖥️': 'monitor', '↔️': 'arrows', '↩️': 'undo', '💵': 'dollar', '📈': 'trendup', '📉': 'trenddown', '🧮': 'calculator', '🔧': 'wrench', '🏷️': 'tag', '📬': 'mail', '🗂️': 'folder', '📚': 'book', '🎓': 'cap', '🚗': 'car', '🛒': 'cart', '🔌': 'plug', '🔑': 'key', '⭐': 'star', '❓': 'help' };
+  const OLD_COLOR = { '#4f46e5': '#6366f1', '#0891b2': '#0ea5e9', '#059669': '#22c55e', '#475569': '#64748b', '#d97706': '#f97316', '#db2777': '#ec4899', '#ea580c': '#eab308', '#7c3aed': '#a855f7', '#0d9488': '#14b8a6', '#16a34a': '#22c55e', '#b45309': '#f97316', '#dc2626': '#ef4444', '#2563eb': '#2563eb', '#65a30d': '#84cc16', '#9333ea': '#a855f7', '#be123c': '#ec4899', '#0369a1': '#0ea5e9' };
+  const iconKey = (ic) => { ic = String(ic || '').slice(0, 12); return /^[a-z]+$/.test(ic) ? ic : (LEGACY_ICON[ic] || ''); };
   const cleanName = (n) => String(n || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 80);
   // Text → tree ("Type" line, "  Sub" lines); colors and icons from `style` (an older tree) by name, else the defaults.
   function parseChartText(text, style) {
@@ -179,10 +185,11 @@ module.exports = function mountBookkeeping(app, deps) {
     const out = []; const seenTop = {};
     (Array.isArray(tree) ? tree : []).forEach((t, i) => {
       const name = cleanName(t && t.name); if (!name || seenTop[name]) return; seenTop[name] = 1;
-      const color = /^#[0-9a-f]{6}$/i.test(String(t.color || '')) ? String(t.color).toLowerCase() : PALETTE[i % PALETTE.length];
+      let color = /^#[0-9a-f]{6}$/i.test(String(t.color || '')) ? String(t.color).toLowerCase() : PALETTE[i % PALETTE.length];
+      if (OLD_COLOR[color]) color = OLD_COLOR[color];            // the 1.16.2 darker palette → its lighter twin
       const kids = []; const seen = {};
-      (Array.isArray(t.children) ? t.children : []).forEach(c => { const n = cleanName(c && c.name); if (n && !seen[n]) { seen[n] = 1; kids.push({ name: n, icon: String(c.icon || '').slice(0, 8) }); } });
-      out.push({ name, color, icon: String(t.icon || '').slice(0, 8), children: kids });
+      (Array.isArray(t.children) ? t.children : []).forEach(c => { const n = cleanName(c && c.name); if (n && !seen[n]) { seen[n] = 1; kids.push({ name: n, icon: iconKey(c.icon) }); } });
+      out.push({ name, color, icon: iconKey(t.icon), children: kids });
     });
     return out;
   }

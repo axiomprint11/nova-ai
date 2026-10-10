@@ -114,7 +114,10 @@ on every save for the AI prompt (`chartText()`: "Cost of Goods Sold: Paper; Inks
 category) and for anything that still reads the text; posting `categories` text to `/settings` rebuilds the tree keeping
 colors by name. `chartTree()` / `chartOf()` (flat, with color/icon) / `categoriesOf()` (sub categories + childless types)
 / `addCategory()` / `renameCategory()` / `categoryUsage()`. The old flat list and the 1.16.0 text tree are upgraded once
-at boot (`DEFAULT_STYLE`, `SUB_ICON` give the defaults their colors and icons).
+at boot (`DEFAULT_STYLE`, `SUB_ICON` give the defaults their colors and icons). Icons are keys of one line-icon set
+(`ICON_PATH` in public/bookkeeping.js, inline SVG, stroke 2); the 1.16.2 emoji are mapped to keys on load (`LEGACY_ICON`) and
+its darker palette to the lighter one (`OLD_COLOR`). A type's color is used as text + border on a light tint of itself
+(`tile()` → `.coa-ic`, CSS `color-mix`), the CRM's pill look.
 
 Editor (Accounts → Chart of Accounts): types on the left (icon tile, reorder), the selected type on the right — big icon
 button (emoji grid), name, color swatches + any color, the sub categories with icon / inline rename / reorder / delete,
