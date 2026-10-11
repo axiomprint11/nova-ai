@@ -87,7 +87,7 @@ module.exports = function mountBookkeeping(app, deps) {
       created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
     ['scheduled_for TEXT', 'paid_at TEXT', 'paid_note TEXT', 'receipt_email_id INTEGER'].forEach(c => db.run('ALTER TABLE bk_bills ADD COLUMN ' + c, () => {}));
     db.run('ALTER TABLE bk_transactions ADD COLUMN receipt_email_id INTEGER', () => {});
-    ['kind TEXT', 'confidence REAL', 'triaged_at TEXT', 'read_by TEXT', 'body_html TEXT', 'aside INTEGER DEFAULT 0', 'vendor_id INTEGER', 'matched_bill_id INTEGER', 'matched_txn_id INTEGER'].forEach(c => db.run('ALTER TABLE bk_emails ADD COLUMN ' + c, () => {}));
+    ['kind TEXT', 'confidence REAL', 'triaged_at TEXT', 'read_by TEXT', 'body_html TEXT', 'aside INTEGER DEFAULT 0', 'vendor_id INTEGER', 'matched_bill_id INTEGER', 'matched_txn_id INTEGER', 'decided_kind TEXT', 'decided_by TEXT', 'decided_at TEXT'].forEach(c => db.run('ALTER TABLE bk_emails ADD COLUMN ' + c, () => {}));
     db.run(`CREATE TABLE IF NOT EXISTS bk_proposals (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, ref_table TEXT, ref_id INTEGER, title TEXT,
       payload TEXT, confidence REAL, reason TEXT, status TEXT DEFAULT 'pending', decided_by TEXT, decided_at TEXT, decision TEXT,
       created_at TEXT DEFAULT (datetime('now')))`);
@@ -742,7 +742,7 @@ module.exports = function mountBookkeeping(app, deps) {
       await dbRun('INSERT INTO bk_questions (proposal_id, question) VALUES (?,?)', [p.lastID, q]);
     }
     await audit(who, 'bill.draft', billId, { vendor, total: j.total, confidence: conf });
-    if (em.id) await audit(who, 'email.bill', em.id, { bill_id: billId, vendor, total: j.total });
+    if (em.id) { await audit(who, 'email.bill', em.id, { bill_id: billId, vendor, total: j.total }); await decideEmail(em.id, 'bill', who); }
     return billId;
   }
   // Triage before the expensive read: a cheap text-only look at every unread email (sender, subject, first lines).
@@ -754,6 +754,8 @@ module.exports = function mountBookkeeping(app, deps) {
   //   bill ≥ triage_bill                        → read in full by parseEmail() → a bill draft
   //   message (a person writing) ≥ triage_message → left for a person, tagged "message"
   //   anything else / unsure                    → read in full anyway (a missed bill costs more than a model call)
+  // A person's decision about an email (the training signal for the AI): what they said it is, who, when.
+  const decideEmail = (id, kind, who) => dbRun("UPDATE bk_emails SET decided_kind = ?, decided_by = ?, decided_at = datetime('now') WHERE id = ?", [kind, who, id]);
   // What still needs a rating: new mail, and mail already read in Gmail (rated for the Everything else basket only).
   const TO_RATE = "triaged_at IS NULL AND status = 'new'";
   async function triageEmails(who, limit) {
@@ -766,7 +768,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const listing = batch.map(m => { let atts = []; try { atts = JSON.parse(m.attachments || '[]'); } catch (e) {} return m.id + ' | from: ' + m.from_addr + ' | subject: ' + m.subject + ' | attachments: ' + (atts.map(a => a.name).join(', ') || 'none') + ' | text: ' + String(m.body || m.snippet || '').replace(/\s+/g, ' ').slice(0, 400); }).join('\n');
       let j = null;
       try {
-        const r = await anthropic.messages.create({ model: MODEL_LIGHT, max_tokens: 2000, system: 'You sort the accounting inbox of AxiomPrint, a print shop. For each email say what it is. Kinds: advertisement (marketing, promotions, newsletters, sales), notification (shipping, delivery and tracking confirmations, account alerts, calendar, system mail), receipt (confirmation of a payment already made), bill (an invoice, statement or credit memo asking for money, or anything with an invoice-like attachment), message (a real person writing to us — a question, a reply, a request), other (anything unclear). When in doubt between advertisement and anything else, say the other thing — a missed advertisement costs nothing, a missed bill or message does. Return ONLY JSON.',
+        const r = await anthropic.messages.create({ model: MODEL_LIGHT, max_tokens: 2000, system: 'You sort the accounting inbox of AxiomPrint, a print shop. For each email say what it is. Kinds: advertisement (marketing, promotions, newsletters, sales), notification (shipping, delivery and tracking confirmations, account alerts, calendar, system mail), receipt (confirmation of a payment already made), bill (an invoice, statement or credit memo sent by a system or a no-reply / billing address, or anything with an invoice-like attachment and no personal note), message (a real person writing to us — a question, a reply, a request; this includes a person sending or chasing an invoice with their own words, since we may need to answer them: a human-written email that contains a bill is a message, not a bill), other (anything unclear). When in doubt between advertisement and anything else, say the other thing — a missed advertisement costs nothing, a missed bill or message does. Return ONLY JSON.',
           messages: [{ role: 'user', content: 'EMAILS\n' + listing + '\n\nReturn ONLY JSON: {"items": [{"id": <id>, "kind": "advertisement"|"notification"|"receipt"|"bill"|"message"|"other", "confidence": 0.0, "why": "<a few words>"}]}' }] });
         j = jsonOf((r.content || []).filter(b => b.type === 'text').map(b => b.text).join(''));
       } catch (e) { errlog('triage', e.message); break; }
@@ -799,8 +801,9 @@ module.exports = function mountBookkeeping(app, deps) {
   async function parseNewEmails(who) {
     const triage = await triageEmails(who);
     const s = await settings();
-    const rows = s.triage_auto ? await dbAll("SELECT * FROM bk_emails WHERE status = 'new' ORDER BY id LIMIT 40")
-      : await dbAll("SELECT * FROM bk_emails WHERE status = 'new' AND kind = 'bill' AND confidence >= ? ORDER BY id LIMIT 40", [s.triage_bill]);
+    // Nothing becomes a bill by itself: a person presses Bill (or Turn all) in the inbox. Only triage_auto (off) reads
+    // everything in full. The AI's rating and the person's decision are both kept (bk_emails.kind vs decided_kind).
+    const rows = s.triage_auto ? await dbAll("SELECT * FROM bk_emails WHERE status = 'new' ORDER BY id LIMIT 40") : [];
     let bills = 0;
     for (const em of rows) { try { if (await parseEmail(em, who)) bills++; } catch (e) { errlog('parse email', em.id, e.message); await dbRun("UPDATE bk_emails SET status = 'error', note = ? WHERE id = ?", [e.message.slice(0, 300), em.id]); } }
     return { emails: rows.length, bills, triage };
@@ -1400,6 +1403,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const gm = await markReadInGmail([id], userId(req)); if (!gm.ok) return res.json({ ok: false, error: gm.error });   // Gmail is the truth: nothing changes here unless it changed there
     if (em.status === 'parsed') await dbRun("UPDATE bk_emails SET read_by = 'user' WHERE id = ?", [id]);
     else await dbRun("UPDATE bk_emails SET status = 'skipped', read_by = 'user', note = ? WHERE id = ?", ['marked read by ' + userId(req), id]);
+    await dbRun("UPDATE bk_emails SET decided_kind = COALESCE(decided_kind, kind), decided_by = COALESCE(decided_by, ?), decided_at = COALESCE(decided_at, datetime('now')) WHERE id = ?", [userId(req), id]);   // read as-is = the rating was right
     await audit(userId(req), 'email.read', id, null); res.json({ ok: true, gmail: gm });
   });
   // Link the sender to a directory vendor: the address goes into bk_vendors.aliases (ours, not the CRM's contact), so
@@ -1443,12 +1447,12 @@ module.exports = function mountBookkeeping(app, deps) {
       if (b.status !== 'paid') await dbRun("UPDATE bk_bills SET status = 'paid', paid_at = ?, paid_note = ?, receipt_email_id = ?, updated_at = datetime('now') WHERE id = ?", [day, 'receipt email matched by ' + userId(req), id, bid]);
       else await dbRun("UPDATE bk_bills SET receipt_email_id = ?, updated_at = datetime('now') WHERE id = ?", [id, bid]);
       await dbRun('UPDATE bk_emails SET matched_bill_id = ? WHERE id = ?', [bid, id]);
-      await audit(userId(req), 'email.match', id, { bill_id: bid, was: b.status });
+      await audit(userId(req), 'email.match', id, { bill_id: bid, was: b.status }); await decideEmail(id, 'receipt', userId(req));
     } else if (tid) {
       const t = await dbGet('SELECT id FROM bk_transactions WHERE id = ?', [tid]); if (!t) return res.json({ ok: false, error: 'No such transaction' });
       await dbRun("UPDATE bk_transactions SET receipt_email_id = ?, updated_at = datetime('now') WHERE id = ?", [id, tid]);
       await dbRun('UPDATE bk_emails SET matched_txn_id = ? WHERE id = ?', [tid, id]);
-      await audit(userId(req), 'email.match', id, { transaction_id: tid });
+      await audit(userId(req), 'email.match', id, { transaction_id: tid }); await decideEmail(id, 'receipt', userId(req));
     } else if (req.body && req.body.clear) {
       const cur = await dbGet('SELECT matched_bill_id, matched_txn_id FROM bk_emails WHERE id = ?', [id]);
       if (cur.matched_bill_id) await dbRun('UPDATE bk_bills SET receipt_email_id = NULL WHERE id = ? AND receipt_email_id = ?', [cur.matched_bill_id, id]);
@@ -1464,7 +1468,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!ids.length) return res.json({ ok: false, error: 'Nothing picked.' });
     const open = (await dbAll("SELECT id FROM bk_emails WHERE id IN (" + ids.map(() => '?').join(',') + ") AND read_by IS NULL AND COALESCE(aside, 0) = 0", ids)).map(r => r.id);
     const gm = await markReadInGmail(open, userId(req)); if (!gm.ok) return res.json({ ok: false, error: gm.error });
-    if (open.length) await dbRun("UPDATE bk_emails SET status = CASE WHEN status = 'parsed' THEN 'parsed' ELSE 'skipped' END, read_by = 'user', note = COALESCE(note, '') || ' — marked read by ' || ? WHERE id IN (" + open.map(() => '?').join(',') + ")", [userId(req)].concat(open));
+    if (open.length) await dbRun("UPDATE bk_emails SET status = CASE WHEN status = 'parsed' THEN 'parsed' ELSE 'skipped' END, read_by = 'user', note = COALESCE(note, '') || ' — marked read by ' || ?, decided_kind = COALESCE(decided_kind, kind), decided_by = COALESCE(decided_by, ?), decided_at = COALESCE(decided_at, datetime('now')) WHERE id IN (" + open.map(() => '?').join(',') + ")", [userId(req), userId(req)].concat(open));
     for (const i of open) await audit(userId(req), 'email.read', i, { picked: true });
     res.json({ ok: true, n: open.length });
   });
@@ -1600,13 +1604,12 @@ module.exports = function mountBookkeeping(app, deps) {
     // read in Gmail already → only the rating changes (it stays under Everything else); otherwise it is open again
     const status = em.read_by === 'gmail' && !em.aside ? em.status : kind === 'message' ? 'message' : 'new';
     await dbRun("UPDATE bk_emails SET kind = ?, confidence = 1, status = ?, aside = 0, triaged_at = COALESCE(triaged_at, datetime('now')), note = ? WHERE id = ?", [kind, status, 'moved to ' + kind + ' by ' + userId(req), id]);
-    await audit(userId(req), 'email.move', id, { kind }); res.json({ ok: true });
+    await audit(userId(req), 'email.move', id, { kind }); await decideEmail(id, kind, userId(req)); res.json({ ok: true });
   });
   app.post('/api/bookkeeping/inbox/fetch', ...guard, async (req, res) => { try { const r = await scanInbox(userId(req)); const left = await dbGet("SELECT COUNT(*) n FROM bk_emails WHERE " + TO_RATE); res.json({ ok: true, scan: r, to_rate: left.n }); } catch (e) { res.json({ ok: false, error: e.message }); } });
   app.post('/api/bookkeeping/inbox/rate', ...guard, async (req, res) => {
     try { const r = await triageEmails(userId(req), Math.min(50, parseInt(req.body && req.body.limit) || 25)); const left = await dbGet("SELECT COUNT(*) n FROM bk_emails WHERE " + TO_RATE); const s = await settings();
-      const bills = await dbAll("SELECT id FROM bk_emails WHERE status = 'new' AND kind = 'bill' AND confidence >= ? ORDER BY id", [s.triage_bill]);
-      res.json({ ok: true, items: r.items, remaining: left.n, bills_to_read: bills.map(b => b.id) }); } catch (e) { res.json({ ok: false, error: e.message }); }
+      res.json({ ok: true, items: r.items, remaining: left.n, bills_to_read: [] }); } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // Set aside every rated email of these kinds at or above the confidence (a person's decision, in one click).
   app.post('/api/bookkeeping/inbox/set-aside', ...guard, async (req, res) => {
@@ -1615,7 +1618,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!kinds.length) return res.json({ ok: false, error: 'Which kinds?' });
     const ids = (await dbAll("SELECT id FROM bk_emails WHERE read_by IS NULL AND COALESCE(aside, 0) = 0 AND status <> 'error' AND kind IN (" + kinds.map(() => '?').join(',') + ") AND COALESCE(confidence, 0) >= ?", kinds.concat([min]))).map(r => r.id);
     const gm = await markReadInGmail(ids, userId(req)); if (!gm.ok) return res.json({ ok: false, error: gm.error });   // Gmail first; nothing changes here unless it changed there
-    const r = ids.length ? await dbRun("UPDATE bk_emails SET status = CASE WHEN status = 'parsed' THEN 'parsed' ELSE 'skipped' END, read_by = 'user', note = COALESCE(note, '') || ' — marked read by ' || ? WHERE id IN (" + ids.map(() => '?').join(',') + ")", [userId(req)].concat(ids)) : { changes: 0 };
+    const r = ids.length ? await dbRun("UPDATE bk_emails SET status = CASE WHEN status = 'parsed' THEN 'parsed' ELSE 'skipped' END, read_by = 'user', note = COALESCE(note, '') || ' — marked read by ' || ?, decided_kind = COALESCE(decided_kind, kind), decided_by = COALESCE(decided_by, ?), decided_at = COALESCE(decided_at, datetime('now')) WHERE id IN (" + ids.map(() => '?').join(',') + ")", [userId(req), userId(req)].concat(ids)) : { changes: 0 };
     await audit(userId(req), 'email.set_aside', null, { kinds, min, n: r.changes });
     for (const i of ids) await audit(userId(req), 'email.read', i, { basket: kinds.join('/') });
     res.json({ ok: true, n: r.changes, gmail: gm });

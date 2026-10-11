@@ -548,7 +548,7 @@
         (bc.receipt ? '<span data-for="receipt"><span class="bk-muted">Confirmations of payments already made.</span> <button class="bk-btn sm" data-aside="receipt">Mark all ' + bc.receipt + ' receipts as read</button></span>' : '') +
         (bc.notice ? '<span data-for="notice"><span class="bk-muted">Shipping, delivery, tracking and account notices.</span> <button class="bk-btn sm" data-aside="notification">Mark all ' + bc.notice + ' notices as read</button></span>' : '') +
         (bc.other ? '<span data-for="other"><span class="bk-muted">Rated, but none of the baskets fit — open them, or move them with "Move to".</span> <button class="bk-btn sm" data-aside="other">Mark all ' + bc.other + ' as read</button></span>' : '') +
-        (bc.bill ? '<span data-for="bill"><span class="bk-muted">Looks like an invoice or statement. Turning one into a bill reads it in full and files a draft under Bills.</span> ' + (billsToRead ? '<button class="bk-btn sm p" data-parseall>Turn all ' + billsToRead + ' into bills</button>' : '') + '<button class="bk-btn sm" data-aside="bill">Mark all ' + bc.bill + ' as read</button></span>' : '') +
+        (bc.bill ? '<span data-for="bill"><span class="bk-muted">Rated as bills — nothing is filed until you press Bill on one (or Turn all).</span> ' + (billsToRead ? '<button class="bk-btn sm p" data-parseall>Turn all ' + billsToRead + ' into bills</button>' : '') + '<button class="bk-btn sm" data-aside="bill">Mark all ' + bc.bill + ' as read</button></span>' : '') +
         (bc.message ? '<span data-for="message"><span class="bk-muted">People writing to accounting — for a person to answer.</span> <button class="bk-btn sm" data-aside="message">Mark all ' + bc.message + ' as read</button></span>' : '') +
         '<span data-for="unrated"><span class="bk-muted">' + (bc.unrated ? 'New mail since the last scan — not sorted yet.' : 'Nothing new. Incoming mail lands here until the next scan (every ' + esc(ov.settings.poll_min) + ' min, or Scan) sorts it into a basket.') + '</span></span>' +
         '</div>' +
@@ -603,7 +603,6 @@
           done += (r.items || []).length; left = r.remaining; bills = r.bills_to_read || [];
           if (!(r.items || []).length) break;
         }
-        for (let i = 0; i < bills.length; i++) { say('Reading bill ' + (i + 1) + ' of ' + bills.length + ' in full…'); const row = v.querySelector('.ib-row[data-m="' + bills[i] + '"]'); if (row) row.classList.add('rated'); await post('/api/bookkeeping/emails/' + bills[i] + '/parse', {}); }
         say('Done.');
       } catch (e) { say('Stopped: ' + e.message); }
       await overview(); setTimeout(loadInbox, 600);

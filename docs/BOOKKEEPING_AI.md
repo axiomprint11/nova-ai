@@ -186,6 +186,16 @@ becomes **paid** on the email's date (`paid_note`, `bk_bills.receipt_email_id`),
 (`bk_transactions.receipt_email_id`); `bk_emails.matched_bill_id / matched_txn_id` show it in the pane. Every row and the pane show the sender as the vendor's logo when linked (`GET /emails` joins `bk_vendors` and links unlinked senders through `matchVendor()`), else a lettered circle (indigo when linked without a photo). Rows have a
 checkbox (hover the dot): a selection bar offers Mark as read (`POST /inbox/read {ids}`, Gmail first) and Move to.
 
+### Manual month (1.18.71)
+Nothing becomes a bill by itself any more: `parseNewEmails` only rates (`triage_auto`, off, is the only automatic
+full read), the UI scan no longer reads rated bills, and `/inbox/rate` returns no `bills_to_read`. A person presses
+**Bill** (or Turn all) → draft under Bills; **Transaction** → matched to a bank line / bill; **Move to** → another basket.
+Every such decision is stored on the email as the training signal for the AI — `bk_emails.decided_kind / decided_by /
+decided_at` (`decideEmail()`): Bill = bill, Transaction = receipt, Move to = that kind, Mark as read = agrees with the
+AI's rating (COALESCE, so an explicit decision is never overwritten by a later read). Compare `kind` (AI) with
+`decided_kind` (person) to measure the rater. The triage prompt now says a human-written email that contains or chases
+an invoice is a **message** (we may need to answer), while system / no-reply invoices are bills.
+
 ### Email history (1.18.57)
 The clock button in the reading pane lists everything done with the email, newest first, with who did it (member
 face, "AI" for BookkeeperAI, a sparkle for the scan): scanned, rated (kind + %), marked read / unread (also from
