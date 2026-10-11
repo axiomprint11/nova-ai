@@ -412,7 +412,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const msg = String(e.message || e);
       const scope = /unauthorized_client|insufficient|insufficientPermissions|403|scope/i.test(msg);
       errlog('gmail mark read', msg);
-      return { ok: false, n: 0, error: scope ? SCOPE_HELP : 'Gmail refused: ' + msg.slice(0, 200), scope };
+      return { ok: false, n: 0, error: (scope ? SCOPE_HELP + ' ' : '') + 'Gmail said: ' + msg.slice(0, 300), scope };
     }
   }
   const b64url = (s) => Buffer.from(String(s || '').replace(/-/g, '+').replace(/_/g, '/'), 'base64');
@@ -1385,7 +1385,7 @@ module.exports = function mountBookkeeping(app, deps) {
   app.post('/api/bookkeeping/emails/:id/unread', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), em = await dbGet('SELECT id, status, kind, gmail_id FROM bk_emails WHERE id = ?', [id]);
     if (!em) return res.json({ ok: false, error: 'No such email' });
-    if (em.gmail_id) { try { await gmailMod().users.messages.batchModify({ userId: 'me', requestBody: { ids: [em.gmail_id], addLabelIds: ['UNREAD'] } }); } catch (e) { const msg = String(e.message || e); return res.json({ ok: false, error: /unauthorized_client|insufficient|403|scope/i.test(msg) ? SCOPE_HELP : 'Gmail refused: ' + msg.slice(0, 200) }); } }
+    if (em.gmail_id) { try { await gmailMod().users.messages.batchModify({ userId: 'me', requestBody: { ids: [em.gmail_id], addLabelIds: ['UNREAD'] } }); } catch (e) { const msg = String(e.message || e); return res.json({ ok: false, error: (/unauthorized_client|insufficient|403|scope/i.test(msg) ? SCOPE_HELP + ' ' : '') + 'Gmail said: ' + msg.slice(0, 300) }); } }
     await dbRun("UPDATE bk_emails SET status = ?, read_by = NULL, aside = 0, note = ? WHERE id = ?", [em.status === 'parsed' ? 'parsed' : em.kind === 'message' ? 'message' : 'new', 'marked unread by ' + userId(req), id]);
     await audit(userId(req), 'email.unread', id, null); res.json({ ok: true });
   });
