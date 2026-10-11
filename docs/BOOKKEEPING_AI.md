@@ -174,7 +174,7 @@ messages kept; the overview has `inbox_messages` and `ai_read_today`.
 tabs: each basket lists open emails on top and the closed ones under a "Closed n" divider. Chips are the AI's own labels: **Not read** (all
 open) · **Unscanned** (unread mail that arrived since the last scan, not rated yet) · Bill · Message · Ad · Receipt ·
 Notice · Other · Set aside (1.18.31). A bill draft is tagged Bill whatever it was rated (`kind = 'bill'` on parse); a
-rated email with no kind is Other. Scan = fetch unread + rate (manual Scan now, or the poll — `poll_min`, now
+rated email with no kind is Other. No heading on the Inbox card; Scan now sits left of the search and shows only on the Unscanned chip. Scan = fetch unread + rate (manual Scan now, or the poll — `poll_min`, now
 60 by default; a one-time `inbox_reset_1830` cleared old closed marks and raised a lower poll to 60).
 
 ### Gmail is the truth (1.18.22)
