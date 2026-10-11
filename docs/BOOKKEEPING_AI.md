@@ -168,6 +168,15 @@ Messages · Bills · **Set aside by AI** (the report of what it marked read on i
 All set aside; "Mark as read" by hand sets `read_by = 'user'`. The daily run's summary line counts emails set aside and
 messages kept; the overview has `inbox_messages` and `ai_read_today`.
 
+### Gmail is the truth (1.18.22)
+Open / closed follows Gmail's UNREAD label both ways: the scan closes open rows no longer unread in Gmail (`read_by =
+'gmail'`) and **re-opens** closed rows (not set-aside ones) that are unread in Gmail again (`unread_again` in the scan
+result). "Mark as read" / "Mark all … as read" change Gmail **first** (`markReadInGmail`) and only then Nova — if Gmail
+refuses (missing `gmail.modify` scope) nothing changes here and the dialog says why. "Mark as unread" (closed emails,
+`POST /api/bookkeeping/emails/:id/unread`) adds UNREAD back and re-opens the row. Clicking an email never marks it read;
+only the buttons do. Every basket has **Open** (unread in Gmail) / **Closed** (read) segments with counts, so a basket
+keeps its history; the chip count is the open count, action bars show in Open only. A wrong count is fixed by Scan now.
+
 ### Baskets (1.18.13)
 `scanInbox` lists `is:unread in:inbox` mail (no date limit), so the inbox here follows the team's Gmail unread count, plus mail already read in Gmail from the last `backfill_days` (default 30) stored as `skipped` / `read_by = 'gmail'` for the **Everything else** basket (rated too — `TO_RATE` — but never moved);
 open rows (`new` / `message`) whose Gmail id is no longer unread are set aside with `read_by = 'gmail'`. The first chip is **Not read** (every open email, the default); then the baskets by rating: **Bills** (kind bill, drafts excluded from the count), **Direct messages**, **Ads**,
