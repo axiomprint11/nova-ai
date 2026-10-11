@@ -388,6 +388,33 @@ module.exports = function mountBookkeeping(app, deps) {
     gmailClient = google.gmail({ version: 'v1', auth: a });
     return gmailClient;
   }
+  // Marking read in Gmail itself (removes the UNREAD label), so the team's unread count drops with ours. Needs the
+  // gmail.modify scope on the service account's domain-wide delegation; until Google has it, this returns the reason
+  // and Nova's own state is still updated. Never deletes, moves or sends.
+  let gmailModClient = null;
+  function gmailMod() {
+    if (gmailModClient) return gmailModClient;
+    const key = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
+    const a = new google.auth.JWT({ email: key.client_email, key: key.private_key, scopes: ['https://www.googleapis.com/auth/gmail.modify'], subject: INBOX });
+    gmailModClient = google.gmail({ version: 'v1', auth: a });
+    return gmailModClient;
+  }
+  const SCOPE_HELP = 'Google has not allowed Nova to change read state yet: in Google Admin → Security → API controls → Domain-wide delegation, add https://www.googleapis.com/auth/gmail.modify to the service account\'s scopes (keep the others).';
+  async function markReadInGmail(emailIds, who) {
+    const rows = emailIds.length ? await dbAll('SELECT id, gmail_id FROM bk_emails WHERE id IN (' + emailIds.map(() => '?').join(',') + ') AND gmail_id IS NOT NULL', emailIds) : [];
+    if (!rows.length) return { ok: true, n: 0 };
+    try {
+      const g = gmailMod();
+      for (let i = 0; i < rows.length; i += 500) await g.users.messages.batchModify({ userId: 'me', requestBody: { ids: rows.slice(i, i + 500).map(r => r.gmail_id), removeLabelIds: ['UNREAD'] } });
+      await audit(who, 'gmail.mark_read', INBOX, { n: rows.length });
+      return { ok: true, n: rows.length };
+    } catch (e) {
+      const msg = String(e.message || e);
+      const scope = /unauthorized_client|insufficient|insufficientPermissions|403|scope/i.test(msg);
+      errlog('gmail mark read', msg);
+      return { ok: false, n: 0, error: scope ? SCOPE_HELP : 'Gmail refused: ' + msg.slice(0, 200), scope };
+    }
+  }
   const b64url = (s) => Buffer.from(String(s || '').replace(/-/g, '+').replace(/_/g, '/'), 'base64');
   function partsOf(payload) { const out = []; (function walk(p) { if (!p) return; out.push(p); (p.parts || []).forEach(walk); })(payload); return out; }
   // The HTML part, cleaned for the reading pane (scripts, forms and event handlers out; images and links stay).
@@ -690,6 +717,7 @@ module.exports = function mountBookkeeping(app, deps) {
         conf, String(j.reason || '').slice(0, 300)]);
     await dbRun('UPDATE bk_bills SET proposal_id = ? WHERE id = ?', [p.lastID, billId]);
     await dbRun("UPDATE bk_emails SET status = 'parsed', note = ? WHERE id = ?", ['Bill draft #' + billId, em.id]);
+    markReadInGmail([em.id], who).catch(() => {});   // it is handled: read in Gmail too (quietly; the scope may be missing)
     if (conf < s.threshold || dup || newVendor) {
       const q = dup ? 'This looks like a duplicate of bill #' + dup.id + ' (' + vendor + (invNo ? ' #' + invNo : '') + '). Is it the same bill?'
         : newVendor ? vendor + ' is a new vendor. Is this a real vendor of ours, and should I approve them for future bills?'
@@ -1339,7 +1367,8 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!em) return res.json({ ok: false, error: 'No such email' });
     if (em.status === 'parsed') return res.json({ ok: false, error: 'It is a bill draft already.' });
     await dbRun("UPDATE bk_emails SET status = 'skipped', read_by = 'user', note = ? WHERE id = ?", ['marked read by ' + userId(req), id]);
-    await audit(userId(req), 'email.read', id, null); res.json({ ok: true });
+    await audit(userId(req), 'email.read', id, null);
+    const gm = await markReadInGmail([id], userId(req)); res.json({ ok: true, gmail: gm });
   });
   app.post('/api/bookkeeping/emails/:id/parse', ...guard, async (req, res) => {
     const em = await dbGet('SELECT * FROM bk_emails WHERE id = ?', [parseInt(req.params.id)]);
@@ -1462,9 +1491,11 @@ module.exports = function mountBookkeeping(app, deps) {
     const kinds = (Array.isArray(req.body && req.body.kinds) ? req.body.kinds : []).filter(k => ['advertisement', 'notification', 'receipt', 'other'].indexOf(k) > -1);
     const min = Math.max(0, Math.min(1, Number(req.body && req.body.min) || 0));
     if (!kinds.length) return res.json({ ok: false, error: 'Which kinds?' });
-    const r = await dbRun("UPDATE bk_emails SET status = 'skipped', read_by = 'user', note = COALESCE(note, '') || ' — set aside by ' || ? WHERE status = 'new' AND kind IN (" + kinds.map(() => '?').join(',') + ") AND COALESCE(confidence, 0) >= ?", [userId(req)].concat(kinds, [min]));
+    const ids = (await dbAll("SELECT id FROM bk_emails WHERE status = 'new' AND kind IN (" + kinds.map(() => '?').join(',') + ") AND COALESCE(confidence, 0) >= ?", kinds.concat([min]))).map(r => r.id);
+    const r = ids.length ? await dbRun("UPDATE bk_emails SET status = 'skipped', read_by = 'user', note = COALESCE(note, '') || ' — set aside by ' || ? WHERE id IN (" + ids.map(() => '?').join(',') + ")", [userId(req)].concat(ids)) : { changes: 0 };
     await audit(userId(req), 'email.set_aside', null, { kinds, min, n: r.changes });
-    res.json({ ok: true, n: r.changes });
+    const gm = await markReadInGmail(ids, userId(req));
+    res.json({ ok: true, n: r.changes, gmail: gm });
   });
   app.post('/api/bookkeeping/scan', ...guard, async (req, res) => { try { const r = await scanInbox(userId(req)); const p = await parseNewEmails(userId(req)); res.json({ ok: true, scan: r, parsed: p }); } catch (e) { res.json({ ok: false, error: e.message }); } });
   app.post('/api/bookkeeping/sync', ...guard, async (req, res) => { try { res.json({ ok: true, sync: await syncAll(userId(req)), categorized: await categorize(userId(req)) }); } catch (e) { res.json({ ok: false, error: e.message }); } });

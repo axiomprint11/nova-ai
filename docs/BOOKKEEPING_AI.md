@@ -44,7 +44,16 @@ Read with the service account in `/opt/axiom-ai/gmail-key.json`, impersonating `
 `accounting@axiomprint.com`) exactly as Nova reads order@. Domain-wide delegation is per domain, so nothing new is
 needed unless the scan logs `unauthorized_client` — then add `https://www.googleapis.com/auth/gmail.readonly` to the
 client id's scopes in Google Admin → Security → API controls → Domain-wide delegation. PDF and image attachments are
-saved; the first scan looks back `backfill_days` (7); our own `@axiomprint.com` mail is skipped.
+saved; our own `@axiomprint.com` mail is skipped.
+
+**Marking read in Gmail** (1.18.20): "Mark as read", "Mark all N … as read" and turning an email into a bill also remove
+the UNREAD label in Gmail (`markReadInGmail()`, `users.messages.batchModify`, a second JWT client with the
+`https://www.googleapis.com/auth/gmail.modify` scope), so the team's unread count follows Nova's. It needs that scope
+on the service account's delegation: Google Admin → Security → Access and data control → API controls → Manage
+Domain Wide Delegation → the client ID from `/opt/axiom-ai/gmail-key.json` → Edit → add `gmail.modify` next to
+`gmail.readonly`, `gmail.send`, `drive.readonly` → Authorize (a few minutes to take effect). Until then Nova's own state
+still changes and the page says "Marked read here, not in Gmail" with those steps. Nova never deletes, moves or
+labels mail otherwise; every batch is audited as `gmail.mark_read`.
 
 Optional push: Google Cloud project of the service account → enable Pub/Sub → topic → grant
 `gmail-api-push@system.gserviceaccount.com` Publisher → push subscription to

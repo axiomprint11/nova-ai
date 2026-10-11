@@ -57,13 +57,13 @@
     return new Promise((resolve) => {
       const el = document.createElement('div'); el.className = 'bk-modal bk-ask';
       el.innerHTML = '<div class="bk-modal-box bk-ask-box">' + (opt.title ? '<div class="bk-modal-title">' + esc(opt.title) + '</div>' : '') + '<div class="bk-ask-text">' + esc(text) + '</div>' +
-        '<div class="bk-ask-acts"><button class="bk-btn" data-no>' + esc(opt.cancel || 'Cancel') + '</button><button class="bk-btn ' + (opt.danger ? 'bad' : 'p') + '" data-yes>' + esc(opt.ok || 'OK') + '</button></div></div>';
+        '<div class="bk-ask-acts">' + (opt.cancel === false ? '' : '<button class="bk-btn" data-no>' + esc(opt.cancel || 'Cancel') + '</button>') + '<button class="bk-btn ' + (opt.danger ? 'bad' : 'p') + '" data-yes>' + esc(opt.ok || 'OK') + '</button></div></div>';
       document.body.appendChild(el);
       const done = (v) => { el.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
       const onKey = (e) => { if (e.key === 'Escape') done(false); if (e.key === 'Enter') done(true); };
       document.addEventListener('keydown', onKey);
       el.onclick = (e) => { if (e.target === el) done(false); };
-      el.querySelector('[data-no]').onclick = () => done(false); el.querySelector('[data-yes]').onclick = () => done(true);
+      const nb = el.querySelector('[data-no]'); if (nb) nb.onclick = () => done(false); el.querySelector('[data-yes]').onclick = () => done(true);
       el.querySelector('[data-yes]').focus();
     });
   }
@@ -523,7 +523,7 @@
       const k = b.dataset.aside, kinds = k === 'confirm' ? ['notification', 'receipt'] : [k];
       const n = k === 'confirm' ? bc.confirm : k === 'advertisement' ? bc.ads : bc.other;
       if (!await ask('They move to "Set aside". Any of them can still be turned into a bill later, and Gmail itself is not changed.', { title: 'Mark ' + n + ' email' + (n === 1 ? '' : 's') + ' as read?', ok: 'Mark as read' })) return;
-      b.disabled = true; const r = await post('/api/bookkeeping/inbox/set-aside', { kinds, min: 0 }); if (!r.ok) alert(r.error); await overview(); loadInbox();
+      b.disabled = true; const r = await post('/api/bookkeeping/inbox/set-aside', { kinds, min: 0 }); if (!r.ok) alert(r.error); else if (r.gmail && !r.gmail.ok) await ask(r.gmail.error, { title: 'Marked read here, not in Gmail', ok: 'OK', cancel: false }); await overview(); loadInbox();
     });
     const pa = v.querySelector('[data-parseall]'); if (pa) pa.onclick = async () => {
       const ids = all.filter(m => basket(m) === 'bill' && st(m) !== 'parsed').map(m => m.id);
@@ -575,7 +575,7 @@
     e.attachments.filter(a => a.kind === 'image').forEach(async a => { try { const r = await fetch('/api/bookkeeping/emails/' + id + '/att/' + a.i, { headers: authHdr }); if (r.ok) { const u = URL.createObjectURL(await r.blob()); const t = el.querySelector('.em-att[data-i="' + a.i + '"] .em-thumb'); if (t) t.style.backgroundImage = 'url(' + u + ')'; } } catch (er) {} });
     el.querySelectorAll('.em-att').forEach(a => a.onclick = async (ev) => { ev.preventDefault(); const r = await fetch('/api/bookkeeping/emails/' + id + '/att/' + a.dataset.i, { headers: authHdr }); if (!r.ok) return alert('File not available.'); const u = URL.createObjectURL(await r.blob()); viewFile(u, a.dataset.kind, a.title); });
     const p1 = el.querySelector('[data-parse]'); if (p1) p1.onclick = async () => { p1.disabled = true; p1.textContent = 'Reading…'; const r = await post('/api/bookkeeping/emails/' + id + '/parse', {}); if (!r.ok) alert(r.error); close(); await overview(); loadInbox(); };
-    const r1 = el.querySelector('[data-read]'); if (r1) r1.onclick = async () => { r1.disabled = true; const r = await post('/api/bookkeeping/emails/' + id + '/read', {}); if (!r.ok) alert(r.error); close(); await overview(); loadInbox(); };
+    const r1 = el.querySelector('[data-read]'); if (r1) r1.onclick = async () => { r1.disabled = true; const r = await post('/api/bookkeeping/emails/' + id + '/read', {}); if (!r.ok) alert(r.error); else if (r.gmail && !r.gmail.ok) await ask(r.gmail.error, { title: 'Marked read here, not in Gmail', ok: 'OK', cancel: false }); close(); await overview(); loadInbox(); };
     const cl = el.querySelector('[data-close]'); if (cl) cl.onclick = () => { ibOpen = null; close(); const sp = $('ibSplit'); if (sp) sp.classList.add('lines'); document.querySelectorAll('.ib-row.open').forEach(r => r.classList.remove('open')); };
     el.querySelectorAll('[data-gobills]').forEach(g1 => g1.onclick = (ev) => { ev.preventDefault(); show('bills'); });
     const mv = el.querySelector('[data-move]'); if (mv) mv.onchange = async () => { if (!mv.value) return; mv.disabled = true; const r = await post('/api/bookkeeping/emails/' + id + '/kind', { kind: mv.value }); if (!r.ok) alert(r.error); await overview(); loadInbox(); };
