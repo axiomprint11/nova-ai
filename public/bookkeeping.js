@@ -512,6 +512,7 @@
     const paneOn = (on) => { $('ibSplit').classList.toggle('lines', !on); };
     if (ibOpen && all.some(m => m.id === ibOpen)) { const r0 = v.querySelector('.ib-row[data-m="' + ibOpen + '"]'); if (r0) r0.classList.add('open'); openEmail(ibOpen); }
     const filter = () => { const q = $('ibQ').value.trim().toLowerCase(); let n = 0; v.querySelectorAll('.ib-row').forEach(r => { const inB = ibFilter === 'open' ? OPEN.indexOf(r.dataset.b) > -1 : r.dataset.b === ibFilter; const on = inB && (!q || r.dataset.q.indexOf(q) > -1); r.style.display = on ? '' : 'none'; if (on) n++; }); $('ibNone').style.display = n || !all.length ? 'none' : ''; v.querySelectorAll('#ibActs > [data-for]').forEach(x => { x.style.display = x.dataset.for === ibFilter ? '' : 'none'; }); $('scanNow2').style.display = ibFilter === 'unrated' ? '' : 'none';
+      const acts = $('ibActs'); acts.style.display = Array.from(acts.children).some(c => c.style.display !== 'none') ? '' : 'none';   // no empty row between the chips and the list
       const nc = Array.from(v.querySelectorAll('.ib-row[data-o="0"]')).filter(r => r.style.display !== 'none').length; const hd = $('ibClosedHead'); hd.style.display = nc && ibFilter !== 'done' ? '' : 'none'; hd.querySelector('b').textContent = nc; };
     v.querySelectorAll('.ib-chip').forEach(c => c.onclick = () => {
       ibFilter = c.dataset.f; v.querySelectorAll('.ib-chip').forEach(x => x.classList.toggle('on', x === c)); filter();
@@ -520,7 +521,7 @@
     });
     $('ibQ').oninput = filter; filter();
     // picking several: the checkbox never opens the email; the bar acts on the picked ones
-    const selPaint = () => { const n = ibSel.size; $('ibSelBar').style.display = n ? '' : 'none'; $('ibSelN').textContent = n; v.querySelectorAll('.ib-row').forEach(r => r.classList.toggle('picked', ibSel.has(Number(r.dataset.m)))); };
+    const selPaint = () => { const n = ibSel.size; $('ibSelBar').style.display = n ? '' : 'none'; $('ibSelN').textContent = n; const acts = $('ibActs'); acts.style.display = Array.from(acts.children).some(c => c.style.display !== 'none') ? '' : 'none'; v.querySelectorAll('.ib-row').forEach(r => r.classList.toggle('picked', ibSel.has(Number(r.dataset.m)))); };
     v.querySelectorAll('[data-pick]').forEach(cb => { cb.onclick = (ev) => ev.stopPropagation(); cb.onchange = () => { const id = Number(cb.dataset.pick); if (cb.checked) ibSel.add(id); else ibSel.delete(id); selPaint(); }; });
     v.querySelector('[data-selclear]').onclick = () => { ibSel.clear(); v.querySelectorAll('[data-pick]').forEach(cb => { cb.checked = false; }); selPaint(); };
     v.querySelector('[data-selread]').onclick = async () => {
