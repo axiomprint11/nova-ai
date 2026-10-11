@@ -96,6 +96,26 @@ Paper" and gets the whole directory as context. Approving a category for a linke
 blur, Approve on click (`POST /api/bookkeeping/vendors/:id` is a partial update — only the fields sent change). Type and
 Approved filters live in the table header. Edit names, emails and specialties in the CRM, not here.
 
+## Equipment (1.19.3)
+Accounts → **Equipment** mirrors the CRM's machine list (`equipments`: name, `photo_url`, and the team through
+`action_ids` → `actions.team_id` → `team.name`; operators and production steps stay in the CRM) into `bk_equipment`
+on the same sync as the directory (tab open / hourly / daily; a machine removed from the CRM is kept, shown as retired).
+The money side lives only here and is edited per machine (**Edit**): a vendor / lender from the directory and one of
+three modes — **Owned outright** (purchase price, date, useful life — 7 years by default — and salvage: straight-line
+depreciation, the book value on Jan 1 and today, `bookValue()`), **On a loan** (price, date, down payment, loan amount
+(price − down if left empty), term, APR, first payment, monthly payment, useful life: depreciation plus the schedule —
+months paid / left, what is still to pay; principal vs interest for the P&L is a later step from the rate), **Leased**
+(start, term, monthly: no asset, every payment is an expense). A machine bought outside the CRM list can be added by
+hand (**+ Add**, no `crm_id`).
+
+**Payments find their machine by themselves**: a bank line (and the purchase made from it) or a bill from the machine's
+vendor for its monthly amount to the cent — or the vendor's only financed machine — gets `equipment_id`
+(`equipmentFor()`, called in `ensureTxnPurchases` and `parseEmail`; saving a machine links what is already in the
+books). **Payments** on the row lists them (bank lines and bills) with a × to unlink. Endpoints:
+`GET /api/bookkeeping/equipment` (rows + `payments`, `schedule`, `book`), `GET /equipment/:id/payments`,
+`POST /equipment/:id` (financing), `POST /equipment` (add), `POST /equipment/:id/link {transaction_id|bill_id, off}`.
+Audit: `equipment.update` (before / after), `equipment.add`, `equipment.link`.
+
 ## Materials & GEO types (the CRM materials catalog)
 CRM → Products → Materials is mirrored read-only into `bk_materials` with every sync of the directory: name, `material`
 (paper_cover, vinyl, foil…), `type` (sheet, role…), production step, **GEO type / sub type** (`geo_type`, `geo_sub_type`
@@ -213,7 +233,7 @@ refuses (missing `gmail.modify` scope) nothing changes here and the dialog says 
 only the buttons do. Every basket has **Open** (unread in Gmail) / **Closed** (read) segments with counts, so a basket
 keeps its history; the chip count is the open count, action bars show in Open only. A wrong count is fixed by Scan now.
 
-### Baskets (1.19.2): All · Bills · Transactions · Arrivals · Messages · More (Ads · Other · Set aside) — no "New" chip: the Scan button sits on All, and mail not yet rated shows there until the next scan sorts it
+### Baskets (1.19.3): All · Bills · Transactions · Arrivals · Messages · Ads · Other · Set aside, all on one line — no "New" chip and no "More baskets" menu; Scan sits at the right of the action row under the search, and mail not yet rated shows under All until the next scan sorts it
 The AI's kinds are `bill`, `receipt` (a purchase: an order confirmation, "thanks for your order", a payment receipt or
 charge confirmation), `arrival` (a delivery notification: shipped, out for delivery, delivered, tracking), `message`,
 `advertisement`, `other` (account alerts, system mail, anything unclear). The old `notification` kind and the Notices

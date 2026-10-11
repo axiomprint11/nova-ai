@@ -21,7 +21,7 @@
   // show('inbox') opens that sub-tab directly; the last sub-tab of each is remembered per browser.
   const BILL_SUBS = { pending: ['draft', 'rejected'], approved: ['approved'], scheduled: ['scheduled'], paid: ['paid'] };
   let billSub = 'pending';
-  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, chart: loadChart, rules: loadRules, materials: loadMaterials }, first: 'vendors' },
+  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, equipment: loadEquipment, chart: loadChart, rules: loadRules, materials: loadMaterials }, first: 'vendors' },
     purchases: { bar: 'subPurchases', subs: { list: () => loadPurchases('list'), bank: loadTxns, waiting: () => loadPurchases('waiting'), notreceived: () => loadPurchases('notreceived') }, first: 'list' },
     bills: { bar: 'subBills', subs: { pending: () => loadBills('pending'), approved: () => loadBills('approved'), scheduled: () => loadBills('scheduled'), paid: () => loadBills('paid') }, first: 'pending' } };
   document.querySelectorAll('.bk-sub button').forEach(b => b.onclick = () => show(b.closest('.bk-view').dataset.v, b.dataset.s));
@@ -579,7 +579,7 @@
     const basket = (m) => { if (m.aside) return 'done'; const k = kindOf(m); if (!k) return 'unrated'; return { bill: 'bill', message: 'message', advertisement: 'ads', receipt: 'receipt', arrival: 'arrival' }[k] || 'other'; };
     // the main chips, then the rest behind "More baskets" (same colours as the AI's tags)
     const BASKETS = [['open', 'All', 'mail'], ['unrated', 'New', 'sparkles'], ['bill', 'Bills', 'file'], ['receipt', 'Transactions', 'receipt'], ['arrival', 'Arrivals', 'package'], ['message', 'Messages', 'users'], ['ads', 'Ads', 'megaphone'], ['other', 'Other', 'folder'], ['done', 'Set aside', 'clock']];
-    const MAIN = ['open', 'bill', 'receipt', 'arrival', 'message'], MORE = ['ads', 'other', 'done'];
+    const MAIN = ['open', 'bill', 'receipt', 'arrival', 'message', 'ads', 'other', 'done'], MORE = [];   // every basket on the line (1.19.3)
     const bc = {}, cc = {};   // open / closed counts per basket
     all.forEach(m => { const b = basket(m); if (b === 'done') { bc.done = (bc.done || 0) + 1; return; } if (isOpen(m)) bc[b] = (bc[b] || 0) + 1; else cc[b] = (cc[b] || 0) + 1; });
     const OPEN = ['message', 'ads', 'receipt', 'arrival', 'bill', 'other', 'unrated'];
@@ -598,7 +598,7 @@
     v.innerHTML = '<div class="bk-card">' +
       '<div class="ib-progress" id="ibProg" style="display:none"><span class="ib-spin"></span><span id="ibProgText"></span></div>' +
       '<div class="ib-bar ib-top"><span class="ib-chips">' + BASKETS.filter(([k]) => MAIN.indexOf(k) > -1).map(([k, l, ic]) => '<button class="ib-chip k-' + k + (ibFilter === k ? ' on' : '') + '" data-f="' + k + '">' + iconSvg(ic) + l + '<b>' + (bc[k] || 0) + '</b></button>').join('') +
-        (() => { const sel = BASKETS.find(([k]) => k === ibFilter && MORE.indexOf(k) > -1); const n = MORE.reduce((a, k) => a + (bc[k] || 0), 0); return '<button class="ib-chip k-' + (sel ? sel[0] : 'more') + (sel ? ' on' : '') + '" data-more title="Ads, Other, Set aside">' + iconSvg(sel ? sel[2] : 'layers') + (sel ? sel[1] : 'More baskets') + '<b>' + (sel ? (bc[sel[0]] || 0) : n) + '</b><span class="thf-c"></span></button>'; })() + '</span><button class="bk-btn p" id="scanNow2" title="' + esc(ov && ov.connections.gmail.last_scan ? 'Last checked ' + when(ov.connections.gmail.last_scan) : 'Not checked yet') + '">Scan</button><input id="ibQ" placeholder="Search"></div>' +
+        '</span><input id="ibQ" placeholder="Search"></div>' +
       // one action bar per basket: review, then one click for the whole basket
       '<div class="ib-bar ib-acts" id="ibActs">' +
         '<span class="ib-selbar" id="ibSelBar" style="display:none"><b id="ibSelN"></b> selected <button class="bk-btn sm p" data-selread>Mark as read</button><button class="bk-btn sm" data-selmove>Move to <span class="thf-c"></span></button><button class="bk-btn sm" data-selclear>Clear</button></span>' +
@@ -609,12 +609,13 @@
         (bc.bill ? '<span data-for="bill"><span class="bk-muted">Rated as bills — nothing is filed until you press Bill on one (or Turn all).</span> ' + (billsToRead ? '<button class="bk-btn sm p" data-parseall>Turn all ' + billsToRead + ' into bills</button>' : '') + '<button class="bk-btn sm" data-aside="bill">Mark all ' + bc.bill + ' as read</button></span>' : '') +
         (bc.message ? '<span data-for="message"><span class="bk-muted">People writing to accounting — for a person to answer.</span> <button class="bk-btn sm" data-aside="message">Mark all ' + bc.message + ' as read</button></span>' : '') +
         '<span data-for="open"><span class="bk-muted">' + (bc.unrated ? bc.unrated + ' not sorted yet — Scan puts them in their baskets.' : 'Everything is sorted. Incoming mail is checked every ' + esc(ov.settings.poll_min) + ' min (or press Scan).') + '</span></span>' +
+        '<button class="bk-btn p sm" id="scanNow2" style="margin-left:auto" title="' + esc(ov && ov.connections.gmail.last_scan ? 'Last checked ' + when(ov.connections.gmail.last_scan) : 'Not checked yet') + '">Scan</button>' +
         '</div>' +
       '<div class="ib-split' + (ibOpen ? '' : ' lines') + '" id="ibSplit"><div class="ib-list">' + all.filter(isOpen).map(row).join('') + '<div class="ib-divider" id="ibClosedHead">Closed <b></b></div>' + all.filter(m => !isOpen(m)).map(row).join('') + (!all.length ? '<div class="bk-muted" style="padding:14px 0">Nothing scanned yet — press Scan now.</div>' : '') + '<div class="bk-muted" id="ibNone" style="display:none;padding:14px 10px">Nothing matches.</div></div>' +
       '<div class="ib-pane" id="ibPane"><div class="ib-empty">Select an email to read it</div></div></div></div>';
     const paneOn = (on) => { $('ibSplit').classList.toggle('lines', !on); };
     if (ibOpen && all.some(m => m.id === ibOpen)) { const r0 = v.querySelector('.ib-row[data-m="' + ibOpen + '"]'); if (r0) r0.classList.add('open'); openEmail(ibOpen); }
-    const filter = () => { const q = $('ibQ').value.trim().toLowerCase(); let n = 0; v.querySelectorAll('.ib-row').forEach(r => { const inB = ibFilter === 'open' ? OPEN.indexOf(r.dataset.b) > -1 : r.dataset.b === ibFilter; const on = inB && (!q || r.dataset.q.indexOf(q) > -1); r.style.display = on ? '' : 'none'; if (on) n++; }); $('ibNone').style.display = n || !all.length ? 'none' : ''; v.querySelectorAll('#ibActs > [data-for]').forEach(x => { x.style.display = x.dataset.for === ibFilter ? '' : 'none'; }); $('scanNow2').style.display = ibFilter === 'open' ? '' : 'none';
+    const filter = () => { const q = $('ibQ').value.trim().toLowerCase(); let n = 0; v.querySelectorAll('.ib-row').forEach(r => { const inB = ibFilter === 'open' ? OPEN.indexOf(r.dataset.b) > -1 : r.dataset.b === ibFilter; const on = inB && (!q || r.dataset.q.indexOf(q) > -1); r.style.display = on ? '' : 'none'; if (on) n++; }); $('ibNone').style.display = n || !all.length ? 'none' : ''; v.querySelectorAll('#ibActs > [data-for]').forEach(x => { x.style.display = x.dataset.for === ibFilter ? '' : 'none'; }); 
 
       const nc = Array.from(v.querySelectorAll('.ib-row[data-o="0"]')).filter(r => r.style.display !== 'none').length; const hd = $('ibClosedHead'); hd.style.display = nc && ibFilter !== 'done' ? '' : 'none'; hd.querySelector('b').textContent = nc; };
     const pickBasket = (f) => { ibFilter = f; loadInbox(); };
@@ -1190,6 +1191,84 @@
     $('mGeo').onchange = () => { subs(); filter(); }; $('mSub').onchange = filter; $('mSup').onchange = filter; $('mQ').oninput = filter; subs(); filter();
     const ms = $('matSync'); if (ms) ms.onclick = async () => { ms.disabled = true; const r = await post('/api/bookkeeping/directory/sync', {}); if (!r.ok) alert(r.error); else if (r.errors && r.errors.length) alert(r.errors.join('\n')); loadMaterials(); };
     v.querySelectorAll('[data-vgo]').forEach(a => a.onclick = (e) => { e.preventDefault(); show('vendors'); setTimeout(() => { const tr = document.querySelector('tr[data-vid="' + a.dataset.vgo + '"]'); if (tr) { tr.scrollIntoView({ block: 'center' }); tr.style.background = '#fffbeb'; } }, 900); });
+  }
+
+  // ---------------------------------------------------------------- Equipment
+  // The CRM's machines (name, photo, team) with how each one is financed: owned (depreciation → balance sheet), on a
+  // loan (price, down payment, loan, term, rate; the monthly payment lands on the machine) or leased (every payment is
+  // an expense). Payments to the vendor with the monthly amount attach to the machine by themselves.
+  async function loadEquipment() {
+    const v = $('vEquipment');
+    if (!ov) await overview();
+    const j = await api('/api/bookkeeping/equipment'); if (!j.ok) { v.innerHTML = '<div class="bk-card bk-muted">' + esc(j.error || 'Could not load') + '</div>'; return; }
+    const all = j.equipment || [], vendors = j.vendors || [];
+    const photo = (e) => e.photo ? '<img class="bk-logo bk-eq" src="' + esc(e.photo) + '" alt="" loading="lazy" onerror="this.outerHTML=\'<span class=&quot;bk-logo bk-eq ph&quot;>' + esc((e.name || '?').charAt(0)) + '</span>\'">' : '<span class="bk-logo bk-eq ph">' + esc((e.name || '?').charAt(0).toUpperCase()) + '</span>';
+    const MODE = { owned: ['Owned', 'check'], loan: ['Loan', 'landmark'], lease: ['Lease', 'calendar'] };
+    const modePill = (e) => e.mode ? '<span class="eq-mode ' + e.mode + '">' + iconSvg(MODE[e.mode][1]) + MODE[e.mode][0] + '</span>' : '<span class="eq-mode none">not set</span>';
+    const dateS = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString([], { month: 'short', year: 'numeric' }) : '';
+    const finance = (e) => {
+      if (e.mode === 'owned') return '<div>Bought ' + esc(dateS(e.purchase_date)) + (e.purchase_price != null ? ' for <b>' + usd(e.purchase_price) + '</b>' : '') + '</div><div class="bk-dim">' + (e.life_years || 7) + '-year straight line' + (e.salvage ? ', ' + usd(e.salvage) + ' salvage' : '') + '</div>';
+      if (e.mode === 'loan') return '<div>' + (e.purchase_price != null ? '<b>' + usd(e.purchase_price) + '</b> ' : '') + esc(dateS(e.purchase_date)) + (e.down_payment ? ' · ' + usd(e.down_payment) + ' down' : '') + '</div><div class="bk-dim">Loan ' + (e.loan_amount != null ? usd(e.loan_amount) : '—') + (e.loan_term ? ' · ' + e.loan_term + ' mo' : '') + (e.loan_rate != null ? ' · ' + e.loan_rate + '%' : '') + (e.schedule && e.schedule.end ? ' · ends ' + esc(dateS(e.schedule.end)) : '') + '</div>';
+      if (e.mode === 'lease') return '<div>Lease from ' + esc(dateS(e.lease_start)) + (e.lease_term ? ' · ' + e.lease_term + ' mo' : '') + '</div><div class="bk-dim">' + (e.schedule && e.schedule.end ? 'ends ' + esc(dateS(e.schedule.end)) + ' · ' : '') + 'all of it is an expense (P&amp;L)</div>';
+      return '<span class="bk-dim">Owned, loan or lease? Press Edit.</span>';
+    };
+    const monthly = (e) => e.schedule && e.schedule.monthly ? '<b>' + usd(e.schedule.monthly) + '</b><div class="bk-dim">' + e.schedule.months_done + ' of ' + (e.schedule.months_done + e.schedule.months_left) + ' paid</div>' + (e.schedule.months_done + e.schedule.months_left ? '<div class="eq-bar"><i style="width:' + Math.round(100 * e.schedule.months_done / (e.schedule.months_done + e.schedule.months_left)) + '%"></i></div>' : '') : '<span class="bk-dim">—</span>';
+    const paid = (e) => e.payments.n || e.payments.bills ? '<b>' + usd(e.payments.total) + '</b><div class="bk-dim">' + (e.payments.n ? e.payments.n + ' bank line' + (e.payments.n === 1 ? '' : 's') : '') + (e.payments.bills ? (e.payments.n ? ' · ' : '') + e.payments.bills + ' bill' + (e.payments.bills === 1 ? '' : 's') : '') + (e.payments.last ? ' · last ' + esc(e.payments.last) : '') + '</div>' : '<span class="bk-dim">none linked</span>';
+    const value = (e) => {
+      if (e.book && e.book.now != null) return '<b>' + usd(e.book.now) + '</b><div class="bk-dim">' + usd(e.book.year_start) + ' on Jan 1' + (e.book.yearly ? ' · ' + usd(e.book.yearly) + '/yr' : '') + '</div>' + (e.schedule && e.schedule.remaining ? '<div class="bk-dim">' + usd(e.schedule.remaining) + ' still to pay</div>' : '');
+      if (e.schedule) return '<b>' + usd(e.schedule.remaining) + '</b><div class="bk-dim">' + e.schedule.months_left + ' payments left</div>';
+      return '<span class="bk-dim">—</span>';
+    };
+    const vendorCell = (e) => e.vendor_id ? (e.vendor_photo ? '<img class="ib-av logo" src="' + esc(e.vendor_photo) + '" alt="" style="width:22px;height:22px;vertical-align:middle;margin-right:6px">' : '') + '<a href="#" class="bk-name" data-vgo="' + e.vendor_id + '">' + esc(e.vendor_name) + '</a>' : '<span class="bk-dim">no vendor</span>';
+    const row = (e) => '<tr' + (e.active ? '' : ' class="off"') + ' data-e="' + e.id + '" data-q="' + esc((e.name + ' ' + (e.team || '') + ' ' + (e.vendor_name || '') + ' ' + (e.mode || '')).toLowerCase()) + '" data-m="' + esc(e.mode || 'none') + '">' +
+      '<td>' + photo(e) + '</td><td><b>' + esc(e.name) + '</b>' + (e.team ? '<div class="bk-muted">' + esc(e.team) + '</div>' : '') + (e.active ? '' : '<div class="bk-dim">no longer in the CRM list</div>') + '</td>' +
+      '<td>' + vendorCell(e) + '</td><td>' + modePill(e) + '<div style="margin-top:4px">' + finance(e) + '</div></td><td class="num">' + monthly(e) + '</td><td class="num">' + paid(e) + '</td><td class="num">' + value(e) + '</td>' +
+      '<td class="pu-acts"><button class="bk-btn sm" data-edit="' + e.id + '">Edit</button>' + (e.payments.n || e.payments.bills ? '<button class="bk-btn sm" data-pays="' + e.id + '">Payments</button>' : '') + '</td></tr>';
+    const n = { owned: 0, loan: 0, lease: 0, none: 0 }; all.forEach(e => { n[e.mode || 'none']++; });
+    v.innerHTML = '<div class="bk-card">' +
+      '<div class="bk-filters"><span class="bk-muted" style="flex:1;min-width:0">' + all.length + ' machines from the CRM · ' + n.owned + ' owned · ' + n.loan + ' on a loan · ' + n.lease + ' leased · ' + n.none + ' not set. Monthly payments to a machine\'s vendor for its amount land on the machine by themselves — bank lines under Purchases, bills under Bills.</span>' +
+      '<select id="eqMode"><option value="">All</option><option value="owned">Owned</option><option value="loan">Loan</option><option value="lease">Lease</option><option value="none">Not set</option></select><input name="q" id="eqQ" placeholder="Search" style="flex:0 0 180px"><button class="bk-btn sm" id="eqAdd" title="A machine that is not in the CRM list">+ Add</button></div>' +
+      (all.length ? '<table class="bk bk-dir bk-eqs"><thead><tr><th></th><th>Machine</th><th>Vendor</th><th>Financing</th><th class="num">Monthly</th><th class="num">Paid so far</th><th class="num">Book value</th><th></th></tr></thead><tbody>' + all.map(row).join('') + '</tbody></table>'
+        : '<div class="bk-muted">Nothing synced yet.</div>') + '</div>';
+    const filter = () => { const m = $('eqMode').value, q = $('eqQ').value.trim().toLowerCase(); v.querySelectorAll('tr[data-e]').forEach(tr => { tr.style.display = (!m || tr.dataset.m === m) && (!q || tr.dataset.q.indexOf(q) >= 0) ? '' : 'none'; }); };
+    $('eqMode').onchange = filter; $('eqQ').oninput = filter;
+    $('eqAdd').onclick = async () => { const name = await askText('Name of the machine', { title: 'Add a machine' }); if (!name) return; const r = await post('/api/bookkeeping/equipment', { name }); if (!r.ok) return alert(r.error); loadEquipment(); };
+    v.querySelectorAll('[data-vgo]').forEach(a => a.onclick = (e) => { e.preventDefault(); show('vendors'); setTimeout(() => { const tr = document.querySelector('tr[data-vid="' + a.dataset.vgo + '"]'); if (tr) { tr.scrollIntoView({ block: 'center' }); tr.style.background = '#eef2ff'; } }, 400); });
+    v.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => equipmentEditor(all.find(e => e.id === Number(b.dataset.edit)), vendors, loadEquipment));
+    v.querySelectorAll('[data-pays]').forEach(b => b.onclick = () => equipmentPayments(all.find(e => e.id === Number(b.dataset.pays))));
+  }
+  function equipmentEditor(e, vendors, done) {
+    let mode = e.mode || 'owned';
+    const el = document.createElement('div'); el.className = 'bk-modal';
+    const f = (k, label, type, extra) => '<label>' + label + '<input class="bk" name="' + k + '" type="' + (type || 'text') + '" value="' + esc(e[k] != null ? e[k] : '') + '"' + (extra || '') + '></label>';
+    const money = (k, l) => f(k, l, 'number', ' step="0.01" min="0"'), date = (k, l) => f(k, l, 'date'), int = (k, l) => f(k, l, 'number', ' step="1" min="0"');
+    const fields = () => mode === 'owned' ? money('purchase_price', 'Purchase price') + date('purchase_date', 'Purchase date') + f('life_years', 'Useful life (years)', 'number', ' step="0.5" min="0" placeholder="7"') + money('salvage', 'Salvage value') + '<div class="wide bk-dim">Straight-line depreciation from the purchase date; the book value on Jan 1 of each year is what goes on the balance sheet.</div>'
+      : mode === 'loan' ? money('purchase_price', 'Purchase price') + date('purchase_date', 'Purchase date') + money('down_payment', 'Down payment') + money('loan_amount', 'Loan amount (price − down, if empty)') + int('loan_term', 'Loan term (months)') + f('loan_rate', 'Interest rate (% APR)', 'number', ' step="0.01" min="0"') + date('loan_start', 'First payment (purchase date if empty)') + money('monthly_payment', 'Monthly payment') + f('life_years', 'Useful life (years)', 'number', ' step="0.5" min="0" placeholder="7"') + '<div class="wide bk-dim">Each monthly payment lands on this machine; principal vs interest for the P&amp;L is split later from the rate.</div>'
+      : date('lease_start', 'Lease start') + int('lease_term', 'Lease term (months)') + money('lease_monthly', 'Monthly payment') + '<div class="wide bk-dim">A lease is not an asset: every payment is an expense on the P&amp;L. The machine still shows here with its payment history.</div>';
+    const paint = () => {
+      el.innerHTML = '<div class="bk-modal-box" style="width:min(640px,100%)"><div class="bk-modal-title">' + esc(e.name) + '</div>' + (e.team ? '<div class="bk-muted">' + esc(e.team) + '</div>' : '') +
+        '<div class="eq-modes">' + ['owned', 'loan', 'lease'].map(m => '<button class="bk-btn' + (mode === m ? ' p' : '') + '" data-mode="' + m + '">' + { owned: 'Owned outright', loan: 'On a loan', lease: 'Leased' }[m] + '</button>').join('') + '</div>' +
+        '<div class="eq-form"><label class="wide">Vendor / lender<select class="bk" name="vendor_id"><option value="">— none —</option>' + vendors.map(x => '<option value="' + x.id + '"' + (e.vendor_id === x.id ? ' selected' : '') + '>' + esc(x.name) + (x.kind ? ' · ' + esc(x.kind) : '') + '</option>').join('') + '</select></label>' + fields() +
+        '<label class="wide">Notes<input class="bk" name="notes" value="' + esc(e.notes || '') + '" placeholder="Serial number, who holds the loan, anything worth remembering"></label></div>' +
+        '<div class="bk-ask-acts"><button class="bk-btn" data-no>Cancel</button><button class="bk-btn p" data-yes>Save</button></div></div>';
+      el.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { collect(); mode = b.dataset.mode; paint(); });
+      el.querySelector('[data-no]').onclick = () => el.remove();
+      el.querySelector('[data-yes]').onclick = async () => { collect(); const body = Object.assign({}, e, { mode }); delete body.payments; delete body.schedule; delete body.book; const r = await post('/api/bookkeeping/equipment/' + e.id, body); if (!r.ok) return alert(r.error); el.remove(); done(); if (r.linked) overview(); };
+    };
+    const collect = () => { el.querySelectorAll('input[name], select[name]').forEach(i => { e[i.name] = i.value === '' ? null : (i.type === 'number' ? Number(i.value) : i.value); }); };
+    paint(); document.body.appendChild(el); el.onclick = (ev) => { if (ev.target === el) el.remove(); };
+  }
+  async function equipmentPayments(e) {
+    const j = await api('/api/bookkeeping/equipment/' + e.id + '/payments'); const t = j.transactions || [], b = j.bills || [];
+    const el = document.createElement('div'); el.className = 'bk-modal';
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(640px,100%)"><div class="bk-modal-title">' + esc(e.name) + ' — payments</div>' +
+      (t.length ? '<div class="vp-h">Bank lines</div><table class="bk eq-pay"><tbody>' + t.map(x => '<tr><td>' + esc(x.date) + '</td><td>' + esc(x.merchant || x.name) + '<div class="bk-dim">' + esc(x.category || '') + (x.account_name ? ' · ' + esc(x.account_name) : '') + '</div></td><td class="num"><b>' + usd(Math.abs(x.amount)) + '</b></td><td><button class="bk-btn sm" data-unt="' + x.id + '" title="Not this machine">×</button></td></tr>').join('') + '</tbody></table>' : '') +
+      (b.length ? '<div class="vp-h">Bills</div><table class="bk eq-pay"><tbody>' + b.map(x => '<tr><td>' + esc(x.invoice_date || '') + '</td><td>Bill #' + x.id + (x.invoice_no ? ' · ' + esc(x.invoice_no) : '') + '<div class="bk-dim">' + esc(x.status) + '</div></td><td class="num"><b>' + usd(x.total) + '</b></td><td><button class="bk-btn sm" data-unb="' + x.id + '" title="Not this machine">×</button></td></tr>').join('') + '</tbody></table>' : '') +
+      (!t.length && !b.length ? '<div class="bk-muted">Nothing linked yet.</div>' : '') +
+      '<div class="bk-ask-acts"><button class="bk-btn" data-no>Close</button></div></div>';
+    document.body.appendChild(el); el.querySelector('[data-no]').onclick = () => el.remove(); el.onclick = (ev) => { if (ev.target === el) el.remove(); };
+    el.querySelectorAll('[data-unt]').forEach(x => x.onclick = async () => { await post('/api/bookkeeping/equipment/' + e.id + '/link', { transaction_id: Number(x.dataset.unt), off: 1 }); el.remove(); loadEquipment(); });
+    el.querySelectorAll('[data-unb]').forEach(x => x.onclick = async () => { await post('/api/bookkeeping/equipment/' + e.id + '/link', { bill_id: Number(x.dataset.unb), off: 1 }); el.remove(); loadEquipment(); });
   }
 
   // ---------------------------------------------------------------- Connections

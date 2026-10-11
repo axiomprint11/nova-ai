@@ -78,6 +78,13 @@ module.exports = function mountBookkeeping(app, deps) {
       geo_type_id INTEGER, geo_type TEXT, geo_sub_type_id INTEGER, geo_sub_type TEXT, teams TEXT, supplier_text TEXT, vendor_id INTEGER, manufacturer TEXT,
       cost REAL, stock INTEGER, location TEXT, code TEXT, axiom_id TEXT, size TEXT, thickness REAL, color TEXT, photo TEXT, synced_at TEXT)`);
     db.run('CREATE INDEX IF NOT EXISTS bk_mat_vendor ON bk_materials(vendor_id)');
+    // Equipment: the CRM's machine list (name, photo, team — read-only mirror) plus how each one is financed, kept here:
+    // owned outright (depreciation), on a loan (price, down payment, loan amount, term, rate → balance sheet; the monthly
+    // payment is split later into principal and interest), or leased (every payment is an expense on the P&L).
+    db.run(`CREATE TABLE IF NOT EXISTS bk_equipment (id INTEGER PRIMARY KEY AUTOINCREMENT, crm_id INTEGER UNIQUE, name TEXT, photo TEXT, team TEXT, active INTEGER DEFAULT 1,
+      vendor_id INTEGER, mode TEXT, purchase_price REAL, purchase_date TEXT, down_payment REAL, loan_amount REAL, loan_term INTEGER, loan_rate REAL, loan_start TEXT, monthly_payment REAL,
+      lease_term INTEGER, lease_start TEXT, lease_monthly REAL, life_years REAL, salvage REAL, notes TEXT, updated_by TEXT, updated_at TEXT, synced_at TEXT)`);
+    ['bk_bills', 'bk_transactions', 'bk_purchases'].forEach(t => db.run('ALTER TABLE ' + t + ' ADD COLUMN equipment_id INTEGER', () => {}));
     db.run(`CREATE TABLE IF NOT EXISTS bk_emails (id INTEGER PRIMARY KEY AUTOINCREMENT, gmail_id TEXT UNIQUE, thread_id TEXT, from_addr TEXT,
       subject TEXT, received_at TEXT, snippet TEXT, body TEXT, attachments TEXT, status TEXT DEFAULT 'new', note TEXT,
       created_at TEXT DEFAULT (datetime('now')))`);
@@ -438,7 +445,7 @@ module.exports = function mountBookkeeping(app, deps) {
   // Bank lines that were categorized without any paperwork are purchases too (no_paperwork), so the list is complete.
   async function ensureTxnPurchases() {
     const rows = await dbAll("SELECT id, vendor_id, name, merchant, amount, date, category FROM bk_transactions WHERE purchase_id IS NULL AND category IS NOT NULL AND status NOT IN ('new', 'pending') AND amount > 0 LIMIT 300");
-    for (const t of rows) { const v = t.vendor_id ? await dbGet('SELECT name FROM bk_vendors WHERE id = ?', [t.vendor_id]) : null; await newPurchase({ vendor_id: t.vendor_id, vendor: v ? v.name : (t.merchant || t.name), amount: t.amount, date: t.date, category: t.category, txn_ids: [t.id], no_paperwork: 1 }, 'bank'); }
+    for (const t of rows) { const v = t.vendor_id ? await dbGet('SELECT name FROM bk_vendors WHERE id = ?', [t.vendor_id]) : null; const pid = await newPurchase({ vendor_id: t.vendor_id, vendor: v ? v.name : (t.merchant || t.name), amount: t.amount, date: t.date, category: t.category, txn_ids: [t.id], no_paperwork: 1 }, 'bank');  const eq = await equipmentFor(t.vendor_id, t.amount); if (eq) { await dbRun('UPDATE bk_transactions SET equipment_id = ? WHERE id = ? AND equipment_id IS NULL', [eq, t.id]); await dbRun('UPDATE bk_purchases SET equipment_id = ? WHERE id = ?', [eq, pid]); } }
     return rows.length;
   }
   // Bank lines that could be the purchase's payment: same amount to the cent, not in a purchase, within 10 days; same vendor first.
@@ -687,6 +694,7 @@ module.exports = function mountBookkeeping(app, deps) {
     dirCache.at = 0;
     let materials = 0;
     try { materials = await syncMaterials(); } catch (e) { errors.push('materials: ' + e.message); }
+    try { await syncEquipment(); } catch (e) { errors.push('equipment: ' + e.message); }
     dirSync.at = Date.now(); dirSync.error = errors.length ? errors.slice(0, 3).join(' · ') : null; dirCache.at = 0;
     if (errors.length) errlog('directory sync', errors.join(' | '));
     await audit(who, 'directory.sync', null, { synced: n, materials, errors });
@@ -745,6 +753,67 @@ module.exports = function mountBookkeeping(app, deps) {
     return by;
   }
   const topKeys = (o, k) => Object.keys(o).sort((a, b) => o[b] - o[a]).slice(0, k);
+  // Equipment from the CRM (`equipments`: name, photo_url, action_ids → the team(s) through `actions.team_id`). Only the
+  // machine itself is copied — operators and production steps stay in the CRM. Financing columns are never touched here.
+  async function syncEquipment() {
+    const rows = await runQuery('SELECT e.id, e.name, e.photo_url, e.action_ids FROM equipments e ORDER BY e.id');
+    let teamOf = {}; try { (await runQuery('SELECT a.id, t.name FROM actions a JOIN team t ON t.id = a.team_id')).forEach(r => { teamOf[r.id] = r.name; }); } catch (e) {}
+    const seen = [];
+    for (const r of rows) {
+      const name = String(r.name || '').trim().slice(0, 200); if (!name) continue;
+      let ids = []; try { ids = Array.isArray(r.action_ids) ? r.action_ids : JSON.parse(r.action_ids || '[]'); } catch (e) {}
+      const team = Array.from(new Set((ids || []).map(id => teamOf[id]).filter(Boolean))).join(', ') || null;
+      const photo = /^https?:\/\//.test(String(r.photo_url || '')) ? String(r.photo_url).slice(0, 300) : null;
+      await dbRun(`INSERT INTO bk_equipment (crm_id, name, photo, team, active, synced_at) VALUES (?,?,?,?,1,datetime('now'))
+        ON CONFLICT(crm_id) DO UPDATE SET name = excluded.name, photo = excluded.photo, team = excluded.team, active = 1, synced_at = excluded.synced_at`, [r.id, name, photo, team]);
+      seen.push(r.id);
+    }
+    if (seen.length) await dbRun('UPDATE bk_equipment SET active = 0 WHERE crm_id IS NOT NULL AND crm_id NOT IN (' + seen.map(() => '?').join(',') + ')', seen);   // deleted in the CRM: kept (its payments and depreciation stay), shown as retired
+    return rows.length;
+  }
+  // Months from a YYYY-MM-DD to today (whole months, never negative).
+  const monthsSince = (d, to) => { if (!d) return 0; const a = new Date(d + 'T00:00:00'), b = to ? new Date(to + 'T00:00:00') : new Date(); if (isNaN(a)) return 0; return Math.max(0, (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth()) - (b.getDate() < a.getDate() ? 1 : 0)); };
+  const addMonths = (d, n) => { if (!d) return null; const a = new Date(d + 'T00:00:00'); if (isNaN(a)) return null; a.setMonth(a.getMonth() + n); return a.toISOString().slice(0, 10); };
+  // Straight-line book value of an owned / financed machine at a date: price − (price − salvage) × months / life.
+  function bookValue(e, at) {
+    const price = Number(e.purchase_price) || 0; if (!price || !e.purchase_date) return null;
+    const life = (Number(e.life_years) || 7) * 12, salvage = Number(e.salvage) || 0;
+    const m = Math.min(life, monthsSince(e.purchase_date, at));
+    return Math.max(salvage, Math.round((price - (price - salvage) * m / life) * 100) / 100);
+  }
+  // Everything the page shows per machine: the CRM facts, the financing, and what the books say so far.
+  async function equipmentRows() {
+    const rows = await dbAll('SELECT e.*, v.name AS vendor_name, v.photo AS vendor_photo FROM bk_equipment e LEFT JOIN bk_vendors v ON v.id = e.vendor_id ORDER BY e.active DESC, e.team, e.name');
+    const paid = {}; (await dbAll('SELECT equipment_id, COUNT(*) AS n, SUM(ABS(amount)) AS total, MAX(date) AS last FROM bk_transactions WHERE equipment_id IS NOT NULL GROUP BY equipment_id')).forEach(r => { paid[r.equipment_id] = r; });
+    const bills = {}; (await dbAll("SELECT equipment_id, COUNT(*) AS n, SUM(total) AS total FROM bk_bills WHERE equipment_id IS NOT NULL AND status <> 'rejected' GROUP BY equipment_id")).forEach(r => { bills[r.equipment_id] = r; });
+    const y0 = new Date().getFullYear() + '-01-01';
+    return rows.map(e => {
+      const out = Object.assign({}, e);
+      const p = paid[e.id] || { n: 0, total: 0, last: null }, b = bills[e.id] || { n: 0, total: 0 };
+      out.payments = { n: p.n, total: Math.round((p.total || 0) * 100) / 100, last: p.last, bills: b.n, billed: Math.round((b.total || 0) * 100) / 100 };
+      if (e.mode === 'loan') {
+        const start = e.loan_start || e.purchase_date, term = Number(e.loan_term) || 0, done = Math.min(term, monthsSince(start)), left = Math.max(0, term - done);
+        out.schedule = { start, end: term ? addMonths(start, term) : null, months_done: done, months_left: left, monthly: Number(e.monthly_payment) || 0, remaining: Math.round(left * (Number(e.monthly_payment) || 0) * 100) / 100 };
+      } else if (e.mode === 'lease') {
+        const start = e.lease_start, term = Number(e.lease_term) || 0, done = Math.min(term, monthsSince(start)), left = Math.max(0, term - done);
+        out.schedule = { start, end: term ? addMonths(start, term) : null, months_done: done, months_left: left, monthly: Number(e.lease_monthly) || 0, remaining: Math.round(left * (Number(e.lease_monthly) || 0) * 100) / 100 };
+      }
+      if (e.mode === 'owned' || e.mode === 'loan') out.book = { year_start: bookValue(e, y0), now: bookValue(e, null), yearly: e.purchase_price && e.life_years !== 0 ? Math.round(((Number(e.purchase_price) || 0) - (Number(e.salvage) || 0)) / (Number(e.life_years) || 7) * 100) / 100 : null };
+      return out;
+    });
+  }
+  // A payment to a vendor that finances a machine belongs to that machine: same monthly amount to the cent, or the
+  // vendor's only financed machine. Used for bank lines (and the purchase made from them) and for bills.
+  async function equipmentFor(vendorId, amount) {
+    if (!vendorId) return null;
+    const list = await dbAll("SELECT id, mode, monthly_payment, lease_monthly FROM bk_equipment WHERE vendor_id = ? AND mode IN ('loan', 'lease')", [vendorId]);
+    if (!list.length) return null;
+    const amt = Math.abs(Number(amount) || 0);
+    const exact = list.filter(e => { const m = Number(e.mode === 'lease' ? e.lease_monthly : e.monthly_payment) || 0; return m && Math.abs(m - amt) < 0.005; });
+    if (exact.length === 1) return exact[0].id;
+    if (!exact.length && list.length === 1) return list[0].id;
+    return null;
+  }
   // Keep the directory current by itself: the tab syncs when it opens and the last sync is older than 10 minutes,
   // the clock every hour, the daily run always.
   async function syncDirectoryIfStale(who, maxAgeMs) { if (runQuery && Date.now() - dirSync.at > maxAgeMs) { try { await syncDirectory(who); } catch (e) { dirSync.error = e.message; errlog('directory sync', e.message); } } }
@@ -862,9 +931,10 @@ module.exports = function mountBookkeeping(app, deps) {
         conf, String(j.reason || '').slice(0, 300)]);
     await dbRun('UPDATE bk_bills SET proposal_id = ? WHERE id = ?', [p.lastID, billId]);
     await dbRun("UPDATE bk_emails SET status = 'parsed', kind = 'bill', note = ? WHERE id = ?", ['Bill draft #' + billId, em.id]);
+    const eqId = await equipmentFor(v ? v.id : null, Number(j.total) || 0); if (eqId) await dbRun('UPDATE bk_bills SET equipment_id = ? WHERE id = ?', [eqId, billId]);   // a loan / lease payment bill belongs to its machine
     // the bill's purchase: new, or the one its email already belongs to (an arrival or a confirmation came first)
     if (em.purchase_id) await attachTo(em.purchase_id, { bill_id: billId }, who);
-    else { const firstCat = ((j.lines || []).find(l => l && l.category) || {}).category || null; const pid = await newPurchase({ vendor_id: v ? v.id : null, vendor, amount: Number(j.total) || 0, date: j.invoice_date || today(), order_no: invNo || null, category: firstCat, bill_id: billId }, who); await dbRun('UPDATE bk_emails SET purchase_id = ? WHERE id = ?', [pid, em.id]); }
+    else { const firstCat = ((j.lines || []).find(l => l && l.category) || {}).category || null; const pid = await newPurchase({ vendor_id: v ? v.id : null, vendor, amount: Number(j.total) || 0, date: j.invoice_date || today(), order_no: invNo || null, category: firstCat, bill_id: billId }, who); await dbRun('UPDATE bk_emails SET purchase_id = ? WHERE id = ?', [pid, em.id]); if (eqId) await dbRun('UPDATE bk_purchases SET equipment_id = ? WHERE id = ?', [eqId, pid]); }
     markReadInGmail([em.id], who).then(r => { if (r.ok && r.n) return dbRun("UPDATE bk_emails SET read_by = 'user' WHERE id = ?", [em.id]); }).catch(() => {});   // handled → read in Gmail → closed here (quietly; the scope may be missing)
     if (conf < s.threshold || dup || newVendor) {
       const q = dup ? 'This looks like a duplicate of bill #' + dup.id + ' (' + vendor + (invNo ? ' #' + invNo : '') + '). Is it the same bill?'
@@ -1727,6 +1797,58 @@ module.exports = function mountBookkeeping(app, deps) {
     const unlinked = {}; rows.filter(r => r.supplier_text && !r.vendor_id).forEach(r => { unlinked[r.supplier_text] = (unlinked[r.supplier_text] || 0) + 1; });
     const last = await dbGet("SELECT at FROM bk_audit WHERE action = 'directory.sync' ORDER BY id DESC LIMIT 1");
     res.json({ ok: true, materials: rows, geo, unlinked, synced_at: last ? last.at : null, sync_error: dirSync.error, crm: !!runQuery });
+  });
+  // Equipment: the machine list with its financing. The CRM part syncs with the directory; the money part is edited here.
+  app.get('/api/bookkeeping/equipment', ...guard, async (req, res) => {
+    if (req.query.fresh !== '0') await syncDirectoryIfStale(userId(req), 10 * 60000);
+    try { res.json({ ok: true, equipment: await equipmentRows(), vendors: await dbAll('SELECT id, name, kind, photo FROM bk_vendors ORDER BY name'), crm: !!runQuery }); } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  // The payments the books link to one machine (bank lines and bills), newest first.
+  app.get('/api/bookkeeping/equipment/:id/payments', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id);
+    const txns = await dbAll('SELECT id, date, name, merchant, amount, category, account_name, purchase_id FROM bk_transactions WHERE equipment_id = ? ORDER BY date DESC LIMIT 200', [id]);
+    const bills = await dbAll('SELECT id, vendor, invoice_no, invoice_date, due_date, total, status FROM bk_bills WHERE equipment_id = ? ORDER BY invoice_date DESC LIMIT 200', [id]);
+    res.json({ ok: true, transactions: txns, bills });
+  });
+  app.post('/api/bookkeeping/equipment/:id', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), b = req.body || {};
+    const e = await dbGet('SELECT * FROM bk_equipment WHERE id = ?', [id]); if (!e) return res.json({ ok: false, error: 'No such machine' });
+    const mode = ['owned', 'loan', 'lease'].indexOf(b.mode) > -1 ? b.mode : null;
+    const num = (k) => b[k] === '' || b[k] == null ? null : (isFinite(Number(b[k])) ? Number(b[k]) : null);
+    const day = (k) => /^\d{4}-\d{2}-\d{2}$/.test(String(b[k] || '')) ? b[k] : null;
+    const vendorId = parseInt(b.vendor_id) || null;
+    if (vendorId && !(await dbGet('SELECT id FROM bk_vendors WHERE id = ?', [vendorId]))) return res.json({ ok: false, error: 'No such vendor' });
+    const row = { vendor_id: vendorId, mode, purchase_price: num('purchase_price'), purchase_date: day('purchase_date'), down_payment: num('down_payment'), loan_amount: num('loan_amount'), loan_term: num('loan_term'), loan_rate: num('loan_rate'), loan_start: day('loan_start'), monthly_payment: num('monthly_payment'),
+      lease_term: num('lease_term'), lease_start: day('lease_start'), lease_monthly: num('lease_monthly'), life_years: num('life_years'), salvage: num('salvage'), notes: String(b.notes || '').slice(0, 1000) || null };
+    if (mode === 'loan' && row.loan_amount == null && row.purchase_price != null) row.loan_amount = Math.round(((row.purchase_price || 0) - (row.down_payment || 0)) * 100) / 100;   // the loan is what was not paid down
+    if (mode === 'loan' && !row.loan_start) row.loan_start = row.purchase_date;
+    const keys = Object.keys(row);
+    await dbRun('UPDATE bk_equipment SET ' + keys.map(k => k + ' = ?').join(', ') + ", updated_by = ?, updated_at = datetime('now') WHERE id = ?", keys.map(k => row[k]).concat([userId(req), id]));
+    await audit(userId(req), 'equipment.update', id, { name: e.name, before: keys.reduce((o, k) => { o[k] = e[k]; return o; }, {}), after: row });
+    // link the payments already in the books that now belong to this machine (same vendor, the monthly amount)
+    let linked = 0;
+    if (vendorId && (mode === 'loan' || mode === 'lease')) {
+      const monthly = mode === 'lease' ? row.lease_monthly : row.monthly_payment;
+      if (monthly) {
+        const r1 = await dbRun('UPDATE bk_transactions SET equipment_id = ? WHERE equipment_id IS NULL AND vendor_id = ? AND ABS(ABS(amount) - ?) < 0.005', [id, vendorId, monthly]);
+        const r2 = await dbRun("UPDATE bk_bills SET equipment_id = ? WHERE equipment_id IS NULL AND vendor_id = ? AND ABS(total - ?) < 0.005 AND status <> 'rejected'", [id, vendorId, monthly]);
+        await dbRun("UPDATE bk_purchases SET equipment_id = ? WHERE equipment_id IS NULL AND (bill_id IN (SELECT id FROM bk_bills WHERE equipment_id = ?) OR EXISTS (SELECT 1 FROM bk_transactions t WHERE t.equipment_id = ? AND bk_purchases.txn_ids LIKE '%' || t.id || '%'))", [id, id, id]);
+        linked = (r1.changes || 0) + (r2.changes || 0);
+      }
+    }
+    res.json({ ok: true, linked });
+  });
+  // A machine bought outside the CRM list (or before it existed) — a row of our own, no crm_id.
+  app.post('/api/bookkeeping/equipment', ...guard, async (req, res) => {
+    const name = String(req.body && req.body.name || '').trim().slice(0, 200); if (!name) return res.json({ ok: false, error: 'A name is needed.' });
+    const r = await dbRun("INSERT INTO bk_equipment (name, team, active, updated_by, updated_at) VALUES (?,?,1,?,datetime('now'))", [name, String(req.body.team || '').slice(0, 100) || null, userId(req)]);
+    await audit(userId(req), 'equipment.add', r.lastID, { name }); res.json({ ok: true, id: r.lastID });
+  });
+  app.post('/api/bookkeeping/equipment/:id/link', ...guard, async (req, res) => {   // attach / detach one bank line or bill by hand
+    const id = parseInt(req.params.id), b = req.body || {}, on = b.off ? null : id;
+    if (b.transaction_id) await dbRun('UPDATE bk_transactions SET equipment_id = ? WHERE id = ?', [on, parseInt(b.transaction_id)]);
+    if (b.bill_id) await dbRun('UPDATE bk_bills SET equipment_id = ? WHERE id = ?', [on, parseInt(b.bill_id)]);
+    await audit(userId(req), 'equipment.link', id, b); res.json({ ok: true });
   });
   app.post('/api/bookkeeping/directory/sync', ...guard, async (req, res) => { try { dirCache.at = 0; res.json(Object.assign({ ok: true }, await syncDirectory(userId(req)))); } catch (e) { res.json({ ok: false, error: e.message }); } });
   app.post('/api/bookkeeping/transactions/:id/vendor', ...guard, async (req, res) => {
