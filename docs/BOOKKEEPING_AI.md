@@ -213,6 +213,15 @@ refuses (missing `gmail.modify` scope) nothing changes here and the dialog says 
 only the buttons do. Every basket has **Open** (unread in Gmail) / **Closed** (read) segments with counts, so a basket
 keeps its history; the chip count is the open count, action bars show in Open only. A wrong count is fixed by Scan now.
 
+### Baskets (1.19.1): Bills · Transactions · Arrivals · Messages · More (Ads · Other · Set aside)
+The AI's kinds are `bill`, `receipt` (a purchase: an order confirmation, "thanks for your order", a payment receipt or
+charge confirmation), `arrival` (a delivery notification: shipped, out for delivery, delivered, tracking), `message`,
+`advertisement`, `other` (account alerts, system mail, anything unclear). The old `notification` kind and the Notices
+basket are gone — everything of that sort is Other. In the reading pane the basket's own button is the **main** one
+(outlined, bold): Bills → Bill, Transactions → Transaction, Arrivals → Arrival; the others stay as grey chips. One-time
+relabel (`inbox_relabel_1910`, in the next scan): every open email the AI had rated is rated again with the new kinds;
+a person's decisions (`decided_kind`) are kept, `notification` decisions become `other`.
+
 ### Baskets (1.18.13)
 `scanInbox` lists `is:unread in:inbox` mail only (no date limit), so the inbox here follows the team's Gmail unread count — including our own `@axiomprint.com` mail (1.18.23; forwarded reports are unread too). Mail read in Gmail before Nova saw it is never imported, so Closed holds only what was dealt with from here (rows the 1.18.16–1.18.22 import brought in as read are deleted on the next scan);
 open rows (`new` / `message`) whose Gmail id is no longer unread are set aside with `read_by = 'gmail'`. The first chip is **Not read** (every open email, the default); then the baskets by rating: **Bills** (kind bill, drafts excluded from the count), **Direct messages**, **Ads**,

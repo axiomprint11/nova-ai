@@ -561,7 +561,7 @@
     const all = e.emails || [];
     const st = (m) => m.status === 'parsed' ? 'parsed' : m.status === 'error' ? 'error' : m.status === 'new' ? 'new' : m.status === 'message' ? 'message' : 'skipped';
     const counts = { all: all.length, parsed: 0, skipped: 0, new: 0, message: 0, ai: 0 }; all.forEach(m => { counts[st(m)] = (counts[st(m)] || 0) + 1; if (m.read_by === 'ai') counts.ai++; });
-    const KIND = { advertisement: 'Ad', notification: 'Notice', receipt: 'Receipt', bill: 'Bill', message: 'Message', other: 'Other' };
+    const KIND = { advertisement: 'Ad', arrival: 'Arrival', receipt: 'Transaction', bill: 'Bill', message: 'Message', other: 'Other', notification: 'Other' };
     // the tag is the basket: a bill draft is a Bill whatever it was rated; rated with nothing fitting = Other
     const kindOf = (m) => st(m) === 'parsed' ? 'bill' : m.kind || (m.triaged_at ? 'other' : null);
     const kindTag = (m) => { const k = kindOf(m); return k ? '<span class="ib-kind ' + esc(k) + '"' + (m.note ? ' data-tip="' + esc(m.note) + '"' : '') + '>' + esc(KIND[k] || k) + (m.confidence != null && k === m.kind ? ' ' + Math.round(m.confidence * 100) + '%' : '') + '</span>' : ''; };
@@ -576,13 +576,13 @@
     // Baskets are by kind (what BookkeeperAI rated it); inside a basket, Open = still unread in Gmail, Closed = read.
     // Set aside is only what a person parked there. Gmail is the truth for open / closed (the scan syncs both ways).
     const isOpen = (m) => !m.read_by && !m.aside && st(m) !== 'error';   // open = still unread in Gmail (bill drafts included until Gmail says read)
-    const basket = (m) => { if (m.aside) return 'done'; const k = kindOf(m); if (!k) return 'unrated'; return { bill: 'bill', message: 'message', advertisement: 'ads', receipt: 'receipt', notification: 'notice' }[k] || 'other'; };
+    const basket = (m) => { if (m.aside) return 'done'; const k = kindOf(m); if (!k) return 'unrated'; return { bill: 'bill', message: 'message', advertisement: 'ads', receipt: 'receipt', arrival: 'arrival' }[k] || 'other'; };
     // the main chips, then the rest behind "More baskets" (same colours as the AI's tags)
-    const BASKETS = [['open', 'All', 'mail'], ['unrated', 'New', 'sparkles'], ['bill', 'Bills', 'file'], ['receipt', 'Transactions', 'receipt'], ['message', 'Messages', 'users'], ['ads', 'Ads', 'megaphone'], ['notice', 'Notices', 'package'], ['other', 'Other', 'folder'], ['done', 'Set aside', 'clock']];
-    const MAIN = ['open', 'unrated', 'bill', 'receipt', 'message'], MORE = ['ads', 'notice', 'other', 'done'];
+    const BASKETS = [['open', 'All', 'mail'], ['unrated', 'New', 'sparkles'], ['bill', 'Bills', 'file'], ['receipt', 'Transactions', 'receipt'], ['arrival', 'Arrivals', 'package'], ['message', 'Messages', 'users'], ['ads', 'Ads', 'megaphone'], ['other', 'Other', 'folder'], ['done', 'Set aside', 'clock']];
+    const MAIN = ['open', 'unrated', 'bill', 'receipt', 'arrival', 'message'], MORE = ['ads', 'other', 'done'];
     const bc = {}, cc = {};   // open / closed counts per basket
     all.forEach(m => { const b = basket(m); if (b === 'done') { bc.done = (bc.done || 0) + 1; return; } if (isOpen(m)) bc[b] = (bc[b] || 0) + 1; else cc[b] = (cc[b] || 0) + 1; });
-    const OPEN = ['message', 'ads', 'receipt', 'notice', 'bill', 'other', 'unrated'];
+    const OPEN = ['message', 'ads', 'receipt', 'arrival', 'bill', 'other', 'unrated'];
     const billsToRead = all.filter(m => isOpen(m) && basket(m) === 'bill' && st(m) !== 'parsed').length;
     const openN = OPEN.reduce((a, k) => a + (bc[k] || 0), 0), closedN = OPEN.reduce((a, k) => a + (cc[k] || 0), 0); bc.open = openN; cc.open = closedN;
     if (!BASKETS.some(([k]) => k === ibFilter)) ibFilter = 'open';
@@ -598,14 +598,14 @@
     v.innerHTML = '<div class="bk-card">' +
       '<div class="ib-progress" id="ibProg" style="display:none"><span class="ib-spin"></span><span id="ibProgText"></span></div>' +
       '<div class="ib-bar ib-top"><span class="ib-chips">' + BASKETS.filter(([k]) => MAIN.indexOf(k) > -1).map(([k, l, ic]) => '<button class="ib-chip k-' + k + (ibFilter === k ? ' on' : '') + '" data-f="' + k + '">' + iconSvg(ic) + l + '<b>' + (bc[k] || 0) + '</b></button>').join('') +
-        (() => { const sel = BASKETS.find(([k]) => k === ibFilter && MORE.indexOf(k) > -1); const n = MORE.reduce((a, k) => a + (bc[k] || 0), 0); return '<button class="ib-chip k-' + (sel ? sel[0] : 'more') + (sel ? ' on' : '') + '" data-more title="Ads, Notices, Other, Set aside">' + iconSvg(sel ? sel[2] : 'layers') + (sel ? sel[1] : 'More baskets') + '<b>' + (sel ? (bc[sel[0]] || 0) : n) + '</b><span class="thf-c"></span></button>'; })() + '</span><button class="bk-btn p" id="scanNow2" title="' + esc(ov && ov.connections.gmail.last_scan ? 'Last checked ' + when(ov.connections.gmail.last_scan) : 'Not checked yet') + '">Scan</button><input id="ibQ" placeholder="Search"></div>' +
+        (() => { const sel = BASKETS.find(([k]) => k === ibFilter && MORE.indexOf(k) > -1); const n = MORE.reduce((a, k) => a + (bc[k] || 0), 0); return '<button class="ib-chip k-' + (sel ? sel[0] : 'more') + (sel ? ' on' : '') + '" data-more title="Ads, Other, Set aside">' + iconSvg(sel ? sel[2] : 'layers') + (sel ? sel[1] : 'More baskets') + '<b>' + (sel ? (bc[sel[0]] || 0) : n) + '</b><span class="thf-c"></span></button>'; })() + '</span><button class="bk-btn p" id="scanNow2" title="' + esc(ov && ov.connections.gmail.last_scan ? 'Last checked ' + when(ov.connections.gmail.last_scan) : 'Not checked yet') + '">Scan</button><input id="ibQ" placeholder="Search"></div>' +
       // one action bar per basket: review, then one click for the whole basket
       '<div class="ib-bar ib-acts" id="ibActs">' +
         '<span class="ib-selbar" id="ibSelBar" style="display:none"><b id="ibSelN"></b> selected <button class="bk-btn sm p" data-selread>Mark as read</button><button class="bk-btn sm" data-selmove>Move to <span class="thf-c"></span></button><button class="bk-btn sm" data-selclear>Clear</button></span>' +
         (bc.ads ? '<span data-for="ads"><span class="bk-muted">Promotions and newsletters, with how sure BookkeeperAI is.</span> <button class="bk-btn sm" data-aside="advertisement">Mark all ' + bc.ads + ' ads as read</button></span>' : '') +
-        (bc.receipt ? '<span data-for="receipt"><span class="bk-muted">Confirmations of payments already made.</span> <button class="bk-btn sm" data-aside="receipt">Mark all ' + bc.receipt + ' receipts as read</button></span>' : '') +
-        (bc.notice ? '<span data-for="notice"><span class="bk-muted">Shipping, delivery, tracking and account notices.</span> <button class="bk-btn sm" data-aside="notification">Mark all ' + bc.notice + ' notices as read</button></span>' : '') +
-        (bc.other ? '<span data-for="other"><span class="bk-muted">Rated, but none of the baskets fit — open them, or move them with "Move to".</span> <button class="bk-btn sm" data-aside="other">Mark all ' + bc.other + ' as read</button></span>' : '') +
+        (bc.receipt ? '<span data-for="receipt"><span class="bk-muted">Purchases: order confirmations and payment receipts — press Transaction on each to file it.</span> <button class="bk-btn sm" data-aside="receipt">Mark all ' + bc.receipt + ' as read</button></span>' : '') +
+        (bc.arrival ? '<span data-for="arrival"><span class="bk-muted">Delivery notifications — press Arrival on each to record what came.</span> <button class="bk-btn sm" data-aside="arrival">Mark all ' + bc.arrival + ' as read</button></span>' : '') +
+        (bc.other ? '<span data-for="other"><span class="bk-muted">Account notices, system mail and anything that fits no basket — open them, or move them with "Move to".</span> <button class="bk-btn sm" data-aside="other">Mark all ' + bc.other + ' as read</button></span>' : '') +
         (bc.bill ? '<span data-for="bill"><span class="bk-muted">Rated as bills — nothing is filed until you press Bill on one (or Turn all).</span> ' + (billsToRead ? '<button class="bk-btn sm p" data-parseall>Turn all ' + billsToRead + ' into bills</button>' : '') + '<button class="bk-btn sm" data-aside="bill">Mark all ' + bc.bill + ' as read</button></span>' : '') +
         (bc.message ? '<span data-for="message"><span class="bk-muted">People writing to accounting — for a person to answer.</span> <button class="bk-btn sm" data-aside="message">Mark all ' + bc.message + ' as read</button></span>' : '') +
         '<span data-for="unrated"><span class="bk-muted">' + (bc.unrated ? 'New mail since the last scan — not sorted yet.' : 'Nothing new. Incoming mail lands here until the next scan (every ' + esc(ov.settings.poll_min) + ' min, or Scan) sorts it into a basket.') + '</span></span>' +
@@ -667,7 +667,7 @@
     };
     v.querySelectorAll('[data-aside]').forEach(b => b.onclick = async () => {
       const k = b.dataset.aside, kinds = [k];
-      const n = { receipt: bc.receipt, notification: bc.notice, advertisement: bc.ads, message: bc.message, bill: bc.bill, other: bc.other }[k] || 0;
+      const n = { receipt: bc.receipt, arrival: bc.arrival, advertisement: bc.ads, message: bc.message, bill: bc.bill, other: bc.other }[k] || 0;
       if (!await ask('They are marked read in Gmail and move to Closed in this basket. Any of them can still be turned into a bill later.', { title: 'Mark ' + n + ' email' + (n === 1 ? '' : 's') + ' as read?', ok: 'Mark as read' })) return;
       b.disabled = true; const r = await post('/api/bookkeeping/inbox/set-aside', { kinds, min: 0 }); if (!r.ok) await ask(r.error, { title: 'Not marked read', ok: 'OK', cancel: false }); await overview(); loadInbox();
     });
@@ -684,7 +684,7 @@
   async function emailHistory(id, anchor) {
     document.querySelectorAll('.thf-pop').forEach(p => p.remove());
     const j = await api('/api/bookkeeping/emails/' + id + '/history'); if (!j.ok) return alert(j.error);
-    const KIND = { advertisement: 'Ad', notification: 'Notice', receipt: 'Receipt', bill: 'Bill', message: 'Message', other: 'Other' };
+    const KIND = { advertisement: 'Ad', arrival: 'Arrival', receipt: 'Transaction', bill: 'Bill', message: 'Message', other: 'Other', notification: 'Other' };
     const line = (h) => {
       const d = h.detail || {};
       switch (h.action) {
@@ -778,7 +778,7 @@
   // The "Move to" menu: the baskets in their colours. cur = the kind to leave out; pick(kind) does the move.
   function moveMenu(anchor, cur, pick) {
     document.querySelectorAll('.thf-pop').forEach(p => p.remove());
-    const items = [['bill', 'Bills', 'file', 'bill'], ['receipt', 'Transactions', 'receipt', 'receipt'], ['message', 'Messages', 'users', 'message'], ['advertisement', 'Ads', 'megaphone', 'ads'], ['notification', 'Notices', 'package', 'notice'], ['other', 'Other', 'folder', 'other'], ['aside', 'Set aside', 'clock', 'done']].filter(([kk]) => kk !== cur);
+    const items = [['bill', 'Bills', 'file', 'bill'], ['receipt', 'Transactions', 'receipt', 'receipt'], ['message', 'Messages', 'users', 'message'], ['arrival', 'Arrivals', 'package', 'arrival'], ['advertisement', 'Ads', 'megaphone', 'ads'], ['other', 'Other', 'folder', 'other'], ['aside', 'Set aside', 'clock', 'done']].filter(([kk]) => kk !== cur);
     const pop = document.createElement('div'); pop.className = 'thf-pop mv-pop';
     pop.innerHTML = '<div class="thf-list">' + items.map(([kk, l, ic, cls]) => '<div class="thf-i mv-i k-' + cls + '" data-v="' + kk + '"><span class="mv-ic">' + iconSvg(ic) + '</span><span class="thf-t">' + l + '</span></div>').join('') + '</div>';
     document.body.appendChild(pop);
@@ -791,7 +791,7 @@
   async function openEmail(id) {
     const j = await api('/api/bookkeeping/emails/' + id); if (!j.ok) return alert(j.error);
     const e = j.email, k = e.status === 'parsed' ? 'parsed' : e.status === 'error' ? 'error' : e.status === 'new' ? 'new' : e.status === 'message' ? 'message' : 'skipped';
-    const KIND = { advertisement: 'Ad', notification: 'Notice', receipt: 'Receipt', bill: 'Bill', message: 'Message', other: 'Other' };
+    const KIND = { advertisement: 'Ad', arrival: 'Arrival', receipt: 'Transaction', bill: 'Bill', message: 'Message', other: 'Other', notification: 'Other' };
     const dec = (t) => { const d = document.createElement('textarea'); d.innerHTML = String(t || ''); return d.value; };
     const fromName = (f) => { const mm = /^\s*"?([^"<]*?)"?\s*<([^>]+)>/.exec(f || ''); return mm ? (mm[1].trim() || mm[2]) : String(f || '').replace(/^"|"$/g, ''); };
     const fromAddr = (f) => { const mm = /<([^>]+)>/.exec(f || ''); return mm ? mm[1] : String(f || ''); };
@@ -800,12 +800,14 @@
     const authHdr = { 'Authorization': 'Bearer ' + token };
     const att = (a) => '<a href="#" class="em-att" data-i="' + a.i + '" data-kind="' + a.kind + '" title="' + esc(a.name) + '"><span class="em-thumb ' + a.kind + '">' + (a.kind === 'pdf' ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>' : '') + '</span><span class="em-attn"><b>' + esc(a.name) + '</b><small>' + (a.kind === 'pdf' ? 'PDF' : 'Image') + (a.size ? ' · ' + (a.size > 1048576 ? (a.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(a.size / 1024)) + ' KB') : '') + '</small></span></a>';
     const el = $('ibPane'); if (!el) return;
+    const mainK = k === 'parsed' ? 'bill' : (e.decided_kind || e.kind || '');
     const htmlBody = e.body_html ? '<iframe class="em-html" sandbox="allow-same-origin allow-popups" referrerpolicy="no-referrer"></iframe>' : '';
     el.innerHTML = '<div class="em-box"><div class="em-head"><div class="em-subject">' + esc(dec(e.subject) || '(no subject)') + '</div><button class="em-close" data-close title="Back to the list" aria-label="Close">×</button></div>' +
       '<div class="em-meta"><button class="em-av' + (j.vendor && j.vendor.photo ? ' logo' : '') + (j.vendor ? ' linked' : '') + '" data-vmenu title="' + esc(j.vendor ? 'Vendor · ' + j.vendor.name + (j.vendor.kind ? ' · ' + j.vendor.kind.charAt(0).toUpperCase() + j.vendor.kind.slice(1) : '') + ' — click to change or unlink' : 'Not linked to a vendor — click to link ' + fromAddr(e.from_addr)) + '">' + (j.vendor && j.vendor.photo ? '<img src="' + esc(j.vendor.photo) + '" alt="' + esc(j.vendor.name) + '">' : esc(fromName(e.from_addr).charAt(0).toUpperCase())) + '</button><div class="em-who"><b>' + esc(fromName(e.from_addr)) + '</b> <span class="bk-muted">&lt;' + esc(fromAddr(e.from_addr)) + '&gt;</span><div class="bk-muted">to ' + esc(j.inbox) + '</div></div><div class="em-date bk-muted">' + esc(fmtDate(e.received_at)) + '</div></div>' +
-      '<div class="em-acts">' + (k !== 'parsed' ? '<button class="ib-chip k-bill" data-parse title="Read this email in full and file it as a bill draft under Bills">' + iconSvg('file') + 'Bill</button>' : '<button class="ib-chip k-bill on" data-gobills title="This email is a bill draft already — open it under Bills">' + iconSvg('file') + 'Bill →</button>') +
-      (j.matched && (j.matched.bill || j.matched.txn) ? '<span class="em-matched">' + (j.matched.bill ? '<a href="#" data-gobills class="em-match">Matched · bill #' + j.matched.bill.id + ' · ' + esc(j.matched.bill.vendor || '') + (j.matched.bill.invoice_no ? ' ' + esc(j.matched.bill.invoice_no) : '') + ' · ' + usd(j.matched.bill.total) + ' · ' + esc(j.matched.bill.status) + '</a>' : '<span class="em-match">Matched · ' + esc(j.matched.txn.date) + ' ' + esc(j.matched.txn.name) + ' · ' + usd(Math.abs(j.matched.txn.amount)) + '</span>') + '<button class="bk-btn sm" data-unmatch title="Remove the match">×</button></span>' : '<button class="ib-chip k-receipt" data-match title="This email is proof of a payment: match it to the bank line or bill, or let it wait for the bank under Purchases">' + iconSvg('receipt') + 'Transaction</button>') +
-      (k !== 'parsed' ? '<button class="ib-chip k-notice" data-arrival title="The goods came: attach this email to the purchase it belongs to">' + iconSvg('package') + 'Arrival</button>' : '') +
+      // the basket's own button is the main one (outlined): Bills → Bill, Transactions → Transaction, Arrivals → Arrival
+      '<div class="em-acts">' + (k !== 'parsed' ? '<button class="ib-chip k-bill' + (mainK === 'bill' ? ' main' : '') + '" data-parse title="Read this email in full and file it as a bill draft under Bills">' + iconSvg('file') + 'Bill</button>' : '<button class="ib-chip k-bill on" data-gobills title="This email is a bill draft already — open it under Bills">' + iconSvg('file') + 'Bill →</button>') +
+      (j.matched && (j.matched.bill || j.matched.txn) ? '<span class="em-matched">' + (j.matched.bill ? '<a href="#" data-gobills class="em-match">Matched · bill #' + j.matched.bill.id + ' · ' + esc(j.matched.bill.vendor || '') + (j.matched.bill.invoice_no ? ' ' + esc(j.matched.bill.invoice_no) : '') + ' · ' + usd(j.matched.bill.total) + ' · ' + esc(j.matched.bill.status) + '</a>' : '<span class="em-match">Matched · ' + esc(j.matched.txn.date) + ' ' + esc(j.matched.txn.name) + ' · ' + usd(Math.abs(j.matched.txn.amount)) + '</span>') + '<button class="bk-btn sm" data-unmatch title="Remove the match">×</button></span>' : '<button class="ib-chip k-receipt' + (mainK === 'receipt' ? ' main' : '') + '" data-match title="This email is proof of a payment: match it to the bank line or bill, or let it wait for the bank under Purchases">' + iconSvg('receipt') + 'Transaction</button>') +
+      (k !== 'parsed' ? '<button class="ib-chip k-arrival' + (mainK === 'arrival' ? ' main' : '') + '" data-arrival title="The goods came: attach this email to the purchase it belongs to">' + iconSvg('package') + 'Arrival</button>' : '') +
       (k !== 'parsed' ? '<button class="ib-chip k-move" data-movebtn>' + iconSvg('folder') + 'Move to <span class="thf-c"></span></button>' : '') +
       (!e.read_by && !e.aside && k !== 'error' ? '<button class="bk-btn sm ico big" data-read title="Mark as read — here and in Gmail" aria-label="Mark as read">' + iconSvg('mailopen') + '</button>' : '<button class="bk-btn sm ico big" data-unread title="Mark as unread — here and in Gmail" aria-label="Mark as unread">' + iconSvg('mail') + '</button>') + '<button class="bk-btn sm ico" data-hist title="History — what was done with this email, and by whom" aria-label="History">' + iconSvg('clock') + '</button>' + '<span class="sp"></span><span class="em-verdict">' + (e.aside ? '<span class="ib-tag skipped">set aside</span>' : '') + (e.kind ? '<span class="ib-kind ' + esc(e.kind) + '"' + (e.note ? ' data-tip="' + esc(e.note) + '"' : '') + '>' + esc(KIND[e.kind] || e.kind) + (e.confidence != null ? ' ' + Math.round(e.confidence * 100) + '%' : '') + '</span>' : '') + (e.note ? '' : '<span class="bk-muted">' + esc(k === 'new' ? 'Not rated yet.' : '') + '</span>') + (j.bill ? ' <a href="#" data-gobills>bill #' + j.bill.id + ' (' + esc(j.bill.status) + ')</a>' : '') + '</span></div>' +
       (e.attachments.length ? '<div class="em-atts">' + e.attachments.map(att).join('') + '</div>' : '') +
@@ -1218,7 +1220,7 @@
       '<div class="bk-muted" style="margin-top:12px"><label><input type="checkbox" id="tAuto"' + (s.triage_auto ? ' checked' : '') + '> <b>Let BookkeeperAI set emails aside by itself</b> (off: it only rates them and you click "Set aside all ads" in the Inbox)</label></div>' +
       '<div class="bk-muted" style="margin-top:8px"><b>Confidence it needs</b> to…</div>' +
       '<div class="bk-row" style="margin-top:6px;gap:16px"><label class="bk-muted">set an <b>ad / receipt</b> aside <input class="bk" id="tAd" type="number" min="30" max="100" value="' + Math.round(s.triage_ad * 100) + '" style="width:64px">%</label>' +
-      '<label class="bk-muted">set a <b>delivery / notice</b> aside <input class="bk" id="tNotice" type="number" min="30" max="100" value="' + Math.round(s.triage_notice * 100) + '" style="width:64px">%</label>' +
+      '<label class="bk-muted">set an <b>arrival</b> aside <input class="bk" id="tNotice" type="number" min="30" max="100" value="' + Math.round(s.triage_notice * 100) + '" style="width:64px">%</label>' +
       '<label class="bk-muted">treat as a <b>bill</b> to be paid <input class="bk" id="tBill" type="number" min="30" max="100" value="' + Math.round(s.triage_bill * 100) + '" style="width:64px">%</label>' +
       '<label class="bk-muted">keep a <b>message</b> for a person <input class="bk" id="tMsg" type="number" min="30" max="100" value="' + Math.round(s.triage_message * 100) + '" style="width:64px">%</label></div>' +
       '<div class="bk-dim" style="margin-top:4px">Below the bill threshold it still reads the email in full before deciding — a missed bill costs more than a model call.</div></div>' +

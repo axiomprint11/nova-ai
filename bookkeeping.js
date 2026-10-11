@@ -576,6 +576,12 @@ module.exports = function mountBookkeeping(app, deps) {
     }
     await dbRun("UPDATE bk_emails SET kind = 'bill' WHERE status = 'parsed' AND kind IS NULL");
     await dbRun("UPDATE bk_emails SET kind = 'other' WHERE triaged_at IS NOT NULL AND kind IS NULL");
+    if (!s.inbox_relabel_1910) {   // once (1.19.1): Notices basket gone, Arrivals added — every open email the AI rated is rated again with the new kinds
+      await dbRun("UPDATE bk_emails SET kind = 'other' WHERE kind = 'notification'");
+      await dbRun("UPDATE bk_emails SET decided_kind = 'other' WHERE decided_kind = 'notification'");
+      await dbRun("UPDATE bk_emails SET kind = NULL, confidence = NULL, triaged_at = NULL, status = 'new', note = NULL WHERE status IN ('new', 'message') AND read_by IS NULL AND COALESCE(aside, 0) = 0 AND decided_kind IS NULL");
+      await setSetting('inbox_relabel_1910', 1, 'system');
+    }
     const ids = unreadIds; let n = 0;
     const seen = new Set((await dbAll('SELECT gmail_id FROM bk_emails')).map(r => r.gmail_id));
     const unread = new Set(unreadIds);
@@ -875,7 +881,7 @@ module.exports = function mountBookkeeping(app, deps) {
   // about are marked read ("skipped") with the reason; anything that might be a bill stays for parseEmail().
   // Every unread email gets a kind and a confidence (stored); what happens next depends on the thresholds in settings:
   //   advertisement / receipt ≥ triage_ad     → marked read by the AI (set aside)
-  //   notification (delivery, tracking, alerts) ≥ triage_notice → marked read by the AI
+  //   arrival (shipped / delivered notifications) ≥ triage_notice → marked read by the AI
   //   bill ≥ triage_bill                        → read in full by parseEmail() → a bill draft
   //   message (a person writing) ≥ triage_message → left for a person, tagged "message"
   //   anything else / unsure                    → read in full anyway (a missed bill costs more than a model call)
@@ -893,14 +899,14 @@ module.exports = function mountBookkeeping(app, deps) {
       const listing = batch.map(m => { let atts = []; try { atts = JSON.parse(m.attachments || '[]'); } catch (e) {} return m.id + ' | from: ' + m.from_addr + ' | subject: ' + m.subject + ' | attachments: ' + (atts.map(a => a.name).join(', ') || 'none') + ' | text: ' + String(m.body || m.snippet || '').replace(/\s+/g, ' ').slice(0, 400); }).join('\n');
       let j = null;
       try {
-        const r = await anthropic.messages.create({ model: MODEL_LIGHT, max_tokens: 2000, system: 'You sort the accounting inbox of AxiomPrint, a print shop. For each email say what it is. Kinds: advertisement (marketing, promotions, newsletters, sales), notification (shipping, delivery and tracking confirmations, account alerts, calendar, system mail), receipt (confirmation of a payment already made), bill (an invoice, statement or credit memo sent by a system or a no-reply / billing address, or anything with an invoice-like attachment and no personal note), message (a real person writing to us — a question, a reply, a request; this includes a person sending or chasing an invoice with their own words, since we may need to answer them: a human-written email that contains a bill is a message, not a bill), other (anything unclear). When in doubt between advertisement and anything else, say the other thing — a missed advertisement costs nothing, a missed bill or message does. Return ONLY JSON.',
-          messages: [{ role: 'user', content: 'EMAILS\n' + listing + '\n\nReturn ONLY JSON: {"items": [{"id": <id>, "kind": "advertisement"|"notification"|"receipt"|"bill"|"message"|"other", "confidence": 0.0, "why": "<a few words>"}]}' }] });
+        const r = await anthropic.messages.create({ model: MODEL_LIGHT, max_tokens: 2000, system: 'You sort the accounting inbox of AxiomPrint, a print shop. For each email say what it is. Kinds: advertisement (marketing, promotions, newsletters, sales), receipt (a purchase: an order confirmation, "thanks for your order", a payment receipt or charge confirmation — proof that we bought or paid for something), arrival (a delivery notification: shipped, out for delivery, delivered, your package arrived, tracking updates for goods coming to us), bill (an invoice, statement or credit memo sent by a system or a no-reply / billing address, or anything with an invoice-like attachment and no personal note), message (a real person writing to us — a question, a reply, a request; this includes a person sending or chasing an invoice with their own words, since we may need to answer them: a human-written email that contains a bill is a message, not a bill), other (account alerts, calendar, system mail, anything unclear). When in doubt between advertisement and anything else, say the other thing — a missed advertisement costs nothing, a missed bill or message does. Return ONLY JSON.',
+          messages: [{ role: 'user', content: 'EMAILS\n' + listing + '\n\nReturn ONLY JSON: {"items": [{"id": <id>, "kind": "advertisement"|"receipt"|"arrival"|"bill"|"message"|"other", "confidence": 0.0, "why": "<a few words>"}]}' }] });
         j = jsonOf((r.content || []).filter(b => b.type === 'text').map(b => b.text).join(''));
       } catch (e) { errlog('triage', e.message); break; }
       for (const m of batch) {
         out.looked++;
         const it = j && Array.isArray(j.items) ? j.items.find(x => Number(x.id) === m.id) : null;
-        const kind = it && ['advertisement', 'notification', 'receipt', 'bill', 'message', 'other'].indexOf(it.kind) > -1 ? it.kind : 'other';
+        const kind = it && ['advertisement', 'receipt', 'arrival', 'bill', 'message', 'other'].indexOf(it.kind) > -1 ? it.kind : it && it.kind === 'notification' ? 'other' : 'other';
         const conf = it ? Math.max(0, Math.min(1, Number(it.confidence) || 0)) : 0;
         const why = it ? String(it.why || '').slice(0, 200) : '';
         out.by_kind[kind] = (out.by_kind[kind] || 0) + 1;
@@ -908,7 +914,7 @@ module.exports = function mountBookkeeping(app, deps) {
         let status = m.status;
         if (m.status !== 'new') {   // already read in Gmail: rated for the Everything else basket, nothing else changes
           await dbRun("UPDATE bk_emails SET kind = ?, confidence = ?, triaged_at = datetime('now'), note = ? WHERE id = ?", [kind, conf, kind + ' — ' + why + ' (' + pct + ') — read in Gmail', m.id]);
-        } else if (auto && ((kind === 'advertisement' || kind === 'receipt') && conf >= s.triage_ad || kind === 'notification' && conf >= s.triage_notice)) {
+        } else if (auto && ((kind === 'advertisement' || kind === 'receipt') && conf >= s.triage_ad || kind === 'arrival' && conf >= s.triage_notice)) {
           await dbRun("UPDATE bk_emails SET status = 'skipped', kind = ?, confidence = ?, triaged_at = datetime('now'), read_by = 'ai', note = ? WHERE id = ?", [kind, conf, kind + ' — ' + why + ' (' + pct + ')', m.id]); out.read++; status = 'skipped';
         } else if (kind === 'message' && conf >= s.triage_message) {
           await dbRun("UPDATE bk_emails SET status = 'message', kind = ?, confidence = ?, triaged_at = datetime('now'), note = ? WHERE id = ?", [kind, conf, 'message — ' + why + ' (' + pct + ') — for a person to answer', m.id]); out.messages++; status = 'message';
@@ -1794,7 +1800,7 @@ module.exports = function mountBookkeeping(app, deps) {
   // the note says who moved it; a bill still has to be read with "Turn into a bill".
   app.post('/api/bookkeeping/emails/:id/kind', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), kind = String(req.body && req.body.kind || '');
-    if (['advertisement', 'notification', 'receipt', 'bill', 'message', 'other', 'aside'].indexOf(kind) < 0) return res.json({ ok: false, error: 'Which basket?' });
+    if (['advertisement', 'arrival', 'receipt', 'bill', 'message', 'other', 'aside'].indexOf(kind) < 0) return res.json({ ok: false, error: 'Which basket?' });
     const em = await dbGet('SELECT id, status, read_by, aside FROM bk_emails WHERE id = ?', [id]); if (!em) return res.json({ ok: false, error: 'No such email' });
     if (em.status === 'parsed') return res.json({ ok: false, error: 'It is a bill draft already.' });
     if (kind === 'aside') {   // Set aside is the manual basket: parked by a person, rating kept, Gmail untouched
@@ -1813,7 +1819,7 @@ module.exports = function mountBookkeeping(app, deps) {
   });
   // Set aside every rated email of these kinds at or above the confidence (a person's decision, in one click).
   app.post('/api/bookkeeping/inbox/set-aside', ...guard, async (req, res) => {
-    const kinds = (Array.isArray(req.body && req.body.kinds) ? req.body.kinds : []).filter(k => ['advertisement', 'notification', 'receipt', 'other', 'bill', 'message'].indexOf(k) > -1);
+    const kinds = (Array.isArray(req.body && req.body.kinds) ? req.body.kinds : []).filter(k => ['advertisement', 'arrival', 'receipt', 'other', 'bill', 'message'].indexOf(k) > -1);
     const min = Math.max(0, Math.min(1, Number(req.body && req.body.min) || 0));
     if (!kinds.length) return res.json({ ok: false, error: 'Which kinds?' });
     const ids = (await dbAll("SELECT id FROM bk_emails WHERE read_by IS NULL AND COALESCE(aside, 0) = 0 AND status <> 'error' AND kind IN (" + kinds.map(() => '?').join(',') + ") AND COALESCE(confidence, 0) >= ?", kinds.concat([min]))).map(r => r.id);
