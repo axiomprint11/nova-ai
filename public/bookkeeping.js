@@ -898,7 +898,207 @@
     if (!ov) await overview();
     const j = await api('/api/bookkeeping/chart');
     coa = j.tree || []; coaUsage = j.usage || {}; if (coaSel >= coa.length) coaSel = 0;
-    v.innerHTML = '<div class="bk-card" style="margin-bottom:14px"><span class="coa-status" id="coaStatus"></span>' +
+    v.innerHTML = '<div class="bk-card" style="margin-bottom:14px"><span class="coa-status" id="coaStatus"></span></div>' +
+      '<div class="coa"><div class="coa-list" id="coaList"></div><div class="coa-edit" id="coaEdit"></div></div>';
+    drawChart();
+  }
+  const useText = (u) => u ? [u.txns && u.txns + ' txn' + (u.txns === 1 ? '' : 's'), u.rules && u.rules + ' rule' + (u.rules === 1 ? '' : 's'), u.vendors && u.vendors + ' vendor' + (u.vendors === 1 ? '' : 's')].filter(Boolean).join(' · ') : '';
+  const inUse = (n) => { const u = coaUsage[n]; return !!(u && (u.txns || u.rules || u.vendors)); };
+  function drawChart() {
+    const list = $('coaList'), ed = $('coaEdit'); if (!list) return;
+    list.innerHTML = coa.map((t, i) => '<div class="coa-t' + (i === coaSel ? ' on' : '') + '" data-i="' + i + '">' + tile(t.color, t.icon, '', t.name.charAt(0)) + '<span class="nm">' + esc(t.name) + '<small>' + (t.children.length ? t.children.length + ' sub categor' + (t.children.length === 1 ? 'y' : 'ies') : 'used as is') + '</small></span>' +
+      '<span class="coa-mv"><button data-up="' + i + '" title="Move up"' + (i ? '' : ' disabled') + '>▲</button><button data-down="' + i + '" title="Move down"' + (i < coa.length - 1 ? '' : ' disabled') + '>▼</button></span></div>').join('') +
+      '<div class="coa-add"><input class="bk" id="coaNewType" placeholder="New type of expense…"><button class="bk-btn sm p" id="coaAddType">Add</button></div>';
+    list.querySelectorAll('.coa-t').forEach(el => el.onclick = (e) => { if (e.target.closest('button')) return; coaSel = Number(el.dataset.i); drawChart(); });
+    list.querySelectorAll('[data-up]').forEach(b => b.onclick = () => { const i = Number(b.dataset.up); [coa[i - 1], coa[i]] = [coa[i], coa[i - 1]]; coaSel = i - 1; drawChart(); saveChart(); });
+    list.querySelectorAll('[data-down]').forEach(b => b.onclick = () => { const i = Number(b.dataset.down); [coa[i + 1], coa[i]] = [coa[i], coa[i + 1]]; coaSel = i + 1; drawChart(); saveChart(); });
+    const addType = () => { const n = $('coaNewType').value.trim(); if (!n) return; if (coa.some(t => t.name === n)) { status('That type already exists.', true); return; } coa.push({ name: n, color: PALETTE[coa.length % PALETTE.length], icon: '', children: [] }); coaSel = coa.length - 1; drawChart(); saveChart(); };
+    $('coaAddType').onclick = addType; $('coaNewType').onkeydown = (e) => { if (e.key === 'Enter') addType(); };
+    const t = coa[coaSel];
+    if (!t) { ed.innerHTML = '<div class="bk-muted">Add a type of expense on the left.</div>'; return; }
+    ed.innerHTML = '<div class="coa-head"><button class="coa-big" id="coaIcon" title="Change icon">' + tile(t.color, t.icon, 'big', t.name.charAt(0)) + '</button><input class="name" id="coaName" value="' + esc(t.name) + '" title="Rename the type"></div>' +
+      '<div class="bk-muted" style="margin-bottom:4px">Color</div><div class="coa-colors">' + PALETTE.map(c => '<span class="coa-sw' + (c === t.color ? ' on' : '') + '" data-c="' + c + '" style="background:' + c + '"></span>').join('') + '<input type="color" id="coaCustom" value="' + esc(t.color) + '" title="Any color"></div>' +
+      '<div class="bk-muted" style="margin-bottom:4px">Sub categories' + (t.children.length ? '' : ' <span class="bk-dim">— none yet: the type itself is used on transactions until you add some</span>') + '</div>' +
+      '<div id="coaKids">' + t.children.map((k, i) => '<div class="coa-k" data-k="' + i + '"><span data-kicon="' + i + '" title="Icon">' + tile(t.color, k.icon, iconKey(k.icon) ? '' : 'empty', '·') + '</span><input class="kn" value="' + esc(k.name) + '"><span class="use">' + esc(useText(coaUsage[k.name])) + '</span>' +
+        '<span class="coa-mv"><button data-kup="' + i + '"' + (i ? '' : ' disabled') + '>▲</button><button data-kdown="' + i + '"' + (i < t.children.length - 1 ? '' : ' disabled') + '>▼</button></span><button class="del" data-kdel="' + i + '" title="' + (inUse(k.name) ? 'In use — rename it instead' : 'Remove') + '"' + (inUse(k.name) ? ' disabled' : '') + '>×</button></div>').join('') + '</div>' +
+      '<div class="coa-foot"><input class="bk" id="coaNewKid" placeholder="New sub category under ' + esc(t.name) + '…"><button class="bk-btn sm p" id="coaAddKid">Add</button></div>' +
+      '<div class="coa-foot" style="border-top:0;margin-top:6px;justify-content:flex-end"><button class="bk-btn sm bad" id="coaDelType"' + (t.children.some(k => inUse(k.name)) || inUse(t.name) ? ' disabled title="Some of it is in use"' : '') + '>Delete this type</button></div>';
+    $('coaIcon').onclick = (e) => iconPicker(e.currentTarget, t.icon, (ic) => { t.icon = ic; drawChart(); saveChart(); });
+    ed.querySelectorAll('.coa-sw').forEach(sw => sw.onclick = () => { t.color = sw.dataset.c; drawChart(); saveChart(); });
+    $('coaCustom').oninput = (e) => { t.color = e.target.value; ed.querySelectorAll('.coa-ic').forEach(el => el.style.setProperty('--c', t.color)); };
+    $('coaCustom').onchange = () => { drawChart(); saveChart(); };
+    $('coaName').onchange = () => rename(t.name, $('coaName').value.trim(), true);
+    ed.querySelectorAll('input.kn').forEach(inp => inp.onchange = () => { const i = Number(inp.closest('.coa-k').dataset.k); rename(t.children[i].name, inp.value.trim(), false); });
+    ed.querySelectorAll('[data-kicon]').forEach(el => el.onclick = (e) => { const i = Number(el.dataset.kicon); iconPicker(e.currentTarget, t.children[i].icon, (ic) => { t.children[i].icon = ic; drawChart(); saveChart(); }); });
+    ed.querySelectorAll('[data-kup]').forEach(b => b.onclick = () => { const i = Number(b.dataset.kup); [t.children[i - 1], t.children[i]] = [t.children[i], t.children[i - 1]]; drawChart(); saveChart(); });
+    ed.querySelectorAll('[data-kdown]').forEach(b => b.onclick = () => { const i = Number(b.dataset.kdown); [t.children[i + 1], t.children[i]] = [t.children[i], t.children[i + 1]]; drawChart(); saveChart(); });
+    ed.querySelectorAll('[data-kdel]').forEach(b => b.onclick = async () => { const i = Number(b.dataset.kdel); if (!await ask('Remove "' + t.children[i].name + '"?')) return; t.children.splice(i, 1); drawChart(); saveChart(); });
+    const addKid = () => { const n = $('coaNewKid').value.trim(); if (!n) return; if (categories.indexOf(n) > -1 || t.children.some(k => k.name === n)) { status('"' + n + '" is already in the chart.', true); return; } t.children.push({ name: n, icon: '' }); drawChart(); saveChart(); setTimeout(() => $('coaNewKid') && $('coaNewKid').focus(), 0); };
+    $('coaAddKid').onclick = addKid; $('coaNewKid').onkeydown = (e) => { if (e.key === 'Enter') addKid(); };
+    $('coaDelType').onclick = async () => { if (!await ask('Delete the type "' + t.name + '" and its sub categories?')) return; coa.splice(coaSel, 1); coaSel = Math.max(0, coaSel - 1); drawChart(); saveChart(); };
+  }
+  function status(msg, err) { const el = $('coaStatus'); if (!el) return; el.textContent = msg; el.className = 'coa-status' + (err ? ' err' : ''); if (!err) setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 2500); }
+  function saveChart() {
+    clearTimeout(coaTimer); status('Saving…');
+    coaTimer = setTimeout(async () => {
+      const r = await post('/api/bookkeeping/chart', { tree: coa });
+      if (!r.ok) { status(r.error, true); loadChart(); return; }
+      // keep the local objects (the open editor's handlers point at them); the server echo only refreshes the pickers
+      chart = r.chart; ov.chart = r.chart; categories = chart.filter(c => c.parent || !c.children).map(c => c.name).filter((n, i, a) => a.indexOf(n) === i);
+      status('Saved ✓');
+    }, 350);
+  }
+  async function rename(from, to, isType) {
+    if (!to || to === from) { drawChart(); return; }
+    if (categories.indexOf(to) > -1 || coa.some(t => t.name === to)) { status('"' + to + '" already exists.', true); drawChart(); return; }
+    clearTimeout(coaTimer);
+    const r = await post('/api/bookkeeping/chart/rename', { from, to });
+    if (!r.ok) { status(r.error, true); return; }
+    coa = r.tree; chart = r.chart; ov.chart = r.chart; categories = chart.filter(c => c.parent || !c.children).map(c => c.name).filter((n, i, a) => a.indexOf(n) === i);
+    if (coaUsage[from]) { coaUsage[to] = coaUsage[from]; delete coaUsage[from]; }
+    status('Renamed ✓' + (!isType && coaUsage[to] && (coaUsage[to].txns || coaUsage[to].rules) ? ' — updated on ' + useText(coaUsage[to]) : ''));
+    drawChart();
+  }
+  function iconPicker(anchor, cur, onPick) {
+    document.querySelectorAll('.ico-pop').forEach(p => p.remove());
+    const pop = document.createElement('div'); pop.className = 'ico-pop';
+    pop.innerHTML = '<div class="ico-grid">' + ICONS.map(i => '<button type="button" data-i="' + i + '" title="' + i + '"' + (i === iconKey(cur) ? ' class="on"' : '') + '>' + iconSvg(i) + '</button>').join('') + '</div><button type="button" class="none">No icon</button>';
+    document.body.appendChild(pop);
+    const r = anchor.getBoundingClientRect(); pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 376)) + 'px'; pop.style.top = (r.bottom + 6 + 330 > window.innerHeight ? r.top - 6 - pop.offsetHeight : r.bottom + 6) + 'px';
+    const close = () => { pop.remove(); document.removeEventListener('click', away, true); };
+    const away = (e) => { if (!pop.contains(e.target) && e.target !== anchor) close(); };
+    setTimeout(() => document.addEventListener('click', away, true), 0);
+    pop.querySelectorAll('[data-i]').forEach(b => b.onclick = () => { onPick(b.dataset.i); close(); });
+    pop.querySelector('.none').onclick = () => { onPick(''); close(); };
+  }
+
+  // ---------------------------------------------------------------- Suppliers & vendors (the CRM directory + vendors seen on bills)
+  async function loadVendors() {
+    const v = $('vVendors');
+    if (!ov) await overview();
+    const j = await api('/api/bookkeeping/directory');
+    const all = j.vendors || [];
+    const KIND_LABEL = { supplier: 'Supplier', vendor: 'Vendor', bill: 'From a bill', other: 'Other' };
+    const label = (k) => KIND_LABEL[k] || (String(k || 'other').charAt(0).toUpperCase() + String(k || 'other').slice(1));
+    // The types are the CRM lists (read-only here — a row's type is the list it is in), then "from a bill".
+    const kinds = (j.lists || ['supplier', 'vendor']).slice(); all.forEach(x => { if (x.kind && kinds.indexOf(x.kind) < 0) kinds.push(x.kind); }); if (kinds.indexOf('bill') < 0) kinds.push('bill');
+    const counts = {}; all.forEach(x => { counts[x.kind || 'other'] = (counts[x.kind || 'other'] || 0) + 1; });
+    let F = { kind: '', cat: '', ap: '', name: '', contact: '', spec: '' }; try { F = Object.assign(F, JSON.parse(localStorage.getItem('bk_vendor_filters') || '{}')); } catch (e) {}
+    if (F.kind && !counts[F.kind]) F.kind = '';
+    const catCounts = { '': 0 }; all.forEach(x => { const cs = splitCats(x.default_category); if (!cs.length) catCounts['']++; cs.forEach(c => { catCounts[c] = (catCounts[c] || 0) + 1; }); });
+    const kindTag = (x) => '<span class="bk-src ' + esc(x.kind || 'other') + '">' + esc(label(x.kind)) + '</span>';
+    const FOPTS = {
+      kind: [{ v: '', l: 'All types', n: all.length }].concat(kinds.filter(k => counts[k]).map(k => ({ v: k, l: kindTag({ kind: k }), t: label(k), n: counts[k] }))),
+      cat: [{ v: '', l: 'All', n: all.length }, { v: '__none', l: 'Not set', n: catCounts[''] }].concat(Object.keys(catCounts).filter(c => c).sort().map(c => ({ v: c, l: catLabel(c), n: catCounts[c] }))),
+      ap: [{ v: '', l: 'All', n: all.length }, { v: '1', l: 'Approved', n: all.length - unapproved0() }, { v: '0', l: 'Waiting for approval', n: unapproved0() }],
+      name: { type: 'text', value: F.name }, contact: { type: 'text', value: F.contact }, spec: { type: 'text', value: F.spec }
+    };
+    function unapproved0() { return all.filter(x => !x.approved).length; }
+    const logo = (x) => x.photo ? '<img class="bk-logo" src="' + esc(x.photo) + '" alt="" loading="lazy" onerror="this.outerHTML=\'<span class=&quot;bk-logo ph&quot;>' + esc(String(x.name).charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo ph">' + esc(String(x.name).charAt(0).toUpperCase()) + '</span>';
+    const row = (x) => '<tr data-vid="' + x.id + '" data-kind="' + esc(x.kind || 'other') + '" data-ap="' + (x.approved ? 1 : 0) + '" data-cats="' + esc('|' + splitCats(x.default_category).join('|') + '|') + '" data-q="' + esc((x.name + ' ' + (x.contact || '') + ' ' + (x.email || '') + ' ' + (x.specialty || '') + ' ' + (x.aliases || '')).toLowerCase()) + '" data-name="' + esc(String(x.name || '').toLowerCase()) + '" data-contact="' + esc(((x.contact || '') + ' ' + (x.email || '') + ' ' + (x.phone || '')).toLowerCase()) + '" data-spec="' + esc(String(x.specialty || '').toLowerCase()) + '"><td class="vcell"><a href="#" class="bk-open" data-vopen="' + x.id + '" title="Full details">' + logo(x) + '</a><div class="vkind">' + kindTag(x) + '</div></td>' +
+      '<td><a href="#" class="bk-open bk-name" data-vopen="' + x.id + '" title="Full details">' + esc(x.name) + '</a>' + (x.contact ? '<div class="bk-muted">' + esc(x.contact) + '</div>' : '') + '</td><td class="bk-muted">' + esc(x.email || '') + (x.phone ? '<br>' + esc(x.phone) : '') + '</td><td class="bk-muted">' + esc(x.specialty || '') + (x.materials ? '<div class="bk-dim"><a href="#" data-mats="' + x.id + '" title="See the materials in the catalog">' + x.materials + ' material' + (x.materials == 1 ? '' : 's') + '</a>: ' + esc((x.geo_types || []).join(', ')) + '</div>' : '') + '</td>' +
+      '<td>' + catSelect(x.default_category || '', 'vcat', 'not set', { multi: true }) + '</td><td><input type="text" class="bk valias" placeholder="bank names, one per line" value="' + esc(String(x.aliases || '').split('\n').join(' | ')) + '" title="How this vendor appears on bank statements (separate with |)"></td>' +
+      '<td class="num bk-muted" title="How many bank transactions and bills are linked to this company">' + (x.txns || 0) + ' <span class="bk-dim">txn' + (x.txns == 1 ? '' : 's') + '</span><br>' + (x.bills || 0) + ' <span class="bk-dim">bill' + (x.bills == 1 ? '' : 's') + '</span></td></tr>';
+    // Full CRM record in a popup (everything the CRM holds for the company; edit it in the CRM).
+    const openVendor = (x) => {
+      let d = {}; try { d = JSON.parse(x.details || '{}') || {}; } catch (e) {}
+      const line = (k, val) => val ? '<div class="bk-dl"><span>' + esc(k) + '</span><div>' + val + '</div></div>' : '';
+      const addr = [d.address, d.unit].filter(Boolean).join(', ') + ((d.city || d.state || d.zip) ? '<br>' + esc([d.city, d.state].filter(Boolean).join(', ') + (d.zip ? ' ' + d.zip : '')) : '') + (d.country && d.country !== 'US' ? '<br>' + esc(d.country) : '');
+      const el = document.createElement('div'); el.className = 'bk-modal';
+      el.innerHTML = '<div class="bk-modal-box"><div class="bk-modal-head">' + logo(x) + '<div><div class="bk-modal-title">' + esc(x.name) + '</div><div>' + kindTag(x) + (x.approved ? ' <span class="bk-pill on">approved</span>' : ' <span class="bk-pill off">waiting for approval</span>') + '</div></div><button class="bk-btn sm bk-x" title="Close">✕</button></div>' +
+        line('Contact', esc(x.contact || '')) + line('Email', x.email ? '<a href="mailto:' + esc(x.email) + '">' + esc(x.email) + '</a>' : '') + line('Phone', esc(x.phone || '')) + line('Specialty', esc(x.specialty || '')) +
+        line('Address', (d.address || d.city) ? addr : '') + line('Hours', esc(d.hours || '')) + line('Usual category', esc(x.default_category || '')) + line('On the bank statement as', esc(String(x.aliases || '').split('\n').filter(Boolean).join(' · '))) +
+        line('Linked', (x.txns || 0) + ' transaction' + (x.txns == 1 ? '' : 's') + ', ' + (x.bills || 0) + ' bill' + (x.bills == 1 ? '' : 's')) +
+        line('Supplies', x.materials ? x.materials + ' material' + (x.materials == 1 ? '' : 's') + ' in the catalog — GEO types: ' + esc((x.geo_types || []).join(', ')) + ' <a href="#" data-mats="' + x.id + '">see them</a>' : '') + line('Notes', esc(x.notes || '')) +
+        '<div class="bk-muted" style="margin-top:12px">' + (x.source === 'bill' ? 'First seen on a bill — not in the CRM yet. Add it to the CRM to fill this in.' : 'From the CRM ' + esc(d.list || x.source || '') + ' list (#' + esc(String(x.crm_id || '')) + '), synced ' + when(x.synced_at) + '. Edit the details in the CRM; they refresh here by themselves.') + '</div></div>';
+      const close = () => el.remove();
+      el.onclick = (e) => { if (e.target === el || e.target.classList.contains('bk-x')) close(); };
+      document.addEventListener('keydown', function k(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', k); } });
+      el.querySelectorAll('[data-mats]').forEach(a => a.onclick = (e) => { e.preventDefault(); close(); matFilter = { vendor: a.dataset.mats }; show('materials'); });
+      document.body.appendChild(el);
+    };
+    const unapproved = all.filter(x => !x.approved).length;
+    v.innerHTML = '<div class="bk-card">' + (j.sync_error ? '<div class="bk-muted" style="color:#b91c1c;margin-bottom:8px" title="' + esc(j.sync_error) + '">CRM sync failed — ' + esc(j.sync_error) + '</div>' : '') +
+            (all.length ? '<table class="bk bk-dir"><thead><tr><th>' + thFilter('kind', 'Type', FOPTS.kind, F.kind) + '</th><th>' + thFilter('name', 'Name', FOPTS.name) + '</th><th>' + thFilter('contact', 'Contact', FOPTS.contact) + '</th><th>' + thFilter('spec', 'Specialty', FOPTS.spec) + '</th><th>' + thFilter('cat', 'Usual category', FOPTS.cat, F.cat) + '</th><th title="How this company appears on bank statements">Bank name</th>' +
+        '<th class="num" title="Bank transactions and bills linked to this company">Linked</th></tr></thead><tbody>' + all.map(row).join('') + '</tbody></table><div class="bk-muted" id="vNone" style="display:none;padding:14px 0">Nothing matches.</div>'
+        : '<div class="bk-muted">Nothing synced from the CRM yet — it syncs itself within the hour.</div>') + '</div>';
+    const filter = () => {
+      const q = ''; let n = 0;
+      try { localStorage.setItem('bk_vendor_filters', JSON.stringify(F)); } catch (e) {}
+      v.querySelectorAll('tr[data-vid]').forEach(tr => {
+        const catOk = !F.cat || (F.cat === '__none' ? tr.dataset.cats === '||' : tr.dataset.cats.indexOf('|' + F.cat + '|') > -1);
+        const has = (k, v) => !v || (tr.dataset[k] || '').indexOf(v.toLowerCase()) > -1;
+        const on = (!F.kind || tr.dataset.kind === F.kind) && (!F.ap || tr.dataset.ap === F.ap) && catOk && has('name', F.name) && has('contact', F.contact) && has('spec', F.spec) && (!q || tr.dataset.q.indexOf(q) >= 0); tr.style.display = on ? '' : 'none'; if (on) n++; });
+      if ($('vNone')) $('vNone').style.display = n ? 'none' : '';
+    };
+    const onF = (key, val) => { F[key] = val; if (FOPTS[key] && FOPTS[key].type === 'text') FOPTS[key].value = val; filter(); const th = v.querySelector('.thf[data-thf="' + key + '"]'); if (th) th.outerHTML = thFilter(key, { kind: 'Type', cat: 'Usual category', ap: 'Approved', name: 'Name', contact: 'Contact', spec: 'Specialty' }[key], FOPTS[key], val); thFilterBind(v, FOPTS, onF); };
+    thFilterBind(v, FOPTS, onF);
+    filter();
+    v.querySelectorAll('[data-vopen]').forEach(a => a.onclick = (e) => { e.preventDefault(); const x = all.find(y => String(y.id) === a.dataset.vopen); if (x) openVendor(x); });
+    v.querySelectorAll('[data-mats]').forEach(a => a.onclick = (e) => { e.preventDefault(); matFilter = { vendor: a.dataset.mats }; show('materials'); });
+    const ds = $('dirSync'); if (ds) ds.onclick = async () => { $('dirSync').disabled = true; const r = await post('/api/bookkeeping/directory/sync', {}); if (!r.ok) alert(r.error); else if (r.errors && r.errors.length) alert(r.errors.join('\n')); loadVendors(); };
+    // Autosave: the usual category when it changes (a removed chip asks first), bank-statement names on blur, Approve on click.
+    const flash = (tr, ok) => { tr.classList.add(ok ? 'saved' : 'failed'); setTimeout(() => tr.classList.remove('saved', 'failed'), 1200); };
+    v.querySelectorAll('tr[data-vid]').forEach(tr => {
+      const id = tr.dataset.vid, wrap = tr.querySelector('.ckp.vcat'), inp = tr.querySelector('input.vcat');
+      let last = inp.value;
+      wrap.addEventListener('change', async () => {
+        const now = inp.value, was = splitCats(last), is = splitCats(now), removed = was.filter(x => is.indexOf(x) < 0);
+        if (removed.length && !await ask('Remove ' + removed.join(', ') + ' from the usual categories?')) { ckpSet(wrap, was); return; }
+        last = now; const r = await post('/api/bookkeeping/vendors/' + id, { default_category: now }); flash(tr, r.ok); if (!r.ok) alert(r.error);
+      });
+      const al = tr.querySelector('.valias'); let lastAl = al.value;
+      al.addEventListener('change', async () => { if (al.value === lastAl) return; lastAl = al.value; const r = await post('/api/bookkeeping/vendors/' + id, { aliases: al.value.split('|').map(x => x.trim()).filter(Boolean).join('\n') }); flash(tr, r.ok); });
+    });
+    v.querySelectorAll('[data-vappr]').forEach(a => a.onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/vendors/' + a.dataset.vappr, { approved: true }); if (!r.ok) alert(r.error); loadVendors(); });
+  }
+
+  // ---------------------------------------------------------------- Materials (CRM → Materials, with GEO types)
+  let matFilter = null;
+  async function loadMaterials() {
+    const v = $('vMaterials');
+    if (!ov) await overview();
+    const j = await api('/api/bookkeeping/materials');
+    const all = j.materials || [], geo = j.geo || {}, unlinked = j.unlinked || {};
+    const pre = matFilter || {}; matFilter = null;
+    const geoNames = Object.keys(geo).sort((a, b) => a.startsWith('—') - b.startsWith('—') || a.localeCompare(b));
+    const count = (g) => Object.values(geo[g]).reduce((a, b) => a + b, 0);
+    const suppliers = {}; all.forEach(m => { const k = m.vendor_id ? 'v' + m.vendor_id : (m.supplier_text ? 't' + m.supplier_text : ''); if (k) suppliers[k] = { label: m.supplier || m.supplier_text, n: (suppliers[k] ? suppliers[k].n : 0) + 1, linked: !!m.vendor_id }; });
+    const supKeys = Object.keys(suppliers).sort((a, b) => suppliers[b].n - suppliers[a].n);
+    const photo = (m) => m.photo ? '<img class="bk-logo bk-mat" src="' + esc(m.photo) + '" alt="" loading="lazy" onerror="this.outerHTML=\'<span class=&quot;bk-logo bk-mat ph&quot;></span>\'">' : '<span class="bk-logo bk-mat ph" style="color:#c7c7d6">·</span>';
+    const supCell = (m) => m.vendor_id ? '<a href="#" class="bk-name" data-vgo="' + m.vendor_id + '">' + esc(m.supplier) + '</a>' + (m.supplier_text && m.supplier_text !== m.supplier ? '<div class="bk-dim">in the CRM as “' + esc(m.supplier_text) + '”</div>' : '') : m.supplier_text ? esc(m.supplier_text) + '<div class="bk-dim" title="This supplier name is not in the Suppliers / Vendors lists yet">not in the directory</div>' : '<span class="bk-dim">—</span>';
+    const row = (m) => '<tr data-g="' + esc(m.geo_type || '— no GEO type —') + '" data-s="' + esc(m.geo_sub_type || '—') + '" data-sup="' + (m.vendor_id ? 'v' + m.vendor_id : (m.supplier_text ? 't' + esc(m.supplier_text) : '')) + '" data-q="' + esc([m.name, m.material, m.type, m.manufacturer, m.supplier, m.supplier_text, m.code, m.axiom_id, m.teams].filter(Boolean).join(' ').toLowerCase()) + '">' +
+      '<td>' + photo(m) + '</td><td><b>' + esc(m.name) + '</b>' + (m.code || m.axiom_id ? '<div class="bk-dim">' + esc([m.code, m.axiom_id].filter(Boolean).join(' · ')) + '</div>' : '') + '</td>' +
+      '<td>' + esc(m.geo_type || '—') + (m.geo_sub_type ? '<div class="bk-muted">' + esc(m.geo_sub_type) + '</div>' : '') + '</td>' +
+      '<td class="bk-muted">' + esc([m.material, m.type].filter(Boolean).map(x => x.replace(/_/g, ' ')).join(' · ')) + (m.size || m.thickness ? '<div class="bk-dim">' + esc([m.size, m.thickness ? m.thickness + ' thick' : ''].filter(Boolean).join(' · ')) + '</div>' : '') + '</td>' +
+      '<td class="bk-muted">' + esc(m.teams || '') + (m.step ? '<div class="bk-dim">' + esc(String(m.step).replace(/_/g, ' ')) + '</div>' : '') + '</td>' +
+      '<td>' + supCell(m) + '</td><td class="bk-muted">' + esc(m.manufacturer || '') + '</td><td class="num">' + (m.cost != null ? usd(m.cost) : '<span class="bk-dim">—</span>') + '</td></tr>';
+    v.innerHTML = '<div class="bk-card">' +
+      '<div class="bk-filters"><select id="mGeo"><option value="">All GEO types (' + all.length + ')</option>' + geoNames.map(g => '<option value="' + esc(g) + '"' + (pre.geo === g ? ' selected' : '') + '>' + esc(g) + ' (' + count(g) + ')</option>').join('') + '</select>' +
+      '<select id="mSub"><option value="">All sub types</option></select>' +
+      '<select id="mSup"><option value="">All suppliers</option>' + supKeys.map(k => '<option value="' + esc(k) + '"' + (pre.vendor && k === 'v' + pre.vendor ? ' selected' : '') + '>' + esc(suppliers[k].label) + ' (' + suppliers[k].n + ')' + (suppliers[k].linked ? '' : ' — not in the directory') + '</option>').join('') + '</select>' +
+      '<input name="q" id="mQ" placeholder="Search name, material, manufacturer, code…"></div>' +
+      (all.length ? '<table class="bk bk-dir bk-mats"><thead><tr><th></th><th>Material</th><th>GEO type</th><th>Kind · size</th><th>Team · step</th><th>Supplier</th><th>Manufacturer</th><th class="num">Cost</th></tr></thead><tbody>' + all.map(row).join('') + '</tbody></table><div class="bk-muted" id="mNone" style="display:none;padding:14px 0">Nothing matches.</div><div class="bk-muted" id="mCount" style="padding:10px 0 0"></div>'
+        : '<div class="bk-muted">Nothing synced yet — press Refresh from CRM.</div>') + '</div>';
+    const subs = () => { const g = $('mGeo').value, cur = $('mSub').value; const names = g ? Object.keys(geo[g] || {}).sort() : []; $('mSub').innerHTML = '<option value="">All sub types' + (g ? ' (' + count(g) + ')' : '') + '</option>' + names.map(n => '<option value="' + esc(n) + '"' + (cur === n ? ' selected' : '') + '>' + esc(n) + ' (' + geo[g][n] + ')</option>').join(''); $('mSub').disabled = !g; };
+    const filter = () => {
+      const g = $('mGeo').value, sb = $('mSub').value, sp = $('mSup').value, q = $('mQ').value.trim().toLowerCase(); let n = 0;
+      v.querySelectorAll('tr[data-g]').forEach(tr => { const on = (!g || tr.dataset.g === g) && (!sb || tr.dataset.s === sb) && (!sp || tr.dataset.sup === sp) && (!q || tr.dataset.q.indexOf(q) >= 0); tr.style.display = on ? '' : 'none'; if (on) n++; });
+      if ($('mNone')) { $('mNone').style.display = n ? 'none' : ''; $('mCount').textContent = n === all.length ? '' : n + ' of ' + all.length + ' materials'; }
+    };
+    $('mGeo').onchange = () => { subs(); filter(); }; $('mSub').onchange = filter; $('mSup').onchange = filter; $('mQ').oninput = filter; subs(); filter();
+    const ms = $('matSync'); if (ms) ms.onclick = async () => { ms.disabled = true; const r = await post('/api/bookkeeping/directory/sync', {}); if (!r.ok) alert(r.error); else if (r.errors && r.errors.length) alert(r.errors.join('\n')); loadMaterials(); };
+    v.querySelectorAll('[data-vgo]').forEach(a => a.onclick = (e) => { e.preventDefault(); show('vendors'); setTimeout(() => { const tr = document.querySelector('tr[data-vid="' + a.dataset.vgo + '"]'); if (tr) { tr.scrollIntoView({ block: 'center' }); tr.style.background = '#fffbeb'; } }, 900); });
+  }
+
+  // ---------------------------------------------------------------- Connections
+  async function loadConn() {
+    await overview();
+    const v = $('vConn'), c = ov.connections, s = ov.settings;
+    const pill = (on, yes, no) => '<span class="bk-pill ' + (on ? 'on' : 'off') + '">' + (on ? yes : no) + '</span>';
+    v.innerHTML = '<div class="bk-conn">' +
+      // Plaid
+      '<div class="bk-card"><h2>Bank accounts ' + pill(c.plaid.configured, 'Plaid keys set (' + esc(c.plaid.env) + ')', 'Plaid keys not in .env') + '<span class="sp"></span><button class="bk-btn p" id="plaidLink"' + (c.plaid.configured ? '' : ' disabled') + '>Connect a bank</button></h2>' +
       (c.plaid.items.length ? '<table class="bk"><thead><tr><th>Bank</th><th>Accounts</th><th>Last sync</th><th>Status</th><th></th></tr></thead><tbody>' + c.plaid.items.map(it => '<tr><td>' + esc(it.institution) + '</td><td>' + it.accounts.map(a => esc(a.name) + (a.mask ? ' ••' + esc(a.mask) : '')).join('<br>') + '</td><td>' + when(it.last_sync_at) + '</td><td>' + (it.status === 'ok' ? '<span class="bk-pill on">ok</span>' : '<span class="bk-pill err">' + esc(it.error || it.status) + '</span>') + '</td><td><button class="bk-btn sm bad" data-unlink="' + it.id + '">Disconnect</button></td></tr>').join('') + '</tbody></table>'
         : '<div class="bk-muted">No bank connected yet.</div>') +
       '<ol class="bk-steps"><li>Create a Plaid account at dashboard.plaid.com (the Transactions product; Sandbox to try, then request Production / Limited Production).</li><li>Put <code>PLAID_CLIENT_ID</code>, <code>PLAID_SECRET</code> and <code>PLAID_ENV=sandbox|production</code> in <code>.env</code> and restart Nova.</li><li>Nothing to set in the dashboard\u2019s Webhooks page (that page is only for Transfer / Wallet / Income events): the Transactions webhook <code>' + esc(c.chat.plaid_webhook_url) + '</code> is attached to every bank connection Nova creates. Allowed redirect URIs are not needed.</li><li>Press <b>Connect a bank</b> and sign in to each bank (2 accounts). Transactions sync straight away; the webhook keeps them current, the daily run syncs again.</li></ol></div>' +
