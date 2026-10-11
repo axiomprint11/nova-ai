@@ -24,6 +24,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const mysql = require('mysql2');   // only for mysql.escape() in the read-only CRM look-ups
 
 module.exports = function mountBookkeeping(app, deps) {
   const { db, crypto, anthropic, auth, serveVersionedHtml, google, keyPath, runQuery } = deps;
@@ -1229,7 +1230,16 @@ module.exports = function mountBookkeeping(app, deps) {
     };
     const lastRun = await dbGet('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 1');
     // who is who, for the page to show a face instead of an email (members: photo from the CRM, else an initial)
-    let people = []; try { people = (await dbAll('SELECT email, username, display_name, photo FROM members')).map(m => ({ email: m.email, username: m.username, name: m.display_name || m.username || m.email, photo: m.photo || null })); } catch (e) {}
+    let people = []; try {
+      const ms = await dbAll('SELECT email, username, display_name, photo, axiom_user_id FROM members');
+      // the CRM holds the team photos (user.memberimage, an S3 key); members.photo is only filled at sign-in
+      const ids = ms.map(m => parseInt(m.axiom_user_id)).filter(Boolean); const img = {}, img2 = {};
+      if (ids.length) { try { (await runQuery('SELECT id, email, memberimage FROM user WHERE id IN (' + ids.join(',') + ')')).forEach(r => { img[r.id] = r.memberimage || null; }); } catch (e) {} }
+      const noId = ms.filter(m => !m.axiom_user_id && m.email).map(m => mysql.escape(String(m.email).toLowerCase()));
+      if (noId.length) { try { (await runQuery('SELECT email, memberimage FROM user WHERE LOWER(email) IN (' + noId.join(',') + ')')).forEach(r => { img2[String(r.email).toLowerCase()] = r.memberimage || null; }); } catch (e) {} }
+      const url = (ph) => !ph ? null : /^https?:\/\//.test(ph) ? ph : 'https://axiomprint.s3.us-west-1.amazonaws.com/MemberImages/' + String(ph).replace(/^\/+/, '');
+      people = ms.map(m => ({ email: m.email, username: m.username, name: m.display_name || m.username || m.email, photo: url(m.photo || img[m.axiom_user_id] || img2[String(m.email || '').toLowerCase()] || null) }));
+    } catch (e) {}
     res.json({ ok: true, me: userId(req), people, settings: Object.assign({}, s, { chat_webhook: s.chat_webhook ? '(set)' : '' }), chart: chartOf(s), counts, brief, last_run: lastRun, running: !!running,
       connections: {
         plaid: { configured: plaidReady(), env: PLAID_ENV, items },
