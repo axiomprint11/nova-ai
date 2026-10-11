@@ -85,7 +85,7 @@ module.exports = function mountBookkeeping(app, deps) {
       duplicate_of INTEGER, lines TEXT, file TEXT, file_name TEXT, status TEXT DEFAULT 'draft', proposal_id INTEGER, note TEXT,
       created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
     ['scheduled_for TEXT', 'paid_at TEXT', 'paid_note TEXT'].forEach(c => db.run('ALTER TABLE bk_bills ADD COLUMN ' + c, () => {}));
-    ['kind TEXT', 'confidence REAL', 'triaged_at TEXT', 'read_by TEXT', 'body_html TEXT'].forEach(c => db.run('ALTER TABLE bk_emails ADD COLUMN ' + c, () => {}));
+    ['kind TEXT', 'confidence REAL', 'triaged_at TEXT', 'read_by TEXT', 'body_html TEXT', 'aside INTEGER DEFAULT 0'].forEach(c => db.run('ALTER TABLE bk_emails ADD COLUMN ' + c, () => {}));
     db.run(`CREATE TABLE IF NOT EXISTS bk_proposals (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, ref_table TEXT, ref_id INTEGER, title TEXT,
       payload TEXT, confidence REAL, reason TEXT, status TEXT DEFAULT 'pending', decided_by TEXT, decided_at TEXT, decision TEXT,
       created_at TEXT DEFAULT (datetime('now')))`);
@@ -1337,7 +1337,7 @@ module.exports = function mountBookkeeping(app, deps) {
     fs.createReadStream(full).pipe(res);
   });
   app.get('/api/bookkeeping/emails', ...guard, async (req, res) => {
-    const rows = await dbAll('SELECT id, gmail_id, from_addr, subject, received_at, snippet, attachments, status, note, kind, confidence, read_by, triaged_at FROM bk_emails ORDER BY received_at DESC LIMIT 300');
+    const rows = await dbAll('SELECT id, gmail_id, from_addr, subject, received_at, snippet, attachments, status, note, kind, confidence, read_by, triaged_at, aside FROM bk_emails ORDER BY received_at DESC LIMIT 500');
     rows.forEach(r => { try { r.attachments = JSON.parse(r.attachments || '[]'); } catch (e) { r.attachments = []; } });
     res.json({ ok: true, emails: rows });
   });
@@ -1473,11 +1473,16 @@ module.exports = function mountBookkeeping(app, deps) {
   // the note says who moved it; a bill still has to be read with "Turn into a bill".
   app.post('/api/bookkeeping/emails/:id/kind', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), kind = String(req.body && req.body.kind || '');
-    if (['advertisement', 'notification', 'receipt', 'bill', 'message', 'other'].indexOf(kind) < 0) return res.json({ ok: false, error: 'Which basket?' });
-    const em = await dbGet('SELECT id, status FROM bk_emails WHERE id = ?', [id]); if (!em) return res.json({ ok: false, error: 'No such email' });
+    if (['advertisement', 'notification', 'receipt', 'bill', 'message', 'other', 'aside'].indexOf(kind) < 0) return res.json({ ok: false, error: 'Which basket?' });
+    const em = await dbGet('SELECT id, status, read_by, aside FROM bk_emails WHERE id = ?', [id]); if (!em) return res.json({ ok: false, error: 'No such email' });
     if (em.status === 'parsed') return res.json({ ok: false, error: 'It is a bill draft already.' });
-    const status = kind === 'message' ? 'message' : (em.status === 'message' ? 'new' : em.status);
-    await dbRun("UPDATE bk_emails SET kind = ?, confidence = 1, status = ?, triaged_at = COALESCE(triaged_at, datetime('now')), note = ? WHERE id = ?", [kind, status, 'moved to ' + kind + ' by ' + userId(req), id]);
+    if (kind === 'aside') {   // Set aside is the manual basket: parked by a person, rating kept, Gmail untouched
+      await dbRun("UPDATE bk_emails SET status = 'skipped', aside = 1, read_by = 'user', note = ? WHERE id = ?", ['set aside by ' + userId(req), id]);
+      await audit(userId(req), 'email.move', id, { kind }); return res.json({ ok: true });
+    }
+    // read in Gmail already → only the rating changes (it stays under Everything else); otherwise it is open again
+    const status = em.read_by === 'gmail' && !em.aside ? em.status : kind === 'message' ? 'message' : 'new';
+    await dbRun("UPDATE bk_emails SET kind = ?, confidence = 1, status = ?, aside = 0, triaged_at = COALESCE(triaged_at, datetime('now')), note = ? WHERE id = ?", [kind, status, 'moved to ' + kind + ' by ' + userId(req), id]);
     await audit(userId(req), 'email.move', id, { kind }); res.json({ ok: true });
   });
   app.post('/api/bookkeeping/inbox/fetch', ...guard, async (req, res) => { try { const r = await scanInbox(userId(req)); const left = await dbGet("SELECT COUNT(*) n FROM bk_emails WHERE " + TO_RATE); res.json({ ok: true, scan: r, to_rate: left.n }); } catch (e) { res.json({ ok: false, error: e.message }); } });
