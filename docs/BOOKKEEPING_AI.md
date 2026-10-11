@@ -178,7 +178,7 @@ rated email with no kind is Other. No heading on the Inbox card; Scan now sits l
 60 by default; a one-time `inbox_reset_1830` cleared old closed marks and raised a lower poll to 60).
 
 ### Sender → vendor, Match, multi-select (1.18.37)
-The reading pane shows the sender's **vendor** (`bk_emails.vendor_id`, set on scan / open by `matchVendor()` — now also by
+The reading pane's avatar *is* the vendor (hover: "Vendor · name · kind"; click: Link / Change vendor… / Unlink this address; Match… sits in the actions row). The sender's **vendor** (`bk_emails.vendor_id`, set on scan / open by `matchVendor()` — now also by
 an exact address kept in `bk_vendors.aliases`, lines with an `@`, Nova-side only, never the CRM's contact). "Link … to a
 vendor…" (`POST /api/bookkeeping/emails/:id/vendor {vendor_id}`) stores the address on the vendor so every later email from
 it links by itself; Unlink (vendor_id 0) removes it. **Match…** (`GET /emails/:id/matches`) scores open bills (same vendor +3,
