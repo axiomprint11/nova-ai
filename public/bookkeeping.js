@@ -1018,12 +1018,12 @@
       document.body.appendChild(el);
     };
     const unapproved = all.filter(x => !x.approved).length;
-    v.innerHTML = '<div class="bk-card"><h2>Vendors &amp; suppliers ' + qHelp('vendors', 'Vendors & suppliers', 'Read from the CRM’s Suppliers and Vendors lists (read-only, refreshed with every daily run); the photo is the CRM’s. They are trusted: a bank line or bill that matches one is linked to it, and BookkeeperAI uses the specialty and the usual category when it proposes. The type is the CRM list the company is in (Supplier, Vendor — new lists appear as new types). Edit names, emails and specialties in the CRM; set the usual category and the bank-statement names here; click a name or logo for the full record. The list refreshes by itself: when you open this tab, hourly, and with every daily run. <b>Approved</b> means BookkeeperAI may link bank lines and bills to the company without asking (CRM entries are approved by themselves); <b>Linked</b> counts the transactions and bills matched to it so far. Vendors first seen on a bill are <span class="bk-src bill">from a bill</span> and wait for your approval.') + '<span class="sp"></span><input class="bk h2-search" name="q" id="vQ" placeholder="Search" title="' + esc(j.synced_at ? 'Synced from the CRM ' + when(j.synced_at) + ' (refreshes itself every hour)' : 'Not synced yet') + '">' + (j.sync_error ? '<span class="bk-muted" style="color:#b91c1c" title="' + esc(j.sync_error) + '">CRM sync failed</span>' : '') + '</h2>' +
+    v.innerHTML = '<div class="bk-card">' + (j.sync_error ? '<div class="bk-muted" style="color:#b91c1c;margin-bottom:8px" title="' + esc(j.sync_error) + '">CRM sync failed — ' + esc(j.sync_error) + '</div>' : '') +
             (all.length ? '<table class="bk bk-dir"><thead><tr><th>' + thFilter('kind', 'Type', FOPTS.kind, F.kind) + '</th><th>' + thFilter('name', 'Name', FOPTS.name) + '</th><th>' + thFilter('contact', 'Contact', FOPTS.contact) + '</th><th>' + thFilter('spec', 'Specialty', FOPTS.spec) + '</th><th>' + thFilter('cat', 'Usual category', FOPTS.cat, F.cat) + '</th><th title="How this company appears on bank statements">Bank name</th>' +
         '<th class="num" title="Bank transactions and bills linked to this company">Linked</th></tr></thead><tbody>' + all.map(row).join('') + '</tbody></table><div class="bk-muted" id="vNone" style="display:none;padding:14px 0">Nothing matches.</div>'
         : '<div class="bk-muted">Nothing synced from the CRM yet — it syncs itself within the hour.</div>') + '</div>';
     const filter = () => {
-      const q = $('vQ').value.trim().toLowerCase(); let n = 0;
+      const q = ''; let n = 0;
       try { localStorage.setItem('bk_vendor_filters', JSON.stringify(F)); } catch (e) {}
       v.querySelectorAll('tr[data-vid]').forEach(tr => {
         const catOk = !F.cat || (F.cat === '__none' ? tr.dataset.cats === '||' : tr.dataset.cats.indexOf('|' + F.cat + '|') > -1);
@@ -1033,7 +1033,7 @@
     };
     const onF = (key, val) => { F[key] = val; if (FOPTS[key] && FOPTS[key].type === 'text') FOPTS[key].value = val; filter(); const th = v.querySelector('.thf[data-thf="' + key + '"]'); if (th) th.outerHTML = thFilter(key, { kind: 'Type', cat: 'Usual category', ap: 'Approved', name: 'Name', contact: 'Contact', spec: 'Specialty' }[key], FOPTS[key], val); thFilterBind(v, FOPTS, onF); };
     thFilterBind(v, FOPTS, onF);
-    $('vQ').oninput = filter; filter();
+    filter();
     v.querySelectorAll('[data-vopen]').forEach(a => a.onclick = (e) => { e.preventDefault(); const x = all.find(y => String(y.id) === a.dataset.vopen); if (x) openVendor(x); });
     v.querySelectorAll('[data-mats]').forEach(a => a.onclick = (e) => { e.preventDefault(); matFilter = { vendor: a.dataset.mats }; show('materials'); });
     const ds = $('dirSync'); if (ds) ds.onclick = async () => { $('dirSync').disabled = true; const r = await post('/api/bookkeeping/directory/sync', {}); if (!r.ok) alert(r.error); else if (r.errors && r.errors.length) alert(r.errors.join('\n')); loadVendors(); };
