@@ -171,9 +171,7 @@ messages kept; the overview has `inbox_messages` and `ai_read_today`.
 ### Open on top, Closed below (1.18.30)
 **Open** = still unread in Gmail (`read_by IS NULL`, not set aside — bill drafts included until Gmail says read);
 **Closed** = closed from here (Mark as read, Mark all, a bill draft once Gmail accepted the read). No Open / Closed
-tabs: each basket lists open emails on top and the closed ones under a "Closed n" divider. Chips are the AI's own labels: **Not read** (all
-open) · **New** (incoming mail since the last scan, not sorted yet) · Bill · Message · Ad · Receipt ·
-Notice · Other · Set aside (1.18.31). A bill draft is tagged Bill whatever it was rated (`kind = 'bill'` on parse); a
+tabs: each basket lists open emails on top and the closed ones under a "Closed n" divider. Chips: **All** (every open email) · **New** (incoming mail since the last scan, not sorted yet) · New · Bills · Transactions (receipts) · Messages, then a **More baskets** dropdown (count = its baskets' open total) holding Ads · Notices · Other · Set aside; the chip takes the chosen basket's name and colour (1.18.55). A bill draft is tagged Bill whatever it was rated (`kind = 'bill'` on parse); a
 rated email with no kind is Other. No heading on the Inbox card; Scan now sits left of the search and shows only on the Unscanned chip. Scan = fetch unread + rate (manual Scan now, or the poll — `poll_min`, now
 60 by default; a one-time `inbox_reset_1830` cleared old closed marks and raised a lower poll to 60).
 
