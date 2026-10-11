@@ -84,8 +84,9 @@ module.exports = function mountBookkeeping(app, deps) {
       invoice_date TEXT, due_date TEXT, terms TEXT, subtotal REAL, tax REAL, total REAL, currency TEXT DEFAULT 'USD', kind TEXT DEFAULT 'invoice',
       duplicate_of INTEGER, lines TEXT, file TEXT, file_name TEXT, status TEXT DEFAULT 'draft', proposal_id INTEGER, note TEXT,
       created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
-    ['scheduled_for TEXT', 'paid_at TEXT', 'paid_note TEXT'].forEach(c => db.run('ALTER TABLE bk_bills ADD COLUMN ' + c, () => {}));
-    ['kind TEXT', 'confidence REAL', 'triaged_at TEXT', 'read_by TEXT', 'body_html TEXT', 'aside INTEGER DEFAULT 0'].forEach(c => db.run('ALTER TABLE bk_emails ADD COLUMN ' + c, () => {}));
+    ['scheduled_for TEXT', 'paid_at TEXT', 'paid_note TEXT', 'receipt_email_id INTEGER'].forEach(c => db.run('ALTER TABLE bk_bills ADD COLUMN ' + c, () => {}));
+    db.run('ALTER TABLE bk_transactions ADD COLUMN receipt_email_id INTEGER', () => {});
+    ['kind TEXT', 'confidence REAL', 'triaged_at TEXT', 'read_by TEXT', 'body_html TEXT', 'aside INTEGER DEFAULT 0', 'vendor_id INTEGER', 'matched_bill_id INTEGER', 'matched_txn_id INTEGER'].forEach(c => db.run('ALTER TABLE bk_emails ADD COLUMN ' + c, () => {}));
     db.run(`CREATE TABLE IF NOT EXISTS bk_proposals (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, ref_table TEXT, ref_id INTEGER, title TEXT,
       payload TEXT, confidence REAL, reason TEXT, status TEXT DEFAULT 'pending', decided_by TEXT, decided_at TEXT, decision TEXT,
       created_at TEXT DEFAULT (datetime('now')))`);
@@ -484,8 +485,9 @@ module.exports = function mountBookkeeping(app, deps) {
           atts.push({ file: file, name: fn, mime: mt, size: buf.length });
         }
         // Unread is unread — our own mail (a forwarded report, a teammate's note) is open too and rated like the rest.
-        await dbRun('INSERT OR IGNORE INTO bk_emails (gmail_id, thread_id, from_addr, subject, received_at, snippet, body, body_html, attachments, status) VALUES (?,?,?,?,?,?,?,?,?,?)',
-          [id, m.threadId, from.slice(0, 200), subject.slice(0, 300), at, (m.snippet || '').slice(0, 300), emailText(m.payload), emailHtml(m.payload), JSON.stringify(atts), 'new']);
+        const vend = await matchVendor(from.replace(/<.*$/, ''), from);
+        await dbRun('INSERT OR IGNORE INTO bk_emails (gmail_id, thread_id, from_addr, subject, received_at, snippet, body, body_html, attachments, status, vendor_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+          [id, m.threadId, from.slice(0, 200), subject.slice(0, 300), at, (m.snippet || '').slice(0, 300), emailText(m.payload), emailHtml(m.payload), JSON.stringify(atts), 'new', vend ? vend.id : null]);
         n++;
       } catch (e) { errlog('gmail message', id, e.message); }
     }
@@ -621,13 +623,15 @@ module.exports = function mountBookkeeping(app, deps) {
   async function directory() {
     if (Date.now() - dirCache.at < 60000) return dirCache.list;
     const rows = await dbAll('SELECT * FROM bk_vendors ORDER BY name');
-    dirCache = { at: Date.now(), list: rows.map(v => Object.assign({}, v, { _n: normV(v.name), _al: String(v.aliases || '').split('\n').map(normV).filter(Boolean), _dom: domainOf(v.email) })) };
+    dirCache = { at: Date.now(), list: rows.map(v => Object.assign({}, v, { _n: normV(v.name), _al: String(v.aliases || '').split('\n').filter(a => a.indexOf('@') < 0).map(normV).filter(Boolean), _em: String(v.aliases || '').split('\n').map(a => a.trim().toLowerCase()).filter(a => a.indexOf('@') > 0), _dom: domainOf(v.email) })) };
     return dirCache.list;
   }
   // The directory entry a bank line / bill belongs to: an alias or the full name inside the text, or the email domain.
   async function matchVendor(text, email) {
     const list = await directory();
     const n = normV(text), dom = domainOf(email);
+    // an address someone linked from the inbox (kept here in bk_vendors.aliases, not in the CRM) wins
+    const addr = String(email || '').toLowerCase().match(/[\w.+-]+@[\w.-]+/); if (addr) { const byAddr = list.find(v => v._em.indexOf(addr[0]) > -1); if (byAddr) return byAddr; }
     if (dom && !FREE_MAIL.test(dom)) { const byDom = list.find(v => v._dom && (v._dom === dom || dom.endsWith('.' + v._dom))); if (byDom) return byDom; }
     if (!n) return null;
     const hits = list.filter(v => v._n.length >= 3 && (n === v._n || (' ' + n + ' ').indexOf(' ' + v._n + ' ') > -1 || v._al.some(a => a.length >= 3 && (' ' + n + ' ').indexOf(' ' + a + ' ') > -1)));
@@ -1362,7 +1366,10 @@ module.exports = function mountBookkeeping(app, deps) {
       try { const g = gmail(); const full = (await g.users.messages.get({ userId: 'me', id: m.gmail_id, format: 'full' })).data; const h = emailHtml(full.payload); if (h) { await dbRun('UPDATE bk_emails SET body_html = ? WHERE id = ?', [h, m.id]); m.body_html = h; } } catch (e) { errlog('email html', e.message); }
     }
     const bill = await dbGet('SELECT id, status FROM bk_bills WHERE email_id = ? ORDER BY id DESC LIMIT 1', [m.id]);
-    res.json({ ok: true, email: m, bill: bill || null, inbox: INBOX });
+    if (!m.vendor_id) { const vend = await matchVendor(String(m.from_addr || '').replace(/<.*$/, ''), m.from_addr); if (vend) { m.vendor_id = vend.id; await dbRun('UPDATE bk_emails SET vendor_id = ? WHERE id = ?', [vend.id, m.id]); } }
+    const vendor = m.vendor_id ? await dbGet('SELECT id, name, kind, photo, email FROM bk_vendors WHERE id = ?', [m.vendor_id]) : null;
+    const matched = { bill: m.matched_bill_id ? await dbGet('SELECT id, vendor, invoice_no, total, status, paid_at FROM bk_bills WHERE id = ?', [m.matched_bill_id]) : null, txn: m.matched_txn_id ? await dbGet('SELECT id, date, name, amount, category FROM bk_transactions WHERE id = ?', [m.matched_txn_id]) : null };
+    res.json({ ok: true, email: m, bill: bill || null, vendor: vendor || null, matched, inbox: INBOX });
   });
   app.get('/api/bookkeeping/emails/:id/att/:i', ...guard, async (req, res) => {
     const m = await dbGet('SELECT attachments FROM bk_emails WHERE id = ?', [parseInt(req.params.id)]); let atts = []; try { atts = JSON.parse(m && m.attachments || '[]'); } catch (e) {}
@@ -1382,6 +1389,71 @@ module.exports = function mountBookkeeping(app, deps) {
     else await dbRun("UPDATE bk_emails SET status = 'skipped', read_by = 'user', note = ? WHERE id = ?", ['marked read by ' + userId(req), id]);
     await audit(userId(req), 'email.read', id, null); res.json({ ok: true, gmail: gm });
   });
+  // Link the sender to a directory vendor: the address goes into bk_vendors.aliases (ours, not the CRM's contact), so
+  // every future email from it links by itself. vendor_id 0 unlinks this email.
+  app.post('/api/bookkeeping/emails/:id/vendor', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), vid = parseInt(req.body && req.body.vendor_id) || 0;
+    const em = await dbGet('SELECT id, from_addr FROM bk_emails WHERE id = ?', [id]); if (!em) return res.json({ ok: false, error: 'No such email' });
+    const addr = (String(em.from_addr || '').toLowerCase().match(/[\w.+-]+@[\w.-]+/) || [])[0];
+    if (vid) {
+      const v = await dbGet('SELECT id, aliases FROM bk_vendors WHERE id = ?', [vid]); if (!v) return res.json({ ok: false, error: 'No such vendor' });
+      if (addr) { const al = String(v.aliases || '').split('\n').filter(Boolean); if (al.indexOf(addr) < 0) { al.push(addr); await dbRun('UPDATE bk_vendors SET aliases = ? WHERE id = ?', [al.join('\n').slice(0, 1000), vid]); dirCache.at = 0; } }
+      await dbRun('UPDATE bk_emails SET vendor_id = ? WHERE id = ? OR (vendor_id IS NULL AND LOWER(from_addr) LIKE ?)', [vid, id, '%' + (addr || '\u0000') + '%']);
+    } else {
+      if (addr) { const v = await dbGet('SELECT id, aliases FROM bk_vendors WHERE id = (SELECT vendor_id FROM bk_emails WHERE id = ?)', [id]); if (v) { await dbRun('UPDATE bk_vendors SET aliases = ? WHERE id = ?', [String(v.aliases || '').split('\n').filter(a => a.trim().toLowerCase() !== addr).join('\n') || null, v.id]); dirCache.at = 0; } }
+      await dbRun('UPDATE bk_emails SET vendor_id = NULL WHERE id = ?', [id]);
+    }
+    await audit(userId(req), 'email.vendor', id, { vendor_id: vid, address: addr }); res.json({ ok: true });
+  });
+  // What a receipt / payment email could belong to: open bills and bank lines by vendor, invoice number and amount.
+  app.get('/api/bookkeeping/emails/:id/matches', ...guard, async (req, res) => {
+    const em = await dbGet('SELECT * FROM bk_emails WHERE id = ?', [parseInt(req.params.id)]); if (!em) return res.json({ ok: false, error: 'No such email' });
+    const text = (em.subject || '') + '\n' + (em.body || em.snippet || '');
+    const nums = Array.from(new Set((text.match(/\b[A-Z]{0,4}-?\d{4,}(?:-\d+)?\b/gi) || []).map(x => x.toUpperCase())));
+    const amts = Array.from(new Set((text.match(/\$?\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})\b/g) || []).map(x => Number(x.replace(/[^0-9.]/g, ''))).filter(n => n > 0)));
+    const bills = await dbAll("SELECT b.id, b.vendor, b.vendor_id, b.invoice_no, b.total, b.status, b.invoice_date, b.due_date, b.paid_at FROM bk_bills b WHERE b.status <> 'rejected' ORDER BY b.id DESC LIMIT 400");
+    const score = (b) => { let sc = 0, why = []; if (em.vendor_id && b.vendor_id === em.vendor_id) { sc += 3; why.push('same vendor'); } const inv = String(b.invoice_no || '').toUpperCase().replace(/\s+/g, ''); if (inv && nums.some(n => n.replace(/-/g, '') === inv.replace(/-/g, '') || inv.indexOf(n) > -1 || n.indexOf(inv) > -1)) { sc += 4; why.push('invoice # ' + b.invoice_no); } if (b.total && amts.some(a => Math.abs(a - b.total) < 0.01)) { sc += 2; why.push('amount ' + b.total); } if (b.status === 'paid') sc -= 1; return { sc, why }; };
+    const billHits = bills.map(b => Object.assign({}, b, score(b))).filter(b => b.sc > 0).sort((a, b) => b.sc - a.sc).slice(0, 8);
+    const since = String(em.received_at || nowIso()).slice(0, 10);
+    const txns = await dbAll("SELECT id, date, name, merchant, amount, category, status, vendor_id FROM bk_transactions WHERE date >= date(?, '-45 days') AND date <= date(?, '+10 days') AND amount < 0 ORDER BY date DESC LIMIT 600", [since, since]);
+    const tscore = (t) => { let sc = 0, why = []; if (em.vendor_id && t.vendor_id === em.vendor_id) { sc += 3; why.push('same vendor'); } if (amts.some(a => Math.abs(a - Math.abs(t.amount)) < 0.01)) { sc += 3; why.push('amount ' + Math.abs(t.amount)); } const vn = normV((em.from_addr || '').replace(/<.*$/, '')); if (vn && normV(t.name + ' ' + (t.merchant || '')).indexOf(vn.split(' ')[0]) > -1 && vn.split(' ')[0].length > 3) { sc += 1; why.push('name'); } return { sc, why }; };
+    const txnHits = txns.map(t => Object.assign({}, t, tscore(t))).filter(t => t.sc > 0).sort((a, b) => b.sc - a.sc).slice(0, 8);
+    res.json({ ok: true, numbers: nums.slice(0, 10), amounts: amts.slice(0, 10), bills: billHits, transactions: txnHits });
+  });
+  // Match the email to a bill (→ paid, paid_at = the email's date) or to a bank line (the receipt for it).
+  app.post('/api/bookkeeping/emails/:id/match', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), bid = parseInt(req.body && req.body.bill_id) || 0, tid = parseInt(req.body && req.body.transaction_id) || 0;
+    const em = await dbGet('SELECT id, received_at FROM bk_emails WHERE id = ?', [id]); if (!em) return res.json({ ok: false, error: 'No such email' });
+    if (bid) {
+      const b = await dbGet('SELECT id, status FROM bk_bills WHERE id = ?', [bid]); if (!b) return res.json({ ok: false, error: 'No such bill' });
+      const day = String(em.received_at || nowIso()).slice(0, 10);
+      if (b.status !== 'paid') await dbRun("UPDATE bk_bills SET status = 'paid', paid_at = ?, paid_note = ?, receipt_email_id = ?, updated_at = datetime('now') WHERE id = ?", [day, 'receipt email matched by ' + userId(req), id, bid]);
+      else await dbRun("UPDATE bk_bills SET receipt_email_id = ?, updated_at = datetime('now') WHERE id = ?", [id, bid]);
+      await dbRun('UPDATE bk_emails SET matched_bill_id = ? WHERE id = ?', [bid, id]);
+      await audit(userId(req), 'email.match', id, { bill_id: bid, was: b.status });
+    } else if (tid) {
+      const t = await dbGet('SELECT id FROM bk_transactions WHERE id = ?', [tid]); if (!t) return res.json({ ok: false, error: 'No such transaction' });
+      await dbRun("UPDATE bk_transactions SET receipt_email_id = ?, updated_at = datetime('now') WHERE id = ?", [id, tid]);
+      await dbRun('UPDATE bk_emails SET matched_txn_id = ? WHERE id = ?', [tid, id]);
+      await audit(userId(req), 'email.match', id, { transaction_id: tid });
+    } else if (req.body && req.body.clear) {
+      const cur = await dbGet('SELECT matched_bill_id, matched_txn_id FROM bk_emails WHERE id = ?', [id]);
+      if (cur.matched_bill_id) await dbRun('UPDATE bk_bills SET receipt_email_id = NULL WHERE id = ? AND receipt_email_id = ?', [cur.matched_bill_id, id]);
+      if (cur.matched_txn_id) await dbRun('UPDATE bk_transactions SET receipt_email_id = NULL WHERE id = ? AND receipt_email_id = ?', [cur.matched_txn_id, id]);
+      await dbRun('UPDATE bk_emails SET matched_bill_id = NULL, matched_txn_id = NULL WHERE id = ?', [id]);
+      await audit(userId(req), 'email.unmatch', id, cur);
+    } else return res.json({ ok: false, error: 'Match to what?' });
+    res.json({ ok: true });
+  });
+  // Several picked emails at once: read in Gmail first, then closed here.
+  app.post('/api/bookkeeping/inbox/read', ...guard, async (req, res) => {
+    const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : []).map(x => parseInt(x)).filter(Boolean).slice(0, 500);
+    if (!ids.length) return res.json({ ok: false, error: 'Nothing picked.' });
+    const open = (await dbAll("SELECT id FROM bk_emails WHERE id IN (" + ids.map(() => '?').join(',') + ") AND read_by IS NULL AND COALESCE(aside, 0) = 0", ids)).map(r => r.id);
+    const gm = await markReadInGmail(open, userId(req)); if (!gm.ok) return res.json({ ok: false, error: gm.error });
+    if (open.length) await dbRun("UPDATE bk_emails SET status = CASE WHEN status = 'parsed' THEN 'parsed' ELSE 'skipped' END, read_by = 'user', note = COALESCE(note, '') || ' — marked read by ' || ? WHERE id IN (" + open.map(() => '?').join(',') + ")", [userId(req)].concat(open));
+    await audit(userId(req), 'email.read', null, { ids: open }); res.json({ ok: true, n: open.length });
+  });
   app.post('/api/bookkeeping/emails/:id/unread', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), em = await dbGet('SELECT id, status, kind, gmail_id FROM bk_emails WHERE id = ?', [id]);
     if (!em) return res.json({ ok: false, error: 'No such email' });
@@ -1394,6 +1466,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!em) return res.json({ ok: false, error: 'No such email' });
     try { const id = await parseEmail(em, userId(req)); res.json({ ok: true, bill_id: id }); } catch (e) { res.json({ ok: false, error: e.message }); }
   });
+  app.get('/api/bookkeeping/vendors/pick', ...guard, async (req, res) => res.json({ ok: true, vendors: await dbAll('SELECT id, name, kind, photo, email FROM bk_vendors ORDER BY name') }));
   app.get('/api/bookkeeping/rules', ...guard, async (req, res) => res.json({ ok: true, rules: await dbAll('SELECT * FROM bk_rules WHERE active = 1 ORDER BY id DESC'), vendors: await dbAll('SELECT * FROM bk_vendors ORDER BY name') }));
   app.post('/api/bookkeeping/rules', ...guard, async (req, res) => {
     const b = req.body || {};

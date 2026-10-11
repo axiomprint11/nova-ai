@@ -177,6 +177,17 @@ Notice · Other · Set aside (1.18.31). A bill draft is tagged Bill whatever it 
 rated email with no kind is Other. No heading on the Inbox card; Scan now sits left of the search and shows only on the Unscanned chip. Scan = fetch unread + rate (manual Scan now, or the poll — `poll_min`, now
 60 by default; a one-time `inbox_reset_1830` cleared old closed marks and raised a lower poll to 60).
 
+### Sender → vendor, Match, multi-select (1.18.37)
+The reading pane shows the sender's **vendor** (`bk_emails.vendor_id`, set on scan / open by `matchVendor()` — now also by
+an exact address kept in `bk_vendors.aliases`, lines with an `@`, Nova-side only, never the CRM's contact). "Link … to a
+vendor…" (`POST /api/bookkeeping/emails/:id/vendor {vendor_id}`) stores the address on the vendor so every later email from
+it links by itself; Unlink (vendor_id 0) removes it. **Match…** (`GET /emails/:id/matches`) scores open bills (same vendor +3,
+invoice number seen in subject/body +4, amount +2, paid −1) and bank lines of the last 45 days (vendor +3, amount +3, name +1);
+one candidate asks to confirm, several open a chooser. `POST /emails/:id/match {bill_id | transaction_id | clear}`: a bill
+becomes **paid** on the email's date (`paid_note`, `bk_bills.receipt_email_id`), a bank line keeps the email as its receipt
+(`bk_transactions.receipt_email_id`); `bk_emails.matched_bill_id / matched_txn_id` show it in the pane. Rows have a
+checkbox (hover the dot): a selection bar offers Mark as read (`POST /inbox/read {ids}`, Gmail first) and Move to.
+
 ### Gmail is the truth (1.18.22)
 Open / closed follows Gmail's UNREAD label both ways: an open row no longer unread in Gmail (someone read it there) is
 **deleted** from Nova (1.18.25 — Closed holds only what was closed from here; a one-time purge `inbox_reset_1825` emptied Closed), and the scan **re-opens** closed rows (not set-aside ones) that are unread in Gmail again (`unread_again` in the scan
