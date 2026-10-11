@@ -237,7 +237,39 @@ the popover flips above when short of room. Vendors: Type (the tag sits under th
 Transactions (Categorized): Date (period presets + custom range), Vendor, Account, Amount (min–max), Category, Set by —
 the old period / $ bar above the table is gone; a "Filtered · Clear filters" line shows when anything is set.
 
-### Transactions tab
+### Purchases tab (1.19.0)
+The Transactions tab became **Purchases**, with four views: **Purchases** · **Bank feed** (the old transactions views:
+All / Pending / New / Categorized) · **Waiting for the bank** · **Not received**. A purchase (`bk_purchases`) is the hub
+record everything we bought attaches to, with four slots — bill (`bill_id`), bank line (`txn_ids`), confirmation email
+(`confirm_email_id`) and arrival emails (`arrival_email_ids`); `bk_emails`, `bk_bills` and `bk_transactions` carry
+`purchase_id`. Status (`purchaseStatus()`): cancelled → no bank line and no bill paid → **awaiting payment** / bill paid or
+confirmation only → **awaiting bank** → goods not here → **not received** / **partly received** → **closed**. Every
+categorized bank line (amount > 0) that is in no purchase becomes one by itself (`ensureTxnPurchases`, `no_paperwork=1`),
+so the list is the full spend; a bill made from the inbox opens a purchase at once.
+
+**Goods or service** comes from the chart of accounts: each type of expense has an **Expects delivery** flag
+(`chart_json`, `delivery`; default from the name — cost of goods, supplies, equipment, inventory, material, asset) and
+the purchase copies it as `expects_delivery`; the row's icon button flips it for one purchase
+(`POST /purchases/:id/flag`). Goods purchases show Received / Partly / Cancel buttons (`POST /purchases/:id/receive
+{status: yes|partial|no|cancel|reopen, note}`); nothing is ever marked received by the AI.
+
+**Inbox buttons.** Besides Bill, the reading pane has **Transaction** (an order confirmation / receipt: proof of a
+payment) and **Arrival** (a delivery confirmation). Both read the email with the light model (`extractPayment`: vendor,
+amount, date, order number, what) and ask: Transaction (`POST /emails/:id/transaction`) offers the bill with the same
+number (becomes paid), bank lines with the same amount (to the cent, −10/+20 days, same vendor first — always ask,
+there is no tolerance), open purchases, or **Wait for the bank**, which starts a purchase under *Waiting for the bank*;
+when the bank line lands Nova proposes it on the row ("1 bank line matches" → `GET /purchases/:id/suggest`,
+`POST /purchases/:id/attach`). Arrival (`POST /emails/:id/arrival`) lists purchases by order number, vendor and date;
+**All here** / **Part** records the arrival (or starts a purchase when nothing matches). Arrival closes nothing else.
+Both leave the email handled (closed, read in Gmail) and are logged (`email.transaction`, `email.arrival`, shown in the
+email's history).
+
+**Alerts** (Settings → Alerts): purchases waiting for the bank for more than `waiting_days` (30) and goods not received
+after `notreceived_days` (30) are emailed as one list to `alert_to` (gary@axiomprint.com, `BOOKKEEPER_ALERT_TO`) every
+morning at `alert_at` (08:00 LA) until handled; **Send now** / `POST /purchases/alert`. Sent as order@ via `sendMail`.
+The Connections icon is now **Settings** (gear).
+
+### Bank feed (the old Transactions tab)
 Tabs All / **Pending** (the default — BookkeeperAI proposed a category or asked a question and waits for you) / New (synced from
 the bank, not looked at yet) / Categorized, with counts (`by_status`) except on Categorized; the main-tab badge counts
 transactions still without a decided category (`txn_open`). Open rows have no Set button — picking a category sets it.
@@ -291,8 +323,8 @@ a category it approves the proposal), `add_rule`, `add_category`, `run_now`, `ba
 `bk_accounts` (Plaid items), `bk_transactions`, `bk_rules` (vendor → category, keyword → category; made from approvals
 with "remember"), `bk_vendors` (approved flag — new vendors always ask), `bk_emails`, `bk_bills` (+ `lines` JSON,
 `duplicate_of`), `bk_proposals` (type `category` | `bill`; status pending → approved / edited / rejected), `bk_questions`,
-`bk_briefs`, `bk_runs`, `bk_audit`, `bk_chat`, `bk_settings` (run_at, poll_min, threshold 0.75, categories = the chart
-of accounts, notes for the AI, chat_webhook, chat_space).
+`bk_purchases` (the purchase hub; `purchase_id` on emails, bills, transactions), `bk_briefs`, `bk_runs`, `bk_audit`, `bk_chat`, `bk_settings` (run_at, poll_min, threshold 0.75, categories = the chart
+of accounts, notes for the AI, chat_webhook, chat_space, waiting_days, notreceived_days, alert_to, alert_at).
 
 ## Open decisions (from the spec, still open)
 1. Source of truth for bills (BILL vs QuickBooks) — until decided, approved bills stay in Nova (`bk_bills.status =

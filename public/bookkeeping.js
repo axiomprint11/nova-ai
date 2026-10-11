@@ -22,6 +22,7 @@
   const BILL_SUBS = { pending: ['draft', 'rejected'], approved: ['approved'], scheduled: ['scheduled'], paid: ['paid'] };
   let billSub = 'pending';
   const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, chart: loadChart, rules: loadRules, materials: loadMaterials }, first: 'vendors' },
+    purchases: { bar: 'subPurchases', subs: { list: () => loadPurchases('list'), bank: loadTxns, waiting: () => loadPurchases('waiting'), notreceived: () => loadPurchases('notreceived') }, first: 'list' },
     bills: { bar: 'subBills', subs: { pending: () => loadBills('pending'), approved: () => loadBills('approved'), scheduled: () => loadBills('scheduled'), paid: () => loadBills('paid') }, first: 'pending' } };
   document.querySelectorAll('.bk-sub button').forEach(b => b.onclick = () => show(b.closest('.bk-view').dataset.v, b.dataset.s));
   const lastSub = {}; Object.keys(TABS).forEach(k => { try { lastSub[k] = localStorage.getItem('bk_sub_' + k) || TABS[k].first; } catch (e) { lastSub[k] = TABS[k].first; } });
@@ -38,7 +39,7 @@
       try { history.replaceState(null, '', '/bookkeeping?tab=' + v + '&sub=' + sub); } catch (e) {}
       return;
     }
-    ({ brief: loadBrief, txns: loadTxns, inbox: loadInbox, conn: loadConn, activity: loadActivity })[v]();
+    ({ brief: loadBrief, inbox: loadInbox, conn: loadConn, activity: loadActivity })[v]();
     try { history.replaceState(null, '', '/bookkeeping?tab=' + v); } catch (e) {}
   }
   // A person as a small face (photo or initial) with the name on hover; the agent, executor and poll keep their word.
@@ -373,6 +374,63 @@
       '<div class="tx-chart"><div class="tx-ct">By type of expense <span class="bk-dim">click to filter</span></div>' + types.slice(0, 10).map(t => { const st = styleOf(t.type); return '<div class="tx-type" data-rtype="' + esc(t.type) + '">' + tile(st.color, st.icon, 'sm', '') + '<span class="tx-tn">' + esc(t.type) + '</span><span class="tx-tbar"><span style="width:' + Math.round(t.spent / maxT * 100) + '%;background:' + esc(st.color) + '"></span></span><b>' + usd(t.spent) + '</b></div>'; }).join('') + '</div>' +
       '<div class="tx-chart"><div class="tx-ct">Top vendors <span class="bk-dim">click to filter</span></div>' + (T.by_vendor || []).slice(0, 8).map(x => '<div class="tx-type"' + (x.vendor_id ? ' data-rvendor="' + x.vendor_id + '"' : '') + '><span class="tx-tn">' + esc(x.vendor || '—') + '</span><span class="bk-dim">' + x.n + '</span><b>' + usd(x.spent) + '</b></div>').join('') + '</div></div></div>';
   }
+  // ---------------------------------------------------------------- purchases: the hub list, waiting for the bank, not received
+  const SLOT_ICON = { bill: 'file', bank: 'landmark', conf: 'receipt', arr: 'package' };
+  const slots = (p) => '<span class="pu-slots">' +
+    '<span class="pu-slot bill' + (p.bill ? ' on' : '') + '" title="' + esc(p.bill ? 'Bill #' + p.bill.id + ' · ' + p.bill.status : 'No bill') + '">' + iconSvg('file') + '</span>' +
+    '<span class="pu-slot bank' + (p.txns.length ? ' on' : '') + '" title="' + esc(p.txns.length ? p.txns.map(t => t.date + ' ' + t.name + ' ' + usd(Math.abs(t.amount))).join(', ') : p.no_paperwork ? 'Bank line (no paperwork expected)' : 'No bank line yet') + '">' + iconSvg('landmark') + '</span>' +
+    '<span class="pu-slot conf' + (p.confirm ? ' on' : '') + '" title="' + esc(p.confirm ? 'Confirmation: ' + p.confirm.subject : 'No confirmation email') + '">' + iconSvg('receipt') + '</span>' +
+    '<span class="pu-slot arr' + (p.arrivals ? ' on' : '') + '" title="' + esc(p.arrivals ? p.arrivals + ' arrival email' + (p.arrivals === 1 ? '' : 's') : p.expects_delivery ? 'No arrival yet' : 'Nothing to receive') + '">' + iconSvg('package') + '</span></span>';
+  const puStatus = (p) => '<span class="pu-st ' + (p.late ? 'late' : p.status === 'closed' ? 'closed' : p.status === 'awaiting bank' ? 'bank' : /received/.test(p.status) ? 'recv' : '') + '">' + esc(p.status) + (p.late ? ' · ' + p.days + ' days' : '') + '</span>';
+  async function loadPurchases(view) {
+    const v = $(view === 'waiting' ? 'vPurchWaiting' : view === 'notreceived' ? 'vPurchNotReceived' : 'vPurchList');
+    if (!ov) await overview();
+    const q = (v.querySelector('input[name=q]') || {}).value || '';
+    const j = await api('/api/bookkeeping/purchases?view=' + view + '&q=' + encodeURIComponent(q)); if (!j.ok) { v.innerHTML = '<div class="bk-card">' + esc(j.error) + '</div>'; return; }
+    const rows = j.purchases || [];
+    $('nWaiting').textContent = j.counts.waiting || ''; $('nNotReceived').textContent = j.counts.notreceived || '';
+    const S = ov.settings;
+    const intro = view === 'waiting' ? 'Emails you marked Transaction: proof of a payment with no bank line yet. Nova proposes the bank line when it lands (same amount to the cent); you confirm. After ' + esc(S.waiting_days) + ' days they are emailed to ' + esc(S.alert_to) + '.'
+      : view === 'notreceived' ? 'Goods bought (by category) with no arrival attached. Mark them received when they come, partly received with a note, or cancelled. After ' + esc(S.notreceived_days) + ' days they are emailed to ' + esc(S.alert_to) + '.'
+      : 'Everything we bought, one row per purchase, with its four slots: bill · bank line · confirmation · arrival. Hover a slot for what is in it.';
+    const row = (p) => '<tr data-pid="' + p.id + '"><td>' + esc(p.date || '') + '</td><td><b>' + esc(p.vendor || '?') + '</b>' + (p.order_no ? '<div class="bk-muted">#' + esc(p.order_no) + '</div>' : '') + (p.note ? '<div class="bk-dim">' + esc(p.note) + '</div>' : '') + '</td>' +
+      '<td class="num">' + (p.amount != null ? usd(p.amount) : '<span class="bk-dim">—</span>') + '</td><td>' + (p.category ? catLabel(p.category) : '<span class="bk-dim">—</span>') + '</td><td>' + slots(p) + '</td><td>' + puStatus(p) + '</td>' +
+      '<td class="pu-acts">' + (p.status === 'awaiting bank' && p.suggest ? '<button class="bk-btn sm p" data-sug="' + p.id + '">' + p.suggest + ' bank line' + (p.suggest === 1 ? '' : 's') + ' match</button>' : p.status === 'awaiting bank' ? '<button class="bk-btn sm" data-sug="' + p.id + '">Pick bank line…</button>' : '') +
+        (p.expects_delivery && p.received !== 'yes' && !p.cancelled ? '<button class="bk-btn sm" data-recv="' + p.id + '" data-s="yes">Received</button><button class="bk-btn sm" data-recv="' + p.id + '" data-s="partial">Partly</button>' : '') +
+        (!p.cancelled && p.status !== 'closed' ? '<button class="bk-btn sm" data-recv="' + p.id + '" data-s="cancel" title="Cancelled or refunded — stops the reminders">Cancel</button>' : p.cancelled ? '<button class="bk-btn sm" data-recv="' + p.id + '" data-s="reopen">Reopen</button>' : '') +
+        (p.expects_delivery ? '<button class="bk-btn sm ico" data-flag="' + p.id + '" data-e="0" title="This is a service, nothing arrives">' + iconSvg('zap') + '</button>' : '<button class="bk-btn sm ico" data-flag="' + p.id + '" data-e="1" title="Goods — something should arrive">' + iconSvg('package') + '</button>') + '</td></tr>';
+    v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top"><span class="bk-muted" style="flex:1;min-width:0">' + intro + '</span><input name="q" placeholder="Search" value="' + esc(q) + '" style="flex:0 0 160px"></div>' +
+      '<table class="bk pu-table"><thead><tr><th>Date</th><th>Vendor</th><th class="num">Amount</th><th>Category</th><th>Paperwork</th><th>Status</th><th></th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table>' +
+      (!rows.length ? '<div class="bk-muted" style="padding:14px 0">' + (view === 'list' ? 'No purchases yet. They appear when you press Bill, Transaction or Arrival on an email, or when a bank line is categorized.' : 'Nothing here.') + '</div>' : '') + '</div>';
+    v.querySelector('input[name=q]').onkeydown = (e) => { if (e.key === 'Enter') loadPurchases(view); };
+    v.querySelectorAll('[data-recv]').forEach(b => b.onclick = async () => {
+      const st = b.dataset.s; let note = '';
+      if (st === 'partial' || st === 'cancel') { note = await askText(st === 'partial' ? 'What arrived, what is missing?' : 'Why? (cancelled, refunded, returned…)', { title: st === 'partial' ? 'Partly received' : 'Cancel this purchase' }); if (note == null) return; }
+      const r = await post('/api/bookkeeping/purchases/' + b.dataset.recv + '/receive', { status: st, note }); if (!r.ok) return alert(r.error); loadPurchases(view); overview();
+    });
+    v.querySelectorAll('[data-flag]').forEach(b => b.onclick = async () => { const r = await post('/api/bookkeeping/purchases/' + b.dataset.flag + '/flag', { expects_delivery: b.dataset.e === '1' }); if (!r.ok) return alert(r.error); loadPurchases(view); });
+    v.querySelectorAll('[data-sug]').forEach(b => b.onclick = async () => {
+      const pid = b.dataset.sug, j2 = await api('/api/bookkeeping/purchases/' + pid + '/suggest'); const list = j2.transactions || [];
+      const el = document.createElement('div'); el.className = 'bk-modal';
+      el.innerHTML = '<div class="bk-modal-box" style="width:min(520px,100%)"><div class="bk-modal-title">' + (list.length ? 'Which bank line paid this?' : 'No bank line matches yet') + '</div><div class="bk-muted" style="margin-bottom:8px">' + (list.length ? 'Same amount to the cent, within a few days. Pick one to attach it.' : 'Nothing in the bank feed has this exact amount yet. Sync the bank, or wait — a different amount always asks, never links.') + '</div>' +
+        (list.length ? '<div class="vp-list">' + list.map(t => '<div class="vp-i" data-t="' + t.id + '"><span class="mv-ic" style="--kc:#1e40af;--kbg:#dbeafe">' + iconSvg('landmark') + '</span><span class="vp-n">' + esc(t.date) + ' · ' + esc(t.merchant || t.name) + ' <small>' + usd(Math.abs(t.amount)) + ' · ' + esc(t.account_name || '') + (t.same_vendor ? ' · same vendor' : '') + '</small></span></div>').join('') + '</div>' : '') +
+        '<div class="bk-ask-acts"><button class="bk-btn" data-no>' + (list.length ? 'Cancel' : 'Close') + '</button></div></div>';
+      document.body.appendChild(el); el.querySelector('[data-no]').onclick = () => el.remove(); el.onclick = (ev) => { if (ev.target === el) el.remove(); };
+      el.querySelectorAll('[data-t]').forEach(i => i.onclick = async () => { el.remove(); const r = await post('/api/bookkeeping/purchases/' + pid + '/attach', { transaction_id: Number(i.dataset.t) }); if (!r.ok) return alert(r.error); loadPurchases(view); overview(); });
+    });
+  }
+  // A one-line text question (note), resolves the text or null.
+  function askText(label, opt) {
+    opt = opt || {};
+    return new Promise((resolve) => {
+      const el = document.createElement('div'); el.className = 'bk-modal bk-ask';
+      el.innerHTML = '<div class="bk-modal-box bk-ask-box">' + (opt.title ? '<div class="bk-modal-title">' + esc(opt.title) + '</div>' : '') + '<div class="bk-ask-text">' + esc(label) + '</div><input class="bk" id="askTxt" style="width:100%;margin-top:10px" placeholder="Optional note"><div class="bk-ask-acts"><button class="bk-btn" data-no>Cancel</button><button class="bk-btn p" data-yes>' + esc(opt.ok || 'OK') + '</button></div></div>';
+      document.body.appendChild(el); const inp = el.querySelector('#askTxt'); inp.focus();
+      const done = (v) => { el.remove(); resolve(v); };
+      inp.onkeydown = (e) => { if (e.key === 'Enter') done(inp.value.trim()); if (e.key === 'Escape') done(null); };
+      el.querySelector('[data-no]').onclick = () => done(null); el.querySelector('[data-yes]').onclick = () => done(inp.value.trim()); el.onclick = (e) => { if (e.target === el) done(null); };
+    });
+  }
   async function loadTxns() {
     const v = $('vTxns');
     if (!ov) await overview();
@@ -639,6 +697,8 @@
         case 'vendor': return d.vendor_id ? 'Linked sender to a vendor' + (d.address ? ' (' + esc(d.address) + ')' : '') : 'Unlinked sender';
         case 'match': return d.bill_id ? 'Matched to <b>bill #' + esc(d.bill_id) + '</b>' + (d.was && d.was !== 'paid' ? ' → paid' : '') : 'Matched to bank line #' + esc(d.transaction_id);
         case 'unmatch': return 'Match removed';
+        case 'transaction': return 'Marked as a transaction → <b>purchase #' + esc(d.purchase_id) + '</b>' + (d.bill_id ? ' (bill #' + esc(d.bill_id) + ' paid)' : d.transaction_id ? ' (bank line matched)' : ' (waiting for the bank)');
+        case 'arrival': return 'Arrival → <b>purchase #' + esc(d.purchase_id) + '</b> · ' + (d.received === 'partial' ? 'partly received' : 'received');
         default: return esc(h.action);
       }
     };
@@ -657,6 +717,42 @@
     const paint = () => { const q = $('vpQ').value.trim().toLowerCase(); const hits = list.filter(v => !q || (v.name + ' ' + (v.email || '')).toLowerCase().indexOf(q) > -1).slice(0, 60); $('vpList').innerHTML = hits.map(v => '<div class="vp-i" data-v="' + v.id + '">' + (v.photo ? '<img src="' + esc(v.photo) + '" alt="">' : '<span class="em-vinit">' + esc(v.name.charAt(0)) + '</span>') + '<span class="vp-n">' + esc(v.name) + (v.email ? ' <small>' + esc(v.email) + '</small>' : '') + '</span>' + (v.kind ? '<span class="bk-src ' + esc(v.kind) + '">' + esc(v.kind) + '</span>' : '') + '</div>').join('') || '<div class="bk-muted" style="padding:10px">No vendor matches.</div>'; $('vpList').querySelectorAll('.vp-i').forEach(i => i.onclick = () => { el.remove(); pick(Number(i.dataset.v)); }); };
     $('vpQ').oninput = paint; paint(); $('vpQ').focus();
     el.querySelector('[data-no]').onclick = () => el.remove(); el.onclick = (ev) => { if (ev.target === el) el.remove(); };
+  }
+  // Transaction: Nova reads the email for vendor / amount / order number, then offers the bank lines with that exact
+  // amount, a bill with that invoice number, or "wait for the bank" (a purchase with the bank slot empty).
+  async function transactionFlow(id, done) {
+    const j = await post('/api/bookkeeping/emails/' + id + '/transaction', {}); if (!j.ok) return alert(j.error);
+    const x = j.extract || {}, txns = j.transactions || [], bills = j.bills || [], open = j.purchases || [];
+    const el = document.createElement('div'); el.className = 'bk-modal';
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(560px,100%)"><div class="bk-modal-title">Transaction</div>' +
+      '<div class="bk-muted" style="margin-bottom:10px">Read from the email: <b>' + esc(x.vendor || (j.vendor && j.vendor.name) || '?') + '</b>' + (x.amount != null ? ' · <b>' + usd(x.amount) + '</b>' : ' · no amount found') + (x.order_no ? ' · #' + esc(x.order_no) : '') + (x.what ? ' · ' + esc(x.what) : '') + '</div>' +
+      (txns.length ? '<div class="vp-h">Bank lines with this amount</div><div class="vp-list">' + txns.map(t => '<div class="vp-i" data-t="' + t.id + '"><span class="mv-ic" style="--kc:#1e40af;--kbg:#dbeafe">' + iconSvg('landmark') + '</span><span class="vp-n">' + esc(t.date) + ' · ' + esc(t.merchant || t.name) + ' <small>' + usd(Math.abs(t.amount)) + (t.same_vendor ? ' · same vendor' : '') + '</small></span></div>').join('') + '</div>' : '') +
+      (bills.length ? '<div class="vp-h">Bills with this number</div><div class="vp-list">' + bills.map(b => '<div class="vp-i" data-b="' + b.id + '"><span class="mv-ic" style="--kc:#065f46;--kbg:#d1fae5">' + iconSvg('file') + '</span><span class="vp-n">Bill #' + b.id + ' · ' + esc(b.vendor || '') + ' · ' + esc(b.invoice_no || '') + ' <small>' + usd(b.total) + ' · ' + esc(b.status) + ' — becomes paid</small></span></div>').join('') + '</div>' : '') +
+      (open.length ? '<div class="vp-h">Open purchases from this vendor</div><div class="vp-list">' + open.map(p => '<div class="vp-i" data-p="' + p.id + '"><span class="mv-ic">' + iconSvg('cart') + '</span><span class="vp-n">' + esc(p.vendor || '') + (p.order_no ? ' · #' + esc(p.order_no) : '') + ' <small>' + (p.amount != null ? usd(p.amount) : '') + ' · ' + esc(p.date || '') + '</small></span></div>').join('') + '</div>' : '') +
+      '<div class="vp-h">Or</div><div class="vp-list"><div class="vp-i" data-wait><span class="mv-ic" style="--kc:#115e59;--kbg:#ccfbf1">' + iconSvg('clock') + '</span><span class="vp-n">Wait for the bank <small>starts a purchase under Purchases → Waiting for the bank; Nova proposes the bank line when it lands</small></span></div></div>' +
+      '<div class="bk-ask-acts"><button class="bk-btn" data-no>Cancel</button></div></div>';
+    document.body.appendChild(el); el.querySelector('[data-no]').onclick = () => el.remove(); el.onclick = (ev) => { if (ev.target === el) el.remove(); };
+    const go = async (body) => { el.remove(); const r = await post('/api/bookkeeping/emails/' + id + '/transaction', Object.assign({ extract: x }, body)); if (!r.ok) return ask(r.error, { title: 'Not done', ok: 'OK', cancel: false }); done(); };
+    el.querySelectorAll('[data-t]').forEach(i => i.onclick = () => go({ transaction_id: Number(i.dataset.t) }));
+    el.querySelectorAll('[data-b]').forEach(i => i.onclick = () => go({ bill_id: Number(i.dataset.b) }));
+    el.querySelectorAll('[data-p]').forEach(i => i.onclick = () => go({ purchase_id: Number(i.dataset.p) }));
+    el.querySelector('[data-wait]').onclick = () => go({ wait: true });
+  }
+  // Arrival: pick the purchase the goods belong to (order number first, then the same vendor), say all or part came.
+  async function arrivalFlow(id, done) {
+    const j = await post('/api/bookkeeping/emails/' + id + '/arrival', {}); if (!j.ok) return alert(j.error);
+    const x = j.extract || {}, list = j.purchases || [];
+    const el = document.createElement('div'); el.className = 'bk-modal';
+    const rowP = (p) => '<div class="vp-i pu-pick" data-p="' + p.id + '"><span class="mv-ic" style="--kc:#9a3412;--kbg:#fde8d8">' + iconSvg('package') + '</span><span class="vp-n">' + esc(p.vendor || '?') + (p.order_no ? ' · #' + esc(p.order_no) : '') + ' <small>' + (p.amount != null ? usd(p.amount) + ' · ' : '') + esc(p.date || '') + (p.received === 'partial' ? ' · partly received' : '') + (p.why ? ' · ' + esc(p.why) : '') + '</small></span><span class="bk-row" style="gap:4px"><button class="bk-btn sm p" data-all>All here</button><button class="bk-btn sm" data-part>Part</button></span></div>';
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(600px,100%)"><div class="bk-modal-title">Arrival</div>' +
+      '<div class="bk-muted" style="margin-bottom:10px">Read from the email: <b>' + esc(x.vendor || '?') + '</b>' + (x.order_no ? ' · #' + esc(x.order_no) : '') + (x.what ? ' · ' + esc(x.what) : '') + '. Which purchase did this deliver?</div>' +
+      (list.length ? '<div class="vp-list">' + list.map(rowP).join('') + '</div>' : '<div class="bk-muted">No open goods purchase matches. Start one from this arrival; the bill or bank line can attach later.</div>') +
+      '<div class="vp-h">Or</div><div class="vp-list"><div class="vp-i" data-start><span class="mv-ic">' + iconSvg('sparkles') + '</span><span class="vp-n">New purchase from this arrival <small>when nothing above is it</small></span></div></div>' +
+      '<div class="bk-ask-acts"><button class="bk-btn" data-no>Cancel</button></div></div>';
+    document.body.appendChild(el); el.querySelector('[data-no]').onclick = () => el.remove(); el.onclick = (ev) => { if (ev.target === el) el.remove(); };
+    const go = async (body) => { el.remove(); const r = await post('/api/bookkeeping/emails/' + id + '/arrival', Object.assign({ extract: x }, body)); if (!r.ok) return ask(r.error, { title: 'Not done', ok: 'OK', cancel: false }); done(); };
+    el.querySelectorAll('.pu-pick').forEach(row => { const pid = Number(row.dataset.p); row.querySelector('[data-all]').onclick = (ev) => { ev.stopPropagation(); go({ purchase_id: pid, received: 'yes' }); }; row.querySelector('[data-part]').onclick = async (ev) => { ev.stopPropagation(); const note = await askText('What came, what is still missing?', { title: 'Partly received' }); if (note == null) return; go({ purchase_id: pid, received: 'partial', note }); }; });
+    el.querySelector('[data-start]').onclick = () => go({ start: true, received: 'yes' });
   }
   // Match a receipt / payment email to a bill or a bank line. One candidate → confirm; several → choose.
   async function matchPicker(id, done) {
@@ -708,7 +804,8 @@
     el.innerHTML = '<div class="em-box"><div class="em-head"><div class="em-subject">' + esc(dec(e.subject) || '(no subject)') + '</div><button class="em-close" data-close title="Back to the list" aria-label="Close">×</button></div>' +
       '<div class="em-meta"><button class="em-av' + (j.vendor && j.vendor.photo ? ' logo' : '') + (j.vendor ? ' linked' : '') + '" data-vmenu title="' + esc(j.vendor ? 'Vendor · ' + j.vendor.name + (j.vendor.kind ? ' · ' + j.vendor.kind.charAt(0).toUpperCase() + j.vendor.kind.slice(1) : '') + ' — click to change or unlink' : 'Not linked to a vendor — click to link ' + fromAddr(e.from_addr)) + '">' + (j.vendor && j.vendor.photo ? '<img src="' + esc(j.vendor.photo) + '" alt="' + esc(j.vendor.name) + '">' : esc(fromName(e.from_addr).charAt(0).toUpperCase())) + '</button><div class="em-who"><b>' + esc(fromName(e.from_addr)) + '</b> <span class="bk-muted">&lt;' + esc(fromAddr(e.from_addr)) + '&gt;</span><div class="bk-muted">to ' + esc(j.inbox) + '</div></div><div class="em-date bk-muted">' + esc(fmtDate(e.received_at)) + '</div></div>' +
       '<div class="em-acts">' + (k !== 'parsed' ? '<button class="ib-chip k-bill" data-parse title="Read this email in full and file it as a bill draft under Bills">' + iconSvg('file') + 'Bill</button>' : '<button class="ib-chip k-bill on" data-gobills title="This email is a bill draft already — open it under Bills">' + iconSvg('file') + 'Bill →</button>') +
-      (j.matched && (j.matched.bill || j.matched.txn) ? '<span class="em-matched">' + (j.matched.bill ? '<a href="#" data-gobills class="em-match">Matched · bill #' + j.matched.bill.id + ' · ' + esc(j.matched.bill.vendor || '') + (j.matched.bill.invoice_no ? ' ' + esc(j.matched.bill.invoice_no) : '') + ' · ' + usd(j.matched.bill.total) + ' · ' + esc(j.matched.bill.status) + '</a>' : '<span class="em-match">Matched · ' + esc(j.matched.txn.date) + ' ' + esc(j.matched.txn.name) + ' · ' + usd(Math.abs(j.matched.txn.amount)) + '</span>') + '<button class="bk-btn sm" data-unmatch title="Remove the match">×</button></span>' : '<button class="ib-chip k-receipt" data-match title="Match this email to the bill or bank transaction it pays">' + iconSvg('receipt') + 'Transaction</button>') +
+      (j.matched && (j.matched.bill || j.matched.txn) ? '<span class="em-matched">' + (j.matched.bill ? '<a href="#" data-gobills class="em-match">Matched · bill #' + j.matched.bill.id + ' · ' + esc(j.matched.bill.vendor || '') + (j.matched.bill.invoice_no ? ' ' + esc(j.matched.bill.invoice_no) : '') + ' · ' + usd(j.matched.bill.total) + ' · ' + esc(j.matched.bill.status) + '</a>' : '<span class="em-match">Matched · ' + esc(j.matched.txn.date) + ' ' + esc(j.matched.txn.name) + ' · ' + usd(Math.abs(j.matched.txn.amount)) + '</span>') + '<button class="bk-btn sm" data-unmatch title="Remove the match">×</button></span>' : '<button class="ib-chip k-receipt" data-match title="This email is proof of a payment: match it to the bank line or bill, or let it wait for the bank under Purchases">' + iconSvg('receipt') + 'Transaction</button>') +
+      (k !== 'parsed' ? '<button class="ib-chip k-notice" data-arrival title="The goods came: attach this email to the purchase it belongs to">' + iconSvg('package') + 'Arrival</button>' : '') +
       (k !== 'parsed' ? '<button class="ib-chip k-move" data-movebtn>' + iconSvg('folder') + 'Move to <span class="thf-c"></span></button>' : '') +
       (!e.read_by && !e.aside && k !== 'error' ? '<button class="bk-btn sm ico big" data-read title="Mark as read — here and in Gmail" aria-label="Mark as read">' + iconSvg('mailopen') + '</button>' : '<button class="bk-btn sm ico big" data-unread title="Mark as unread — here and in Gmail" aria-label="Mark as unread">' + iconSvg('mail') + '</button>') + '<button class="bk-btn sm ico" data-hist title="History — what was done with this email, and by whom" aria-label="History">' + iconSvg('clock') + '</button>' + '<span class="sp"></span><span class="em-verdict">' + (e.aside ? '<span class="ib-tag skipped">set aside</span>' : '') + (e.kind ? '<span class="ib-kind ' + esc(e.kind) + '"' + (e.note ? ' data-tip="' + esc(e.note) + '"' : '') + '>' + esc(KIND[e.kind] || e.kind) + (e.confidence != null ? ' ' + Math.round(e.confidence * 100) + '%' : '') + '</span>' : '') + (e.note ? '' : '<span class="bk-muted">' + esc(k === 'new' ? 'Not rated yet.' : '') + '</span>') + (j.bill ? ' <a href="#" data-gobills>bill #' + j.bill.id + ' (' + esc(j.bill.status) + ')</a>' : '') + '</span></div>' +
       (e.attachments.length ? '<div class="em-atts">' + e.attachments.map(att).join('') + '</div>' : '') +
@@ -748,7 +845,8 @@
       const closeP = () => { pop.remove(); document.removeEventListener('click', away); }; const away = (ev2) => { if (!pop.contains(ev2.target)) closeP(); }; setTimeout(() => document.addEventListener('click', away), 0);
       pop.querySelectorAll('.thf-i').forEach(i => i.onclick = () => { closeP(); if (i.dataset.a === 'change') linkV(); else unlinkV(); });
     };
-    const mt = el.querySelector('[data-match]'); if (mt) mt.onclick = () => matchPicker(id, () => { openEmail(id); overview(); });
+    const mt = el.querySelector('[data-match]'); if (mt) mt.onclick = () => transactionFlow(id, () => { ibOpen = null; overview(); loadInbox(); });
+    const ar = el.querySelector('[data-arrival]'); if (ar) ar.onclick = () => arrivalFlow(id, () => { ibOpen = null; overview(); loadInbox(); });
     const um = el.querySelector('[data-unmatch]'); if (um) um.onclick = async () => { const r = await post('/api/bookkeeping/emails/' + id + '/match', { clear: 1 }); if (!r.ok) return alert(r.error); openEmail(id); overview(); };
     const hb = el.querySelector('[data-hist]'); if (hb) hb.onclick = (ev) => { ev.stopPropagation(); emailHistory(id, hb); };
     const cl = el.querySelector('[data-close]'); if (cl) cl.onclick = () => { ibOpen = null; close(); const sp = $('ibSplit'); if (sp) sp.classList.add('lines'); document.querySelectorAll('.ib-row.open').forEach(r => r.classList.remove('open')); };
@@ -897,7 +995,7 @@
     if (!ov) await overview();
     const j = await api('/api/bookkeeping/chart');
     coa = j.tree || []; coaUsage = j.usage || {}; if (coaSel >= coa.length) coaSel = 0;
-    v.innerHTML = '<div class="bk-card" style="margin-bottom:14px"><span class="coa-status" id="coaStatus"></span></div>' +
+    v.innerHTML = '<div class="coa-status" id="coaStatus" style="min-height:0;margin:0 0 6px"></div>' +
       '<div class="coa"><div class="coa-list" id="coaList"></div><div class="coa-edit" id="coaEdit"></div></div>';
     drawChart();
   }
@@ -917,12 +1015,14 @@
     if (!t) { ed.innerHTML = '<div class="bk-muted">Add a type of expense on the left.</div>'; return; }
     ed.innerHTML = '<div class="coa-head"><button class="coa-big" id="coaIcon" title="Change icon">' + tile(t.color, t.icon, 'big', t.name.charAt(0)) + '</button><input class="name" id="coaName" value="' + esc(t.name) + '" title="Rename the type"></div>' +
       '<div class="bk-muted" style="margin-bottom:4px">Color</div><div class="coa-colors">' + PALETTE.map(c => '<span class="coa-sw' + (c === t.color ? ' on' : '') + '" data-c="' + c + '" style="background:' + c + '"></span>').join('') + '<input type="color" id="coaCustom" value="' + esc(t.color) + '" title="Any color"></div>' +
+      '<label class="bk-row" style="gap:8px;align-items:center;margin:10px 0 12px;font-size:13px"><input type="checkbox" id="coaDeliv"' + (t.delivery ? ' checked' : '') + '> Expects delivery <span class="bk-muted">— money under this type buys goods that must arrive; purchases get a receiving status and show under Not received</span></label>' +
       '<div class="bk-muted" style="margin-bottom:4px">Sub categories' + (t.children.length ? '' : ' <span class="bk-dim">— none yet: the type itself is used on transactions until you add some</span>') + '</div>' +
       '<div id="coaKids">' + t.children.map((k, i) => '<div class="coa-k" data-k="' + i + '"><span data-kicon="' + i + '" title="Icon">' + tile(t.color, k.icon, iconKey(k.icon) ? '' : 'empty', '·') + '</span><input class="kn" value="' + esc(k.name) + '"><span class="use">' + esc(useText(coaUsage[k.name])) + '</span>' +
         '<span class="coa-mv"><button data-kup="' + i + '"' + (i ? '' : ' disabled') + '>▲</button><button data-kdown="' + i + '"' + (i < t.children.length - 1 ? '' : ' disabled') + '>▼</button></span><button class="del" data-kdel="' + i + '" title="' + (inUse(k.name) ? 'In use — rename it instead' : 'Remove') + '"' + (inUse(k.name) ? ' disabled' : '') + '>×</button></div>').join('') + '</div>' +
       '<div class="coa-foot"><input class="bk" id="coaNewKid" placeholder="New sub category under ' + esc(t.name) + '…"><button class="bk-btn sm p" id="coaAddKid">Add</button></div>' +
       '<div class="coa-foot" style="border-top:0;margin-top:6px;justify-content:flex-end"><button class="bk-btn sm bad" id="coaDelType"' + (t.children.some(k => inUse(k.name)) || inUse(t.name) ? ' disabled title="Some of it is in use"' : '') + '>Delete this type</button></div>';
     $('coaIcon').onclick = (e) => iconPicker(e.currentTarget, t.icon, (ic) => { t.icon = ic; drawChart(); saveChart(); });
+    $('coaDeliv').onchange = () => { t.delivery = $('coaDeliv').checked ? 1 : 0; saveChart(); };
     ed.querySelectorAll('.coa-sw').forEach(sw => sw.onclick = () => { t.color = sw.dataset.c; drawChart(); saveChart(); });
     $('coaCustom').oninput = (e) => { t.color = e.target.value; ed.querySelectorAll('.coa-ic').forEach(el => el.style.setProperty('--c', t.color)); };
     $('coaCustom').onchange = () => { drawChart(); saveChart(); };
@@ -1096,6 +1196,14 @@
     const v = $('vConn'), c = ov.connections, s = ov.settings;
     const pill = (on, yes, no) => '<span class="bk-pill ' + (on ? 'on' : 'off') + '">' + (on ? yes : no) + '</span>';
     v.innerHTML = '<div class="bk-conn">' +
+      // Alerts (purchases waiting / not received)
+      '<div class="bk-card"><h2>Alerts ' + qHelp('alerts', 'Alerts', 'Two things can sit unfinished on a purchase: a payment with no bank line yet (an order confirmation you marked Transaction), and goods with no arrival. Each morning at the time below Nova emails one list of everything older than these limits to the address here, and keeps emailing daily until each one is handled (matched, received, or cancelled).') + '</h2>' +
+      '<div class="bk-row" style="gap:14px;flex-wrap:wrap"><label class="bk-muted">Waiting for the bank after <input class="bk" id="aWait" type="number" min="1" max="365" value="' + esc(s.waiting_days) + '" style="width:64px"> days</label>' +
+      '<label class="bk-muted">Not received after <input class="bk" id="aRecv" type="number" min="1" max="365" value="' + esc(s.notreceived_days) + '" style="width:64px"> days</label>' +
+      '<label class="bk-muted">Email <input class="bk" id="aTo" type="email" value="' + esc(s.alert_to) + '" style="width:220px"></label>' +
+      '<label class="bk-muted" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">at <input class="bk" id="aAt" type="time" value="' + esc(s.alert_at || '08:00') + '" style="width:120px"> LA time</label>' +
+      '<button class="bk-btn sm" id="alertNow" title="Send the list now, whatever the time">Send now</button></div>' +
+      '<div class="bk-muted" style="margin-top:8px">Goods or service is decided by the type of expense in the Chart of Accounts ("expects delivery"), and can be flipped on any purchase.</div></div>' +
       // Plaid
       '<div class="bk-card"><h2>Bank accounts ' + pill(c.plaid.configured, 'Plaid keys set (' + esc(c.plaid.env) + ')', 'Plaid keys not in .env') + '<span class="sp"></span><button class="bk-btn p" id="plaidLink"' + (c.plaid.configured ? '' : ' disabled') + '>Connect a bank</button></h2>' +
       (c.plaid.items.length ? '<table class="bk"><thead><tr><th>Bank</th><th>Accounts</th><th>Last sync</th><th>Status</th><th></th></tr></thead><tbody>' + c.plaid.items.map(it => '<tr><td>' + esc(it.institution) + '</td><td>' + it.accounts.map(a => esc(a.name) + (a.mask ? ' ••' + esc(a.mask) : '')).join('<br>') + '</td><td>' + when(it.last_sync_at) + '</td><td>' + (it.status === 'ok' ? '<span class="bk-pill on">ok</span>' : '<span class="bk-pill err">' + esc(it.error || it.status) + '</span>') + '</td><td><button class="bk-btn sm bad" data-unlink="' + it.id + '">Disconnect</button></td></tr>').join('') + '</tbody></table>'
@@ -1124,7 +1232,8 @@
       '<div class="bk-muted">A bookkeeperAI@axiomprint.com mailbox is not needed for this — the app posts as itself in the space. (If you still want that address, create it in Google Admin and it can be the sender of email copies later.)</div>' +
       '<div class="bk-row" style="margin-top:10px"><button class="bk-btn p" id="connSave">Save</button><span class="bk-muted" id="connMsg"></span></div></div>' +
       '<div class="bk-card"><h2>Who can open this tab</h2><div class="bk-muted">' + esc(c.users.join(', ')) + ' (BOOKKEEPER_USERS in .env; you are signed in as ' + esc(ov.me) + ').</div></div></div>';
-    $('connSave').onclick = async () => { const b = { run_at: $('sRunAt').value, poll_min: $('sPoll').value, backfill_days: $('sBack').value, triage_ad: $('tAd').value / 100, triage_notice: $('tNotice').value / 100, triage_bill: $('tBill').value / 100, triage_message: $('tMsg').value / 100, triage_auto: $('tAuto').checked ? 1 : 0 }; if ($('sHook').value.trim()) b.chat_webhook = $('sHook').value.trim(); await post('/api/bookkeeping/settings', b); $('connMsg').textContent = 'Saved.'; loadConn(); };
+    $('alertNow').onclick = async () => { $('alertNow').disabled = true; const r = await post('/api/bookkeeping/purchases/alert', {}); $('connMsg').textContent = r.ok ? (r.sent ? 'Sent: ' + r.n + ' overdue purchase(s) to ' + ov.settings.alert_to + '.' : 'Nothing overdue — no email sent.') : r.error; $('alertNow').disabled = false; };
+    $('connSave').onclick = async () => { const b = { run_at: $('sRunAt').value, poll_min: $('sPoll').value, backfill_days: $('sBack').value, waiting_days: $('aWait').value, notreceived_days: $('aRecv').value, alert_to: $('aTo').value.trim(), alert_at: $('aAt').value, triage_ad: $('tAd').value / 100, triage_notice: $('tNotice').value / 100, triage_bill: $('tBill').value / 100, triage_message: $('tMsg').value / 100, triage_auto: $('tAuto').checked ? 1 : 0 }; if ($('sHook').value.trim()) b.chat_webhook = $('sHook').value.trim(); await post('/api/bookkeeping/settings', b); $('connMsg').textContent = 'Saved.'; loadConn(); };
     $('chatTest').onclick = async () => { $('chatTest').disabled = true; const r = await post('/api/bookkeeping/chat/test', {}); $('connMsg').textContent = r.ok ? 'Sent via ' + r.posted.via + '.' : r.error; $('chatTest').disabled = false; };
     $('scanNow2').onclick = async () => { $('scanNow2').disabled = true; const r = await post('/api/bookkeeping/scan', {}); $('connMsg').textContent = r.ok ? 'Scanned: ' + r.scan.new + ' new email(s), ' + r.parsed.bills + ' bill draft(s).' : r.error; loadConn(); };
     if ($('watchBtn')) $('watchBtn').onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/gmail/watch', {}); $('connMsg').textContent = r.ok ? 'Watching.' : r.error; loadConn(); };
@@ -1155,5 +1264,5 @@
   }
 
   const qs = new URLSearchParams(location.search), want = qs.get('tab');
-  show(['brief', 'txns', 'bills', 'inbox', 'accounts', 'vendors', 'chart', 'rules', 'materials', 'conn', 'activity'].indexOf(want) > -1 ? want : 'brief', qs.get('sub'));
+  show(['brief', 'purchases', 'list', 'bank', 'waiting', 'notreceived', 'bills', 'inbox', 'accounts', 'vendors', 'chart', 'rules', 'materials', 'conn', 'activity'].indexOf(want) > -1 ? (want === 'txns' ? 'purchases' : want) : 'brief', qs.get('sub'));
 })();
