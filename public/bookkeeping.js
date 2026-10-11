@@ -455,7 +455,9 @@
     const st = (m) => m.status === 'parsed' ? 'parsed' : m.status === 'error' ? 'error' : m.status === 'new' ? 'new' : m.status === 'message' ? 'message' : 'skipped';
     const counts = { all: all.length, parsed: 0, skipped: 0, new: 0, message: 0, ai: 0 }; all.forEach(m => { counts[st(m)] = (counts[st(m)] || 0) + 1; if (m.read_by === 'ai') counts.ai++; });
     const KIND = { advertisement: 'Ad', notification: 'Notice', receipt: 'Receipt', bill: 'Bill', message: 'Message', other: 'Other' };
-    const kindTag = (m) => m.kind ? '<span class="ib-kind ' + esc(m.kind) + '" title="' + esc(m.note || '') + '">' + esc(KIND[m.kind] || m.kind) + (m.confidence != null ? ' ' + Math.round(m.confidence * 100) + '%' : '') + '</span>' : '';
+    // the tag is the basket: a bill draft is a Bill whatever it was rated; rated with nothing fitting = Other
+    const kindOf = (m) => st(m) === 'parsed' ? 'bill' : m.kind || (m.triaged_at ? 'other' : null);
+    const kindTag = (m) => { const k = kindOf(m); return k ? '<span class="ib-kind ' + esc(k) + '" title="' + esc(m.note || '') + '">' + esc(KIND[k] || k) + (m.confidence != null && k === m.kind ? ' ' + Math.round(m.confidence * 100) + '%' : '') + '</span>' : ''; };
     const fromName = (f) => { const m = /^\s*"?([^"<]*?)"?\s*<([^>]+)>/.exec(f || ''); return m ? (m[1].trim() || m[2]) : String(f || '').replace(/^"|"$/g, ''); };
     const fromAddr = (f) => { const m = /<([^>]+)>/.exec(f || ''); return m ? m[1] : String(f || ''); };
     const clip = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.5 8.5a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8"/></svg>';
@@ -465,11 +467,11 @@
     // Baskets are by kind (what BookkeeperAI rated it); inside a basket, Open = still unread in Gmail, Closed = read.
     // Set aside is only what a person parked there. Gmail is the truth for open / closed (the scan syncs both ways).
     const isOpen = (m) => !m.read_by && !m.aside && st(m) !== 'error';   // open = still unread in Gmail (bill drafts included until Gmail says read)
-    const basket = (m) => { if (m.aside) return 'done'; const k = st(m); if (k === 'parsed' || m.kind === 'bill') return 'bill'; if (!m.triaged_at) return 'unrated'; if (k === 'message' || m.kind === 'message') return 'message'; if (m.kind === 'advertisement') return 'ads'; if (m.kind === 'notification' || m.kind === 'receipt') return 'confirm'; return 'other'; };
-    const BASKETS = [['open', 'Not read'], ['unrated', 'Unscanned'], ['message', 'Direct messages'], ['ads', 'Ads'], ['confirm', 'Confirmations'], ['bill', 'Bills'], ['other', 'Other'], ['done', 'Set aside']];
+    const basket = (m) => { if (m.aside) return 'done'; const k = kindOf(m); if (!k) return 'unrated'; return { bill: 'bill', message: 'message', advertisement: 'ads', receipt: 'receipt', notification: 'notice' }[k] || 'other'; };
+    const BASKETS = [['open', 'Not read'], ['unrated', 'Unscanned'], ['bill', 'Bill'], ['message', 'Message'], ['ads', 'Ad'], ['receipt', 'Receipt'], ['notice', 'Notice'], ['other', 'Other'], ['done', 'Set aside']];   // the same words as the AI's tags
     const bc = {}, cc = {};   // open / closed counts per basket
     all.forEach(m => { const b = basket(m); if (b === 'done') { bc.done = (bc.done || 0) + 1; return; } if (isOpen(m)) bc[b] = (bc[b] || 0) + 1; else cc[b] = (cc[b] || 0) + 1; });
-    const OPEN = ['message', 'ads', 'confirm', 'bill', 'other', 'unrated'];
+    const OPEN = ['message', 'ads', 'receipt', 'notice', 'bill', 'other', 'unrated'];
     const billsToRead = all.filter(m => isOpen(m) && basket(m) === 'bill' && st(m) !== 'parsed').length;
     const openN = OPEN.reduce((a, k) => a + (bc[k] || 0), 0), closedN = OPEN.reduce((a, k) => a + (cc[k] || 0), 0); bc.open = openN; cc.open = closedN;
     if (!BASKETS.some(([k]) => k === ibFilter)) ibFilter = 'open';
@@ -488,7 +490,8 @@
       // one action bar per basket: review, then one click for the whole basket
       '<div class="ib-bar ib-acts" id="ibActs">' +
         (bc.ads ? '<span data-for="ads"><span class="bk-muted">Promotions and newsletters, with how sure BookkeeperAI is.</span> <button class="bk-btn sm" data-aside="advertisement">Mark all ' + bc.ads + ' ads as read</button></span>' : '') +
-        (bc.confirm ? '<span data-for="confirm"><span class="bk-muted">Delivery, shipping and payment confirmations.</span> <button class="bk-btn sm" data-aside="confirm">Mark all ' + bc.confirm + ' confirmations as read</button></span>' : '') +
+        (bc.receipt ? '<span data-for="receipt"><span class="bk-muted">Confirmations of payments already made.</span> <button class="bk-btn sm" data-aside="receipt">Mark all ' + bc.receipt + ' receipts as read</button></span>' : '') +
+        (bc.notice ? '<span data-for="notice"><span class="bk-muted">Shipping, delivery, tracking and account notices.</span> <button class="bk-btn sm" data-aside="notification">Mark all ' + bc.notice + ' notices as read</button></span>' : '') +
         (bc.other ? '<span data-for="other"><span class="bk-muted">Rated, but none of the baskets fit — open them, or move them with "Move to".</span> <button class="bk-btn sm" data-aside="other">Mark all ' + bc.other + ' as read</button></span>' : '') +
         (bc.bill ? '<span data-for="bill"><span class="bk-muted">Looks like an invoice or statement. Turning one into a bill reads it in full and files a draft under Bills.</span> ' + (billsToRead ? '<button class="bk-btn sm p" data-parseall>Turn all ' + billsToRead + ' into bills</button>' : '') + '<button class="bk-btn sm" data-aside="bill">Mark all ' + bc.bill + ' as read</button></span>' : '') +
         (bc.message ? '<span data-for="message"><span class="bk-muted">People writing to accounting — for a person to answer.</span> <button class="bk-btn sm" data-aside="message">Mark all ' + bc.message + ' as read</button></span>' : '') +
@@ -525,8 +528,8 @@
       await overview(); setTimeout(loadInbox, 600);
     };
     v.querySelectorAll('[data-aside]').forEach(b => b.onclick = async () => {
-      const k = b.dataset.aside, kinds = k === 'confirm' ? ['notification', 'receipt'] : [k];
-      const n = k === 'confirm' ? bc.confirm : k === 'advertisement' ? bc.ads : k === 'message' ? bc.message : k === 'bill' ? bc.bill : bc.other;
+      const k = b.dataset.aside, kinds = [k];
+      const n = { receipt: bc.receipt, notification: bc.notice, advertisement: bc.ads, message: bc.message, bill: bc.bill, other: bc.other }[k] || 0;
       if (!await ask('They are marked read in Gmail and move to Closed in this basket. Any of them can still be turned into a bill later.', { title: 'Mark ' + n + ' email' + (n === 1 ? '' : 's') + ' as read?', ok: 'Mark as read' })) return;
       b.disabled = true; const r = await post('/api/bookkeeping/inbox/set-aside', { kinds, min: 0 }); if (!r.ok) await ask(r.error, { title: 'Not marked read', ok: 'OK', cancel: false }); await overview(); loadInbox();
     });
@@ -557,7 +560,7 @@
     el.innerHTML = '<div class="em-box"><div class="em-head"><div class="em-subject">' + esc(dec(e.subject) || '(no subject)') + '</div><button class="em-close" data-close title="Back to the list" aria-label="Close">×</button></div>' +
       '<div class="em-meta"><span class="em-av">' + esc(fromName(e.from_addr).charAt(0).toUpperCase()) + '</span><div class="em-who"><b>' + esc(fromName(e.from_addr)) + '</b> <span class="bk-muted">&lt;' + esc(fromAddr(e.from_addr)) + '&gt;</span><div class="bk-muted">to ' + esc(j.inbox) + '</div></div><div class="em-date bk-muted">' + esc(fmtDate(e.received_at)) + '</div></div>' +
       '<div class="em-verdict"><span class="ib-tag ' + k + '">' + esc(k === 'skipped' ? (e.aside ? 'set aside' : e.read_by === 'ai' ? 'read by AI' : e.read_by === 'gmail' ? 'read in Gmail' : 'read') : k === 'message' ? 'for a person' : k === 'parsed' ? 'bill' : k) + '</span>' + (e.kind ? '<span class="ib-kind ' + esc(e.kind) + '">' + esc(KIND[e.kind] || e.kind) + (e.confidence != null ? ' ' + Math.round(e.confidence * 100) + '%' : '') + '</span>' : '') + '<span class="bk-muted">' + (e.note ? noteHtml(e.note) : esc(k === 'new' ? 'Not rated yet.' : '')) + '</span>' + (j.bill ? ' <a href="#" data-gobills>bill #' + j.bill.id + ' (' + esc(j.bill.status) + ')</a>' : '') + '</div>' +
-      '<div class="em-acts">' + (k !== 'parsed' ? '<button class="bk-btn sm p" data-parse>Turn into a bill</button>' : '<button class="bk-btn sm p" data-gobills>Open in Bills →</button>') + (k === 'new' || k === 'message' ? '<button class="bk-btn sm" data-read>Mark as read</button>' : k === 'skipped' ? '<button class="bk-btn sm" data-unread>Mark as unread</button>' : '') + (k !== 'parsed' ? '<select class="bk-sel sm" data-move><option value="">Move to…</option>' + [['bill', 'Bills'], ['message', 'Direct messages'], ['advertisement', 'Ads'], ['notification', 'Confirmations'], ['other', 'Other'], ['aside', 'Set aside']].filter(([kk]) => kk !== (e.aside ? 'aside' : e.kind === 'receipt' ? 'notification' : e.kind)).map(([kk, l]) => '<option value="' + kk + '">' + l + '</option>').join('') + '</select>' : '') + '<span class="sp"></span><span class="bk-dim">#' + e.id + '</span></div>' +
+      '<div class="em-acts">' + (k !== 'parsed' ? '<button class="bk-btn sm p" data-parse>Turn into a bill</button>' : '<button class="bk-btn sm p" data-gobills>Open in Bills →</button>') + (k === 'new' || k === 'message' ? '<button class="bk-btn sm" data-read>Mark as read</button>' : k === 'skipped' ? '<button class="bk-btn sm" data-unread>Mark as unread</button>' : '') + (k !== 'parsed' ? '<select class="bk-sel sm" data-move><option value="">Move to…</option>' + [['bill', 'Bill'], ['message', 'Message'], ['advertisement', 'Ad'], ['receipt', 'Receipt'], ['notification', 'Notice'], ['other', 'Other'], ['aside', 'Set aside']].filter(([kk]) => kk !== (e.aside ? 'aside' : e.kind)).map(([kk, l]) => '<option value="' + kk + '">' + l + '</option>').join('') + '</select>' : '') + '<span class="sp"></span><span class="bk-dim">#' + e.id + '</span></div>' +
       (e.attachments.length ? '<div class="em-atts">' + e.attachments.map(att).join('') + '</div>' : '') +
       (htmlBody || '<div class="em-body">' + esc(body).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>') + '</div>') + '</div>';
     const close = () => { el.innerHTML = '<div class="ib-empty">Select an email to read it</div>'; };

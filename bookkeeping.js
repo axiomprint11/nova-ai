@@ -450,6 +450,8 @@ module.exports = function mountBookkeeping(app, deps) {
       if (parseInt(s.poll_min) < 60) await setSetting('poll_min', 60, 'system');
       await setSetting('inbox_reset_1830', 1, 'system');
     }
+    await dbRun("UPDATE bk_emails SET kind = 'bill' WHERE status = 'parsed' AND kind IS NULL");
+    await dbRun("UPDATE bk_emails SET kind = 'other' WHERE triaged_at IS NOT NULL AND kind IS NULL");
     const ids = unreadIds; let n = 0;
     const seen = new Set((await dbAll('SELECT gmail_id FROM bk_emails')).map(r => r.gmail_id));
     const unread = new Set(unreadIds);
@@ -726,7 +728,7 @@ module.exports = function mountBookkeeping(app, deps) {
       ['bill', 'bk_bills', billId, title, JSON.stringify({ vendor, invoice_no: invNo, invoice_date: j.invoice_date, due_date: j.due_date, total: Number(j.total) || 0, kind: j.kind, duplicate_of: dup ? dup.id : null, new_vendor: !!newVendor, lines: (j.lines || []).slice(0, 60) }),
         conf, String(j.reason || '').slice(0, 300)]);
     await dbRun('UPDATE bk_bills SET proposal_id = ? WHERE id = ?', [p.lastID, billId]);
-    await dbRun("UPDATE bk_emails SET status = 'parsed', note = ? WHERE id = ?", ['Bill draft #' + billId, em.id]);
+    await dbRun("UPDATE bk_emails SET status = 'parsed', kind = 'bill', note = ? WHERE id = ?", ['Bill draft #' + billId, em.id]);
     markReadInGmail([em.id], who).then(r => { if (r.ok && r.n) return dbRun("UPDATE bk_emails SET read_by = 'user' WHERE id = ?", [em.id]); }).catch(() => {});   // handled → read in Gmail → closed here (quietly; the scope may be missing)
     if (conf < s.threshold || dup || newVendor) {
       const q = dup ? 'This looks like a duplicate of bill #' + dup.id + ' (' + vendor + (invNo ? ' #' + invNo : '') + '). Is it the same bill?'
