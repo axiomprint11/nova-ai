@@ -543,6 +543,7 @@
         (() => { const sel = BASKETS.find(([k]) => k === ibFilter && MORE.indexOf(k) > -1); const n = MORE.reduce((a, k) => a + (bc[k] || 0), 0); return '<button class="ib-chip k-' + (sel ? sel[0] : 'more') + (sel ? ' on' : '') + '" data-more title="Ads, Notices, Other, Set aside">' + iconSvg(sel ? sel[2] : 'layers') + (sel ? sel[1] : 'More baskets') + '<b>' + (sel ? (bc[sel[0]] || 0) : n) + '</b><span class="thf-c"></span></button>'; })() + '</span><button class="bk-btn p" id="scanNow2" title="' + esc(ov && ov.connections.gmail.last_scan ? 'Last checked ' + when(ov.connections.gmail.last_scan) : 'Not checked yet') + '">Scan</button><input id="ibQ" placeholder="Search"></div>' +
       // one action bar per basket: review, then one click for the whole basket
       '<div class="ib-bar ib-acts" id="ibActs">' +
+        '<span class="ib-selbar" id="ibSelBar" style="display:none"><b id="ibSelN"></b> selected <button class="bk-btn sm p" data-selread>Mark as read</button><button class="bk-btn sm" data-selmove>Move to <span class="thf-c"></span></button><button class="bk-btn sm" data-selclear>Clear</button></span>' +
         (bc.ads ? '<span data-for="ads"><span class="bk-muted">Promotions and newsletters, with how sure BookkeeperAI is.</span> <button class="bk-btn sm" data-aside="advertisement">Mark all ' + bc.ads + ' ads as read</button></span>' : '') +
         (bc.receipt ? '<span data-for="receipt"><span class="bk-muted">Confirmations of payments already made.</span> <button class="bk-btn sm" data-aside="receipt">Mark all ' + bc.receipt + ' receipts as read</button></span>' : '') +
         (bc.notice ? '<span data-for="notice"><span class="bk-muted">Shipping, delivery, tracking and account notices.</span> <button class="bk-btn sm" data-aside="notification">Mark all ' + bc.notice + ' notices as read</button></span>' : '') +
@@ -550,14 +551,13 @@
         (bc.bill ? '<span data-for="bill"><span class="bk-muted">Looks like an invoice or statement. Turning one into a bill reads it in full and files a draft under Bills.</span> ' + (billsToRead ? '<button class="bk-btn sm p" data-parseall>Turn all ' + billsToRead + ' into bills</button>' : '') + '<button class="bk-btn sm" data-aside="bill">Mark all ' + bc.bill + ' as read</button></span>' : '') +
         (bc.message ? '<span data-for="message"><span class="bk-muted">People writing to accounting — for a person to answer.</span> <button class="bk-btn sm" data-aside="message">Mark all ' + bc.message + ' as read</button></span>' : '') +
         '<span data-for="unrated"><span class="bk-muted">' + (bc.unrated ? 'New mail since the last scan — not sorted yet.' : 'Nothing new. Incoming mail lands here until the next scan (every ' + esc(ov.settings.poll_min) + ' min, or Scan) sorts it into a basket.') + '</span></span>' +
-        '<span class="ib-selbar" id="ibSelBar" style="display:none"><b id="ibSelN"></b> selected <button class="bk-btn sm p" data-selread>Mark as read</button><button class="bk-btn sm" data-selmove>Move to <span class="thf-c"></span></button><button class="bk-btn sm" data-selclear>Clear</button></span>' +
         '</div>' +
       '<div class="ib-split' + (ibOpen ? '' : ' lines') + '" id="ibSplit"><div class="ib-list">' + all.filter(isOpen).map(row).join('') + '<div class="ib-divider" id="ibClosedHead">Closed <b></b></div>' + all.filter(m => !isOpen(m)).map(row).join('') + (!all.length ? '<div class="bk-muted" style="padding:14px 0">Nothing scanned yet — press Scan now.</div>' : '') + '<div class="bk-muted" id="ibNone" style="display:none;padding:14px 10px">Nothing matches.</div></div>' +
       '<div class="ib-pane" id="ibPane"><div class="ib-empty">Select an email to read it</div></div></div></div>';
     const paneOn = (on) => { $('ibSplit').classList.toggle('lines', !on); };
     if (ibOpen && all.some(m => m.id === ibOpen)) { const r0 = v.querySelector('.ib-row[data-m="' + ibOpen + '"]'); if (r0) r0.classList.add('open'); openEmail(ibOpen); }
     const filter = () => { const q = $('ibQ').value.trim().toLowerCase(); let n = 0; v.querySelectorAll('.ib-row').forEach(r => { const inB = ibFilter === 'open' ? OPEN.indexOf(r.dataset.b) > -1 : r.dataset.b === ibFilter; const on = inB && (!q || r.dataset.q.indexOf(q) > -1); r.style.display = on ? '' : 'none'; if (on) n++; }); $('ibNone').style.display = n || !all.length ? 'none' : ''; v.querySelectorAll('#ibActs > [data-for]').forEach(x => { x.style.display = x.dataset.for === ibFilter ? '' : 'none'; }); $('scanNow2').style.display = ibFilter === 'unrated' ? '' : 'none';
-      const acts = $('ibActs'); acts.style.display = Array.from(acts.children).some(c => c.style.display !== 'none') ? '' : 'none';   // no empty row between the chips and the list
+
       const nc = Array.from(v.querySelectorAll('.ib-row[data-o="0"]')).filter(r => r.style.display !== 'none').length; const hd = $('ibClosedHead'); hd.style.display = nc && ibFilter !== 'done' ? '' : 'none'; hd.querySelector('b').textContent = nc; };
     const pickBasket = (f) => { ibFilter = f; loadInbox(); };
     const mb2 = v.querySelector('[data-more]'); if (mb2) mb2.onclick = (ev) => {
@@ -576,7 +576,7 @@
     });
     $('ibQ').oninput = filter; filter();
     // picking several: the checkbox never opens the email; the bar acts on the picked ones
-    const selPaint = () => { const n = ibSel.size; $('ibSelBar').style.display = n ? '' : 'none'; $('ibSelN').textContent = n; const acts = $('ibActs'); acts.style.display = Array.from(acts.children).some(c => c.style.display !== 'none') ? '' : 'none'; v.querySelectorAll('.ib-row').forEach(r => r.classList.toggle('picked', ibSel.has(Number(r.dataset.m)))); };
+    const selPaint = () => { const n = ibSel.size; $('ibSelBar').style.display = n ? '' : 'none'; $('ibSelN').textContent = n; v.querySelectorAll('.ib-row').forEach(r => r.classList.toggle('picked', ibSel.has(Number(r.dataset.m)))); };
     v.querySelectorAll('[data-pick]').forEach(cb => { cb.onclick = (ev) => ev.stopPropagation(); cb.onchange = () => { const id = Number(cb.dataset.pick); if (cb.checked) ibSel.add(id); else ibSel.delete(id); selPaint(); }; });
     v.querySelector('[data-selclear]').onclick = () => { ibSel.clear(); v.querySelectorAll('[data-pick]').forEach(cb => { cb.checked = false; }); selPaint(); };
     v.querySelector('[data-selread]').onclick = async () => {
