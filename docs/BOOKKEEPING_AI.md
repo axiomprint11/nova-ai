@@ -223,7 +223,7 @@ PDF icon) that open a viewer (PDF in a frame, image as is, Download / Open in a 
 Every table filter is a funnel on the column header (`thFilter(key, label, spec, cur)` / `thFilterBind`), CRM style:
 a **list** spec (array of `{v, l, n}`) applies on click; `{type:'text'}` opens a "Contains" box with Clear / Apply;
 `{type:'range', kind:'number'|'date', presets}` opens From / To (date ranges also offer period chips) with Clear / Apply;
-the popover flips above when short of room. Vendors: Type, Name, Contact, Specialty, Usual category, Approved.
+the popover flips above when short of room. Vendors: Type (the tag sits under the 72px logo; the Approved column is gone — approval still exists in the data), Name, Contact, Specialty, Usual category.
 Transactions (Categorized): Date (period presets + custom range), Vendor, Account, Amount (min–max), Category, Set by —
 the old period / $ bar above the table is gone; a "Filtered · Clear filters" line shows when anything is set.
 
