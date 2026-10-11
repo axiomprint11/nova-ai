@@ -443,7 +443,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const unreadIds = await list('is:unread in:inbox -in:spam -in:trash', 1000);
     // Only unread mail comes in. Closed is what was dealt with from here on; mail read in Gmail before Nova ever saw it
     // is not imported (1.18.23 — rows the earlier import brought in as read are dropped once).
-    await dbRun("DELETE FROM bk_emails WHERE read_by = 'gmail' AND note = 'read in Gmail' AND id NOT IN (SELECT email_id FROM bk_bills WHERE email_id IS NOT NULL)");
+    await dbRun("DELETE FROM bk_emails WHERE read_by = 'gmail' AND COALESCE(aside, 0) = 0 AND id NOT IN (SELECT email_id FROM bk_bills WHERE email_id IS NOT NULL)");
     const ids = unreadIds; let n = 0;
     const seen = new Set((await dbAll('SELECT gmail_id FROM bk_emails')).map(r => r.gmail_id));
     const unread = new Set(unreadIds);
