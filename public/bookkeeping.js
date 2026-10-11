@@ -495,7 +495,7 @@
       '</div>'; };
     v.innerHTML = '<div class="bk-card">' +
       '<div class="ib-progress" id="ibProg" style="display:none"><span class="ib-spin"></span><span id="ibProgText"></span></div>' +
-      '<div class="ib-bar ib-top"><span class="ib-chips">' + BASKETS.map(([k, l, ic]) => '<button class="ib-chip k-' + k + (ibFilter === k ? ' on' : '') + '" data-f="' + k + '">' + iconSvg(ic) + l + '<b>' + (bc[k] || 0) + '</b></button>').join('') + '</span><button class="bk-btn p" id="scanNow2" title="' + esc(ov && ov.connections.gmail.last_scan ? 'Last checked ' + when(ov.connections.gmail.last_scan) : 'Not checked yet') + '">Scan</button><input id="ibQ" placeholder="Search sender, subject, text…"></div>' +
+      '<div class="ib-bar ib-top"><span class="ib-chips">' + BASKETS.map(([k, l, ic]) => '<button class="ib-chip k-' + k + (ibFilter === k ? ' on' : '') + '" data-f="' + k + '">' + iconSvg(ic) + l + '<b>' + (bc[k] || 0) + '</b></button>').join('') + '</span><button class="bk-btn p" id="scanNow2" title="' + esc(ov && ov.connections.gmail.last_scan ? 'Last checked ' + when(ov.connections.gmail.last_scan) : 'Not checked yet') + '">Scan</button><input id="ibQ" placeholder="Search"></div>' +
       // one action bar per basket: review, then one click for the whole basket
       '<div class="ib-bar ib-acts" id="ibActs">' +
         (bc.ads ? '<span data-for="ads"><span class="bk-muted">Promotions and newsletters, with how sure BookkeeperAI is.</span> <button class="bk-btn sm" data-aside="advertisement">Mark all ' + bc.ads + ' ads as read</button></span>' : '') +
