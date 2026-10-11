@@ -623,6 +623,32 @@
     };
     $('nInbox').textContent = openN || '';
   }
+  // The email's history: a small popover listing every action (newest first) with who did it.
+  async function emailHistory(id, anchor) {
+    document.querySelectorAll('.thf-pop').forEach(p => p.remove());
+    const j = await api('/api/bookkeeping/emails/' + id + '/history'); if (!j.ok) return alert(j.error);
+    const KIND = { advertisement: 'Ad', notification: 'Notice', receipt: 'Receipt', bill: 'Bill', message: 'Message', other: 'Other' };
+    const line = (h) => {
+      const d = h.detail || {};
+      switch (h.action) {
+        case 'scanned': return 'Scanned from the inbox';
+        case 'rated': return 'Rated <b>' + esc(KIND[d.kind] || d.kind || '?') + (d.confidence != null ? ' ' + Math.round(d.confidence * 100) + '%' : '') + '</b>';
+        case 'read': return 'Marked as read' + (d.basket ? ' (with all ' + esc(d.basket) + ')' : d.picked ? ' (picked)' : '');
+        case 'unread': return 'Marked as unread';
+        case 'move': return 'Moved to <b>' + esc(d.kind === 'aside' ? 'Set aside' : KIND[d.kind] || d.kind) + '</b>';
+        case 'bill': return 'Converted to <b>bill #' + esc(d.bill_id) + '</b>' + (d.total != null ? ' · ' + usd(d.total) : '');
+        case 'vendor': return d.vendor_id ? 'Linked sender to a vendor' + (d.address ? ' (' + esc(d.address) + ')' : '') : 'Unlinked sender';
+        case 'match': return d.bill_id ? 'Matched to <b>bill #' + esc(d.bill_id) + '</b>' + (d.was && d.was !== 'paid' ? ' → paid' : '') : 'Matched to bank line #' + esc(d.transaction_id);
+        case 'unmatch': return 'Match removed';
+        default: return esc(h.action);
+      }
+    };
+    const pop = document.createElement('div'); pop.className = 'thf-pop hist-pop';
+    pop.innerHTML = '<div class="thf-h">History</div><div class="hist-list">' + (j.history.length ? j.history.map(h => '<div class="hist-i"><span class="hist-who">' + (h.who === 'BookkeeperAI' ? '<span class="bk-who ai" title="BookkeeperAI">AI</span>' : h.who === 'scan' || h.who === 'poll' || h.who === 'system' ? '<span class="bk-who sys" title="' + esc(h.who) + '">' + iconSvg('sparkles') + '</span>' : (whoHtml(h.who).indexOf('bk-who-sys') > -1 ? '<span class="bk-who" title="' + esc(h.who) + '">' + esc(h.who.charAt(0).toUpperCase()) + '</span>' : whoHtml(h.who))) + '</span><span class="hist-t">' + line(h) + '<small>' + esc(when(h.at)) + '</small></span></div>').join('') : '<div class="bk-muted" style="padding:10px 14px">Nothing yet.</div>') + '</div>';
+    document.body.appendChild(pop);
+    const r = anchor.getBoundingClientRect(), W = 340; pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) + 'px'; pop.style.top = (r.bottom + 6) + 'px'; pop.style.width = W + 'px';
+    const closeP = () => { pop.remove(); document.removeEventListener('click', away); }; const away = (ev) => { if (!pop.contains(ev.target)) closeP(); }; setTimeout(() => document.addEventListener('click', away), 0);
+  }
   // Pick a vendor from the directory (search by name / email); pick(id).
   async function emailVendorPicker(pick) {
     const j = await api('/api/bookkeeping/vendors/pick'); const list = j.vendors || [];
@@ -685,7 +711,7 @@
       '<div class="em-acts">' + (k !== 'parsed' ? '<button class="ib-chip k-bill" data-parse title="Read this email in full and file it as a bill draft under Bills">' + iconSvg('file') + 'Bill</button>' : '<button class="ib-chip k-bill on" data-gobills title="This email is a bill draft already — open it under Bills">' + iconSvg('file') + 'Bill →</button>') +
       (j.matched && (j.matched.bill || j.matched.txn) ? '<span class="em-matched">' + (j.matched.bill ? '<a href="#" data-gobills class="em-match">Matched · bill #' + j.matched.bill.id + ' · ' + esc(j.matched.bill.vendor || '') + (j.matched.bill.invoice_no ? ' ' + esc(j.matched.bill.invoice_no) : '') + ' · ' + usd(j.matched.bill.total) + ' · ' + esc(j.matched.bill.status) + '</a>' : '<span class="em-match">Matched · ' + esc(j.matched.txn.date) + ' ' + esc(j.matched.txn.name) + ' · ' + usd(Math.abs(j.matched.txn.amount)) + '</span>') + '<button class="bk-btn sm" data-unmatch title="Remove the match">×</button></span>' : '<button class="ib-chip k-receipt" data-match title="Match this email to the bill or bank transaction it pays">' + iconSvg('receipt') + 'Transaction</button>') +
       (k !== 'parsed' ? '<button class="ib-chip k-move" data-movebtn>' + iconSvg('folder') + 'Move to <span class="thf-c"></span></button>' : '') +
-      (!e.read_by && !e.aside && k !== 'error' ? '<button class="bk-btn sm ico big" data-read title="Mark as read — here and in Gmail" aria-label="Mark as read">' + iconSvg('mailopen') + '</button>' : '<button class="bk-btn sm ico big" data-unread title="Mark as unread — here and in Gmail" aria-label="Mark as unread">' + iconSvg('mail') + '</button>') + '<span class="sp"></span><span class="em-verdict">' + (e.aside ? '<span class="ib-tag skipped">set aside</span>' : '') + (e.kind ? '<span class="ib-kind ' + esc(e.kind) + '"' + (e.note ? ' data-tip="' + esc(e.note) + '"' : '') + '>' + esc(KIND[e.kind] || e.kind) + (e.confidence != null ? ' ' + Math.round(e.confidence * 100) + '%' : '') + '</span>' : '') + (e.note ? '' : '<span class="bk-muted">' + esc(k === 'new' ? 'Not rated yet.' : '') + '</span>') + (j.bill ? ' <a href="#" data-gobills>bill #' + j.bill.id + ' (' + esc(j.bill.status) + ')</a>' : '') + '</span></div>' +
+      (!e.read_by && !e.aside && k !== 'error' ? '<button class="bk-btn sm ico big" data-read title="Mark as read — here and in Gmail" aria-label="Mark as read">' + iconSvg('mailopen') + '</button>' : '<button class="bk-btn sm ico big" data-unread title="Mark as unread — here and in Gmail" aria-label="Mark as unread">' + iconSvg('mail') + '</button>') + '<button class="bk-btn sm ico" data-hist title="History — what was done with this email, and by whom" aria-label="History">' + iconSvg('clock') + '</button>' + '<span class="sp"></span><span class="em-verdict">' + (e.aside ? '<span class="ib-tag skipped">set aside</span>' : '') + (e.kind ? '<span class="ib-kind ' + esc(e.kind) + '"' + (e.note ? ' data-tip="' + esc(e.note) + '"' : '') + '>' + esc(KIND[e.kind] || e.kind) + (e.confidence != null ? ' ' + Math.round(e.confidence * 100) + '%' : '') + '</span>' : '') + (e.note ? '' : '<span class="bk-muted">' + esc(k === 'new' ? 'Not rated yet.' : '') + '</span>') + (j.bill ? ' <a href="#" data-gobills>bill #' + j.bill.id + ' (' + esc(j.bill.status) + ')</a>' : '') + '</span></div>' +
       (e.attachments.length ? '<div class="em-atts">' + e.attachments.map(att).join('') + '</div>' : '') +
       (htmlBody || '<div class="em-body">' + esc(body).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>') + '</div>') + '</div>';
     const close = () => { el.innerHTML = '<div class="ib-empty">Select an email to read it</div>'; };
@@ -725,6 +751,7 @@
     };
     const mt = el.querySelector('[data-match]'); if (mt) mt.onclick = () => matchPicker(id, () => { openEmail(id); overview(); });
     const um = el.querySelector('[data-unmatch]'); if (um) um.onclick = async () => { const r = await post('/api/bookkeeping/emails/' + id + '/match', { clear: 1 }); if (!r.ok) return alert(r.error); openEmail(id); overview(); };
+    const hb = el.querySelector('[data-hist]'); if (hb) hb.onclick = (ev) => { ev.stopPropagation(); emailHistory(id, hb); };
     const cl = el.querySelector('[data-close]'); if (cl) cl.onclick = () => { ibOpen = null; close(); const sp = $('ibSplit'); if (sp) sp.classList.add('lines'); document.querySelectorAll('.ib-row.open').forEach(r => r.classList.remove('open')); };
     el.querySelectorAll('[data-gobills]').forEach(g1 => g1.onclick = (ev) => { ev.preventDefault(); show('bills'); });
     // Move to: a menu of the baskets, in their colours

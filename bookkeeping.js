@@ -741,6 +741,7 @@ module.exports = function mountBookkeeping(app, deps) {
       await dbRun('INSERT INTO bk_questions (proposal_id, question) VALUES (?,?)', [p.lastID, q]);
     }
     await audit(who, 'bill.draft', billId, { vendor, total: j.total, confidence: conf });
+    if (em.id) await audit(who, 'email.bill', em.id, { bill_id: billId, vendor, total: j.total });
     return billId;
   }
   // Triage before the expensive read: a cheap text-only look at every unread email (sender, subject, first lines).
@@ -1454,7 +1455,19 @@ module.exports = function mountBookkeeping(app, deps) {
     const open = (await dbAll("SELECT id FROM bk_emails WHERE id IN (" + ids.map(() => '?').join(',') + ") AND read_by IS NULL AND COALESCE(aside, 0) = 0", ids)).map(r => r.id);
     const gm = await markReadInGmail(open, userId(req)); if (!gm.ok) return res.json({ ok: false, error: gm.error });
     if (open.length) await dbRun("UPDATE bk_emails SET status = CASE WHEN status = 'parsed' THEN 'parsed' ELSE 'skipped' END, read_by = 'user', note = COALESCE(note, '') || ' — marked read by ' || ? WHERE id IN (" + open.map(() => '?').join(',') + ")", [userId(req)].concat(open));
-    await audit(userId(req), 'email.read', null, { ids: open }); res.json({ ok: true, n: open.length });
+    for (const i of open) await audit(userId(req), 'email.read', i, { picked: true });
+    res.json({ ok: true, n: open.length });
+  });
+  // What happened to this email, newest first: people's actions (bk_audit, ref = the email), the rating, the scan.
+  app.get('/api/bookkeeping/emails/:id/history', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), em = await dbGet('SELECT id, received_at, created_at, triaged_at, kind, confidence, note, read_by, status FROM bk_emails WHERE id = ?', [id]);
+    if (!em) return res.json({ ok: false, error: 'No such email' });
+    const rows = await dbAll("SELECT at, who, action, detail FROM bk_audit WHERE ref = ? AND action LIKE 'email.%' ORDER BY id DESC", [String(id)]);
+    const out = rows.map(r => { let d = {}; try { d = JSON.parse(r.detail || '{}'); } catch (e) {} return { at: r.at, who: r.who, action: r.action.replace(/^email\./, ''), detail: d }; });
+    if (em.triaged_at) out.push({ at: em.triaged_at, who: 'BookkeeperAI', action: 'rated', detail: { kind: em.kind, confidence: em.confidence, note: em.note } });
+    if (em.created_at) out.push({ at: em.created_at, who: 'scan', action: 'scanned', detail: {} });
+    out.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    res.json({ ok: true, history: out });
   });
   app.post('/api/bookkeeping/emails/:id/unread', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), em = await dbGet('SELECT id, status, kind, gmail_id FROM bk_emails WHERE id = ?', [id]);
@@ -1594,6 +1607,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const gm = await markReadInGmail(ids, userId(req)); if (!gm.ok) return res.json({ ok: false, error: gm.error });   // Gmail first; nothing changes here unless it changed there
     const r = ids.length ? await dbRun("UPDATE bk_emails SET status = CASE WHEN status = 'parsed' THEN 'parsed' ELSE 'skipped' END, read_by = 'user', note = COALESCE(note, '') || ' — marked read by ' || ? WHERE id IN (" + ids.map(() => '?').join(',') + ")", [userId(req)].concat(ids)) : { changes: 0 };
     await audit(userId(req), 'email.set_aside', null, { kinds, min, n: r.changes });
+    for (const i of ids) await audit(userId(req), 'email.read', i, { basket: kinds.join('/') });
     res.json({ ok: true, n: r.changes, gmail: gm });
   });
   app.post('/api/bookkeeping/scan', ...guard, async (req, res) => { try { const r = await scanInbox(userId(req)); const p = await parseNewEmails(userId(req)); res.json({ ok: true, scan: r, parsed: p }); } catch (e) { res.json({ ok: false, error: e.message }); } });

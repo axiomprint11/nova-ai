@@ -186,6 +186,14 @@ becomes **paid** on the email's date (`paid_note`, `bk_bills.receipt_email_id`),
 (`bk_transactions.receipt_email_id`); `bk_emails.matched_bill_id / matched_txn_id` show it in the pane. Every row and the pane show the sender as the vendor's logo when linked (`GET /emails` joins `bk_vendors` and links unlinked senders through `matchVendor()`), else a lettered circle (indigo when linked without a photo). Rows have a
 checkbox (hover the dot): a selection bar offers Mark as read (`POST /inbox/read {ids}`, Gmail first) and Move to.
 
+### Email history (1.18.57)
+The clock button in the reading pane lists everything done with the email, newest first, with who did it (member
+face, "AI" for BookkeeperAI, a sparkle for the scan): scanned, rated (kind + %), marked read / unread (also from
+"Mark all" and picked rows — each email gets its own `bk_audit` row), moved to a basket, converted to bill #n
+(`email.bill`, written by `parseEmail`), sender linked / unlinked, matched / unmatched.
+`GET /api/bookkeeping/emails/:id/history` = `bk_audit` rows with `ref` = the email id and `action LIKE 'email.%'`,
+plus synthetic rated / scanned entries from `triaged_at` / `created_at`.
+
 ### Gmail is the truth (1.18.22)
 Open / closed follows Gmail's UNREAD label both ways: an open row no longer unread in Gmail (someone read it there) is
 **deleted** from Nova (1.18.25 — Closed holds only what was closed from here; a one-time purge `inbox_reset_1825` emptied Closed), and the scan **re-opens** closed rows (not set-aside ones) that are unread in Gmail again (`unread_again` in the scan
