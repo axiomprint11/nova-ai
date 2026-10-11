@@ -169,8 +169,8 @@ All set aside; "Mark as read" by hand sets `read_by = 'user'`. The daily run's s
 messages kept; the overview has `inbox_messages` and `ai_read_today`.
 
 ### Gmail is the truth (1.18.22)
-Open / closed follows Gmail's UNREAD label both ways: the scan closes open rows no longer unread in Gmail (`read_by =
-'gmail'`) and **re-opens** closed rows (not set-aside ones) that are unread in Gmail again (`unread_again` in the scan
+Open / closed follows Gmail's UNREAD label both ways: an open row no longer unread in Gmail (someone read it there) is
+**deleted** from Nova (1.18.25 — Closed holds only what was closed from here; a one-time purge `inbox_reset_1825` emptied Closed), and the scan **re-opens** closed rows (not set-aside ones) that are unread in Gmail again (`unread_again` in the scan
 result). "Mark as read" / "Mark all … as read" change Gmail **first** (`markReadInGmail`) and only then Nova — if Gmail
 refuses (missing `gmail.modify` scope) nothing changes here and the dialog says why. "Mark as unread" (closed emails,
 `POST /api/bookkeeping/emails/:id/unread`) adds UNREAD back and re-opens the row. Clicking an email never marks it read;

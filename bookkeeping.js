@@ -444,12 +444,17 @@ module.exports = function mountBookkeeping(app, deps) {
     // Only unread mail comes in. Closed is what was dealt with from here on; mail read in Gmail before Nova ever saw it
     // is not imported (1.18.23 — rows the earlier import brought in as read are dropped once).
     await dbRun("DELETE FROM bk_emails WHERE read_by = 'gmail' AND COALESCE(aside, 0) = 0 AND id NOT IN (SELECT email_id FROM bk_bills WHERE email_id IS NOT NULL)");
+    if (!s.inbox_reset_1825) {   // once: everything closed before Closed meant "closed from here" goes (Gmail state untouched)
+      await dbRun("DELETE FROM bk_emails WHERE status IN ('skipped', 'error') AND COALESCE(aside, 0) = 0 AND id NOT IN (SELECT email_id FROM bk_bills WHERE email_id IS NOT NULL)");
+      await setSetting('inbox_reset_1825', 1, 'system');
+    }
     const ids = unreadIds; let n = 0;
     const seen = new Set((await dbAll('SELECT gmail_id FROM bk_emails')).map(r => r.gmail_id));
     const unread = new Set(unreadIds);
     const open = await dbAll("SELECT id, gmail_id FROM bk_emails WHERE status IN ('new','message')");
     let readInGmail = 0, unreadAgain = 0;
-    for (const o of open) if (o.gmail_id && !unread.has(o.gmail_id)) { await dbRun("UPDATE bk_emails SET status = 'skipped', read_by = 'gmail', note = COALESCE(note, '') || ' — read in Gmail' WHERE id = ?", [o.id]); readInGmail++; }
+    // Read in Gmail by someone (not from here) → it simply leaves this inbox; Closed is only what was closed from here.
+    for (const o of open) if (o.gmail_id && !unread.has(o.gmail_id)) { await dbRun('DELETE FROM bk_emails WHERE id = ? AND id NOT IN (SELECT email_id FROM bk_bills WHERE email_id IS NOT NULL)', [o.id]); readInGmail++; }
     // ...and the other way: read here (or by the AI) but unread in Gmail again → open again. Gmail is the truth.
     const closed = await dbAll("SELECT id, gmail_id, kind FROM bk_emails WHERE status = 'skipped' AND COALESCE(aside, 0) = 0 AND gmail_id IS NOT NULL");
     for (const c of closed) if (unread.has(c.gmail_id)) { await dbRun("UPDATE bk_emails SET status = ?, read_by = NULL, note = COALESCE(note, '') || ' — unread again in Gmail' WHERE id = ?", [c.kind === 'message' ? 'message' : 'new', c.id]); unreadAgain++; }
