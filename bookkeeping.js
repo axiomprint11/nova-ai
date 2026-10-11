@@ -1353,7 +1353,9 @@ module.exports = function mountBookkeeping(app, deps) {
     fs.createReadStream(full).pipe(res);
   });
   app.get('/api/bookkeeping/emails', ...guard, async (req, res) => {
-    const rows = await dbAll('SELECT id, gmail_id, from_addr, subject, received_at, snippet, attachments, status, note, kind, confidence, read_by, triaged_at, aside FROM bk_emails ORDER BY received_at DESC LIMIT 500');
+    const rows = await dbAll('SELECT e.id, e.gmail_id, e.from_addr, e.subject, e.received_at, e.snippet, e.attachments, e.status, e.note, e.kind, e.confidence, e.read_by, e.triaged_at, e.aside, e.vendor_id, e.matched_bill_id, e.matched_txn_id, v.name AS vendor_name, v.photo AS vendor_photo FROM bk_emails e LEFT JOIN bk_vendors v ON v.id = e.vendor_id ORDER BY e.received_at DESC LIMIT 500');
+    // senders not linked yet: try the directory (an address alias someone added, or the domain) so the logo shows
+    for (const r of rows) { if (r.vendor_id) continue; const vend = await matchVendor(String(r.from_addr || '').replace(/<.*$/, ''), r.from_addr); if (vend) { r.vendor_id = vend.id; r.vendor_name = vend.name; r.vendor_photo = vend.photo; await dbRun('UPDATE bk_emails SET vendor_id = ? WHERE id = ?', [vend.id, r.id]); } }
     rows.forEach(r => { try { r.attachments = JSON.parse(r.attachments || '[]'); } catch (e) { r.attachments = []; } });
     res.json({ ok: true, emails: rows });
   });

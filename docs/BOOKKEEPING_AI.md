@@ -185,7 +185,7 @@ it links by itself; Unlink (vendor_id 0) removes it. **Match…** (`GET /emails/
 invoice number seen in subject/body +4, amount +2, paid −1) and bank lines of the last 45 days (vendor +3, amount +3, name +1);
 one candidate asks to confirm, several open a chooser. `POST /emails/:id/match {bill_id | transaction_id | clear}`: a bill
 becomes **paid** on the email's date (`paid_note`, `bk_bills.receipt_email_id`), a bank line keeps the email as its receipt
-(`bk_transactions.receipt_email_id`); `bk_emails.matched_bill_id / matched_txn_id` show it in the pane. Rows have a
+(`bk_transactions.receipt_email_id`); `bk_emails.matched_bill_id / matched_txn_id` show it in the pane. Every row and the pane show the sender as the vendor's logo when linked (`GET /emails` joins `bk_vendors` and links unlinked senders through `matchVendor()`), else a lettered circle (indigo when linked without a photo). Rows have a
 checkbox (hover the dot): a selection bar offers Mark as read (`POST /inbox/read {ids}`, Gmail first) and Move to.
 
 ### Gmail is the truth (1.18.22)
