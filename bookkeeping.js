@@ -441,9 +441,10 @@ module.exports = function mountBookkeeping(app, deps) {
     // No date limit: unread is unread, however old (backfill_days only applied when read mail was scanned too).
     const list = async (q, cap) => { let pageToken, ids = []; do { const r = await g.users.messages.list({ userId: 'me', q: q, maxResults: 100, pageToken: pageToken }); ids = ids.concat((r.data.messages || []).map(m => m.id)); pageToken = r.data.nextPageToken; } while (pageToken && ids.length < cap); return ids; };
     const unreadIds = await list('is:unread in:inbox -in:spam -in:trash', 1000);
-    // "Everything else": mail already read in Gmail from the last backfill_days — shown in its own basket, rated too.
-    const readIds = (await list('-is:unread in:inbox -in:spam -in:trash newer_than:' + Math.max(1, s.backfill_days) + 'd', 600)).filter(id => unreadIds.indexOf(id) < 0);
-    const ids = unreadIds.concat(readIds); let n = 0;
+    // Only unread mail comes in. Closed is what was dealt with from here on; mail read in Gmail before Nova ever saw it
+    // is not imported (1.18.23 — rows the earlier import brought in as read are dropped once).
+    await dbRun("DELETE FROM bk_emails WHERE read_by = 'gmail' AND note = 'read in Gmail' AND id NOT IN (SELECT email_id FROM bk_bills WHERE email_id IS NOT NULL)");
+    const ids = unreadIds; let n = 0;
     const seen = new Set((await dbAll('SELECT gmail_id FROM bk_emails')).map(r => r.gmail_id));
     const unread = new Set(unreadIds);
     const open = await dbAll("SELECT id, gmail_id FROM bk_emails WHERE status IN ('new','message')");
@@ -473,14 +474,13 @@ module.exports = function mountBookkeeping(app, deps) {
           fs.writeFileSync(path.join(FILES, file), buf);
           atts.push({ file: file, name: fn, mime: mt, size: buf.length });
         }
-        // Our own mail (the team writing to a vendor) is not a bill.
-        const ours = /@axiomprint\.com/i.test(from), isRead = !unread.has(id);
-        await dbRun('INSERT OR IGNORE INTO bk_emails (gmail_id, thread_id, from_addr, subject, received_at, snippet, body, body_html, attachments, status, read_by, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-          [id, m.threadId, from.slice(0, 200), subject.slice(0, 300), at, (m.snippet || '').slice(0, 300), emailText(m.payload), emailHtml(m.payload), JSON.stringify(atts), ours || isRead ? 'skipped' : 'new', isRead ? 'gmail' : null, isRead ? 'read in Gmail' : null]);
+        // Unread is unread — our own mail (a forwarded report, a teammate's note) is open too and rated like the rest.
+        await dbRun('INSERT OR IGNORE INTO bk_emails (gmail_id, thread_id, from_addr, subject, received_at, snippet, body, body_html, attachments, status) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          [id, m.threadId, from.slice(0, 200), subject.slice(0, 300), at, (m.snippet || '').slice(0, 300), emailText(m.payload), emailHtml(m.payload), JSON.stringify(atts), 'new']);
         n++;
       } catch (e) { errlog('gmail message', id, e.message); }
     }
-    await audit(who, 'gmail.scan', INBOX, { unread: unreadIds.length, read: readIds.length, new: n, read_in_gmail: readInGmail, unread_again: unreadAgain });
+    await audit(who, 'gmail.scan', INBOX, { unread: unreadIds.length, new: n, read_in_gmail: readInGmail, unread_again: unreadAgain });
     return { looked_at: ids.length, unread: unreadIds.length, new: n, read_in_gmail: readInGmail, unread_again: unreadAgain };
   }
   // Start fresh: forget every scanned email that did not become a bill (and its saved attachments), then scan the
@@ -740,7 +740,7 @@ module.exports = function mountBookkeeping(app, deps) {
   //   message (a person writing) ≥ triage_message → left for a person, tagged "message"
   //   anything else / unsure                    → read in full anyway (a missed bill costs more than a model call)
   // What still needs a rating: new mail, and mail already read in Gmail (rated for the Everything else basket only).
-  const TO_RATE = "triaged_at IS NULL AND (status = 'new' OR (status = 'skipped' AND read_by = 'gmail'))";
+  const TO_RATE = "triaged_at IS NULL AND status = 'new'";
   async function triageEmails(who, limit) {
     const s = await settings();
     const rows = await dbAll("SELECT id, status, read_by, from_addr, subject, snippet, body, attachments FROM bk_emails WHERE " + TO_RATE + " ORDER BY id LIMIT ?", [limit || 150]);
