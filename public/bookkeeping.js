@@ -468,7 +468,7 @@
     // Set aside is only what a person parked there. Gmail is the truth for open / closed (the scan syncs both ways).
     const isOpen = (m) => !m.read_by && !m.aside && st(m) !== 'error';   // open = still unread in Gmail (bill drafts included until Gmail says read)
     const basket = (m) => { if (m.aside) return 'done'; const k = kindOf(m); if (!k) return 'unrated'; return { bill: 'bill', message: 'message', advertisement: 'ads', receipt: 'receipt', notification: 'notice' }[k] || 'other'; };
-    const BASKETS = [['open', 'Not read'], ['unrated', 'Unscanned'], ['bill', 'Bill'], ['message', 'Message'], ['ads', 'Ad'], ['receipt', 'Receipt'], ['notice', 'Notice'], ['other', 'Other'], ['done', 'Set aside']];   // the same words as the AI's tags
+    const BASKETS = [['open', 'Not read', 'mail'], ['unrated', 'Unscanned', 'sparkles'], ['bill', 'Bill', 'file'], ['message', 'Message', 'users'], ['ads', 'Ad', 'megaphone'], ['receipt', 'Receipt', 'receipt'], ['notice', 'Notice', 'package'], ['other', 'Other', 'folder'], ['done', 'Set aside', 'clock']];   // the same words (and colours) as the AI's tags
     const bc = {}, cc = {};   // open / closed counts per basket
     all.forEach(m => { const b = basket(m); if (b === 'done') { bc.done = (bc.done || 0) + 1; return; } if (isOpen(m)) bc[b] = (bc[b] || 0) + 1; else cc[b] = (cc[b] || 0) + 1; });
     const OPEN = ['message', 'ads', 'receipt', 'notice', 'bill', 'other', 'unrated'];
@@ -486,7 +486,7 @@
       '</div>'; };
     v.innerHTML = '<div class="bk-card">' +
       '<div class="ib-progress" id="ibProg" style="display:none"><span class="ib-spin"></span><span id="ibProgText"></span></div>' +
-      '<div class="ib-bar"><span class="ib-chips">' + BASKETS.map(([k, l]) => '<button class="ib-chip' + (ibFilter === k ? ' on' : '') + '" data-f="' + k + '">' + l + ' (' + (bc[k] || 0) + ')' + '</button>').join('') + '</span><button class="bk-btn p" id="scanNow2" title="' + esc(ov && ov.connections.gmail.last_scan ? 'Last checked ' + when(ov.connections.gmail.last_scan) : 'Not checked yet') + '">Scan now</button><input id="ibQ" placeholder="Search sender, subject, text…"></div>' +
+      '<div class="ib-bar ib-top"><span class="ib-chips">' + BASKETS.map(([k, l, ic]) => '<button class="ib-chip k-' + k + (ibFilter === k ? ' on' : '') + '" data-f="' + k + '">' + iconSvg(ic) + l + '<b>' + (bc[k] || 0) + '</b></button>').join('') + '</span><button class="bk-btn p" id="scanNow2" title="' + esc(ov && ov.connections.gmail.last_scan ? 'Last checked ' + when(ov.connections.gmail.last_scan) : 'Not checked yet') + '">Scan now</button><input id="ibQ" placeholder="Search sender, subject, text…"></div>' +
       // one action bar per basket: review, then one click for the whole basket
       '<div class="ib-bar ib-acts" id="ibActs">' +
         (bc.ads ? '<span data-for="ads"><span class="bk-muted">Promotions and newsletters, with how sure BookkeeperAI is.</span> <button class="bk-btn sm" data-aside="advertisement">Mark all ' + bc.ads + ' ads as read</button></span>' : '') +
