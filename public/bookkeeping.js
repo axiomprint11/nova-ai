@@ -503,7 +503,11 @@
     if (ibOpen && all.some(m => m.id === ibOpen)) { const r0 = v.querySelector('.ib-row[data-m="' + ibOpen + '"]'); if (r0) r0.classList.add('open'); openEmail(ibOpen); }
     const filter = () => { const q = $('ibQ').value.trim().toLowerCase(); let n = 0; v.querySelectorAll('.ib-row').forEach(r => { const inB = ibFilter === 'open' ? OPEN.indexOf(r.dataset.b) > -1 : r.dataset.b === ibFilter; const on = inB && (!q || r.dataset.q.indexOf(q) > -1); r.style.display = on ? '' : 'none'; if (on) n++; }); $('ibNone').style.display = n || !all.length ? 'none' : ''; v.querySelectorAll('#ibActs > [data-for]').forEach(x => { x.style.display = x.dataset.for === ibFilter ? '' : 'none'; }); $('scanNow2').style.display = ibFilter === 'unrated' ? '' : 'none';
       const nc = Array.from(v.querySelectorAll('.ib-row[data-o="0"]')).filter(r => r.style.display !== 'none').length; const hd = $('ibClosedHead'); hd.style.display = nc && ibFilter !== 'done' ? '' : 'none'; hd.querySelector('b').textContent = nc; };
-    v.querySelectorAll('.ib-chip').forEach(c => c.onclick = () => { ibFilter = c.dataset.f; v.querySelectorAll('.ib-chip').forEach(x => x.classList.toggle('on', x === c)); filter(); });
+    v.querySelectorAll('.ib-chip').forEach(c => c.onclick = () => {
+      ibFilter = c.dataset.f; v.querySelectorAll('.ib-chip').forEach(x => x.classList.toggle('on', x === c)); filter();
+      // a basket change closes the open email and goes back to the full-width list
+      ibOpen = null; v.querySelectorAll('.ib-row.open').forEach(r => r.classList.remove('open')); $('ibPane').innerHTML = '<div class="ib-empty">Select an email to read it</div>'; paneOn(false);
+    });
     $('ibQ').oninput = filter; filter();
     v.querySelectorAll('.ib-row').forEach(r => r.onclick = () => { ibOpen = Number(r.dataset.m); v.querySelectorAll('.ib-row').forEach(x => x.classList.toggle('open', x === r)); paneOn(true); openEmail(ibOpen); });
     // Scan now, visibly: fetch new mail → rate 25 at a time (each rated row gets its tag as it comes in) → read the rated bills one by one.
