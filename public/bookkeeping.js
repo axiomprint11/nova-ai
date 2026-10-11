@@ -801,8 +801,8 @@
     const v = $('vRules');
     if (!ov) await overview();
     const j = await api('/api/bookkeeping/rules');
-    v.innerHTML = '<div class="bk-card"><h2>Categorization rules<span class="sp"></span><span class="bk-muted">applied before the AI looks — made from your approvals, or here</span></h2>' +
-      '<div class="bk-row" style="margin-bottom:10px"><select class="bk" id="rKind"><option value="vendor">Vendor is</option><option value="keyword">Description contains</option></select><input class="bk" id="rPat" placeholder="e.g. Veritiv or AMAZON" style="min-width:220px">' + catSelect('', 'rcat', 'Category…') + '<button class="bk-btn p" id="rAdd">Add rule</button></div>' +
+    v.innerHTML = '<div class="bk-card">' +
+      '<div class="bk-row" style="margin-bottom:10px;flex-wrap:nowrap"><select class="bk" id="rKind"><option value="vendor">Vendor is</option><option value="keyword">Description contains</option></select><input class="bk" id="rPat" placeholder="e.g. Veritiv or AMAZON" style="min-width:220px">' + catSelect('', 'rcat', 'Category…') + '<button class="bk-btn p" id="rAdd">Add rule</button></div>' +
       '<table class="bk"><thead><tr><th>Rule</th><th>Category</th><th>From</th><th>Hits</th><th></th></tr></thead><tbody>' +
       (j.rules || []).map(r => '<tr><td>' + (r.kind === 'vendor' ? 'Vendor is ' : 'Contains ') + '<b>' + esc(r.pattern) + '</b></td><td>' + esc(r.category) + '</td><td>' + esc(r.source) + ' · ' + esc(r.created_by || '') + '</td><td>' + r.hits + '</td><td><button class="bk-btn sm bad" data-del="' + r.id + '">Remove</button></td></tr>').join('') + '</tbody></table>' +
       (!(j.rules || []).length ? '<div class="bk-muted" style="padding:14px 0">No rules yet — each approval with "remember" ticked adds one.</div>' : '') + '</div>' +
