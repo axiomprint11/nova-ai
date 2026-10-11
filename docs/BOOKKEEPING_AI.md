@@ -168,6 +168,14 @@ Messages · Bills · **Set aside by AI** (the report of what it marked read on i
 All set aside; "Mark as read" by hand sets `read_by = 'user'`. The daily run's summary line counts emails set aside and
 messages kept; the overview has `inbox_messages` and `ai_read_today`.
 
+### Open on top, Closed below (1.18.30)
+**Open** = still unread in Gmail (`read_by IS NULL`, not set aside — bill drafts included until Gmail says read);
+**Closed** = closed from here (Mark as read, Mark all, a bill draft once Gmail accepted the read). No Open / Closed
+tabs: each basket lists open emails on top and the closed ones under a "Closed n" divider. Chips: **Not read** (all
+open) · **Unscanned** (unread mail that arrived since the last scan, not rated yet) · Direct messages · Ads ·
+Confirmations · Bills · Other · Set aside. Scan = fetch unread + rate (manual Scan now, or the poll — `poll_min`, now
+60 by default; a one-time `inbox_reset_1830` cleared old closed marks and raised a lower poll to 60).
+
 ### Gmail is the truth (1.18.22)
 Open / closed follows Gmail's UNREAD label both ways: an open row no longer unread in Gmail (someone read it there) is
 **deleted** from Nova (1.18.25 — Closed holds only what was closed from here; a one-time purge `inbox_reset_1825` emptied Closed), and the scan **re-opens** closed rows (not set-aside ones) that are unread in Gmail again (`unread_again` in the scan

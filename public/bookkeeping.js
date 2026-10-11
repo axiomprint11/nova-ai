@@ -446,7 +446,7 @@
     v.querySelectorAll('[data-link]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); const b = bills.find(x => String(x.id) === a.dataset.link); vendorPicker(a, b, (vid) => pair(b.id, vid)); });
   }
   // ---------------------------------------------------------------- Inbox (accounting@, Gmail-like)
-  let ibFilter = 'open', ibState = 'open', ibOpen = null;   // chip = basket by kind; ibState = Open (unread in Gmail) or Closed (read); default Not read / Open
+  let ibFilter = 'open', ibOpen = null;   // chip = basket by kind; inside, open emails (unread in Gmail) on top, closed ones under a divider
   async function loadInbox() {
     const v = $('vInbox');
     if (!ov) await overview();
@@ -464,18 +464,19 @@
     // Baskets: where an open email goes by its rating. Read in Gmail → Everything else; marked read here / by the AI → Set aside.
     // Baskets are by kind (what BookkeeperAI rated it); inside a basket, Open = still unread in Gmail, Closed = read.
     // Set aside is only what a person parked there. Gmail is the truth for open / closed (the scan syncs both ways).
-    const isOpen = (m) => { const k = st(m); return k === 'new' || k === 'message'; };
+    const isOpen = (m) => !m.read_by && !m.aside && st(m) !== 'error';   // open = still unread in Gmail (bill drafts included until Gmail says read)
     const basket = (m) => { if (m.aside) return 'done'; const k = st(m); if (k === 'parsed' || m.kind === 'bill') return 'bill'; if (!m.triaged_at) return 'unrated'; if (k === 'message' || m.kind === 'message') return 'message'; if (m.kind === 'advertisement') return 'ads'; if (m.kind === 'notification' || m.kind === 'receipt') return 'confirm'; return 'other'; };
-    const BASKETS = [['open', 'Not read'], ['message', 'Direct messages'], ['ads', 'Ads'], ['confirm', 'Confirmations'], ['bill', 'Bills'], ['other', 'Other'], ['unrated', 'Not rated'], ['done', 'Set aside']];
+    const BASKETS = [['open', 'Not read'], ['unrated', 'Unscanned'], ['message', 'Direct messages'], ['ads', 'Ads'], ['confirm', 'Confirmations'], ['bill', 'Bills'], ['other', 'Other'], ['done', 'Set aside']];
     const bc = {}, cc = {};   // open / closed counts per basket
     all.forEach(m => { const b = basket(m); if (b === 'done') { bc.done = (bc.done || 0) + 1; return; } if (isOpen(m)) bc[b] = (bc[b] || 0) + 1; else cc[b] = (cc[b] || 0) + 1; });
     const OPEN = ['message', 'ads', 'confirm', 'bill', 'other', 'unrated'];
+    const billsToRead = all.filter(m => isOpen(m) && basket(m) === 'bill' && st(m) !== 'parsed').length;
     const openN = OPEN.reduce((a, k) => a + (bc[k] || 0), 0), closedN = OPEN.reduce((a, k) => a + (cc[k] || 0), 0); bc.open = openN; cc.open = closedN;
     if (!BASKETS.some(([k]) => k === ibFilter)) ibFilter = 'open';
     // Gmail snippets come HTML-escaped (&quot; &amp;): decode once, esc() re-escapes for display.
     const dec = (t) => { const d = document.createElement('textarea'); d.innerHTML = String(t || ''); return d.value; };
     all.forEach(m => { m.snippet = dec(m.snippet); m.subject = dec(m.subject); });
-    all.sort((a, b) => String(b.received_at || '').localeCompare(String(a.received_at || '')));   // newest first; the baskets do the grouping
+    all.sort((a, b) => (isOpen(b) ? 1 : 0) - (isOpen(a) ? 1 : 0) || String(b.received_at || '').localeCompare(String(a.received_at || '')));   // open first, then closed; newest first in each
     const row = (m) => { const k = st(m); return '<div class="ib-row ' + k + (ibOpen === m.id ? ' open' : '') + '" data-m="' + m.id + '" data-k="' + k + '" data-b="' + basket(m) + '" data-o="' + (isOpen(m) ? 1 : 0) + '" data-ai="' + (m.read_by === 'ai' ? 1 : 0) + '" data-q="' + esc((m.from_addr + ' ' + m.subject + ' ' + (m.snippet || '') + ' ' + (m.note || '')).toLowerCase()) + '">' +
       '<span class="ib-dot ' + k + '" title="' + esc(k) + '"></span><span class="ib-main"><span class="ib-l1"><span class="ib-from" title="' + esc(fromAddr(m.from_addr)) + '">' + esc(fromName(m.from_addr)) + '</span><span class="ib-time">' + esc(day(m.received_at)) + '</span></span>' +
       '<span class="ib-l2"><b>' + esc(m.subject || '(no subject)') + '</b></span><span class="ib-l3"><span class="ib-snip">' + esc(m.snippet || '') + '</span><span class="ib-att">' + kindTag(m) + (m.attachments.length ? ' ' + clip + ' ' + m.attachments.length : '') + '</span></span></span>' +
@@ -483,24 +484,22 @@
       '</div>'; };
     v.innerHTML = '<div class="bk-card"><h2>Inbox — ' + esc(ov ? ov.connections.gmail.inbox : '') + ' ' + qHelp('inbox', 'Inbox', 'Only mail that is still <b>unread in Gmail</b> is scanned (every ' + esc(ov.settings.poll_min) + ' minutes), so the count here follows the team\'s unread count; an email someone reads in Gmail is set aside here too. BookkeeperAI rates every email and sorts it into a basket — <b>Bills</b>, <b>Direct messages</b>, <b>Ads</b>, <b>Confirmations</b> (delivery, shipping, payment), <b>Other</b> — with how sure it is. Nothing is marked read by itself: review a basket, then one click marks the whole basket read here (Gmail is not changed), or turn the bills into bill drafts. "Move to" puts an email in another basket. <b>Start fresh</b> forgets everything scanned that is not a bill and scans the unread mail again.') + '<span class="sp"></span><button class="bk-btn p" id="scanNow2" title="' + esc(ov && ov.connections.gmail.last_scan ? 'Last checked ' + when(ov.connections.gmail.last_scan) : 'Not checked yet') + '">Scan now</button></h2>' +
       '<div class="ib-progress" id="ibProg" style="display:none"><span class="ib-spin"></span><span id="ibProgText"></span></div>' +
-      '<div class="ib-bar"><span class="ib-chips">' + BASKETS.filter(([k]) => k !== 'unrated' || bc[k] || cc[k]).map(([k, l]) => '<button class="ib-chip' + (ibFilter === k ? ' on' : '') + '" data-f="' + k + '">' + l + ' (' + (bc[k] || 0) + ')' + '</button>').join('') + '</span><input id="ibQ" placeholder="Search sender, subject, text…"></div>' +
-      '<div class="ib-bar ib-state" id="ibState"><button class="ib-seg' + (ibState === 'open' ? ' on' : '') + '" data-s="open">Open <b id="ibOpenN"></b></button><button class="ib-seg' + (ibState === 'closed' ? ' on' : '') + '" data-s="closed">Closed <b id="ibClosedN"></b></button></div>' +
+      '<div class="ib-bar"><span class="ib-chips">' + BASKETS.map(([k, l]) => '<button class="ib-chip' + (ibFilter === k ? ' on' : '') + '" data-f="' + k + '">' + l + ' (' + (bc[k] || 0) + ')' + '</button>').join('') + '</span><input id="ibQ" placeholder="Search sender, subject, text…"></div>' +
       // one action bar per basket: review, then one click for the whole basket
       '<div class="ib-bar ib-acts" id="ibActs">' +
         (bc.ads ? '<span data-for="ads"><span class="bk-muted">Promotions and newsletters, with how sure BookkeeperAI is.</span> <button class="bk-btn sm" data-aside="advertisement">Mark all ' + bc.ads + ' ads as read</button></span>' : '') +
         (bc.confirm ? '<span data-for="confirm"><span class="bk-muted">Delivery, shipping and payment confirmations.</span> <button class="bk-btn sm" data-aside="confirm">Mark all ' + bc.confirm + ' confirmations as read</button></span>' : '') +
         (bc.other ? '<span data-for="other"><span class="bk-muted">Rated, but none of the baskets fit — open them, or move them with "Move to".</span> <button class="bk-btn sm" data-aside="other">Mark all ' + bc.other + ' as read</button></span>' : '') +
-        (bc.bill ? '<span data-for="bill"><span class="bk-muted">Looks like an invoice or statement. Turning one into a bill reads it in full and files a draft under Bills.</span> <button class="bk-btn sm p" data-parseall>Turn all ' + bc.bill + ' into bills</button></span>' : '') +
+        (bc.bill ? '<span data-for="bill"><span class="bk-muted">Looks like an invoice or statement. Turning one into a bill reads it in full and files a draft under Bills.</span> ' + (billsToRead ? '<button class="bk-btn sm p" data-parseall>Turn all ' + billsToRead + ' into bills</button>' : '') + '<button class="bk-btn sm" data-aside="bill">Mark all ' + bc.bill + ' as read</button></span>' : '') +
         (bc.message ? '<span data-for="message"><span class="bk-muted">People writing to accounting — for a person to answer.</span> <button class="bk-btn sm" data-aside="message">Mark all ' + bc.message + ' as read</button></span>' : '') +
-        (bc.unrated ? '<span data-for="unrated"><span class="bk-muted">Not rated yet.</span> <button class="bk-btn sm p" data-ratenow>Rate them now</button></span>' : '') +
+        '<span data-for="unrated"><span class="bk-muted">' + (bc.unrated ? 'Unread mail that came in since the last scan — not rated yet.' : 'Everything is scanned. New unread mail lands here until the next scan (every ' + esc(ov.settings.poll_min) + ' min, or Scan now).') + '</span>' + (bc.unrated ? ' <button class="bk-btn sm p" data-ratenow>Scan now</button>' : '') + '</span>' +
         '</div>' +
-      '<div class="ib-split' + (ibOpen ? '' : ' lines') + '" id="ibSplit"><div class="ib-list">' + all.map(row).join('') + (!all.length ? '<div class="bk-muted" style="padding:14px 0">Nothing scanned yet — press Scan now.</div>' : '') + '<div class="bk-muted" id="ibNone" style="display:none;padding:14px 10px">Nothing matches.</div></div>' +
+      '<div class="ib-split' + (ibOpen ? '' : ' lines') + '" id="ibSplit"><div class="ib-list">' + all.filter(isOpen).map(row).join('') + '<div class="ib-divider" id="ibClosedHead">Closed <b></b></div>' + all.filter(m => !isOpen(m)).map(row).join('') + (!all.length ? '<div class="bk-muted" style="padding:14px 0">Nothing scanned yet — press Scan now.</div>' : '') + '<div class="bk-muted" id="ibNone" style="display:none;padding:14px 10px">Nothing matches.</div></div>' +
       '<div class="ib-pane" id="ibPane"><div class="ib-empty">Select an email to read it</div></div></div></div>';
     const paneOn = (on) => { $('ibSplit').classList.toggle('lines', !on); };
     if (ibOpen && all.some(m => m.id === ibOpen)) { const r0 = v.querySelector('.ib-row[data-m="' + ibOpen + '"]'); if (r0) r0.classList.add('open'); openEmail(ibOpen); }
-    const filter = () => { const q = $('ibQ').value.trim().toLowerCase(); let n = 0; v.querySelectorAll('.ib-row').forEach(r => { const inB = ibFilter === 'open' ? OPEN.indexOf(r.dataset.b) > -1 : r.dataset.b === ibFilter; const on = inB && (ibFilter === 'done' || q || (ibState === 'open' ? r.dataset.o === '1' : r.dataset.o === '0')) && (!q || r.dataset.q.indexOf(q) > -1); r.style.display = on ? '' : 'none'; if (on) n++; }); $('ibNone').style.display = n || !all.length ? 'none' : ''; v.querySelectorAll('#ibActs > [data-for]').forEach(x => { x.style.display = x.dataset.for === ibFilter && ibState === 'open' ? '' : 'none'; });
-      $('ibState').style.display = ibFilter === 'done' ? 'none' : ''; $('ibOpenN').textContent = bc[ibFilter] || 0; $('ibClosedN').textContent = cc[ibFilter] || 0; };
-    v.querySelectorAll('.ib-seg').forEach(c => c.onclick = () => { ibState = c.dataset.s; v.querySelectorAll('.ib-seg').forEach(x => x.classList.toggle('on', x === c)); filter(); });
+    const filter = () => { const q = $('ibQ').value.trim().toLowerCase(); let n = 0; v.querySelectorAll('.ib-row').forEach(r => { const inB = ibFilter === 'open' ? OPEN.indexOf(r.dataset.b) > -1 : r.dataset.b === ibFilter; const on = inB && (!q || r.dataset.q.indexOf(q) > -1); r.style.display = on ? '' : 'none'; if (on) n++; }); $('ibNone').style.display = n || !all.length ? 'none' : ''; v.querySelectorAll('#ibActs > [data-for]').forEach(x => { x.style.display = x.dataset.for === ibFilter ? '' : 'none'; });
+      const nc = Array.from(v.querySelectorAll('.ib-row[data-o="0"]')).filter(r => r.style.display !== 'none').length; const hd = $('ibClosedHead'); hd.style.display = nc && ibFilter !== 'done' ? '' : 'none'; hd.querySelector('b').textContent = nc; };
     v.querySelectorAll('.ib-chip').forEach(c => c.onclick = () => { ibFilter = c.dataset.f; v.querySelectorAll('.ib-chip').forEach(x => x.classList.toggle('on', x === c)); filter(); });
     $('ibQ').oninput = filter; filter();
     v.querySelectorAll('.ib-row').forEach(r => r.onclick = () => { ibOpen = Number(r.dataset.m); v.querySelectorAll('.ib-row').forEach(x => x.classList.toggle('open', x === r)); paneOn(true); openEmail(ibOpen); });
@@ -527,7 +526,7 @@
     };
     v.querySelectorAll('[data-aside]').forEach(b => b.onclick = async () => {
       const k = b.dataset.aside, kinds = k === 'confirm' ? ['notification', 'receipt'] : [k];
-      const n = k === 'confirm' ? bc.confirm : k === 'advertisement' ? bc.ads : k === 'message' ? bc.message : bc.other;
+      const n = k === 'confirm' ? bc.confirm : k === 'advertisement' ? bc.ads : k === 'message' ? bc.message : k === 'bill' ? bc.bill : bc.other;
       if (!await ask('They are marked read in Gmail and move to Closed in this basket. Any of them can still be turned into a bill later.', { title: 'Mark ' + n + ' email' + (n === 1 ? '' : 's') + ' as read?', ok: 'Mark as read' })) return;
       b.disabled = true; const r = await post('/api/bookkeeping/inbox/set-aside', { kinds, min: 0 }); if (!r.ok) await ask(r.error, { title: 'Not marked read', ok: 'OK', cancel: false }); await overview(); loadInbox();
     });
@@ -539,7 +538,7 @@
       txt.textContent = 'Done — see Bills.'; await overview(); setTimeout(loadInbox, 600);
     };
     const rn = v.querySelector('[data-ratenow]'); if (rn) rn.onclick = () => $('scanNow2').click();
-    $('nInbox').textContent = (counts.new + counts.message) || '';
+    $('nInbox').textContent = openN || '';
   }
   // The reading pane — an email the way Gmail shows it: subject, sender, date, the text, attachment cards that open a viewer.
   async function openEmail(id) {

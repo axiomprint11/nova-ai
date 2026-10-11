@@ -134,7 +134,7 @@ module.exports = function mountBookkeeping(app, deps) {
   ];
   const DEFAULT_CATEGORIES = DEFAULT_CHART;
   const SETTING_DEFAULTS = {
-    run_at: env('BOOKKEEPER_RUN_AT') || '07:00', poll_min: parseInt(env('BOOKKEEPER_POLL_MIN')) || 5, threshold: 0.75,
+    run_at: env('BOOKKEEPER_RUN_AT') || '07:00', poll_min: parseInt(env('BOOKKEEPER_POLL_MIN')) || 60, threshold: 0.75,
     triage_ad: 0.95, triage_bill: 0.8, triage_notice: 0.75, triage_message: 0.6,   // inbox triage: when BookkeeperAI acts on its own
     triage_auto: 0,   // 0 = BookkeeperAI only RATES emails; a person sets them aside ("Set aside all ads"). 1 = it sets aside by itself above the thresholds.
     categories: DEFAULT_CATEGORIES.join('\n'), chat_webhook: env('BOOKKEEPER_CHAT_WEBHOOK') || '', chat_space: '',
@@ -147,7 +147,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const rows = await dbAll('SELECT key, value FROM bk_settings');
     const s = Object.assign({}, SETTING_DEFAULTS);
     rows.forEach(r => { s[r.key] = r.value; });
-    s.poll_min = Math.max(2, parseInt(s.poll_min) || 5); s.threshold = Number(s.threshold) || 0.75; s.backfill_days = parseInt(s.backfill_days) || 30;
+    s.poll_min = Math.max(2, parseInt(s.poll_min) || 60); s.threshold = Number(s.threshold) || 0.75; s.backfill_days = parseInt(s.backfill_days) || 30;
     ['triage_ad', 'triage_bill', 'triage_notice', 'triage_message'].forEach(k => { s[k] = Math.max(0.3, Math.min(1, Number(s[k]) || SETTING_DEFAULTS[k])); });
     s.triage_auto = String(s.triage_auto) === '1' || s.triage_auto === true ? 1 : 0;
     settingsCache = s;
@@ -444,20 +444,22 @@ module.exports = function mountBookkeeping(app, deps) {
     // Only unread mail comes in. Closed is what was dealt with from here on; mail read in Gmail before Nova ever saw it
     // is not imported (1.18.23 — rows the earlier import brought in as read are dropped once).
     await dbRun("DELETE FROM bk_emails WHERE read_by = 'gmail' AND COALESCE(aside, 0) = 0 AND id NOT IN (SELECT email_id FROM bk_bills WHERE email_id IS NOT NULL)");
-    if (!s.inbox_reset_1825) {   // once: everything closed before Closed meant "closed from here" goes (Gmail state untouched)
+    if (!s.inbox_reset_1830) {   // once (1.18.30): Closed starts empty — open = unread in Gmail, closed = closed from here, bill drafts included
       await dbRun("DELETE FROM bk_emails WHERE status IN ('skipped', 'error') AND COALESCE(aside, 0) = 0 AND id NOT IN (SELECT email_id FROM bk_bills WHERE email_id IS NOT NULL)");
-      await setSetting('inbox_reset_1825', 1, 'system');
+      await dbRun("UPDATE bk_emails SET read_by = NULL WHERE COALESCE(aside, 0) = 0");
+      if (parseInt(s.poll_min) < 60) await setSetting('poll_min', 60, 'system');
+      await setSetting('inbox_reset_1830', 1, 'system');
     }
     const ids = unreadIds; let n = 0;
     const seen = new Set((await dbAll('SELECT gmail_id FROM bk_emails')).map(r => r.gmail_id));
     const unread = new Set(unreadIds);
-    const open = await dbAll("SELECT id, gmail_id FROM bk_emails WHERE status IN ('new','message')");
+    const open = await dbAll("SELECT id, gmail_id, status FROM bk_emails WHERE read_by IS NULL AND COALESCE(aside, 0) = 0");
     let readInGmail = 0, unreadAgain = 0;
     // Read in Gmail by someone (not from here) → it simply leaves this inbox; Closed is only what was closed from here.
-    for (const o of open) if (o.gmail_id && !unread.has(o.gmail_id)) { await dbRun('DELETE FROM bk_emails WHERE id = ? AND id NOT IN (SELECT email_id FROM bk_bills WHERE email_id IS NOT NULL)', [o.id]); readInGmail++; }
+    for (const o of open) if (o.gmail_id && !unread.has(o.gmail_id)) { if (o.status === 'parsed') await dbRun("UPDATE bk_emails SET read_by = 'gmail' WHERE id = ?", [o.id]); else await dbRun('DELETE FROM bk_emails WHERE id = ? AND id NOT IN (SELECT email_id FROM bk_bills WHERE email_id IS NOT NULL)', [o.id]); readInGmail++; }
     // ...and the other way: read here (or by the AI) but unread in Gmail again → open again. Gmail is the truth.
-    const closed = await dbAll("SELECT id, gmail_id, kind FROM bk_emails WHERE status = 'skipped' AND COALESCE(aside, 0) = 0 AND gmail_id IS NOT NULL");
-    for (const c of closed) if (unread.has(c.gmail_id)) { await dbRun("UPDATE bk_emails SET status = ?, read_by = NULL, note = COALESCE(note, '') || ' — unread again in Gmail' WHERE id = ?", [c.kind === 'message' ? 'message' : 'new', c.id]); unreadAgain++; }
+    const closed = await dbAll("SELECT id, gmail_id, kind, status FROM bk_emails WHERE read_by IS NOT NULL AND COALESCE(aside, 0) = 0 AND gmail_id IS NOT NULL");
+    for (const c of closed) if (unread.has(c.gmail_id)) { await dbRun("UPDATE bk_emails SET status = ?, read_by = NULL, note = COALESCE(note, '') || ' — unread again in Gmail' WHERE id = ?", [c.status === 'parsed' ? 'parsed' : c.kind === 'message' ? 'message' : 'new', c.id]); unreadAgain++; }
     for (const id of ids) {
       if (seen.has(id)) continue;
       try {
@@ -725,7 +727,7 @@ module.exports = function mountBookkeeping(app, deps) {
         conf, String(j.reason || '').slice(0, 300)]);
     await dbRun('UPDATE bk_bills SET proposal_id = ? WHERE id = ?', [p.lastID, billId]);
     await dbRun("UPDATE bk_emails SET status = 'parsed', note = ? WHERE id = ?", ['Bill draft #' + billId, em.id]);
-    markReadInGmail([em.id], who).catch(() => {});   // it is handled: read in Gmail too (quietly; the scope may be missing)
+    markReadInGmail([em.id], who).then(r => { if (r.ok && r.n) return dbRun("UPDATE bk_emails SET read_by = 'user' WHERE id = ?", [em.id]); }).catch(() => {});   // handled → read in Gmail → closed here (quietly; the scope may be missing)
     if (conf < s.threshold || dup || newVendor) {
       const q = dup ? 'This looks like a duplicate of bill #' + dup.id + ' (' + vendor + (invNo ? ' #' + invNo : '') + '). Is it the same bill?'
         : newVendor ? vendor + ' is a new vendor. Is this a real vendor of ours, and should I approve them for future bills?'
@@ -1213,7 +1215,7 @@ module.exports = function mountBookkeeping(app, deps) {
       bills: (await dbGet("SELECT COUNT(*) AS n FROM bk_bills WHERE status <> 'rejected'")).n,
       bill_drafts: (await dbGet("SELECT COUNT(*) AS n FROM bk_bills WHERE status = 'draft'")).n,
       bills_by_status: Object.fromEntries((await dbAll('SELECT status, COUNT(*) n FROM bk_bills GROUP BY status')).map(r => [r.status, r.n])),
-      inbox_new: (await dbGet("SELECT COUNT(*) AS n FROM bk_emails WHERE status = 'new'")).n,
+      inbox_new: (await dbGet("SELECT COUNT(*) AS n FROM bk_emails WHERE read_by IS NULL AND COALESCE(aside, 0) = 0 AND status <> 'message'")).n,
       inbox_messages: (await dbGet("SELECT COUNT(*) AS n FROM bk_emails WHERE status = 'message'")).n,
       ai_read_today: (await dbGet("SELECT COUNT(*) AS n FROM bk_emails WHERE read_by = 'ai' AND triaged_at >= datetime('now', '-1 day')")).n,
       emails: (await dbGet('SELECT COUNT(*) AS n FROM bk_emails')).n, rules: (await dbGet('SELECT COUNT(*) AS n FROM bk_rules WHERE active = 1')).n
@@ -1373,17 +1375,16 @@ module.exports = function mountBookkeeping(app, deps) {
   app.post('/api/bookkeeping/emails/:id/read', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), em = await dbGet('SELECT id, status FROM bk_emails WHERE id = ?', [id]);
     if (!em) return res.json({ ok: false, error: 'No such email' });
-    if (em.status === 'parsed') return res.json({ ok: false, error: 'It is a bill draft already.' });
     const gm = await markReadInGmail([id], userId(req)); if (!gm.ok) return res.json({ ok: false, error: gm.error });   // Gmail is the truth: nothing changes here unless it changed there
-    await dbRun("UPDATE bk_emails SET status = 'skipped', read_by = 'user', note = ? WHERE id = ?", ['marked read by ' + userId(req), id]);
+    if (em.status === 'parsed') await dbRun("UPDATE bk_emails SET read_by = 'user' WHERE id = ?", [id]);
+    else await dbRun("UPDATE bk_emails SET status = 'skipped', read_by = 'user', note = ? WHERE id = ?", ['marked read by ' + userId(req), id]);
     await audit(userId(req), 'email.read', id, null); res.json({ ok: true, gmail: gm });
   });
   app.post('/api/bookkeeping/emails/:id/unread', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), em = await dbGet('SELECT id, status, kind, gmail_id FROM bk_emails WHERE id = ?', [id]);
     if (!em) return res.json({ ok: false, error: 'No such email' });
-    if (em.status === 'parsed') return res.json({ ok: false, error: 'It is a bill draft already.' });
     if (em.gmail_id) { try { await gmailMod().users.messages.batchModify({ userId: 'me', requestBody: { ids: [em.gmail_id], addLabelIds: ['UNREAD'] } }); } catch (e) { const msg = String(e.message || e); return res.json({ ok: false, error: /unauthorized_client|insufficient|403|scope/i.test(msg) ? SCOPE_HELP : 'Gmail refused: ' + msg.slice(0, 200) }); } }
-    await dbRun("UPDATE bk_emails SET status = ?, read_by = NULL, aside = 0, note = ? WHERE id = ?", [em.kind === 'message' ? 'message' : 'new', 'marked unread by ' + userId(req), id]);
+    await dbRun("UPDATE bk_emails SET status = ?, read_by = NULL, aside = 0, note = ? WHERE id = ?", [em.status === 'parsed' ? 'parsed' : em.kind === 'message' ? 'message' : 'new', 'marked unread by ' + userId(req), id]);
     await audit(userId(req), 'email.unread', id, null); res.json({ ok: true });
   });
   app.post('/api/bookkeeping/emails/:id/parse', ...guard, async (req, res) => {
@@ -1512,9 +1513,9 @@ module.exports = function mountBookkeeping(app, deps) {
     const kinds = (Array.isArray(req.body && req.body.kinds) ? req.body.kinds : []).filter(k => ['advertisement', 'notification', 'receipt', 'other', 'bill', 'message'].indexOf(k) > -1);
     const min = Math.max(0, Math.min(1, Number(req.body && req.body.min) || 0));
     if (!kinds.length) return res.json({ ok: false, error: 'Which kinds?' });
-    const ids = (await dbAll("SELECT id FROM bk_emails WHERE status IN ('new', 'message') AND kind IN (" + kinds.map(() => '?').join(',') + ") AND COALESCE(confidence, 0) >= ?", kinds.concat([min]))).map(r => r.id);
+    const ids = (await dbAll("SELECT id FROM bk_emails WHERE read_by IS NULL AND COALESCE(aside, 0) = 0 AND status <> 'error' AND kind IN (" + kinds.map(() => '?').join(',') + ") AND COALESCE(confidence, 0) >= ?", kinds.concat([min]))).map(r => r.id);
     const gm = await markReadInGmail(ids, userId(req)); if (!gm.ok) return res.json({ ok: false, error: gm.error });   // Gmail first; nothing changes here unless it changed there
-    const r = ids.length ? await dbRun("UPDATE bk_emails SET status = 'skipped', read_by = 'user', note = COALESCE(note, '') || ' — marked read by ' || ? WHERE id IN (" + ids.map(() => '?').join(',') + ")", [userId(req)].concat(ids)) : { changes: 0 };
+    const r = ids.length ? await dbRun("UPDATE bk_emails SET status = CASE WHEN status = 'parsed' THEN 'parsed' ELSE 'skipped' END, read_by = 'user', note = COALESCE(note, '') || ' — marked read by ' || ? WHERE id IN (" + ids.map(() => '?').join(',') + ")", [userId(req)].concat(ids)) : { changes: 0 };
     await audit(userId(req), 'email.set_aside', null, { kinds, min, n: r.changes });
     res.json({ ok: true, n: r.changes, gmail: gm });
   });
