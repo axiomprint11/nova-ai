@@ -115,19 +115,55 @@
 
   // ---------------------------------------------------------------- column filters (a header word that opens a small list)
   // thFilter(key, label, options [{v, l, n}], cur) → header markup; thFilterBind(root, onChange) wires the popovers.
-  const thFilter = (key, label, options, cur) => { const o = options.find(x => x.v === cur); return '<button type="button" class="thf' + (cur ? ' on' : '') + '" data-thf="' + esc(key) + '" data-v="' + esc(cur || '') + '"><span class="thf-l">' + esc(label) + '</span>' + (o && cur ? ' <b>' + (o.t != null ? esc(o.t) : o.l) + '</b>' : '') + '<span class="thf-c"></span></button>'; };
-  function thFilterBind(root, options, onChange) {
+  // Column filters, CRM style: a funnel on the header; click → a popover. spec = an array of options (a list, picked
+  // in one click), or { type: 'text', value } (contains), or { type: 'range', kind: 'number' | 'date', from, to,
+  // presets: [{v, l}], period } (From / To with Clear / Apply; date ranges can also offer period presets).
+  const FUNNEL = '<svg class="thf-f" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18l-7 8v5l-4 2v-7z"/></svg>';
+  const thActive = (spec, cur) => Array.isArray(spec) ? !!cur : spec.type === 'text' ? !!spec.value : !!(spec.from || spec.to || (spec.period && spec.period !== spec.defaultPeriod));
+  const thFilter = (key, label, spec, cur) => {
+    const on = thActive(spec, cur); let val = '';
+    if (Array.isArray(spec)) { const o = spec.find(x => x.v === cur); val = o && cur ? (o.t != null ? esc(o.t) : o.l) : ''; }
+    else if (spec.type === 'text') val = spec.value ? esc(spec.value) : '';
+    else if (spec.type === 'range') { const pr = (spec.presets || []).find(x => x.v === spec.period); val = spec.period && spec.period !== 'custom' && spec.period !== spec.defaultPeriod && pr ? esc(pr.l) : (spec.from || spec.to) ? esc((spec.from || '…') + ' – ' + (spec.to || '…')) : ''; }
+    return '<button type="button" class="thf' + (on ? ' on' : '') + '" data-thf="' + esc(key) + '" data-v="' + esc(cur || '') + '"><span class="thf-l">' + esc(label) + '</span>' + (val ? ' <b>' + val + '</b>' : '') + FUNNEL + '</button>';
+  };
+  function thFilterBind(root, specs, onChange) {
     root.querySelectorAll('.thf').forEach(btn => btn.onclick = (e) => {
       e.stopPropagation(); document.querySelectorAll('.thf-pop').forEach(p => p.remove());
-      const key = btn.dataset.thf, opts = options[key] || [], cur = btn.dataset.v;
+      const key = btn.dataset.thf, spec = specs[key] || [], cur = btn.dataset.v, label = btn.querySelector('.thf-l').textContent;
       const pop = document.createElement('div'); pop.className = 'thf-pop';
-      pop.innerHTML = (opts.length > 8 ? '<div class="ckp-search"><input type="text" placeholder="Filter…"></div>' : '') + '<div class="thf-list">' + opts.map(o => '<div class="thf-i' + (o.v === cur ? ' on' : '') + '" data-v="' + esc(o.v) + '"><span class="ckp-ck"></span><span class="thf-t">' + o.l + '</span>' + (o.n != null ? '<small>' + o.n + '</small>' : '') + '</div>').join('') + '</div>';
-      document.body.appendChild(pop);
-      const r = btn.getBoundingClientRect(), W = 260; pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) + 'px'; pop.style.top = (r.bottom + 6) + 'px'; pop.style.width = W + 'px';
+      const r = btn.getBoundingClientRect(), W = Array.isArray(spec) ? 260 : 300; pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) + 'px'; pop.style.top = (r.bottom + 6) + 'px'; pop.style.width = W + 'px';
+      const place = () => { const h = pop.offsetHeight; if (r.bottom + 6 + h > window.innerHeight - 8 && r.top - h - 6 > 8) pop.style.top = (r.top - h - 6) + 'px'; };   // flip above when short of room
       const close = () => { pop.remove(); document.removeEventListener('click', away); };
       const away = (ev) => { if (!pop.contains(ev.target)) close(); }; setTimeout(() => document.addEventListener('click', away), 0);
-      const q = pop.querySelector('input'); if (q) { q.focus(); q.oninput = () => { const f = q.value.toLowerCase(); pop.querySelectorAll('.thf-i').forEach(i => { i.style.display = !f || i.textContent.toLowerCase().indexOf(f) > -1 ? '' : 'none'; }); }; }
-      pop.querySelectorAll('.thf-i').forEach(i => i.onclick = () => { close(); onChange(key, i.dataset.v); });
+      if (Array.isArray(spec)) {
+        pop.innerHTML = '<div class="thf-h">' + esc(label) + '</div>' + (spec.length > 8 ? '<div class="ckp-search"><input type="text" placeholder="Filter…"></div>' : '') + '<div class="thf-list">' + spec.map(o => '<div class="thf-i' + (o.v === cur ? ' on' : '') + '" data-v="' + esc(o.v) + '"><span class="ckp-ck"></span><span class="thf-t">' + o.l + '</span>' + (o.n != null ? '<small>' + o.n + '</small>' : '') + '</div>').join('') + '</div>';
+        document.body.appendChild(pop); place();
+        const q = pop.querySelector('input'); if (q) { q.focus(); q.oninput = () => { const f = q.value.toLowerCase(); pop.querySelectorAll('.thf-i').forEach(i => { i.style.display = !f || i.textContent.toLowerCase().indexOf(f) > -1 ? '' : 'none'; }); }; }
+        pop.querySelectorAll('.thf-i').forEach(i => i.onclick = () => { close(); onChange(key, i.dataset.v); });
+        return;
+      }
+      if (spec.type === 'text') {
+        pop.innerHTML = '<div class="thf-h">' + esc(label) + '</div><div class="thf-body"><label class="thf-lab">Contains</label><input type="text" class="bk thf-in" value="' + esc(spec.value || '') + '" placeholder="' + esc(label) + '…"></div><div class="thf-acts"><button type="button" class="thf-clear">Clear</button><span class="sp"></span><button type="button" class="thf-apply">Apply</button></div>';
+        document.body.appendChild(pop); place();
+        const inp = pop.querySelector('.thf-in'); inp.focus(); inp.select();
+        const apply = () => { close(); onChange(key, inp.value.trim()); };
+        inp.onkeydown = (ev) => { if (ev.key === 'Enter') apply(); if (ev.key === 'Escape') close(); };
+        pop.querySelector('.thf-apply').onclick = apply; pop.querySelector('.thf-clear').onclick = () => { close(); onChange(key, ''); };
+        return;
+      }
+      // range
+      const dt = spec.kind === 'date', it = dt ? 'date' : 'number';
+      pop.innerHTML = '<div class="thf-h">' + esc(label) + '</div><div class="thf-body">' +
+        (spec.presets ? '<div class="thf-presets">' + spec.presets.map(p => '<button type="button" class="ib-chip sm' + (spec.period === p.v && !(spec.from || spec.to) ? ' on' : '') + '" data-p="' + esc(p.v) + '">' + esc(p.l) + '</button>').join('') + '</div>' : '') +
+        '<div class="thf-range"><label><span class="thf-lab">From</span><input type="' + it + '" class="bk thf-from" ' + (dt ? '' : 'min="0" step="0.01" ') + 'value="' + esc(spec.from || '') + '"></label><label><span class="thf-lab">To</span><input type="' + it + '" class="bk thf-to" ' + (dt ? '' : 'min="0" step="0.01" ') + 'value="' + esc(spec.to || '') + '"></label></div></div>' +
+        '<div class="thf-acts"><button type="button" class="thf-clear">Clear</button><span class="sp"></span><button type="button" class="thf-apply">Apply</button></div>';
+      document.body.appendChild(pop); place();
+      const from = pop.querySelector('.thf-from'), to = pop.querySelector('.thf-to'); from.focus();
+      const apply = () => { close(); onChange(key, { from: from.value, to: to.value, period: (from.value || to.value) ? 'custom' : (spec.period || '') }); };
+      [from, to].forEach(x => x.onkeydown = (ev) => { if (ev.key === 'Enter') apply(); if (ev.key === 'Escape') close(); });
+      pop.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { close(); onChange(key, { from: '', to: '', period: b.dataset.p }); });
+      pop.querySelector('.thf-apply').onclick = apply; pop.querySelector('.thf-clear').onclick = () => { close(); onChange(key, { from: '', to: '', period: spec.defaultPeriod || '' }); };
     });
   }
 
@@ -349,18 +385,19 @@
     const chip = (k, l, n) => '<button class="ib-chip' + (st === k ? ' on' : '') + '" data-st="' + k + '">' + l + (n == null ? '' : ' (' + n + ')') + '</button>';
     const syncIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/></svg>';
     const T = j.totals || {}, chart = cat ? report(T) : '';
-    const fbar = cat ? '<div class="tx-filters">' + [['30', 'Last 30 days'], ['month', 'This month'], ['last', 'Last month'], ['90', 'Last 90 days'], ['year', 'This year'], ['all', 'All time'], ['custom', 'Custom…']].map(([k, l]) => '<button class="ib-chip sm' + (TF.period === k ? ' on' : '') + '" data-period="' + k + '">' + l + '</button>').join('') +
-        (TF.period === 'custom' ? '<input type="date" class="bk" id="tfFrom" value="' + esc(TF.from) + '"><span class="bk-muted">to</span><input type="date" class="bk" id="tfTo" value="' + esc(TF.to) + '">' : '') + '<span class="sp"></span>' +
-        '<label class="bk-muted">$ <input class="bk" id="tfMin" type="number" min="0" placeholder="min" value="' + esc(TF.min) + '" style="width:80px"> – <input class="bk" id="tfMax" type="number" min="0" placeholder="max" value="' + esc(TF.max) + '" style="width:80px"></label>' +
-        ((TF.type || TF.category || TF.vendor_id || TF.source || TF.min || TF.max || TF.account) ? '<button class="bk-btn sm" id="tfClear">Clear filters</button>' : '') + '</div>' : '';
+    const PERIODS = [['30', 'Last 30 days'], ['month', 'This month'], ['last', 'Last month'], ['90', 'Last 90 days'], ['year', 'This year'], ['all', 'All time']].map(([v, l]) => ({ v, l }));
+    const anyF = TF.type || TF.category || TF.vendor_id || TF.source || TF.min || TF.max || TF.account || TF.period !== '30' || TF.from || TF.to;
+    const fbar = cat && anyF ? '<div class="tx-filters"><span class="bk-muted">Filtered</span><button class="bk-btn sm" id="tfClear">Clear filters</button></div>' : '';
     const FO = cat ? {
       type: [{ v: '', l: 'All categories' }].concat(chart_types().map(t => ({ v: 'T:' + t.name, l: tile(t.color, t.icon, 'sm', '') + ' ' + esc(t.name) })), (T.by_category || []).map(c => ({ v: 'C:' + c.category, l: catLabel(c.category), n: c.n }))),
       vendor: [{ v: '', l: 'All vendors' }, { v: 'none', l: 'Not linked' }].concat((j.vendors || []).map(x => ({ v: String(x.id), l: esc(x.name) }))),
       source: [{ v: '', l: 'Any' }, { v: 'approved', l: 'Approved (AI proposed)' }, { v: 'manual', l: 'Manual' }, { v: 'rule', l: 'By rule' }],
-      account: [{ v: '', l: 'All accounts' }].concat((j.accounts || []).map(a => ({ v: a, l: esc(a) })))
+      account: [{ v: '', l: 'All accounts' }].concat((j.accounts || []).map(a => ({ v: a, l: esc(a) }))),
+      date: { type: 'range', kind: 'date', from: TF.period === 'custom' ? TF.from : '', to: TF.period === 'custom' ? TF.to : '', period: TF.period, defaultPeriod: '30', presets: PERIODS },
+      amount: { type: 'range', kind: 'number', from: TF.min, to: TF.max }
     } : null;
     v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top">' + chip('', 'All') + chip('pending', 'Pending', bs.pending || 0) + chip('new', 'New', bs.new || 0) + chip('categorized', 'Categorized') + '<span class="sp"></span><input name="q" placeholder="Search name, vendor or category" value="' + esc(q) + '"><button class="bk-btn ico" id="syncNow" title="Sync with Bank" aria-label="Sync with Bank">' + syncIcon + '</button></div>' + fbar + chart +
-      '<table class="bk tx-table"><thead><tr><th>Date</th><th>Description' + (cat ? ' · ' + thFilter('vendor', 'Vendor', FO.vendor, TF.vendor_id) : '') + '</th><th>' + (cat ? thFilter('account', 'Account', FO.account, TF.account) : 'Account') + '</th><th class="num">Amount</th><th>' + (cat ? thFilter('type', 'Category', FO.type, TF.type ? 'T:' + TF.type : TF.category ? 'C:' + TF.category : '') + ' · ' + thFilter('source', 'Set by', FO.source, TF.source) : 'Category <span class="bk-dim" style="font-weight:500">pick to set</span>') + '</th></tr></thead><tbody>' +
+      '<table class="bk tx-table"><thead><tr><th>' + (cat ? thFilter('date', 'Date', FO.date) : 'Date') + '</th><th>Description' + (cat ? ' · ' + thFilter('vendor', 'Vendor', FO.vendor, TF.vendor_id) : '') + '</th><th>' + (cat ? thFilter('account', 'Account', FO.account, TF.account) : 'Account') + '</th><th class="num">' + (cat ? thFilter('amount', 'Amount', FO.amount) : 'Amount') + '</th><th>' + (cat ? thFilter('type', 'Category', FO.type, TF.type ? 'T:' + TF.type : TF.category ? 'C:' + TF.category : '') + ' · ' + thFilter('source', 'Set by', FO.source, TF.source) : 'Category <span class="bk-dim" style="font-weight:500">pick to set</span>') + '</th></tr></thead><tbody>' +
       (j.transactions || []).map(t => '<tr><td>' + esc(t.date) + (t.pending ? ' <span class="bk-tag">pending</span>' : '') + '</td><td>' + esc(t.merchant || t.name) + (t.merchant && t.merchant !== t.name ? '<div class="bk-muted">' + esc(t.name) + '</div>' : '') +
         (t.vendor_name ? '<div><span class="bk-src ' + esc(t.vendor_source || '') + '">' + (t.vendor_source === 'suppliers' ? 'supplier' : t.vendor_source === 'vendors' ? 'vendor' : 'from a bill') + '</span> ' + esc(t.vendor_name) + ' <a href="#" class="bk-muted" data-setv="' + t.id + '" title="Link to another supplier / vendor">change</a></div>' : '<div><a href="#" class="bk-muted" data-setv="' + t.id + '">link to a supplier / vendor</a></div>') +
         (t.plaid_category ? '<div class="bk-muted">bank: ' + esc(t.plaid_category) + '</div>' : '') + '</td><td>' + esc(t.account_name || '') + '</td>' +
@@ -373,8 +410,13 @@
     v.querySelectorAll('[data-period]').forEach(b => b.onclick = () => { TF.period = b.dataset.period; saveTF(); });
     if ($('tfFrom')) { $('tfFrom').onchange = () => { TF.from = $('tfFrom').value; saveTF(); }; $('tfTo').onchange = () => { TF.to = $('tfTo').value; saveTF(); }; }
     if ($('tfMin')) { $('tfMin').onchange = () => { TF.min = $('tfMin').value; saveTF(); }; $('tfMax').onchange = () => { TF.max = $('tfMax').value; saveTF(); }; }
-    if ($('tfClear')) $('tfClear').onclick = () => { Object.assign(TF, { type: '', category: '', vendor_id: '', source: '', min: '', max: '', account: '' }); saveTF(); };
-    if (FO) thFilterBind(v, FO, (key, val) => { if (key === 'type') { TF.type = val.startsWith('T:') ? val.slice(2) : ''; TF.category = val.startsWith('C:') ? val.slice(2) : ''; } else if (key === 'vendor') TF.vendor_id = val; else TF[key] = val; saveTF(); });
+    if ($('tfClear')) $('tfClear').onclick = () => { Object.assign(TF, { type: '', category: '', vendor_id: '', source: '', min: '', max: '', account: '', period: '30', from: '', to: '' }); saveTF(); };
+    if (FO) thFilterBind(v, FO, (key, val) => {
+      if (key === 'type') { TF.type = val.startsWith('T:') ? val.slice(2) : ''; TF.category = val.startsWith('C:') ? val.slice(2) : ''; }
+      else if (key === 'vendor') TF.vendor_id = val;
+      else if (key === 'date') { TF.period = val.period || '30'; TF.from = val.from || ''; TF.to = val.to || ''; }
+      else if (key === 'amount') { TF.min = val.from || ''; TF.max = val.to || ''; }
+      else TF[key] = val; saveTF(); });
     v.querySelectorAll('[data-rtype]').forEach(el => el.onclick = () => { TF.type = el.dataset.rtype; TF.category = ''; saveTF(); });
     v.querySelectorAll('[data-rvendor]').forEach(el => el.onclick = () => { TF.vendor_id = el.dataset.rvendor; saveTF(); });
     $('syncNow').onclick = async () => { $('syncNow').disabled = true; const r = await post('/api/bookkeeping/sync', {}); if (!r.ok) alert(r.error); loadTxns(); overview(); };
@@ -914,18 +956,19 @@
     // The types are the CRM lists (read-only here — a row's type is the list it is in), then "from a bill".
     const kinds = (j.lists || ['supplier', 'vendor']).slice(); all.forEach(x => { if (x.kind && kinds.indexOf(x.kind) < 0) kinds.push(x.kind); }); if (kinds.indexOf('bill') < 0) kinds.push('bill');
     const counts = {}; all.forEach(x => { counts[x.kind || 'other'] = (counts[x.kind || 'other'] || 0) + 1; });
-    let F = { kind: '', cat: '', ap: '' }; try { F = Object.assign(F, JSON.parse(localStorage.getItem('bk_vendor_filters') || '{}')); } catch (e) {}
+    let F = { kind: '', cat: '', ap: '', name: '', contact: '', spec: '' }; try { F = Object.assign(F, JSON.parse(localStorage.getItem('bk_vendor_filters') || '{}')); } catch (e) {}
     if (F.kind && !counts[F.kind]) F.kind = '';
     const catCounts = { '': 0 }; all.forEach(x => { const cs = splitCats(x.default_category); if (!cs.length) catCounts['']++; cs.forEach(c => { catCounts[c] = (catCounts[c] || 0) + 1; }); });
     const kindTag = (x) => '<span class="bk-src ' + esc(x.kind || 'other') + '">' + esc(label(x.kind)) + '</span>';
     const FOPTS = {
       kind: [{ v: '', l: 'All types', n: all.length }].concat(kinds.filter(k => counts[k]).map(k => ({ v: k, l: kindTag({ kind: k }), t: label(k), n: counts[k] }))),
       cat: [{ v: '', l: 'All', n: all.length }, { v: '__none', l: 'Not set', n: catCounts[''] }].concat(Object.keys(catCounts).filter(c => c).sort().map(c => ({ v: c, l: catLabel(c), n: catCounts[c] }))),
-      ap: [{ v: '', l: 'All', n: all.length }, { v: '1', l: 'Approved', n: all.length - unapproved0() }, { v: '0', l: 'Waiting for approval', n: unapproved0() }]
+      ap: [{ v: '', l: 'All', n: all.length }, { v: '1', l: 'Approved', n: all.length - unapproved0() }, { v: '0', l: 'Waiting for approval', n: unapproved0() }],
+      name: { type: 'text', value: F.name }, contact: { type: 'text', value: F.contact }, spec: { type: 'text', value: F.spec }
     };
     function unapproved0() { return all.filter(x => !x.approved).length; }
     const logo = (x) => x.photo ? '<img class="bk-logo" src="' + esc(x.photo) + '" alt="" loading="lazy" onerror="this.outerHTML=\'<span class=&quot;bk-logo ph&quot;>' + esc(String(x.name).charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo ph">' + esc(String(x.name).charAt(0).toUpperCase()) + '</span>';
-    const row = (x) => '<tr data-vid="' + x.id + '" data-kind="' + esc(x.kind || 'other') + '" data-ap="' + (x.approved ? 1 : 0) + '" data-cats="' + esc('|' + splitCats(x.default_category).join('|') + '|') + '" data-q="' + esc((x.name + ' ' + (x.contact || '') + ' ' + (x.email || '') + ' ' + (x.specialty || '') + ' ' + (x.aliases || '')).toLowerCase()) + '"><td><a href="#" class="bk-open" data-vopen="' + x.id + '" title="Full details">' + logo(x) + '</a></td><td>' + kindTag(x) + '</td>' +
+    const row = (x) => '<tr data-vid="' + x.id + '" data-kind="' + esc(x.kind || 'other') + '" data-ap="' + (x.approved ? 1 : 0) + '" data-cats="' + esc('|' + splitCats(x.default_category).join('|') + '|') + '" data-q="' + esc((x.name + ' ' + (x.contact || '') + ' ' + (x.email || '') + ' ' + (x.specialty || '') + ' ' + (x.aliases || '')).toLowerCase()) + '" data-name="' + esc(String(x.name || '').toLowerCase()) + '" data-contact="' + esc(((x.contact || '') + ' ' + (x.email || '') + ' ' + (x.phone || '')).toLowerCase()) + '" data-spec="' + esc(String(x.specialty || '').toLowerCase()) + '"><td><a href="#" class="bk-open" data-vopen="' + x.id + '" title="Full details">' + logo(x) + '</a></td><td>' + kindTag(x) + '</td>' +
       '<td><a href="#" class="bk-open bk-name" data-vopen="' + x.id + '" title="Full details">' + esc(x.name) + '</a>' + (x.contact ? '<div class="bk-muted">' + esc(x.contact) + '</div>' : '') + '</td><td class="bk-muted">' + esc(x.email || '') + (x.phone ? '<br>' + esc(x.phone) : '') + '</td><td class="bk-muted">' + esc(x.specialty || '') + (x.materials ? '<div class="bk-dim"><a href="#" data-mats="' + x.id + '" title="See the materials in the catalog">' + x.materials + ' material' + (x.materials == 1 ? '' : 's') + '</a>: ' + esc((x.geo_types || []).join(', ')) + '</div>' : '') + '</td>' +
       '<td>' + catSelect(x.default_category || '', 'vcat', 'not set', { multi: true }) + '</td><td><input type="text" class="bk valias" placeholder="bank names, one per line" value="' + esc(String(x.aliases || '').split('\n').join(' | ')) + '" title="How this vendor appears on bank statements (separate with |)"></td>' +
       '<td class="c">' + (x.approved ? '<span class="bk-ok" title="Approved — BookkeeperAI may link bank lines and bills to this company without asking">✓</span>' : '<a href="#" class="bk-approve" data-vappr="' + x.id + '" title="First seen on a bill — approve so BookkeeperAI may link to it without asking">Approve</a>') + '</td>' +
@@ -950,7 +993,7 @@
     };
     const unapproved = all.filter(x => !x.approved).length;
     v.innerHTML = '<div class="bk-card"><h2>Vendors &amp; suppliers ' + qHelp('vendors', 'Vendors & suppliers', 'Read from the CRM’s Suppliers and Vendors lists (read-only, refreshed with every daily run); the photo is the CRM’s. They are trusted: a bank line or bill that matches one is linked to it, and BookkeeperAI uses the specialty and the usual category when it proposes. The type is the CRM list the company is in (Supplier, Vendor — new lists appear as new types). Edit names, emails and specialties in the CRM; set the usual category and the bank-statement names here; click a name or logo for the full record. The list refreshes by itself: when you open this tab, hourly, and with every daily run. <b>Approved</b> means BookkeeperAI may link bank lines and bills to the company without asking (CRM entries are approved by themselves); <b>Linked</b> counts the transactions and bills matched to it so far. Vendors first seen on a bill are <span class="bk-src bill">from a bill</span> and wait for your approval.') + '<span class="sp"></span><input class="bk h2-search" name="q" id="vQ" placeholder="Search name, contact, email, specialty…"><span class="bk-muted">' + (j.synced_at ? 'synced ' + when(j.synced_at) : 'not synced yet') + (j.sync_error ? ' · <span style="color:#b91c1c">' + esc(j.sync_error) + '</span>' : '') + '</span><button class="bk-btn" id="dirSync"' + (j.crm ? '' : ' disabled') + '>Refresh from CRM</button></h2>' +
-            (all.length ? '<table class="bk bk-dir"><thead><tr><th></th><th>' + thFilter('kind', 'Type', FOPTS.kind, F.kind) + '</th><th>Name</th><th>Contact</th><th>Specialty</th><th>' + thFilter('cat', 'Usual category', FOPTS.cat, F.cat) + '</th><th>On the bank statement as</th>' +
+            (all.length ? '<table class="bk bk-dir"><thead><tr><th></th><th>' + thFilter('kind', 'Type', FOPTS.kind, F.kind) + '</th><th>' + thFilter('name', 'Name', FOPTS.name) + '</th><th>' + thFilter('contact', 'Contact', FOPTS.contact) + '</th><th>' + thFilter('spec', 'Specialty', FOPTS.spec) + '</th><th>' + thFilter('cat', 'Usual category', FOPTS.cat, F.cat) + '</th><th>On the bank statement as</th>' +
         '<th class="c">' + thFilter('ap', 'Approved', FOPTS.ap, F.ap) + '</th><th class="num" title="Bank transactions and bills linked to this company">Linked</th></tr></thead><tbody>' + all.map(row).join('') + '</tbody></table><div class="bk-muted" id="vNone" style="display:none;padding:14px 0">Nothing matches.</div>'
         : '<div class="bk-muted">Nothing synced yet — press Refresh from CRM.</div>') + '</div>';
     const filter = () => {
@@ -958,10 +1001,11 @@
       try { localStorage.setItem('bk_vendor_filters', JSON.stringify(F)); } catch (e) {}
       v.querySelectorAll('tr[data-vid]').forEach(tr => {
         const catOk = !F.cat || (F.cat === '__none' ? tr.dataset.cats === '||' : tr.dataset.cats.indexOf('|' + F.cat + '|') > -1);
-        const on = (!F.kind || tr.dataset.kind === F.kind) && (!F.ap || tr.dataset.ap === F.ap) && catOk && (!q || tr.dataset.q.indexOf(q) >= 0); tr.style.display = on ? '' : 'none'; if (on) n++; });
+        const has = (k, v) => !v || (tr.dataset[k] || '').indexOf(v.toLowerCase()) > -1;
+        const on = (!F.kind || tr.dataset.kind === F.kind) && (!F.ap || tr.dataset.ap === F.ap) && catOk && has('name', F.name) && has('contact', F.contact) && has('spec', F.spec) && (!q || tr.dataset.q.indexOf(q) >= 0); tr.style.display = on ? '' : 'none'; if (on) n++; });
       if ($('vNone')) $('vNone').style.display = n ? 'none' : '';
     };
-    const onF = (key, val) => { F[key] = val; filter(); const th = v.querySelector('.thf[data-thf="' + key + '"]'); if (th) th.outerHTML = thFilter(key, { kind: 'Type', cat: 'Usual category', ap: 'Approved' }[key], FOPTS[key], val); thFilterBind(v, FOPTS, onF); };
+    const onF = (key, val) => { F[key] = val; if (FOPTS[key] && FOPTS[key].type === 'text') FOPTS[key].value = val; filter(); const th = v.querySelector('.thf[data-thf="' + key + '"]'); if (th) th.outerHTML = thFilter(key, { kind: 'Type', cat: 'Usual category', ap: 'Approved', name: 'Name', contact: 'Contact', spec: 'Specialty' }[key], FOPTS[key], val); thFilterBind(v, FOPTS, onF); };
     thFilterBind(v, FOPTS, onF);
     $('vQ').oninput = filter; filter();
     v.querySelectorAll('[data-vopen]').forEach(a => a.onclick = (e) => { e.preventDefault(); const x = all.find(y => String(y.id) === a.dataset.vopen); if (x) openVendor(x); });

@@ -211,6 +211,14 @@ the rating / verdict line (and the bill it became), the HTML body in a sandboxed
 scanned before 1.18.7 fetch it once on open; "Plain text" falls back to `body`), attachment cards (image thumbnails,
 PDF icon) that open a viewer (PDF in a frame, image as is, Download / Open in a tab), and Read it as a bill / Mark as read.
 `GET /api/bookkeeping/emails/:id` (full record + `bill`), `GET /api/bookkeeping/emails/:id/att/:i` (the file, inline).
+### Column filters (1.18.56)
+Every table filter is a funnel on the column header (`thFilter(key, label, spec, cur)` / `thFilterBind`), CRM style:
+a **list** spec (array of `{v, l, n}`) applies on click; `{type:'text'}` opens a "Contains" box with Clear / Apply;
+`{type:'range', kind:'number'|'date', presets}` opens From / To (date ranges also offer period chips) with Clear / Apply;
+the popover flips above when short of room. Vendors: Type, Name, Contact, Specialty, Usual category, Approved.
+Transactions (Categorized): Date (period presets + custom range), Vendor, Account, Amount (min–max), Category, Set by —
+the old period / $ bar above the table is gone; a "Filtered · Clear filters" line shows when anything is set.
+
 ### Transactions tab
 Tabs All / **Pending** (the default — BookkeeperAI proposed a category or asked a question and waits for you) / New (synced from
 the bank, not looked at yet) / Categorized, with counts (`by_status`) except on Categorized; the main-tab badge counts
