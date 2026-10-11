@@ -86,15 +86,22 @@
   // ---------------------------------------------------------------- "?" help: hover = tooltip, click = popup
   const HELP = {};
   const qHelp = (key, title, html) => { HELP[key] = { title, html }; return '<button type="button" class="bk-q" data-help="' + esc(key) + '">?</button>'; };
-  let tipEl = null;
+  // Hover tips stay while the pointer is on them (so long text can be read, links clicked). [data-help] = a registered
+  // "?" help; [data-tip] = the element's own text (e.g. the rating's reason). Shared by both.
+  let tipEl = null, tipFor = null, tipTimer = null;
+  const tipHide = () => { clearTimeout(tipTimer); tipTimer = setTimeout(() => { if (tipEl) { tipEl.remove(); tipEl = null; tipFor = null; } }, 140); };
+  const tipKeep = () => clearTimeout(tipTimer);
   document.addEventListener('mouseover', (e) => {
-    const b = e.target.closest && e.target.closest('[data-help]'); if (!b || tipEl) return;
-    const h = HELP[b.dataset.help]; if (!h) return;
-    tipEl = document.createElement('div'); tipEl.className = 'bk-tip'; tipEl.innerHTML = h.html; document.body.appendChild(tipEl);
+    const b = e.target.closest && e.target.closest('[data-help],[data-tip]'); if (!b) return;
+    if (tipEl && tipFor === b) { tipKeep(); return; }
+    const html = b.dataset.help ? (HELP[b.dataset.help] || {}).html : esc(b.dataset.tip); if (!html) return;
+    if (tipEl) { tipEl.remove(); tipEl = null; } clearTimeout(tipTimer);
+    tipEl = document.createElement('div'); tipEl.className = 'bk-tip'; tipEl.innerHTML = html; document.body.appendChild(tipEl); tipFor = b;
     const r = b.getBoundingClientRect(), W = Math.min(420, window.innerWidth - 16);
-    tipEl.style.width = W + 'px'; tipEl.style.left = Math.max(8, Math.min(r.left - 8, window.innerWidth - W - 8)) + 'px'; tipEl.style.top = (r.bottom + 8) + 'px';
-    const off = () => { if (tipEl) { tipEl.remove(); tipEl = null; } b.removeEventListener('mouseleave', off); };
-    b.addEventListener('mouseleave', off);
+    tipEl.style.width = W + 'px'; tipEl.style.left = Math.max(8, Math.min(r.left - 8, window.innerWidth - W - 8)) + 'px';
+    const below = r.bottom + 8, h = tipEl.offsetHeight; tipEl.style.top = (below + h > window.innerHeight - 8 && r.top - h - 8 > 0 ? r.top - h - 8 : below) + 'px';
+    tipEl.addEventListener('mouseenter', tipKeep); tipEl.addEventListener('mouseleave', tipHide);
+    const off = () => { tipHide(); b.removeEventListener('mouseleave', off); }; b.addEventListener('mouseleave', off);
   });
   document.addEventListener('click', (e) => {
     const b = e.target.closest && e.target.closest('[data-help]'); if (!b) return;
@@ -457,7 +464,7 @@
     const KIND = { advertisement: 'Ad', notification: 'Notice', receipt: 'Receipt', bill: 'Bill', message: 'Message', other: 'Other' };
     // the tag is the basket: a bill draft is a Bill whatever it was rated; rated with nothing fitting = Other
     const kindOf = (m) => st(m) === 'parsed' ? 'bill' : m.kind || (m.triaged_at ? 'other' : null);
-    const kindTag = (m) => { const k = kindOf(m); return k ? '<span class="ib-kind ' + esc(k) + '" title="' + esc(m.note || '') + '">' + esc(KIND[k] || k) + (m.confidence != null && k === m.kind ? ' ' + Math.round(m.confidence * 100) + '%' : '') + '</span>' : ''; };
+    const kindTag = (m) => { const k = kindOf(m); return k ? '<span class="ib-kind ' + esc(k) + '"' + (m.note ? ' data-tip="' + esc(m.note) + '"' : '') + '>' + esc(KIND[k] || k) + (m.confidence != null && k === m.kind ? ' ' + Math.round(m.confidence * 100) + '%' : '') + '</span>' : ''; };
     const fromName = (f) => { const m = /^\s*"?([^"<]*?)"?\s*<([^>]+)>/.exec(f || ''); return m ? (m[1].trim() || m[2]) : String(f || '').replace(/^"|"$/g, ''); };
     const fromAddr = (f) => { const m = /<([^>]+)>/.exec(f || ''); return m ? m[1] : String(f || ''); };
     // who it is from, at a glance: the vendor's logo when the sender is linked, else a lettered circle
@@ -619,7 +626,7 @@
     const htmlBody = e.body_html ? '<iframe class="em-html" sandbox="allow-same-origin allow-popups" referrerpolicy="no-referrer"></iframe>' : '';
     el.innerHTML = '<div class="em-box"><div class="em-head"><div class="em-subject">' + esc(dec(e.subject) || '(no subject)') + '</div><button class="em-close" data-close title="Back to the list" aria-label="Close">×</button></div>' +
       '<div class="em-meta"><button class="em-av' + (j.vendor && j.vendor.photo ? ' logo' : '') + (j.vendor ? ' linked' : '') + '" data-vmenu title="' + esc(j.vendor ? 'Vendor · ' + j.vendor.name + (j.vendor.kind ? ' · ' + j.vendor.kind.charAt(0).toUpperCase() + j.vendor.kind.slice(1) : '') + ' — click to change or unlink' : 'Not linked to a vendor — click to link ' + fromAddr(e.from_addr)) + '">' + (j.vendor && j.vendor.photo ? '<img src="' + esc(j.vendor.photo) + '" alt="' + esc(j.vendor.name) + '">' : esc(fromName(e.from_addr).charAt(0).toUpperCase())) + '</button><div class="em-who"><b>' + esc(fromName(e.from_addr)) + '</b> <span class="bk-muted">&lt;' + esc(fromAddr(e.from_addr)) + '&gt;</span><div class="bk-muted">to ' + esc(j.inbox) + '</div></div><div class="em-date bk-muted">' + esc(fmtDate(e.received_at)) + '</div></div>' +
-      '<div class="em-verdict">' + (e.aside ? '<span class="ib-tag skipped">set aside</span>' : '') + (e.kind ? '<span class="ib-kind ' + esc(e.kind) + '">' + esc(KIND[e.kind] || e.kind) + (e.confidence != null ? ' ' + Math.round(e.confidence * 100) + '%' : '') + '</span>' : '') + '<span class="bk-muted">' + (e.note ? noteHtml(e.note) : esc(k === 'new' ? 'Not rated yet.' : '')) + '</span>' + (j.bill ? ' <a href="#" data-gobills>bill #' + j.bill.id + ' (' + esc(j.bill.status) + ')</a>' : '') + '</div>' +
+      '<div class="em-verdict">' + (e.aside ? '<span class="ib-tag skipped">set aside</span>' : '') + (e.kind ? '<span class="ib-kind ' + esc(e.kind) + '"' + (e.note ? ' data-tip="' + esc(e.note) + '"' : '') + '>' + esc(KIND[e.kind] || e.kind) + (e.confidence != null ? ' ' + Math.round(e.confidence * 100) + '%' : '') + '</span>' : '') + (e.note ? '' : '<span class="bk-muted">' + esc(k === 'new' ? 'Not rated yet.' : '') + '</span>') + (j.bill ? ' <a href="#" data-gobills>bill #' + j.bill.id + ' (' + esc(j.bill.status) + ')</a>' : '') + '</div>' +
       '<div class="em-acts">' + (k !== 'parsed' ? '<button class="bk-btn sm p" data-parse>Turn into a bill</button>' : '<button class="bk-btn sm p" data-gobills>Open in Bills →</button>') + (j.matched && (j.matched.bill || j.matched.txn) ? '<span class="em-matched">' + (j.matched.bill ? '<a href="#" data-gobills class="em-match">Matched · bill #' + j.matched.bill.id + ' · ' + esc(j.matched.bill.vendor || '') + (j.matched.bill.invoice_no ? ' ' + esc(j.matched.bill.invoice_no) : '') + ' · ' + usd(j.matched.bill.total) + ' · ' + esc(j.matched.bill.status) + '</a>' : '<span class="em-match">Matched · ' + esc(j.matched.txn.date) + ' ' + esc(j.matched.txn.name) + ' · ' + usd(Math.abs(j.matched.txn.amount)) + '</span>') + '<button class="bk-btn sm" data-unmatch title="Remove the match">×</button></span>' : '<button class="bk-btn sm" data-match title="Find the bill or bank line this email is about">Match…</button>') + (!e.read_by && !e.aside && k !== 'error' ? '<button class="bk-btn sm ico" data-read title="Mark as read — here and in Gmail" aria-label="Mark as read">' + iconSvg('mail') + '<span class="ico-ck"></span></button>' : '<button class="bk-btn sm ico" data-unread title="Mark as unread — here and in Gmail" aria-label="Mark as unread">' + iconSvg('mail') + '</button>') + (k !== 'parsed' ? '<button class="bk-btn sm" data-movebtn>Move to <span class="thf-c"></span></button>' : '') + '</div>' +
       (e.attachments.length ? '<div class="em-atts">' + e.attachments.map(att).join('') + '</div>' : '') +
       (htmlBody || '<div class="em-body">' + esc(body).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>') + '</div>') + '</div>';
