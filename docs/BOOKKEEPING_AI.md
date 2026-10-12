@@ -370,8 +370,10 @@ that paid it, its purchase's confirmation and deliveries — role, subject, time
 as a chip (one click opens it). Clicking an email opens it in a popup (`emailModal`: header, body, attachments) with
 **Take me to the Inbox**, which opens that email in the Inbox (All, open or closed) with the row scrolled into view.
 
-The Bills tab has four sub-tabs by status — **Pending** (drafts; rejected folded below), **Approved**, **Scheduled**,
-**Paid** — each with a count. After approval a bill is moved by hand: "Schedule payment…" (a pay date →
+The Bills tab has five sub-tabs by status — **Pending** (drafts), **Approved**, **Scheduled**, **Paid** and **Rejected**
+(1.19.16: its own tab; a reject asks for a reason — required, multi-line — kept on the proposal as `decision`, shown on
+the card as "Rejected by <who> · when — reason"; **Restore to Pending** puts it back, `POST /bills/:id/restore`; merged
+duplicates stay merged) — each with a count. After approval a bill is moved by hand: "Schedule payment…" (a pay date →
 `bk_bills.scheduled_for`), "Mark paid…" (date + how → `paid_at`, `paid_note`), and back (`POST
 /api/bookkeeping/bills/:id/status {status, date, note}`, allowed moves approved ↔ scheduled ↔ paid, audited). Nothing
 moves money; this is the ledger until BILL / QuickBooks are connected. **Bills** and **Inbox** are two main tabs (`?tab=inbox`; the Inbox tab carries a badge with the not-yet-read count;

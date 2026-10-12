@@ -1633,10 +1633,11 @@ module.exports = function mountBookkeeping(app, deps) {
     res.json({ ok: true });
   });
   app.get('/api/bookkeeping/bills', ...guard, async (req, res) => {
-    const rows = await dbAll('SELECT b.*, e.from_addr, e.subject, e.received_at, p.status AS proposal_status, p.confidence AS proposal_confidence, p.reason AS proposal_reason FROM bk_bills b LEFT JOIN bk_emails e ON e.id = b.email_id LEFT JOIN bk_proposals p ON p.id = b.proposal_id ORDER BY b.id DESC LIMIT 200');
+    const rows = await dbAll('SELECT b.*, e.from_addr, e.subject, e.received_at, p.status AS proposal_status, p.confidence AS proposal_confidence, p.reason AS proposal_reason, p.decision AS rejected_note, p.decided_by AS rejected_by, p.decided_at AS rejected_at FROM bk_bills b LEFT JOIN bk_emails e ON e.id = b.email_id LEFT JOIN bk_proposals p ON p.id = b.proposal_id ORDER BY b.id DESC LIMIT 200');
     const dir = await directory();
     for (const r of rows) {
       try { r.lines = JSON.parse(r.lines || '[]'); } catch (e) { r.lines = []; }
+      for (const l of r.lines) { if (l && l.material_id && !l.material_photo) { const m = await dbGet('SELECT name, photo FROM bk_materials WHERE id = ?', [l.material_id]); if (m) { l.material_photo = m.photo || null; if (!l.material_name) l.material_name = m.name; } } }   // links made before photos were kept
       const v = r.vendor_id ? dir.find(x => x.id === r.vendor_id) : null;
       r.vendor_card = vendorCard(v);
       // not linked to a CRM entry yet (none, or only the bill-source row) → near matches to pair with
@@ -1690,6 +1691,15 @@ module.exports = function mountBookkeeping(app, deps) {
       if (b.email_id) { const em = await dbGet('SELECT * FROM bk_emails WHERE id = ?', [b.email_id]); if (em) { await dbRun('UPDATE bk_emails SET purchase_id = COALESCE(?, purchase_id) WHERE id = ?', [t.purchase_id || null, em.id]); if (!em.read_by) { try { await handleEmail(em, 'bill', who, 'duplicate of bill #' + into + ' — merged by ' + who); } catch (e) {} } } }
       await audit(who, 'bill.merge', id, { into }); res.json({ ok: true });
     } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  // A rejected bill back to Pending (its proposal pending again). Merged duplicates stay merged.
+  app.post('/api/bookkeeping/bills/:id/restore', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), who = userId(req); const b = await dbGet('SELECT * FROM bk_bills WHERE id = ?', [id]);
+    if (!b || b.status !== 'rejected') return res.json({ ok: false, error: 'Only a rejected bill can be restored.' });
+    if (b.merged_into) return res.json({ ok: false, error: 'This one was merged into Bill #' + b.merged_into + '.' });
+    await dbRun("UPDATE bk_bills SET status = 'draft', updated_at = datetime('now') WHERE id = ?", [id]);
+    if (b.proposal_id) await dbRun("UPDATE bk_proposals SET status = 'pending', decided_by = NULL, decided_at = NULL, decision = NULL WHERE id = ?", [b.proposal_id]);
+    await audit(who, 'bill.restore', id, {}); res.json({ ok: true });
   });
   app.post('/api/bookkeeping/bills/:id/status', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), to = String(req.body && req.body.status || ''), date = String(req.body && req.body.date || '').slice(0, 10), note = String(req.body && req.body.note || '').slice(0, 200);
