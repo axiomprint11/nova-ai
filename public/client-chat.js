@@ -213,7 +213,9 @@
       '<div class="cc-price-hd">' +
         (c.image ? '<img src="' + esc(c.image) + '" alt="" onerror="this.remove()">' : '') +
         '<div><b>' + esc(c.product) + '</b>' + (rows.length === 1 && rows[0].quantity ? '<small>Qty ' + Number(rows[0].quantity).toLocaleString() + '</small>' : '') + '</div>' +
-        (canEdit ? '<button type="button" class="cc-edit-btn" title="Change options or quantities">\u270e Edit</button>' : '') +
+        (ref != null ? '<span class="cc-card-tools">' + (canEdit ? '<button type="button" class="cc-edit-btn" title="Change options or quantities">\u270e Edit</button>' : '') +
+          '<button type="button" class="cc-dl-btn" title="Download this quote as a PDF (print or keep it)">\u2913 PDF</button>' +
+          '<button type="button" class="cc-mail-btn" title="Email this quote to yourself">\u2709 Send to me</button></span>' : '') +
       '</div>' +
       '<table class="cc-specs">' + (c.specs || []).filter(s => !/^quantity$/i.test(s.field)).slice(0, 16).map(s => {
         // "Clarify" fields left on the default: a yellow dropdown to pick right here.
@@ -889,6 +891,54 @@
       const wh = sel.closest('.cc-edit').querySelector('.cc-wh');
       if (wh) wh.style.display = /custom/i.test(sel.value) ? '' : 'none';
     });
+    // ---- 1.19.40: Download PDF / Send to me (quote card) and "Send me this chat" (header) ----
+    const authH = () => ({ 'Authorization': 'Bearer ' + (opts.getToken ? opts.getToken() : '') });
+    let contact = null; try { contact = JSON.parse(localStorage.getItem('nova-contact') || 'null'); } catch (x) {}
+    async function downloadPdf(key) {
+      if (!chatId) return;
+      try {
+        const r = await fetch('/api/client-bot/quote.pdf?chat_id=' + chatId + (key ? '&key=' + encodeURIComponent(key) : ''), { headers: authH() });
+        if (!r.ok) { toast('The PDF is not ready — ask for a price first.'); return; }
+        const blob = await r.blob(), u = URL.createObjectURL(blob), a = document.createElement('a');
+        a.href = u; a.download = 'AxiomPrint-quote.pdf'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000);
+      } catch (x) { toast('Could not download the PDF.'); }
+    }
+    let toastEl = null;
+    function toast(msg) { if (!toastEl) { toastEl = document.createElement('div'); toastEl.className = 'cc-toast'; root.appendChild(toastEl); } toastEl.textContent = msg; toastEl.classList.add('on'); clearTimeout(toastEl._t); toastEl._t = setTimeout(() => toastEl.classList.remove('on'), 3200); }
+    function openMail(scope, key) {
+      if (!chatId) { toast('Ask for a price first — then NovaAI can email it.'); return; }
+      root.querySelectorAll('.cc-mailbox').forEach(x => x.remove());
+      const c = (opts.contact && opts.contact()) || contact || {};
+      const box = document.createElement('div'); box.className = 'cc-mailbox';
+      box.innerHTML = '<div class="cc-mailbox-in"><div class="cc-mailbox-hd"><b>' + (scope === 'quote' ? 'Email me this quote' : 'Email me this chat\u2019s quotes') + '</b><button type="button" class="cc-mailbox-x" aria-label="Close">\u00d7</button></div>' +
+        '<p>You\u2019ll get the quote' + (scope === 'quote' ? '' : 's') + ' with prices, options and Order now links \u2014 and a PDF to print or keep.</p>' +
+        '<label>Name<input type="text" class="cc-mb-name" maxlength="80" autocomplete="name" value="' + esc(c.name || '') + '"></label>' +
+        '<label>Email<input type="email" class="cc-mb-email" maxlength="160" autocomplete="email" inputmode="email" value="' + esc(c.email || '') + '"></label>' +
+        '<div class="cc-mailbox-acts"><button type="button" class="cc-mb-send">Send</button><span class="cc-mb-msg"></span></div></div>';
+      root.appendChild(box);
+      const nameIn = box.querySelector('.cc-mb-name'), mailIn = box.querySelector('.cc-mb-email'), msg = box.querySelector('.cc-mb-msg'), send = box.querySelector('.cc-mb-send');
+      setTimeout(() => (c.email ? send : (c.name ? mailIn : nameIn)).focus(), 0);
+      box.querySelector('.cc-mailbox-x').onclick = () => box.remove();
+      box.addEventListener('click', (e) => { if (e.target === box) box.remove(); });
+      const go = async () => {
+        const name = nameIn.value.trim(), email = mailIn.value.trim();
+        if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)) { msg.textContent = 'Please enter a valid email.'; mailIn.focus(); return; }
+        send.disabled = true; msg.textContent = 'Sending\u2026';
+        let j = {};
+        try { const r = await fetch('/api/client-bot/send-me', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, authH()), body: JSON.stringify({ chat_id: chatId, name: name, email: email, scope: scope, key: key || null }) }); j = await r.json().catch(() => ({})); } catch (x) { j = {}; }
+        send.disabled = false;
+        if (!j.ok) { msg.textContent = j.error || 'Could not send right now.'; return; }
+        contact = { name: name, email: email }; try { localStorage.setItem('nova-contact', JSON.stringify(contact)); } catch (x) {}
+        box.remove(); toast('Sent to ' + email + ' \u2014 check your inbox.');
+      };
+      send.onclick = go; box.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } if (e.key === 'Escape') box.remove(); });
+    }
+    root.addEventListener('click', (e) => {
+      const dl = e.target.closest && e.target.closest('.cc-dl-btn'), ml = e.target.closest && e.target.closest('.cc-mail-btn');
+      if (!dl && !ml) return;
+      const card = (dl || ml).closest('.cc-price'), key = card ? card.getAttribute('data-key') : '';
+      if (dl) downloadPdf(key); else openMail('quote', key);
+    });
     root.addEventListener('click', async (e) => {
       const btn = e.target.closest && e.target.closest('.cc-edit-btn, .cc-cancel, .cc-upd');
       if (!btn) return;
@@ -1070,7 +1120,9 @@
       load: load,
       chatId: () => chatId,
       setPage: setPage,
-      ask: ask
+      ask: ask,
+      openMail: (scope) => openMail(scope || 'chat', null),
+      downloadPdf: () => downloadPdf(null)
     };
   }
 

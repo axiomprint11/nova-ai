@@ -140,6 +140,7 @@ module.exports = function mountClientBot(app, deps) {
     db.run('ALTER TABLE client_chats ADD COLUMN visit TEXT', () => {});
     // The customer's own rating of the conversation (1-5 stars, asked in the chat), an optional note, and when.
     ['cust_rating INTEGER', 'cust_note TEXT', 'cust_rated_at TEXT'].forEach(c => db.run('ALTER TABLE client_chats ADD COLUMN ' + c, () => {}));
+    ['contact_name TEXT', 'contact_email TEXT', 'team_summary_at TEXT', 'summary_text TEXT'].forEach(c => db.run('ALTER TABLE client_chats ADD COLUMN ' + c, () => {}));   // 1.19.40: Send to me / chat summary
     // Past-due jobs NovaAI escalated (one email per job per day).
     db.run(`CREATE TABLE IF NOT EXISTS client_escalations (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, customer_id INTEGER,
       estimate_id INTEGER, kind TEXT, sent_to TEXT, email_id TEXT, ok INTEGER, error TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`);     // how they reached the site + device (JSON)
@@ -691,6 +692,10 @@ module.exports = function mountClientBot(app, deps) {
     name: 'order_status',
     description: 'Status and details of ONE of the signed-in customer\'s own orders, by order number (E1234567) or invoice number (INV123456). Returns "not found on your account" for anything else.',
     input_schema: { type: 'object', properties: { order_number: { type: 'string' } }, required: ['order_number'] }
+  }, {
+    name: 'email_quotes',
+    description: 'Email the prices quoted in this conversation (every price card so far, as a PDF with Order now links) to the customer. Use when they ask to have the quote emailed / sent to them and you have an address: a signed-in customer\'s account email (leave email empty), or the address they typed. Not for printing or saving — for that point to the Download PDF button on the quote card.',
+    input_schema: { type: 'object', properties: { email: { type: 'string', description: 'The address they gave. Empty = the signed-in customer\'s account email.' }, name: { type: 'string', description: 'Their name, if they said it.' } } }
   }];
 
   // The picture for an order: its own artwork preview when there is one, else the product photo.
@@ -1527,6 +1532,14 @@ module.exports = function mountClientBot(app, deps) {
       return { results: rows.slice(0, 6).map(r => ({ id: r.id, name: r.public_title || r.title, about: clip(r.short_description, 160) })),
         newest_first: true, note: 'Do not mention when they were added.', shown: PRODUCTS_SHOWN };
     }
+    if (name === 'email_quotes') {
+      const to = String(input.email || '').trim().toLowerCase() || (who.customer && who.customer.email ? String(who.customer.email).toLowerCase() : '');
+      if (!isMail(to)) return { sent: false, error: 'No email address yet. Ask the customer which address to send the quote to (or they can press "Send to me" on the quote card).' };
+      try {
+        const r = await sendQuotes({ chatId: ctx.chatId, who: who, name: input.name || (who.customer && (who.customer.first || who.customer.name)) || '', email: to, scope: 'chat', by: 'tool' });
+        return r.ok ? { sent: true, to: to, quotes: r.cards, say: 'Tell them the quote (with a PDF and Order now links) is on its way to ' + to + '.' } : { sent: false, error: r.error };
+      } catch (e) { return { sent: false, error: e.message }; }
+    }
     if (name === 'estimate_design') {
       const r = await loadRules();
       const lo = Number(r.design_min), hi = Number(r.design_max);
@@ -1884,6 +1897,7 @@ module.exports = function mountClientBot(app, deps) {
       '19. GRAPHIC DESIGN AND FILE CHANGES: when the customer asks you to design, create, draw, edit, fix or change artwork or a file, say plainly that NovaAI cannot design or edit files yet, and that AxiomPrint offers in-house graphic design at $' + usd2(Number(rules.design_min || DEFAULT_DESIGN_MIN)).replace(/\.00$/, '') + '\u2013$' + usd2(Number(rules.design_max || DEFAULT_DESIGN_MAX)).replace(/\.00$/, '') + ' per hour depending on the project. ' +
         'Turn their request into pieces and hours with the DESIGN SERVICES guide below and call estimate_design; give its estimate and hours in one or two lines (never your own arithmetic). Then offer to price the printing too (price first, as usual). ' +
         'To go ahead with design, point them to ' + (rules.contact || DEFAULT_CONTACT) + '. Never claim you designed, edited or checked a file.',
+      '21. PRINT / SAVE / EMAIL A QUOTE: every quote card has a **Download PDF** button (next to Edit) that saves the quote as a PDF with the options, prices, ready date and Order now links, and a **Send to me** button that emails it. When the customer asks to print, save, download, keep or email a quote or the prices, say exactly that in one sentence (e.g. "Press Download PDF on the quote card to print or save it, or Send to me to get it by email") — never suggest the browser\'s print function, never say you cannot. If they give you an email address, or they are signed in and ask you to email it, call email_quotes.',
       '',
       signIn,
       '',
@@ -2003,6 +2017,92 @@ module.exports = function mountClientBot(app, deps) {
   // to another page, or clicked Add to Cart (added / needed to sign in / failed).
   // The customer rates the conversation (1-5 stars, and a note when it could be better). Kept on the chat (the latest
   // rating wins) and as an event line in the admin transcript; the chat shows as unread for admins.
+  // ---- 1.19.40: Download PDF / Send to me — the quotes of a chat as a PDF, by download or by email ----
+  const { quotePdf } = require('./quote-pdf');
+  const isMail = (e) => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(String(e || ''));
+  const MAIL_BCC = String(process.env.CLIENT_BOT_MAIL_BCC || 'gary@axiomprint.com').trim();
+  const usdFmt = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const laDate = (d) => new Date(d || Date.now()).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric' });
+  // Every price card of a chat, newest version of each (edits replace the earlier card with the same key), in the order first quoted.
+  async function priceCardsOf(chatId, key) {
+    const rows = await dbAll("SELECT role, cards FROM client_messages WHERE chat_id = ? AND role IN ('assistant', 'note') AND cards LIKE '%\"price\"%' ORDER BY id", [chatId]);
+    const out = new Map();
+    rows.forEach(m => { let cards = []; try { cards = JSON.parse(m.cards || '[]'); } catch (e) {} (Array.isArray(cards) ? cards : []).forEach(c => { if (c && c.type === 'price' && (c.rows || []).length) { const k = c.key || (c.product_id + '|' + JSON.stringify(c.specs || [])); if (out.has(k)) { const prev = out.get(k); out.delete(k); out.set(k, Object.assign({}, prev, c)); } else out.set(k, c); } }); });
+    const all = Array.from(out.values());
+    return key ? all.filter(c => (c.key || '') === key) : all;
+  }
+  function quoteMail(cards, name, intro, link) {
+    const esc = (t) => String(t == null ? '' : t).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]);
+    const specs = (c) => (c.specs || []).filter(x => !/^quantity$/i.test(x.field || ''));
+    const html = '<div style="font-family:Inter,Arial,sans-serif;color:#1c1c28;max-width:640px">' +
+      '<p>' + (name ? 'Hi ' + esc(name) + ',' : 'Hello,') + '</p><p>' + esc(intro) + '</p>' +
+      cards.map(c => '<h3 style="margin:18px 0 4px;font-size:15px">' + esc(c.product) + '</h3>' +
+        '<div style="font-size:12.5px;color:#4b4b66">' + specs(c).filter(x => x.tag !== 'default').map(x => esc(x.field) + ': <b>' + esc(x.value) + '</b>').join(' &nbsp;·&nbsp; ') +
+        (specs(c).some(x => x.tag === 'default') ? '<div style="color:#8a8aa0;margin-top:2px">Standard: ' + specs(c).filter(x => x.tag === 'default').map(x => esc(x.field) + ': ' + esc(x.value)).join(', ') + '</div>' : '') + '</div>' +
+        '<table cellpadding="6" cellspacing="0" style="border-collapse:collapse;margin-top:8px;font-size:13px"><tr style="background:#f3f3fa;color:#6b6b85;font-size:11px"><th align="left">QTY</th><th align="left">PRICE</th><th align="left">EACH</th><th align="left">READY</th><th></th></tr>' +
+        (c.rows || []).map(r => '<tr style="border-bottom:1px solid #ececf4"><td><b>' + Number(r.quantity || 0).toLocaleString('en-US') + '</b></td><td>' + (r.discount && r.list_price > r.price ? '<s style="color:#8a8aa0">' + usdFmt(r.list_price) + '</s> ' : '') + '<b style="color:#4f46e5">' + usdFmt(r.price) + '</b></td><td style="color:#6b6b85">' + (r.each != null ? usdFmt(r.each) : '') + '</td><td style="color:#6b6b85">' + esc(r.ready || '') + '</td><td>' + (r.cart && r.cart.url ? '<a href="' + esc(r.cart.url) + '" style="color:#4f46e5;font-weight:600">Order now</a>' : '') + '</td></tr>').join('') + '</table>').join('') +
+      '<p style="font-size:12px;color:#8a8aa0;margin-top:18px">The same quote is attached as a PDF. Prices are estimates from NovaAI and are confirmed at checkout; production starts the business day after approval, shipping is extra.' + (link ? ' <a href="' + esc(link) + '" style="color:#4f46e5">Continue the chat</a>.' : '') + '</p>' +
+      '<p style="font-size:12px;color:#8a8aa0">AxiomPrint · order@axiomprint.com · (747) 888-7777</p></div>';
+    const text = (name ? 'Hi ' + name + ',' : 'Hello,') + '\n\n' + intro + '\n\n' + cards.map(c => c.product + '\n' + specs(c).map(x => '  ' + x.field + ': ' + x.value).join('\n') + '\n' +
+      (c.rows || []).map(r => '  ' + Number(r.quantity || 0).toLocaleString('en-US') + ' — ' + usdFmt(r.price) + (r.each != null ? ' (' + usdFmt(r.each) + ' each)' : '') + (r.ready ? ' — ready ' + r.ready : '') + (r.cart && r.cart.url ? '\n    Order now: ' + r.cart.url : '')).join('\n')).join('\n\n') +
+      '\n\nThe same quote is attached as a PDF. Prices are estimates from NovaAI and are confirmed at checkout.\n\nAxiomPrint · order@axiomprint.com · (747) 888-7777\n';
+    return { html, text };
+  }
+  // The customer's own copy: quote(s) by email with the PDF attached, BCC the team. Used by the Send to me button and the email_quotes tool.
+  async function sendQuotes({ chatId, who, name, email, scope, key, by }) {
+    if (!deps.sendMail) return { ok: false, error: 'Email is not available right now.' };
+    const chat = await dbGet('SELECT * FROM client_chats WHERE id = ?', [chatId]);
+    if (!chat) return { ok: false, error: 'No such chat.' };
+    const cards = await priceCardsOf(chatId, scope === 'quote' ? key : null);
+    if (!cards.length) return { ok: false, error: 'Nothing has been priced in this chat yet.' };
+    name = String(name || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 80);
+    const who1 = name || (who && who.customer && (who.customer.first || who.customer.name)) || '';
+    const pdf = quotePdf({ title: cards.length === 1 ? 'Your quote — ' + cards[0].product : 'Your quotes from AxiomPrint', who: [name, who && who.customer && who.customer.company].filter(Boolean).join(' · '), date: laDate(),
+      intro: 'The prices NovaAI worked out in your chat on axiomprint.com. Each Order now link opens the product with these options preselected.', cards: cards });
+    const subject = 'Your AxiomPrint quote' + (cards.length === 1 ? ' — ' + cards[0].product : ' (' + cards.length + ' products)');
+    const mail = quoteMail(cards, who1, 'Here ' + (cards.length === 1 ? 'is the quote' : 'are the quotes') + ' from your chat with NovaAI on axiomprint.com. Press Order now to add one to your cart with these options.', null);
+    await deps.sendMail({ to: email, subject: subject, text: mail.text, html: mail.html, bcc: chat.source === 'website' && MAIL_BCC ? MAIL_BCC : undefined,
+      attachments: [{ filename: 'AxiomPrint-quote-' + chatId + '.pdf', type: 'application/pdf', content: pdf }] });
+    if (name || email) await dbRun("UPDATE client_chats SET contact_name = COALESCE(NULLIF(?, ''), contact_name), contact_email = ?, updated_at = datetime('now') WHERE id = ?", [name, email, chatId]).catch(() => {});
+    await dbRun('INSERT INTO client_messages (chat_id, role, content, cards) VALUES (?,?,?,?)', [chatId, 'event', 'Quote emailed to ' + email + (name ? ' (' + name + ')' : '') + (by === 'tool' ? ' by NovaAI' : ' — Send to me') + ': ' + cards.map(c => c.product).join(', '),
+      JSON.stringify([{ type: 'event', kind: 'mail', to: email, name: name, scope: scope, products: cards.map(c => c.product) }])]).catch(() => {});
+    return { ok: true, cards: cards.map(c => c.product), to: email };
+  }
+  async function chatOf(req, b) {
+    const who = await identify(req);
+    if (!who || who.error) return { who, status: who && who.status || 401 };
+    const chat = parseInt(b.chat_id) ? await dbGet('SELECT id, visitor_id, customer_id, source FROM client_chats WHERE id = ?', [parseInt(b.chat_id)]) : null;
+    if (!ownsChat(chat, who)) return { who, status: 403 };
+    return { who, chat };
+  }
+  // The PDF to download (fetched with the visitor token, so not a plain link).
+  app.get('/api/client-bot/quote.pdf', async (req, res) => {
+    const { who, chat, status } = await chatOf(req, req.query);
+    if (!chat) return res.status(status).json({ ok: false });
+    if (overLimit('pdf:' + who.vid, 30, 10 * 60 * 1000)) return res.status(429).json({ ok: false });
+    const cards = await priceCardsOf(chat.id, req.query.key ? String(req.query.key) : null);
+    if (!cards.length) return res.status(404).json({ ok: false, error: 'Nothing priced yet' });
+    const c = await dbGet('SELECT customer_name, contact_name FROM client_chats WHERE id = ?', [chat.id]);
+    const pdf = quotePdf({ title: cards.length === 1 ? 'Your quote — ' + cards[0].product : 'Your quotes from AxiomPrint', who: (who.customer && who.customer.name) || (c && (c.contact_name || c.customer_name)) || '', date: laDate(),
+      intro: 'The prices NovaAI worked out in your chat on axiomprint.com. Each Order now link opens the product with these options preselected.', cards: cards });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="AxiomPrint-quote-' + chat.id + '.pdf"');
+    res.send(pdf);
+  });
+  // Send to me: name + email from the small form → the quote(s) by email with the PDF, BCC the team.
+  app.post('/api/client-bot/send-me', async (req, res) => {
+    const b = req.body || {};
+    const { who, chat, status } = await chatOf(req, b);
+    if (!chat) return res.status(status).json({ ok: false });
+    if (overLimit('sendme:' + who.vid, 6, 60 * 60 * 1000)) return res.status(429).json({ ok: false, error: 'Too many emails in a short time — please try again later.' });
+    const email = String(b.email || '').trim().toLowerCase().slice(0, 160);
+    if (!isMail(email)) return res.json({ ok: false, error: 'Please enter a valid email address.' });
+    try {
+      const r = await sendQuotes({ chatId: chat.id, who: who, name: b.name, email: email, scope: b.scope === 'quote' ? 'quote' : 'chat', key: b.key ? String(b.key) : null, by: 'button' });
+      res.json(r);
+    } catch (e) { console.error('CLIENT_BOT send-me', e.message); res.json({ ok: false, error: 'Could not send the email right now.' }); }
+  });
+
   app.post('/api/client-bot/rate', async (req, res) => {
     const who = await identify(req);
     if (!who) return res.status(401).json({ ok: false });

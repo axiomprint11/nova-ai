@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.19.39';
-const NOVA_BUILT = '10-12-2026 2:45pm';
+const NOVA_VERSION = '1.19.40';
+const NOVA_BUILT = '10-12-2026 3:20pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -730,19 +730,27 @@ function getGmailSend() {
   gmailSendClient = google.gmail({ version: 'v1', auth });
   return gmailSendClient;
 }
-async function sendMail({ to, subject, text, html, replyTo, bcc }) {
+async function sendMail({ to, subject, text, html, replyTo, bcc, attachments }) {
   const clean = (v) => String(v || '').replace(/[\r\n]+/g, ' ').trim();
   const from = clean(process.env.MAIL_FROM || GMAIL_USER);
-  const b64 = (t) => Buffer.from(String(t || ''), 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n');
+  const b64 = (t) => (Buffer.isBuffer(t) ? t : Buffer.from(String(t || ''), 'utf8')).toString('base64').replace(/(.{76})/g, '$1\r\n');
   const boundary = 'nova-' + require('crypto').randomBytes(8).toString('hex');
+  const alt = ['--' + boundary, 'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', b64(text),
+    '--' + boundary, 'Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', b64(html || ''),
+    '--' + boundary + '--'];
+  // 1.19.40: attachments (e.g. a quote PDF) — multipart/mixed around the text/html alternative
+  const atts = (attachments || []).filter(a => a && a.content);
+  const outer = atts.length ? 'mixed-' + boundary : null;
+  const body = atts.length
+    ? ['--' + outer, 'Content-Type: multipart/alternative; boundary="' + boundary + '"', ''].concat(alt).concat(
+        [].concat.apply([], atts.map(a => ['--' + outer, 'Content-Type: ' + (a.type || 'application/octet-stream') + '; name="' + clean(a.filename).replace(/"/g, '') + '"',
+          'Content-Disposition: attachment; filename="' + clean(a.filename).replace(/"/g, '') + '"', 'Content-Transfer-Encoding: base64', '', b64(a.content)])), ['--' + outer + '--'])
+    : alt;
   const lines = ['From: NovaAI <' + from + '>', 'To: ' + clean(to),
     'Subject: =?UTF-8?B?' + Buffer.from(clean(subject), 'utf8').toString('base64') + '?=',
     bcc ? 'Bcc: ' + clean(bcc) : null,                     // Gmail delivers to it and strips the header
     replyTo ? 'Reply-To: ' + clean(replyTo) : null, 'MIME-Version: 1.0',
-    'Content-Type: multipart/alternative; boundary="' + boundary + '"', '',
-    '--' + boundary, 'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', b64(text),
-    '--' + boundary, 'Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', b64(html || ''),
-    '--' + boundary + '--', ''].filter(x => x !== null);
+    'Content-Type: multipart/' + (outer ? 'mixed; boundary="' + outer + '"' : 'alternative; boundary="' + boundary + '"'), ''].concat(body).concat(['']).filter(x => x !== null);
   const raw = Buffer.from(lines.join('\r\n'), 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const r = await getGmailSend().users.messages.send({ userId: 'me', requestBody: { raw: raw } });
   return r && r.data ? r.data.id : null;

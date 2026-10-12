@@ -12,7 +12,7 @@ LIVE=${NOVA_LIVE:-/opt/axiom-ai}
 SRC=${NOVA_SRC:-/tmp/nova-ai}
 FILES=("$@")
 if [ ${#FILES[@]} -eq 0 ]; then
-  FILES=(server.js ecosystem.config.js client-bot.js visitor-info.js public/admin.html speech-to-text.js public/axiom-voice.js public/axiom-cards.js public/client-embed.js public/client-chat.html public/client-chat.js
+  FILES=(server.js ecosystem.config.js client-bot.js quote-pdf.js visitor-info.js public/admin.html speech-to-text.js public/axiom-voice.js public/axiom-cards.js public/client-embed.js public/client-chat.html public/client-chat.js
          public/client-bot-admin.js public/client-bot.html public/axiom-shared.css docs/CLIENT_BOT.md CLAUDE.md
          talk-ai.js public/talk-ai.html public/talk-ai.js docs/TALK_AI.md
          usage-stats.js public/nova-stats.js public/index.html public/chatbot.html public/chatbot.js public/nova-nav.js closed-days.js talk-handoff.js docs/TALKAI_CRM_WEBHOOK.md artwork-specs.js team-directory.js office-hours.js bookkeeping.js public/bookkeeping.html public/bookkeeping.js docs/BOOKKEEPING_AI.md)

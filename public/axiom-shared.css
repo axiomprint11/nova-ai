@@ -1961,6 +1961,25 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .cc-unsure-note { margin-top: 8px; font-size: 11.5px; color: #9a3412; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 6px 9px; }
 .cc-edit-btn { flex: none; margin-left: auto; padding: 6px 11px; border-radius: 8px; border: 1.5px solid #c7d2fe; background: #fff;
   color: var(--indigo-dark); font: 600 12px/1 inherit; cursor: pointer; }
+/* 1.19.40: Edit · PDF · Send to me on the quote card, and the Send-to-me form */
+.cc-card-tools { flex: none; margin-left: auto; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.cc-card-tools .cc-edit-btn { margin-left: 0; }
+.cc-dl-btn, .cc-mail-btn { flex: none; padding: 6px 10px; border-radius: 8px; border: 1.5px solid var(--line); background: #fff; color: var(--ink-soft); font: 600 12px/1 inherit; cursor: pointer; white-space: nowrap; }
+.cc-dl-btn:hover, .cc-mail-btn:hover { border-color: var(--indigo); color: var(--indigo-dark); background: var(--indigo-light); }
+.cc-mailbox { position: absolute; inset: 0; z-index: 40; background: rgba(28,28,40,.35); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.cc { position: relative; }
+.cc-mailbox-in { background: #fff; border-radius: 14px; padding: 16px 18px; width: min(360px, 100%); box-shadow: 0 12px 40px rgba(0,0,0,.18); font-size: 13px; }
+.cc-mailbox-hd { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; } .cc-mailbox-hd b { flex: 1; font-size: 14px; }
+.cc-mailbox-x { border: none; background: none; font-size: 20px; line-height: 1; color: var(--muted); cursor: pointer; padding: 2px 4px; }
+.cc-mailbox-in p { margin: 0 0 10px; color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+.cc-mailbox-in label { display: block; font-size: 11.5px; font-weight: 600; color: var(--muted); margin-bottom: 8px; }
+.cc-mailbox-in label input { display: block; width: 100%; box-sizing: border-box; margin: 3px 0 0; padding: 8px 10px; font: 13.5px/1.3 inherit; border: 1.5px solid var(--line); border-radius: 9px; }
+.cc-mailbox-in label input:focus { border-color: var(--indigo); outline: none; box-shadow: 0 0 0 3px var(--indigo-light); }
+.cc-mailbox-acts { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+.cc-mb-send { padding: 8px 16px; border-radius: 9px; border: none; background: var(--indigo); color: #fff; font: 600 13px/1 inherit; cursor: pointer; } .cc-mb-send:disabled { opacity: .6; }
+.cc-mb-msg { font-size: 12px; color: var(--muted); }
+.cc-toast { position: absolute; left: 50%; bottom: 84px; transform: translate(-50%, 8px); background: #1c1c28; color: #fff; padding: 9px 14px; border-radius: 10px; font-size: 12.5px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 41; max-width: 90%; }
+.cc-toast.on { opacity: 1; transform: translate(-50%, 0); }
 .cc-edit-btn:hover { border-color: var(--indigo); background: var(--indigo-light); }
 .cc-price.editing .cc-specs, .cc-price.editing .cc-unsure-note, .cc-price.editing .cc-edit-btn { display: none; }
 .cc-price.editing .cc-ladder { opacity: .45; }
