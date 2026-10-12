@@ -616,7 +616,7 @@
     const KIND = { advertisement: 'Ad', arrival: 'Delivery', receipt: 'Transaction', bill: 'Bill', message: 'Message', other: 'Other', notification: 'Other' };
     // the tag is the basket: a bill draft is a Bill whatever it was rated; rated with nothing fitting = Other
     const kindOf = (m) => st(m) === 'parsed' ? 'bill' : m.kind || (m.triaged_at ? 'other' : null);
-    const kindTag = (m) => { const k = kindOf(m); return k ? '<span class="ib-kind ' + esc(k) + '"' + (m.note ? ' data-tip="' + esc(m.note) + '"' : '') + '>' + esc(KIND[k] || k) + (m.confidence != null && k === m.kind ? ' ' + Math.round(m.confidence * 100) + '%' : '') + '</span>' : ''; };
+    const kindTag = (m) => { const k = kindOf(m); return k ? '<span class="ib-kind ' + esc(k) + '"' + (m.note ? ' data-tip="' + esc(m.note) + '"' : '') + '>' + esc(KIND[k] || k) + ' ' + (m.confidence != null && k === m.kind ? Math.round(m.confidence * 100) : 100) + '%' + '</span>' : ''; };
     const fromName = (f) => { const m = /^\s*"?([^"<]*?)"?\s*<([^>]+)>/.exec(f || ''); return m ? (m[1].trim() || m[2]) : String(f || '').replace(/^"|"$/g, ''); };
     const fromAddr = (f) => { const m = /<([^>]+)>/.exec(f || ''); return m ? m[1] : String(f || ''); };
     // who it is from, at a glance: the vendor's logo when the sender is linked, else a lettered circle
