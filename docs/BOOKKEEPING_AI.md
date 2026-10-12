@@ -139,6 +139,12 @@ categorization Rules and Materials & GEO types (`?tab=accounts&sub=chart`; `show
 Connections and Activity stay in the small row.
 
 ### Chart of Accounts — a styled tree
+**Expects delivery per sub category** (1.19.19): the checkbox on the type is only the default; every sub category and
+sub-sub category has its own 📦 toggle in the editor (orange = goods that must arrive, grey = a service; a dashed border
+means "same as the level above", solid means set for this one). Stored as `delivery` 0 / 1 / null on each node;
+`chartOf()` resolves the effective value down the tree (`delivery`, with the own value in `delivery_own`), and
+`expectsDelivery(category)` uses the effective value for the purchase's receiving status.
+
 **Three levels** (1.19.17): a type of expense → sub categories → optional sub-sub categories (Cost of Goods Sold →
 Paper → Coated / Uncoated). In the editor every sub category has a dashed "+ sub category under …" line (Enter adds),
 and its sub-subs sit indented under it with the same rename / icon / order / remove controls (a sub with a used

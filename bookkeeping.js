@@ -237,8 +237,9 @@ module.exports = function mountBookkeeping(app, deps) {
       if (OLD_COLOR[color]) color = OLD_COLOR[color];            // the 1.16.2 darker palette → its lighter twin
       const kids = []; const seen = {};
       (Array.isArray(t.children) ? t.children : []).forEach(c => { const n = cleanName(c && c.name); if (n && !seen[n]) { seen[n] = 1;
-        const gk = []; (Array.isArray(c.children) ? c.children : []).forEach(g => { const gn = cleanName(g && g.name); if (gn && !seen[gn]) { seen[gn] = 1; gk.push({ name: gn, icon: iconKey(g.icon) }); } });   // third level (1.19.17)
-        kids.push({ name: n, icon: iconKey(c.icon), children: gk }); } });
+        const dl = (x) => x.delivery === 0 || x.delivery === false ? 0 : x.delivery === 1 || x.delivery === true ? 1 : null;   // per sub category (1.19.19): 0 / 1 explicit, null = same as the level above
+        const gk = []; (Array.isArray(c.children) ? c.children : []).forEach(g => { const gn = cleanName(g && g.name); if (gn && !seen[gn]) { seen[gn] = 1; gk.push({ name: gn, icon: iconKey(g.icon), delivery: dl(g) }); } });   // third level (1.19.17)
+        kids.push({ name: n, icon: iconKey(c.icon), delivery: dl(c), children: gk }); } });
       // delivery: does money under this type buy something that has to arrive? (goods → receiving status on the purchase)
       const delivery = t.delivery === 0 || t.delivery === false ? 0 : t.delivery === 1 || t.delivery === true ? 1 : (/cost of goods|supplies|equipment|inventory|material|asset/i.test(name) ? 1 : 0);
       out.push({ name, color, icon: iconKey(t.icon), delivery, children: kids });
@@ -252,7 +253,7 @@ module.exports = function mountBookkeeping(app, deps) {
   // Flat view: [{ name, parent, children, color, icon }] — parents first, their subs after each (file order).
   function chartOf(s) {
     const out = [];
-    chartTree(s).forEach(t => { out.push({ name: t.name, parent: null, children: t.children.length, color: t.color, icon: t.icon, delivery: t.delivery }); t.children.forEach(c => { out.push({ name: c.name, parent: t.name, top: t.name, children: (c.children || []).length, color: t.color, icon: c.icon || t.icon, delivery: t.delivery }); (c.children || []).forEach(g => out.push({ name: g.name, parent: c.name, top: t.name, level: 3, color: t.color, icon: g.icon || c.icon || t.icon, delivery: t.delivery })); }); }); return out; }
+    chartTree(s).forEach(t => { out.push({ name: t.name, parent: null, children: t.children.length, color: t.color, icon: t.icon, delivery: t.delivery }); t.children.forEach(c => { const cd = c.delivery == null ? t.delivery : c.delivery; out.push({ name: c.name, parent: t.name, top: t.name, children: (c.children || []).length, color: t.color, icon: c.icon || t.icon, delivery: cd, delivery_own: c.delivery }); (c.children || []).forEach(g => out.push({ name: g.name, parent: c.name, top: t.name, level: 3, color: t.color, icon: g.icon || c.icon || t.icon, delivery: g.delivery == null ? cd : g.delivery, delivery_own: g.delivery })); }); }); return out; }
   const categoriesOf = (s) => { const seen = {}; return chartOf(s).filter(c => c.parent || !c.children).map(c => c.name).filter(n => !seen[n] && (seen[n] = 1)); };
   const parentOf = (s, name) => { const c = chartOf(s).find(x => x.name === name && x.parent); return c ? c.parent : null; };
   // The chart as the AI reads it: "Cost of Goods Sold: Paper; Inks & Toner | Facilities: Rent; …"
