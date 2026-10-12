@@ -85,6 +85,7 @@ module.exports = function mountBookkeeping(app, deps) {
       vendor_id INTEGER, mode TEXT, purchase_price REAL, purchase_date TEXT, down_payment REAL, loan_amount REAL, loan_term INTEGER, loan_rate REAL, loan_start TEXT, monthly_payment REAL,
       lease_term INTEGER, lease_start TEXT, lease_monthly REAL, life_years REAL, salvage REAL, notes TEXT, updated_by TEXT, updated_at TEXT, synced_at TEXT)`);
     ['bk_bills', 'bk_transactions', 'bk_purchases'].forEach(t => db.run('ALTER TABLE ' + t + ' ADD COLUMN equipment_id INTEGER', () => {}));
+    db.run('ALTER TABLE bk_bills ADD COLUMN merged_into INTEGER', () => {});   // a duplicate folded into the bill it repeats (1.19.14)
     // What is inside a purchase: the line items the AI read from its email / bill (name, qty, amount, picture), each one
     // linked to a material in the catalog (or left Unknown) and to a chart-of-accounts category; shipping / tax / fees
     // are rows of their own kind, so the small shipping part of an invoice can go to Shipping.
@@ -1622,10 +1623,11 @@ module.exports = function mountBookkeeping(app, deps) {
       r.question = q && !q.answer ? q : null;
       // every email behind the bill: the one it was read from, the receipt that paid it, and its purchase's confirmation / deliveries — each with its attachments
       const pu = r.purchase_id ? await dbGet('SELECT confirm_email_id, arrival_email_ids FROM bk_purchases WHERE id = ?', [r.purchase_id]) : null;
-      const ids = [r.email_id, r.receipt_email_id, pu && pu.confirm_email_id].concat(pu ? jarr(pu.arrival_email_ids) : []).filter(Boolean).filter((x, i, a) => a.indexOf(x) === i);
+      const dups = await dbAll('SELECT id, email_id FROM bk_bills WHERE merged_into = ?', [r.id]); r.merged = dups.map(d => d.id);
+      const ids = [r.email_id, r.receipt_email_id, pu && pu.confirm_email_id].concat(pu ? jarr(pu.arrival_email_ids) : [], dups.map(d => d.email_id)).filter(Boolean).filter((x, i, a) => a.indexOf(x) === i);
       r.emails = ids.length ? (await dbAll('SELECT id, subject, from_addr, received_at, kind, status, read_by, attachments FROM bk_emails WHERE id IN (' + ids.map(() => '?').join(',') + ') ORDER BY received_at', ids)).map(e => {
         const atts = jarr(e.attachments).map((a, i) => ({ i, name: a.name, kind: /\.pdf$/i.test(a.file || a.name || '') || /pdf/.test(a.mime || '') ? 'pdf' : 'image' }));
-        return { id: e.id, subject: e.subject, from_addr: e.from_addr, received_at: e.received_at, open: !e.read_by, role: e.id === r.email_id ? 'bill' : e.id === r.receipt_email_id ? 'receipt' : e.id === (pu && pu.confirm_email_id) ? 'confirmation' : 'delivery', attachments: atts };
+        return { id: e.id, subject: e.subject, from_addr: e.from_addr, received_at: e.received_at, open: !e.read_by, role: e.id === r.email_id ? 'bill' : e.id === r.receipt_email_id ? 'receipt' : e.id === (pu && pu.confirm_email_id) ? 'confirmation' : dups.some(d => d.email_id === e.id) ? 'duplicate' : 'delivery', attachments: atts };
       }) : [];
     }
     res.json({ ok: true, bills: rows });
@@ -1647,6 +1649,24 @@ module.exports = function mountBookkeeping(app, deps) {
       items.forEach((it, i) => { const l = lines[i]; if (l) dbRun("UPDATE bk_purchase_items SET category = ?, material_id = ?, updated_at = datetime('now') WHERE id = ?", [l.category, l.material_id, it.id]); });
     }
     await audit(who, 'bill.lines', id, { n: lines.length }); res.json({ ok: true });
+  });
+  // A duplicate: fold this bill into the one it repeats. The duplicate is rejected with a note, its proposal closed, its
+  // email kept on the surviving bill (shown as DUPLICATE) and handled in the inbox. Nothing is deleted.
+  app.post('/api/bookkeeping/bills/:id/merge', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), into = parseInt(req.body && req.body.into), who = userId(req);
+    const b = await dbGet('SELECT * FROM bk_bills WHERE id = ?', [id]), t = await dbGet('SELECT * FROM bk_bills WHERE id = ?', [into]);
+    if (!b || !t || id === into) return res.json({ ok: false, error: 'Which two bills?' });
+    if (t.status === 'rejected' || t.merged_into) return res.json({ ok: false, error: 'Bill #' + into + ' is itself rejected or merged — merge into the one that stays.' });
+    try {
+      await dbRun("UPDATE bk_bills SET status = 'rejected', merged_into = ?, note = ?, updated_at = datetime('now') WHERE id = ?", [into, 'Duplicate of bill #' + into + ' — merged by ' + who, id]);
+      if (b.proposal_id) await dbRun("UPDATE bk_proposals SET status = 'rejected', decided_by = ?, decided_at = ?, decision = ? WHERE id = ? AND status = 'pending'", [who, nowIso(), 'duplicate of bill #' + into, b.proposal_id]);
+      if (b.purchase_id && b.purchase_id !== t.purchase_id) {   // the duplicate's purchase goes too, unless it already has a bank line of its own
+        const pu = await dbGet('SELECT txn_ids FROM bk_purchases WHERE id = ?', [b.purchase_id]);
+        if (pu && !jarr(pu.txn_ids).length) { await dbRun('DELETE FROM bk_purchase_items WHERE purchase_id = ?', [b.purchase_id]); await dbRun("UPDATE bk_purchases SET cancelled = 1, note = ?, updated_at = datetime('now') WHERE id = ?", ['duplicate of bill #' + into, b.purchase_id]); }
+      }
+      if (b.email_id) { const em = await dbGet('SELECT * FROM bk_emails WHERE id = ?', [b.email_id]); if (em) { await dbRun('UPDATE bk_emails SET purchase_id = COALESCE(?, purchase_id) WHERE id = ?', [t.purchase_id || null, em.id]); if (!em.read_by) { try { await handleEmail(em, 'bill', who, 'duplicate of bill #' + into + ' — merged by ' + who); } catch (e) {} } } }
+      await audit(who, 'bill.merge', id, { into }); res.json({ ok: true });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   app.post('/api/bookkeeping/bills/:id/status', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), to = String(req.body && req.body.status || ''), date = String(req.body && req.body.date || '').slice(0, 10), note = String(req.body && req.body.note || '').slice(0, 200);

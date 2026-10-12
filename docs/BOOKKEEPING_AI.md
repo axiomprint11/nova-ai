@@ -346,6 +346,12 @@ Search boxes everywhere are regular weight and right-aligned on their row.
 
 ## Bills tab and vendor pairing
 ### The bill card (1.19.11)
+Every card shows Nova's own number (**Bill #15**) next to the invoice number, so "possible duplicate of Bill #15" can
+be followed: the red tag scrolls to that card (or says it is under another Bills tab), and **Merge into #15** folds the
+duplicate in (`POST /api/bookkeeping/bills/:id/merge {into}`): the duplicate is rejected with a note and
+`merged_into`, its proposal closed, its purchase cancelled unless it already has a bank line, its email kept on the
+surviving bill (role **Duplicate**) and closed in the inbox. The survivor shows "+ 1 duplicate merged". Nothing is deleted.
+
 No subtitle and no "Scan the inbox now" on Pending (scanning lives in the Inbox); no "Open the file" (the attachments
 are on the email row). Dates in US format (10-10-2026). The AI's note is one clamped **AI Summary:** line with a chevron
 that expands it (1.19.12); an open question is a small **AI question** button at the right of that line (popup,
