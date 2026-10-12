@@ -102,6 +102,9 @@ module.exports = function mountTalkAi(app, deps, bot) {
     // The team's rating of a call (Good / Bad + a note), fed back into the phone prompt as lessons (callLessons()).
     db.run(`CREATE TABLE IF NOT EXISTS talk_ratings (id INTEGER PRIMARY KEY AUTOINCREMENT, call_id INTEGER UNIQUE, rating TEXT, note TEXT,
       rated_by TEXT, rated_at TEXT DEFAULT (datetime('now')), active INTEGER DEFAULT 1)`);
+    // 1.19.32: every save of a rating is kept, so the call page can show who changed it and when
+    db.run(`CREATE TABLE IF NOT EXISTS talk_rating_history (id INTEGER PRIMARY KEY AUTOINCREMENT, call_id INTEGER, rating TEXT, note TEXT,
+      rated_by TEXT, rated_at TEXT DEFAULT (datetime('now')))`);
   });
   const dbGet = (sql, p) => new Promise((ok, no) => db.get(sql, p || [], (e, r) => e ? no(e) : ok(r)));
   const dbAll = (sql, p) => new Promise((ok, no) => db.all(sql, p || [], (e, r) => e ? no(e) : ok(r)));
@@ -2069,9 +2072,15 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const id = parseInt(req.params.id) || 0, b = req.body || {};
     const rating = b.rating === 'good' || b.rating === 'bad' ? b.rating : null;
     const who = String(req.user.username || req.user.key || '').replace(/^(member|user):/, '');
-    if (!rating) { await dbRun('DELETE FROM talk_ratings WHERE call_id = ?', [id]); lessonsCache.at = 0; return res.json({ ok: true, rating: null }); }
+    const note = String(b.note || '').trim().slice(0, 1500) || null;
+    const prev = await dbGet('SELECT rating, note FROM talk_ratings WHERE call_id = ?', [id]).catch(() => null);
+    if (!rating) {
+      if (prev) await dbRun("INSERT INTO talk_rating_history (call_id, rating, note, rated_by) VALUES (?,?,?,?)", [id, 'cleared', null, who]);
+      await dbRun('DELETE FROM talk_ratings WHERE call_id = ?', [id]); lessonsCache.at = 0; return res.json({ ok: true, rating: null });
+    }
+    if (!prev || prev.rating !== rating || (prev.note || '') !== (note || '')) await dbRun("INSERT INTO talk_rating_history (call_id, rating, note, rated_by) VALUES (?,?,?,?)", [id, rating, note, who]);
     await dbRun("INSERT INTO talk_ratings (call_id, rating, note, rated_by, rated_at) VALUES (?,?,?,?,datetime('now')) ON CONFLICT(call_id) DO UPDATE SET rating = excluded.rating, note = excluded.note, rated_by = excluded.rated_by, rated_at = excluded.rated_at, active = 1",
-      [id, rating, String(b.note || '').trim().slice(0, 1500) || null, who]);
+      [id, rating, note, who]);
     lessonsCache.at = 0;
     res.json({ ok: true, rating: rating });
   });
@@ -2088,6 +2097,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
     c.can_fetch_audio = !c.has_audio && !!c.conversation_id && c.source !== 'try' && !!env('ELEVENLABS_API_KEY');
     c.emails = await dbAll('SELECT id, kind, to_addr, bcc, subject, html, text, ok, error, created_at FROM talk_emails WHERE call_id = ? ORDER BY id', [id]).catch(() => []);
     c.team_rating = await dbGet('SELECT rating, note, rated_by, rated_at FROM talk_ratings WHERE call_id = ? AND active = 1', [id]).catch(() => null) || null;
+    c.rating_history = await dbAll('SELECT rating, note, rated_by, rated_at FROM talk_rating_history WHERE call_id = ? ORDER BY id DESC', [id]).catch(() => []);
+    if (c.team_rating && !c.rating_history.length) c.rating_history = [c.team_rating];   // rated before the history existed
     try { c.quotes = c.quotes ? JSON.parse(c.quotes) : []; } catch (e) { c.quotes = []; }
     c.page_url = c.share_token ? NOVA_URL + '/talk/c/' + c.share_token : null; delete c.share_token;
     const ln = c.line_id ? await dbGet('SELECT am_name FROM talk_lines WHERE id = ?', [c.line_id]).catch(() => null) : null;

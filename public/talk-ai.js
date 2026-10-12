@@ -312,10 +312,13 @@
     // phone prompt, a Good a short example.
     const tr = c.team_rating || null;
     // 1.19.31: a saved rating reads as a note card (full text, who, when) with Edit; the editor shows only when there is nothing saved or Edit is pressed
+    const hist = c.rating_history || [];
     const ratedLine = tr ? 'Rated ' + esc(tr.rating) + ' by ' + esc(tr.rated_by || '') + ' · ' + esc(rel(tr.rated_at)) : '';
     const viewHtml = tr ? '<div class="tk-rate-view"><span class="tk-rate-tag ' + esc(tr.rating) + '">' + (tr.rating === 'good' ? '👍 Good' : '👎 Bad') + '</span>' +
         (tr.note ? '<div class="tk-rate-note">' + esc(tr.note) + '</div>' : '<div class="tk-rate-note none">No note</div>') +
-        '<div class="tk-rate-meta"><span class="tk-foot-st">' + ratedLine + '</span><a href="#" class="tk-rate-edit" id="rateEdit">Edit</a></div></div>' : '';
+        '<div class="tk-rate-meta"><span class="tk-foot-st">' + ratedLine + '</span><a href="#" class="tk-rate-edit" id="rateEdit">Edit</a>' +
+        (hist.length > 1 ? '<a href="#" class="tk-rate-edit" id="rateHist">History (' + hist.length + ')</a>' : '') + '</div>' +
+        (hist.length > 1 ? '<div class="tk-rate-hist hidden" id="rateHistList">' + hist.map(h => '<div class="tk-rate-h"><span class="tk-rate-tag sm ' + esc(h.rating) + '">' + (h.rating === 'good' ? '\ud83d\udc4d Good' : h.rating === 'bad' ? '\ud83d\udc4e Bad' : 'Cleared') + '</span><span class="tk-rate-hw">' + esc(h.rated_by || '') + ' \u00b7 ' + esc(rel(h.rated_at)) + '</span>' + (h.note ? '<div class="tk-rate-hn">' + esc(h.note) + '</div>' : '') + '</div>').join('') + '</div>' : '') + '</div>' : '';
     const editHtml = '<div class="tk-rate-row' + (tr ? ' hidden' : '') + '" id="rateEditor"><button type="button" class="tk-rate-btn good' + (tr && tr.rating === 'good' ? ' on' : '') + '" data-rate="good">👍 Good</button>' +
       '<button type="button" class="tk-rate-btn bad' + (tr && tr.rating === 'bad' ? ' on' : '') + '" data-rate="bad">👎 Bad</button>' +
       '<textarea id="rateNote" rows="1" placeholder="What was right or wrong? e.g. should have offered a callback instead of asking twice">' + esc(tr ? tr.note || '' : '') + '</textarea>' +
@@ -329,6 +332,7 @@
       btns.forEach(b => b.onclick = () => { picked = picked === b.dataset.rate ? null : b.dataset.rate; btns.forEach(x => x.classList.toggle('on', x.dataset.rate === picked)); if (picked === 'bad') note.focus(); });
       const openEditor = () => { const vw = v.querySelector('.tk-rate-view'); if (vw) vw.classList.add('hidden'); $('rateEditor').classList.remove('hidden'); grow(); note.focus(); };
       if ($('rateEdit')) $('rateEdit').onclick = (e) => { e.preventDefault(); openEditor(); };
+      if ($('rateHist')) $('rateHist').onclick = (e) => { e.preventDefault(); const l = $('rateHistList'); l.classList.toggle('hidden'); $('rateHist').textContent = (l.classList.contains('hidden') ? 'History (' : 'Hide history (') + hist.length + ')'; };
       if ($('rateCancel')) $('rateCancel').onclick = () => { $('rateEditor').classList.add('hidden'); const vw = v.querySelector('.tk-rate-view'); if (vw) vw.classList.remove('hidden'); };
       $('rateSave').onclick = async () => {
         const text = note.value.trim();
