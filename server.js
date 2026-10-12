@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.19.33';
-const NOVA_BUILT = '10-12-2026 1:25pm';
+const NOVA_VERSION = '1.19.34';
+const NOVA_BUILT = '10-12-2026 1:40pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -9237,4 +9237,16 @@ const bookkeeping = require('./bookkeeping')(app, { db, crypto, jwt, anthropic, 
 
 app.get(/^(?!\/api).*/, serveVersionedHtml('index.html'));
 
-app.listen(process.env.PORT, () => console.log('Axiom AI running on port ' + process.env.PORT));
+// 1.19.34: zero-downtime restarts. pm2 runs Nova in cluster mode (ecosystem.config.js) and `pm2 reload` starts the new
+// copy first, waits for this 'ready', then asks the old one to stop (SIGINT): the port stays answered the whole time.
+// On SIGINT we stop taking new connections, let in-flight requests finish, and exit (pm2's kill_timeout is the cap).
+const httpServer = app.listen(process.env.PORT, () => {
+  console.log('Axiom AI running on port ' + process.env.PORT + (process.send ? ' (pm2 cluster)' : ''));
+  if (process.send) process.send('ready');
+});
+process.on('SIGINT', () => {
+  console.log('Nova: stopping — finishing open requests');
+  httpServer.close(() => process.exit(0));
+  if (httpServer.closeIdleConnections) httpServer.closeIdleConnections();
+  setTimeout(() => process.exit(0), 10000).unref();
+});

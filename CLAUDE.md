@@ -17,7 +17,8 @@ test suite, and **not a git repository** — the running code on this box is the
 Production and development are the same machine and the same files. There is no staging.
 
 ```bash
-pm2 restart axiom-ai      # required after ANY server.js / mcp.js change
+pm2 reload axiom-ai       # after ANY server.js / mcp.js change — zero-downtime (cluster mode, ecosystem.config.js, 1.19.34);
+                          # scripts/deploy.sh does it: trial boot on port 3101 first, then reload, then checks the new version answers
 pm2 logs axiom-ai         # runtime errors, "Schema loaded: N tables", MCP mount line
 pm2 list                  # axiom-ai is process 0 (design-tool is an unrelated app)
 
@@ -183,7 +184,7 @@ admins can switch the user filter), "+ New chat" opens ChatBot, and a row of you
 has no Agents tab and Users has no per-member agents column: ChatBot's training opens from CRM Chat ("Train ChatBot",
 `trainAgent('chatbot')`) and TalkAi's from its page (`/admin?tab=agents&agent=talk-ai`).
 
-**One left menu.** `public/nova-nav.js` (`NovaNav.mount`) draws the same grouped menu (brand **NovaAI** with the running version beside it from `GET /api/version`, 1.19.33; page titles say NovaAI) on `/admin`, `/talk-ai` and
+**One left menu.** `public/nova-nav.js` (`NovaNav.mount`) draws the same grouped menu (brand **NovaAI** with the running version beside it from `GET /api/version`, 1.19.34; page titles say NovaAI) on `/admin`, `/talk-ai` and
 `/client-bot`: CRM Chat · Client ChatBot · TalkAi (each with its unread count) / Users · Domain Knowledge · Connectors /
 Installation Pricing · Delivery Pricing and Templates (both "Soon"); at the bottom New chat and who is signed in (photo or
 initial, name, email — from `/api/me`) with **Sign out** (`NovaNav.signOut()`: clears `axiom_token` / `axiom_user` /
