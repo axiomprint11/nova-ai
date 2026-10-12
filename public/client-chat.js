@@ -213,10 +213,12 @@
       '<div class="cc-price-hd">' +
         (c.image ? '<img src="' + esc(c.image) + '" alt="" onerror="this.remove()">' : '') +
         '<div><b>' + esc(c.product) + '</b>' + (rows.length === 1 && rows[0].quantity ? '<small>Qty ' + Number(rows[0].quantity).toLocaleString() + '</small>' : '') + '</div>' +
-        (ref != null ? '<span class="cc-card-tools">' + (canEdit ? '<button type="button" class="cc-edit-btn" title="Change options or quantities">\u270e Edit</button>' : '') +
-          '<button type="button" class="cc-dl-btn" title="Download this quote as a PDF (print or keep it)">\u2913 PDF</button>' +
-          '<button type="button" class="cc-mail-btn" title="Email this quote to yourself">\u2709 Send to me</button></span>' : '') +
+        (canEdit ? '<button type="button" class="cc-edit-btn" title="Change options or quantities">\u270e Edit</button>' : '') +
       '</div>' +
+      // 1.19.42: PDF / email on their own row, icons only, so the product name keeps its width
+      (ref != null ? '<div class="cc-card-tools"><span class="cc-card-tools-l">Keep this quote</span>' +
+          '<button type="button" class="cc-dl-btn" title="Download as PDF — print or keep it" aria-label="Download as PDF"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg><span>PDF</span></button>' +
+          '<button type="button" class="cc-mail-btn" title="Email this quote to yourself" aria-label="Email this quote to me"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg><span>Email</span></button></div>' : '') +
       '<table class="cc-specs">' + (c.specs || []).filter(s => !/^quantity$/i.test(s.field)).slice(0, 16).map(s => {
         // "Clarify" fields left on the default: a yellow dropdown to pick right here.
         const f = canEdit && s.tag === 'questionable' ? ((c.edit && c.edit.fields) || []).find(x => x.field === s.field && x.choices && x.choices.length > 1) : null;
