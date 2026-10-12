@@ -608,9 +608,10 @@
     const kindTag = (k) => k ? '<span class="bk-src ' + esc(k) + '">' + esc(k === 'bill' ? 'from a bill' : k) + '</span>' : '';
     const vendorBlock = (b) => {
       const c = b.vendor_card, linked = c && c.kind !== 'bill';
-      return '<div class="bl-vendor">' + vlogo(linked ? c : null) + '<div class="bl-vname"><b>' + esc(b.vendor) + '</b>' +
-        (linked ? '<div class="bk-dim">' + kindTag(c.kind) + (c.name !== b.vendor ? ' ' + esc(c.name) : '') + (c.specialty ? ' · ' + esc(c.specialty) : '') + ' · <a href="#" data-link="' + b.id + '">change</a></div>'
-          : '<div class="bl-unlinked">Not in the CRM directory' + (b.suggestions.length ? ' — is it ' + b.suggestions.map(sg => '<a href="#" class="bl-sug" data-pair="' + b.id + '" data-vid="' + sg.id + '" title="' + Math.round(sg.score * 100) + '% match">' + esc(sg.name) + '</a>').join(' or ') + '?' : '') + ' <a href="#" data-link="' + b.id + '">' + (b.suggestions.length ? 'pick another' : 'link to a vendor') + '</a></div>') + '</div></div>';
+      const act = '<a href="#" class="bl-vact" data-link="' + b.id + '">' + (linked ? 'change' : (b.suggestions.length ? 'pick another' : 'link to a vendor')) + '</a>';
+      return '<div class="bl-vendor">' + vlogo(linked ? c : null) + '<div class="bl-vname"><b>' + esc(b.vendor) + '</b> ' + act +
+        (linked ? '<div class="bk-dim">' + kindTag(c.kind) + (c.name !== b.vendor ? ' ' + esc(c.name) : '') + (c.specialty ? ' · ' + esc(c.specialty) : '') + '</div>'
+          : '<div class="bl-unlinked">Not in the CRM directory' + (b.suggestions.length ? ' — is it ' + b.suggestions.map(sg => '<a href="#" class="bl-sug" data-pair="' + b.id + '" data-vid="' + sg.id + '" title="' + Math.round(sg.score * 100) + '% match">' + esc(sg.name) + '</a>').join(' or ') + '?' : '') + '</div>') + '</div></div>';
     };
     const usDate = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : String(d || ''); };
     const ROLE = { bill: 'Bill', receipt: 'Receipt', confirmation: 'Confirmation', delivery: 'Delivery', duplicate: 'Duplicate' };

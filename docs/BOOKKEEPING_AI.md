@@ -385,6 +385,8 @@ as a chip (one click opens it). Clicking an email opens it in a popup (`emailMod
 **Take me to the Inbox**, which opens that email in the Inbox (All, open or closed) with the row scrolled into view.
 
 The Bills tab has five sub-tabs by status — **Pending** (drafts), **Approved**, **Scheduled**, **Paid** and **Rejected**
+(since 1.19.22 the sub-tabs of every tab are chips in the inbox-basket style, same size as the inbox chips since 1.19.24, in a
+sticky bar so only the list scrolls; the vendor's "change" / "link to a vendor" link sits beside the vendor name on the card)
 (1.19.16: its own tab; a reject asks for a reason — required, multi-line — kept on the proposal as `decision`, shown on
 the card as "Rejected by <who> · when — reason"; **Restore to Pending** puts it back, `POST /bills/:id/restore`; merged
 duplicates stay merged) — each with a count. After approval a bill is moved by hand: "Schedule payment…" (a pay date →
