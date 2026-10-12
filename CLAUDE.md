@@ -183,7 +183,7 @@ admins can switch the user filter), "+ New chat" opens ChatBot, and a row of you
 has no Agents tab and Users has no per-member agents column: ChatBot's training opens from CRM Chat ("Train ChatBot",
 `trainAgent('chatbot')`) and TalkAi's from its page (`/admin?tab=agents&agent=talk-ai`).
 
-**One left menu.** `public/nova-nav.js` (`NovaNav.mount`) draws the same grouped menu (brand **NovaAI** with the running version beside it from `GET /api/version`, 1.19.32; page titles say NovaAI) on `/admin`, `/talk-ai` and
+**One left menu.** `public/nova-nav.js` (`NovaNav.mount`) draws the same grouped menu (brand **NovaAI** with the running version beside it from `GET /api/version`, 1.19.33; page titles say NovaAI) on `/admin`, `/talk-ai` and
 `/client-bot`: CRM Chat · Client ChatBot · TalkAi (each with its unread count) / Users · Domain Knowledge · Connectors /
 Installation Pricing · Delivery Pricing and Templates (both "Soon"); at the bottom New chat and who is signed in (photo or
 initial, name, email — from `/api/me`) with **Sign out** (`NovaNav.signOut()`: clears `axiom_token` / `axiom_user` /
@@ -357,7 +357,7 @@ pattern for any new report over a large log table. To add a report, add an entry
   `latest_order` = newest job that is neither canceled nor a quote, and the staff job card / hover use `boardStatus()`.
 - **Office hours are company data, not the TalkAi routing hours.** `office-hours.js` (SQLite `company_info`, key
   `office_hours`; Admin → Domain Knowledge → Company info; `GET /api/office-hours`, `POST /api/admin/office-hours`)
-  holds what customers are told (default Mon–Fri 9–6, Sat 10–2, Sun closed + a note); `officeHours.line(closedDays)`
+  holds what customers are told (default Mon–Fri 9–6, Sat 10–2, Sun closed + a note; since 1.19.33 each day can carry its own note — Saturday defaults to "Open for pickup only" — which `weekText()` shows in brackets and `dayNotesRule()` turns into a prompt rule: on that day customers can only collect finished orders, no in-person orders / walk-in quotes / new jobs at the counter, order online, by email or phone instead); `officeHours.line(closedDays)`
   is an OFFICE HOURS line in the CRM Chat, website chat and TalkAi prompts (the only hours they may state); TalkAi gets
   `line(closedDays, { spoken: true })` — full day names and "to" ("Monday to Friday 9 AM to 6 PM"), plus a prompt rule to
   say words in full, while the chats keep "Mon–Fri". TalkAi's

@@ -174,7 +174,8 @@ tr:last-child td { border-bottom: none; }
 .ci-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 18px; margin-bottom: 18px; }
 .ci-hd { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; font-size: 14px; }
 .ci-hd span { color: var(--muted); font-size: 12.5px; }
-.ci-grid { display: grid; grid-template-columns: auto auto auto 1fr; gap: 6px 12px; align-items: center; max-width: 560px; font-size: 13px; }
+.ci-grid { display: grid; grid-template-columns: auto auto auto auto 1fr; gap: 6px 12px; align-items: center; max-width: 760px; font-size: 13px; }
+.ci-grid .ci-dnote { margin: 0; padding: 5px 9px; font-size: 12.5px; border: 1px solid var(--line); border-radius: 7px; width: 100%; min-width: 180px; } .ci-grid .ci-dnote:disabled { opacity: .45; }
 .ci-grid input[type=time] { padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; font: inherit; font-size: 13px; }
 .ci-grid input[type=time]:disabled { opacity: .45; }
 .ci-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
@@ -1288,15 +1289,15 @@ async function loadCompanyInfo() {
     const h = j.hours, DAYS = ['mon','tue','wed','thu','fri','sat','sun'], NAMES = { mon:'Monday', tue:'Tuesday', wed:'Wednesday', thu:'Thursday', fri:'Friday', sat:'Saturday', sun:'Sunday' };
     const ro = IS_ADMIN ? '' : ' disabled';
     box.innerHTML = '<div class="ci-grid">' + DAYS.map(k => '<label><input type="checkbox" data-ci-open="' + k + '"' + (h.days[k].open ? ' checked' : '') + ro + '> ' + NAMES[k] + '</label>' +
-      '<span style="color:var(--muted)">' + (h.days[k].open ? 'Open' : 'Closed') + '</span><input type="time" data-ci-from="' + k + '" value="' + h.days[k].from + '"' + (h.days[k].open ? '' : ' disabled') + ro + '><span>to <input type="time" data-ci-to="' + k + '" value="' + h.days[k].to + '"' + (h.days[k].open ? '' : ' disabled') + ro + '></span>').join('') + '</div>' +
+      '<span style="color:var(--muted)">' + (h.days[k].open ? 'Open' : 'Closed') + '</span><input type="time" data-ci-from="' + k + '" value="' + h.days[k].from + '"' + (h.days[k].open ? '' : ' disabled') + ro + '><span>to <input type="time" data-ci-to="' + k + '" value="' + h.days[k].to + '"' + (h.days[k].open ? '' : ' disabled') + ro + '></span><input type="text" class="ci-dnote" data-ci-note="' + k + '" placeholder="Note, e.g. Open for pickup only" value="' + esc(h.days[k].note || '') + '"' + (h.days[k].open ? '' : ' disabled') + ro + '>').join('') + '</div>' +
       '<div class="ci-row"><input type="text" id="ciNote" placeholder="Note for customers, e.g. Pick-ups until 6 PM; closed on major holidays" value="' + esc(h.note || '') + '"' + ro + '></div>' +
       '<div class="ci-row"><input type="text" id="ciAddress" placeholder="Address (optional)" value="' + esc(h.address || '') + '"' + ro + '><input type="text" id="ciPhone" placeholder="Phone (optional)" value="' + esc(h.phone || '') + '" style="max-width:200px"' + ro + '></div>' +
       '<div class="ci-now">Customers are told: <b>' + esc(j.text) + '</b> · right now <b class="' + (j.status.open ? 'on' : 'off') + '">' + (j.status.open ? 'open until ' + esc(j.status.closes) : 'closed' + (j.status.holiday ? ' (' + esc(j.status.holiday) + ')' : '')) + '</b></div>' +
       (IS_ADMIN ? '<div class="ci-row"><button class="btn-solid" id="ciSave" style="font-size:12.5px;padding:7px 14px">Save company info</button><span id="ciMsg" style="font-size:12.5px;color:var(--muted)"></span></div>' : '');
-    box.querySelectorAll('[data-ci-open]').forEach(c => c.onchange = () => { const k = c.dataset.ciOpen; box.querySelector('[data-ci-from="' + k + '"]').disabled = !c.checked; box.querySelector('[data-ci-to="' + k + '"]').disabled = !c.checked; c.parentElement.nextElementSibling.textContent = c.checked ? 'Open' : 'Closed'; });
+    box.querySelectorAll('[data-ci-open]').forEach(c => c.onchange = () => { const k = c.dataset.ciOpen; box.querySelector('[data-ci-from="' + k + '"]').disabled = !c.checked; box.querySelector('[data-ci-to="' + k + '"]').disabled = !c.checked; box.querySelector('[data-ci-note="' + k + '"]').disabled = !c.checked; c.parentElement.nextElementSibling.textContent = c.checked ? 'Open' : 'Closed'; });
     const save = document.getElementById('ciSave');
     if (save) save.onclick = async () => {
-      const days = {}; DAYS.forEach(k => { days[k] = { open: box.querySelector('[data-ci-open="' + k + '"]').checked ? 1 : 0, from: box.querySelector('[data-ci-from="' + k + '"]').value, to: box.querySelector('[data-ci-to="' + k + '"]').value }; });
+      const days = {}; DAYS.forEach(k => { days[k] = { open: box.querySelector('[data-ci-open="' + k + '"]').checked ? 1 : 0, from: box.querySelector('[data-ci-from="' + k + '"]').value, to: box.querySelector('[data-ci-to="' + k + '"]').value, note: box.querySelector('[data-ci-note="' + k + '"]').value }; });
       save.disabled = true;
       const r2 = await fetch('/api/admin/office-hours', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ days, note: document.getElementById('ciNote').value, address: document.getElementById('ciAddress').value, phone: document.getElementById('ciPhone').value }) });
       const j2 = await r2.json(); save.disabled = false;

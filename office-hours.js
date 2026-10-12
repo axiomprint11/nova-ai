@@ -10,7 +10,7 @@ module.exports = function officeHours(db) {
   const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
   const NAMES = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' };
   const DEFAULT = { days: { mon: { open: 1, from: '09:00', to: '18:00' }, tue: { open: 1, from: '09:00', to: '18:00' }, wed: { open: 1, from: '09:00', to: '18:00' },
-    thu: { open: 1, from: '09:00', to: '18:00' }, fri: { open: 1, from: '09:00', to: '18:00' }, sat: { open: 1, from: '10:00', to: '14:00' }, sun: { open: 0, from: '10:00', to: '14:00' } },
+    thu: { open: 1, from: '09:00', to: '18:00' }, fri: { open: 1, from: '09:00', to: '18:00' }, sat: { open: 1, from: '10:00', to: '14:00', note: 'Open for pickup only' }, sun: { open: 0, from: '10:00', to: '14:00' } },
     note: '', address: '', phone: '' };
   db.run('CREATE TABLE IF NOT EXISTS company_info (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT, updated_by TEXT)');
   let cache = null;
@@ -18,7 +18,7 @@ module.exports = function officeHours(db) {
   function norm(h) {
     h = h && typeof h === 'object' ? h : {};
     const out = { days: {}, note: String(h.note || '').slice(0, 600), address: String(h.address || '').slice(0, 200), phone: String(h.phone || '').slice(0, 60) };
-    DAYS.forEach(k => { const d = (h.days && h.days[k]) || {}; const def = DEFAULT.days[k]; out.days[k] = { open: d.open ? 1 : 0, from: hhmm(d.from, def.from), to: hhmm(d.to, def.to) }; });
+    DAYS.forEach(k => { const d = (h.days && h.days[k]) || {}; const def = DEFAULT.days[k]; out.days[k] = { open: d.open ? 1 : 0, from: hhmm(d.from, def.from), to: hhmm(d.to, def.to), note: String(d.note == null ? (def.note || '') : d.note).trim().slice(0, 120) }; });   // 1.19.33: a per-day note, e.g. Saturday "Open for pickup only"
     return out;
   }
   function get() {
@@ -42,7 +42,7 @@ module.exports = function officeHours(db) {
   function weekText(h, spoken) {
     const groups = [];
     DAYS.forEach(k => {
-      const d = h.days[k], txt = d.open ? ampm(d.from) + (spoken ? ' to ' : '–') + ampm(d.to) : 'closed', last = groups[groups.length - 1];
+      const d = h.days[k], txt = (d.open ? ampm(d.from) + (spoken ? ' to ' : '–') + ampm(d.to) : 'closed') + (d.open && d.note ? (spoken ? ', ' + d.note.toLowerCase() : ' (' + d.note.toLowerCase() + ')') : ''), last = groups[groups.length - 1];
       if (last && last.txt === txt) last.to = k; else groups.push({ from: k, to: k, txt });
     });
     const nm = (k) => spoken ? NAMES[k] : NAMES[k].slice(0, 3);
@@ -58,13 +58,22 @@ module.exports = function officeHours(db) {
     const open = !holiday && d.open && nowMin >= toMin(d.from) && nowMin < toMin(d.to);
     return { open: !!open, closes: open ? ampm(d.to) : null, holiday: holiday || null, today: wd };
   }
+  // A day note like "Open for pickup only" is a rule, not decoration: that day is for collecting finished jobs — no walk-ins,
+  // no placing orders in person, no quotes at the counter. Orders still go through the website / email / phone any day.
+  function dayNotesRule(h, spoken) {
+    const noted = DAYS.filter(k => h.days[k].open && h.days[k].note);
+    if (!noted.length) return '';
+    const nm = (k) => spoken ? NAMES[k] : NAMES[k];
+    return '. ' + noted.map(k => nm(k) + ' is ' + h.days[k].note.toLowerCase().replace(/^open\s+/, '').replace(/[.\s]+$/, '')).join('; ') +
+      ' — on ' + (noted.length === 1 ? 'that day' : 'those days') + ' customers can only collect finished orders: no in-person orders, no walk-in quotes, no new jobs at the counter. Say so whenever someone plans to come in, drop off, or order in person ' + (noted.length === 1 ? 'on ' + nm(noted[0]) : 'on those days') + ', and point them to ordering online, by email or by phone instead (they can still pick up)';
+  }
   // line(closedDays, { spoken: true }) for the phone: full day names, "to" instead of dashes, and a rule to keep it that way.
   async function line(closedDays, opts) {
     const h = await get();
     const st = status(h, closedDays);
     const spoken = !!(opts && opts.spoken);
     return 'OFFICE HOURS (what to tell customers when they ask when we are open, pick-up times or when to call — the ONLY hours you ever state' + (spoken ? '; say day names in full, "Monday to Friday", "Saturday", never "Mon–Fri" or "Sat"' : '') + '): ' + weekText(h, spoken) + ' (Los Angeles)' +
-      (h.note ? '. ' + h.note.replace(/[.\s]+$/, '') : '') + '. Right now the office is ' + (st.open ? 'open until ' + st.closes + ' today' : 'closed' + (st.holiday ? ' (' + st.holiday + ')' : '')) + '.' +
+      (h.note ? '. ' + h.note.replace(/[.\s]+$/, '') : '') + dayNotesRule(h, spoken) + '. Right now the office is ' + (st.open ? 'open until ' + st.closes + ' today' : 'closed' + (st.holiday ? ' (' + st.holiday + ')' : '')) + '.' +
       (h.address ? ' Address: ' + h.address + '.' : '') + (h.phone ? ' Phone: ' + h.phone + '.' : '');
   }
   return { get, set, weekText, status, line, DAYS, NAMES };
