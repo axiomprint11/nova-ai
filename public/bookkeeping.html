@@ -90,7 +90,7 @@
   .bk-view { max-width: 1120px; }   /* left aligned, brief-width; the Inbox split view keeps the full width */
   .bk-view[data-v=inbox] { max-width: none; }   /* full width, left aligned */
   .bk-view[data-v=activity] table.bk td:first-child, .bk-view[data-v=activity] table.bk th:first-child { white-space: nowrap; }
-  .bk-sub .sp { flex: 1; } .bk-sub input.sub-q { flex: 0 0 240px; margin: 0; padding: 5px 10px; font-size: 12.5px; font-weight: 400; border-radius: 20px; }   /* 1.19.25: search on the sub-tab line */
+  .bk-sub .sp { flex: 1; } .bk-sub input.sub-q { flex: 0 0 300px; margin: 0; padding: 7px 10px; font: inherit; font-size: 13px; font-weight: 400; border: 1px solid var(--line); border-radius: 8px; background: #fff; align-self: flex-start; }   /* 1.19.25: search on the sub-tab line */
   .bk-sub { display: flex; gap: 6px; flex-wrap: wrap; margin: -18px 0 14px; padding: 16px 0 10px; position: sticky; top: 0; z-index: 6; background: var(--bg, #f6f6fb); }   /* 1.19.21: chips like the Inbox baskets; 1.19.23: stay put while the list scrolls */
   .bk-sub button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: #fff; border-radius: 20px; padding: 5px 5px 5px 10px; font: 600 12.5px/1 inherit; color: var(--ink-soft); cursor: pointer; --kc: #6b6b85; --kbg: #ececf4; } .bk-sub button svg { width: 15px; height: 15px; color: var(--kc); } .bk-sub button:hover { border-color: #d4d4e2; }
   .bk-sub button.on { background: var(--kbg); border-color: var(--kbg); color: var(--kc); } .bk-sub button.on .n { background: var(--kc); color: #fff; }
@@ -368,7 +368,7 @@
       <button data-s="scheduled">Scheduled<span class="n grey" id="nBillsScheduled"></span></button>
       <button data-s="paid">Paid<span class="n grey" id="nBillsPaid"></span></button>
       <button data-s="rejected">Rejected<span class="n grey" id="nBillsRejected"></span></button>
-      <span class="sp"></span><input id="blQ" class="bk sub-q" placeholder="Search bills" autocomplete="off">
+      <span class="sp"></span><input id="blQ" class="bk sub-q" placeholder="Search" autocomplete="off">
     </div>
     <div class="bk-subview on" data-s="bills" id="vBills"></div>
   </section>
