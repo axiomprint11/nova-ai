@@ -665,7 +665,7 @@
             '<span data-for="other">' + head('other', 'Other') + readBtn('other', bc.other) + '</span>' +
             '<span data-for="done">' + head('aside', 'Do Later') + '</span>' +
             '<span data-for="open">' + head('all', 'All') + '<span class="bk-muted">' + (bc.unrated ? bc.unrated + ' not sorted yet — Scan puts them in their baskets.' : esc(txt('all'))) + '</span></span>'; })() +
-        '<span class="bk-muted ib-last" style="margin-left:auto">' + esc(ov && ov.connections.gmail.last_scan ? 'Last scanned ' + when(ov.connections.gmail.last_scan) : 'Not scanned yet') + '</span><button class="bk-btn p sm ico" id="scanNow2" title="Scan the inbox now" aria-label="Scan now">' + iconSvg('refresh') + '</button>' +
+        '<span class="bk-muted ib-last" style="margin-left:auto">' + esc(ov && ov.connections.gmail.last_scan ? 'Last scanned ' + when(ov.connections.gmail.last_scan) : 'Not scanned yet') + '</span><button class="bk-btn sm ico" id="scanNow2" title="Scan the inbox now" aria-label="Scan now">' + iconSvg('refresh') + '</button>' +
         '</div>' +
       '<div class="ib-split' + (ibOpen ? '' : ' lines') + '" id="ibSplit"><div class="ib-list">' + all.filter(isOpen).map(row).join('') + '<div class="ib-divider" id="ibClosedHead">Closed <b></b></div>' + all.filter(m => !isOpen(m)).map(row).join('') + (!all.length ? '<div class="bk-muted" style="padding:14px 0">Nothing scanned yet — press Scan now.</div>' : '') + '<div class="bk-muted" id="ibNone" style="display:none;padding:14px 10px">Nothing matches.</div></div>' +
       '<div class="ib-pane" id="ibPane"><div class="ib-empty">Select an email to read it</div></div></div></div>';
