@@ -644,8 +644,12 @@
     if (billSub === 'scheduled') main.sort((a, b) => String(a.scheduled_for || '').localeCompare(String(b.scheduled_for || '')));
     if (billSub === 'paid') main.sort((a, b) => String(b.paid_at || '').localeCompare(String(a.paid_at || '')));
     const total = main.reduce((a, b) => a + (Number(b.total) || 0), 0);
-    v.innerHTML = '<div class="bk-card"><h2>' + t[0] + ' bills ' + qHelp('bills', 'Bills', 'Bills BookkeeperAI read from ' + esc(ov ? ov.connections.gmail.inbox : 'the inbox') + '. Each one is paired with a CRM supplier or vendor — when the name is not an exact match, pick the right one once and the next bill from them links by itself. Pending → Approved → Scheduled → Paid.') + '<span class="sp"></span><span class="bk-muted">' + main.length + ' bill' + (main.length === 1 ? '' : 's') + (main.length ? ' · ' + usd(total) : '') + '</span>' + '</h2>' +
-      (billSub === 'pending' ? '' : '<div class="bk-muted" style="margin-bottom:10px">' + t[1] + '</div>') +
+    const HELP_TAB = { pending: 'Bills BookkeeperAI read from the inbox, waiting for your decision: fix the lines, then Approve or Reject (a reason is asked). Each one is paired with a CRM supplier or vendor — when the name is not an exact match, pick the right one once and the next bill from them links by itself.',
+      approved: 'Approved and waiting to be paid — schedule a pay date or mark them paid as you go. Paying through BILL comes in a later phase; nothing moves money here.',
+      scheduled: 'Approved bills with a pay date, soonest first. Mark paid when the money goes out, or Unschedule.',
+      paid: 'Paid bills, newest first. "Not paid after all" sends one back to Approved.',
+      rejected: 'Bills that were turned down, with who rejected them, when and why. Restore one if it was a mistake — it goes back to Pending. Merged duplicates stay merged.' };
+    v.innerHTML = '<div class="bk-card"><h2>' + t[0] + ' bills ' + qHelp('bills_' + billSub, t[0] + ' bills', HELP_TAB[billSub] || '') + '<span class="sp"></span><span class="bk-muted">' + main.length + ' bill' + (main.length === 1 ? '' : 's') + (main.length ? ' · ' + usd(total) : '') + '</span>' + '</h2>' +
       (main.length ? main.map(billCard).join('') : '<div class="bk-muted" style="padding:10px 0">' + t[2] + '</div>') +
       (rejected.length ? '<details class="bl-done"><summary>' + rejected.length + ' rejected</summary>' + rejected.map(billCard).join('') + '</details>' : '') + '</div>';
     v.querySelectorAll('[data-file]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); openFile(a.dataset.file); });
