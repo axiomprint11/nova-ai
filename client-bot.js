@@ -2031,11 +2031,32 @@ module.exports = function mountClientBot(app, deps) {
     const all = Array.from(out.values());
     return key ? all.filter(c => (c.key || '') === key) : all;
   }
-  function quoteMail(cards, name, intro, link) {
+  // A short recap of the chat for the customer's email (cached on the chat until a new message arrives).
+  async function chatSummary(chatId, audience) {
+    const chat = await dbGet('SELECT id, summary_text, customer_name FROM client_chats WHERE id = ?', [chatId]);
+    const rows = await dbAll("SELECT id, role, content FROM client_messages WHERE chat_id = ? AND role IN ('user','assistant') ORDER BY id", [chatId]);
+    if (!rows.length) return '';
+    const last = rows[rows.length - 1].id;
+    let cached = null; try { cached = chat && chat.summary_text ? JSON.parse(chat.summary_text) : null; } catch (e) {}
+    if (cached && cached.last === last && cached[audience || 'customer']) return cached[audience || 'customer'];
+    const transcript = rows.map(m => (m.role === 'user' ? 'Customer: ' : 'NovaAI: ') + String(m.content || '').replace(/\[\[products\]\]/g, '').replace(/\s+/g, ' ').trim().slice(0, 700)).join('\n').slice(-9000);
+    const sys = audience === 'team'
+      ? 'You write a 3-5 sentence summary of a website chat for the AxiomPrint sales team: who the customer seems to be, what they want to print (product, size, quantity, options), what was quoted, questions left open, and the best next step for the team. Plain text, no headings, no markdown.'
+      : 'You write a short, friendly recap (2-4 sentences, second person: "You asked about…") of a customer\'s chat with NovaAI, AxiomPrint\'s assistant, to go at the top of the email that carries their quotes. Mention what they are looking to print and any specifics they gave (size, quantity, options, deadline), and anything still open. Do not repeat prices (the quote table follows). Plain text, no headings, no markdown, no greeting.';
+    let text = '';
+    try {
+      const r = await anthropic.messages.create({ model: process.env.ANTHROPIC_MODEL_LIGHT || 'claude-haiku-4-5', max_tokens: 350, system: sys, messages: [{ role: 'user', content: transcript }] });
+      text = (r.content || []).filter(b => b.type === 'text').map(b => b.text).join(' ').trim();
+    } catch (e) { console.error('CLIENT_BOT summary', e.message); }
+    if (text) { const next = Object.assign({}, cached && cached.last === last ? cached : {}, { last: last }); next[audience || 'customer'] = text; await dbRun('UPDATE client_chats SET summary_text = ? WHERE id = ?', [JSON.stringify(next), chatId]).catch(() => {}); }
+    return text;
+  }
+  function quoteMail(cards, name, intro, link, summary) {
     const esc = (t) => String(t == null ? '' : t).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]);
     const specs = (c) => (c.specs || []).filter(x => !/^quantity$/i.test(x.field || ''));
     const html = '<div style="font-family:Inter,Arial,sans-serif;color:#1c1c28;max-width:640px">' +
       '<p>' + (name ? 'Hi ' + esc(name) + ',' : 'Hello,') + '</p><p>' + esc(intro) + '</p>' +
+      (summary ? '<div style="background:#f6f6fb;border-radius:10px;padding:10px 14px;margin:6px 0 10px;font-size:13.5px;line-height:1.5"><b style="font-size:11px;color:#6b6b85;letter-spacing:.04em">WHAT WE TALKED ABOUT</b><br>' + esc(summary) + '</div>' : '') +
       cards.map(c => '<h3 style="margin:18px 0 4px;font-size:15px">' + esc(c.product) + '</h3>' +
         '<div style="font-size:12.5px;color:#4b4b66">' + specs(c).filter(x => x.tag !== 'default').map(x => esc(x.field) + ': <b>' + esc(x.value) + '</b>').join(' &nbsp;·&nbsp; ') +
         (specs(c).some(x => x.tag === 'default') ? '<div style="color:#8a8aa0;margin-top:2px">Standard: ' + specs(c).filter(x => x.tag === 'default').map(x => esc(x.field) + ': ' + esc(x.value)).join(', ') + '</div>' : '') + '</div>' +
@@ -2043,7 +2064,7 @@ module.exports = function mountClientBot(app, deps) {
         (c.rows || []).map(r => '<tr style="border-bottom:1px solid #ececf4"><td><b>' + Number(r.quantity || 0).toLocaleString('en-US') + '</b></td><td>' + (r.discount && r.list_price > r.price ? '<s style="color:#8a8aa0">' + usdFmt(r.list_price) + '</s> ' : '') + '<b style="color:#4f46e5">' + usdFmt(r.price) + '</b></td><td style="color:#6b6b85">' + (r.each != null ? usdFmt(r.each) : '') + '</td><td style="color:#6b6b85">' + esc(r.ready || '') + '</td><td>' + (r.cart && r.cart.url ? '<a href="' + esc(r.cart.url) + '" style="color:#4f46e5;font-weight:600">Order now</a>' : '') + '</td></tr>').join('') + '</table>').join('') +
       '<p style="font-size:12px;color:#8a8aa0;margin-top:18px">The same quote is attached as a PDF. Prices are estimates from NovaAI and are confirmed at checkout; production starts the business day after approval, shipping is extra.' + (link ? ' <a href="' + esc(link) + '" style="color:#4f46e5">Continue the chat</a>.' : '') + '</p>' +
       '<p style="font-size:12px;color:#8a8aa0">AxiomPrint · order@axiomprint.com · (747) 888-7777</p></div>';
-    const text = (name ? 'Hi ' + name + ',' : 'Hello,') + '\n\n' + intro + '\n\n' + cards.map(c => c.product + '\n' + specs(c).map(x => '  ' + x.field + ': ' + x.value).join('\n') + '\n' +
+    const text = (name ? 'Hi ' + name + ',' : 'Hello,') + '\n\n' + intro + '\n\n' + (summary ? 'What we talked about: ' + summary + '\n\n' : '') + cards.map(c => c.product + '\n' + specs(c).map(x => '  ' + x.field + ': ' + x.value).join('\n') + '\n' +
       (c.rows || []).map(r => '  ' + Number(r.quantity || 0).toLocaleString('en-US') + ' — ' + usdFmt(r.price) + (r.each != null ? ' (' + usdFmt(r.each) + ' each)' : '') + (r.ready ? ' — ready ' + r.ready : '') + (r.cart && r.cart.url ? '\n    Order now: ' + r.cart.url : '')).join('\n')).join('\n\n') +
       '\n\nThe same quote is attached as a PDF. Prices are estimates from NovaAI and are confirmed at checkout.\n\nAxiomPrint · order@axiomprint.com · (747) 888-7777\n';
     return { html, text };
@@ -2057,10 +2078,11 @@ module.exports = function mountClientBot(app, deps) {
     if (!cards.length) return { ok: false, error: 'Nothing has been priced in this chat yet.' };
     name = String(name || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 80);
     const who1 = name || (who && who.customer && (who.customer.first || who.customer.name)) || '';
+    const summary = await chatSummary(chatId, 'customer');
     const pdf = quotePdf({ title: cards.length === 1 ? 'Your quote — ' + cards[0].product : 'Your quotes from AxiomPrint', who: [name, who && who.customer && who.customer.company].filter(Boolean).join(' · '), date: laDate(),
-      intro: 'The prices NovaAI worked out in your chat on axiomprint.com. Each Order now link opens the product with these options preselected.', cards: cards });
+      intro: (summary ? summary + ' ' : '') + 'Each Order now link opens the product on axiomprint.com with these options preselected.', cards: cards });
     const subject = 'Your AxiomPrint quote' + (cards.length === 1 ? ' — ' + cards[0].product : ' (' + cards.length + ' products)');
-    const mail = quoteMail(cards, who1, 'Here ' + (cards.length === 1 ? 'is the quote' : 'are the quotes') + ' from your chat with NovaAI on axiomprint.com. Press Order now to add one to your cart with these options.', null);
+    const mail = quoteMail(cards, who1, 'Here ' + (cards.length === 1 ? 'is the quote' : 'are the quotes') + ' from your chat with NovaAI on axiomprint.com, with a short recap of what we covered. Press Order now to add one to your cart with these options.', null, summary);
     await deps.sendMail({ to: email, subject: subject, text: mail.text, html: mail.html, bcc: chat.source === 'website' && MAIL_BCC ? MAIL_BCC : undefined,
       attachments: [{ filename: 'AxiomPrint-quote-' + chatId + '.pdf', type: 'application/pdf', content: pdf }] });
     if (name || email) await dbRun("UPDATE client_chats SET contact_name = COALESCE(NULLIF(?, ''), contact_name), contact_email = ?, updated_at = datetime('now') WHERE id = ?", [name, email, chatId]).catch(() => {});

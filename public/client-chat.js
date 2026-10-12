@@ -913,7 +913,7 @@
       const c = (opts.contact && opts.contact()) || contact || {};
       const box = document.createElement('div'); box.className = 'cc-mailbox';
       box.innerHTML = '<div class="cc-mailbox-in"><div class="cc-mailbox-hd"><b>' + (scope === 'quote' ? 'Email me this quote' : 'Email me this chat\u2019s quotes') + '</b><button type="button" class="cc-mailbox-x" aria-label="Close">\u00d7</button></div>' +
-        '<p>You\u2019ll get the quote' + (scope === 'quote' ? '' : 's') + ' with prices, options and Order now links \u2014 and a PDF to print or keep.</p>' +
+        '<p>You\u2019ll get a short recap of this chat and the quote' + (scope === 'quote' ? '' : 's') + ' with prices, options and Order now links \u2014 plus a PDF to print or keep.</p>' +
         '<label>Name<input type="text" class="cc-mb-name" maxlength="80" autocomplete="name" value="' + esc(c.name || '') + '"></label>' +
         '<label>Email<input type="email" class="cc-mb-email" maxlength="160" autocomplete="email" inputmode="email" value="' + esc(c.email || '') + '"></label>' +
         '<div class="cc-mailbox-acts"><button type="button" class="cc-mb-send">Send</button><span class="cc-mb-msg"></span></div></div>';
