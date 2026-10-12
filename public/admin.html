@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Axiom AI · Admin</title>
+<title>NovaAI · Admin</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -531,7 +531,7 @@ function applyRoleVisibility() {
   } else {
     // Regular member: their own CRM Chat, and Domain Knowledge when they have access (the menu, nova-nav.js, decides).
     const u = document.querySelector('#fRating option[value="unread"]'); if (u) u.remove();
-    document.title = 'Axiom AI \u00b7 CRM Chat';
+    document.title = 'NovaAI \u00b7 CRM Chat';
   }
 }
 function showGate(html) { document.getElementById('gate').innerHTML = '<div>' + html + '</div>'; }

@@ -52,7 +52,8 @@
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; overflow-y: auto; }
 .nn-logo { display: flex; align-items: center; gap: 2px; height: 56px; flex: none; padding: 0 20px; font-size: 16px; font-weight: 700; letter-spacing: -0.02em;
   color: #1e1b2e; text-decoration: none; }
-.nn-logo span { background: linear-gradient(135deg, #6366f1, #8b5cf6); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; margin-left: 4px; }
+.nn-logo span { background: linear-gradient(135deg, #6366f1, #8b5cf6); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; margin-left: 0; }
+.nn-ver { font-size: 10px; font-weight: 600; letter-spacing: 0; color: #a3a3b8; margin-left: 7px; padding-top: 3px; }
 .nn-groups { display: flex; flex-direction: column; padding: 4px 10px 12px; flex: 1; }
 .nn-group { display: flex; flex-direction: column; gap: 2px; }
 .nn-group + .nn-group { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ececf3; }
@@ -94,7 +95,7 @@ body.nn-shell { flex-direction: row !important; }
 @media (max-width: 1100px) and (min-width: 761px) {
   .nn { width: 60px; }
   .nn-logo { padding: 0; justify-content: center; font-size: 0; }
-  .nn-logo span { font-size: 15px; margin: 0; }
+  .nn-logo span { font-size: 15px; margin: 0; } .nn-ver { display: none; }
   .nn-groups, .nn-foot { padding-left: 8px; padding-right: 8px; }
   .nn-item { justify-content: center; padding: 10px 0; }
   .nn-item .nn-l, .nn-soon { display: none; }
@@ -136,6 +137,7 @@ body.nn-shell { flex-direction: row !important; }
     if (who === 'knowledge') return (me.knowledge_access || 'none') !== 'none';
     return who === 'all';
   }
+  let ver = { text: '', title: 'Version' };
   function render() {
     const groups = GROUPS.map(g => '<div class="nn-group">' + g.filter(it => allowed(it[3])).map(it => {
       const [key, label, href] = it;
@@ -144,7 +146,7 @@ body.nn-shell { flex-direction: row !important; }
       if (!href) return '<span class="nn-item soon" title="' + esc(label) + ' — coming soon" aria-disabled="true">' + inner + '</span>';
       return '<a class="nn-item" data-k="' + key + '" href="' + href + '" title="' + esc(label) + '">' + inner + '</a>';
     }).join('') + '</div>').join('');
-    root.innerHTML = '<a class="nn-logo" href="/admin?tab=history&amp;mine=1" title="Axiom AI">Axiom<span>AI</span></a>' +
+    root.innerHTML = '<a class="nn-logo" href="/admin?tab=history&amp;mine=1" title="NovaAI">Nova<span>AI</span><small class="nn-ver" id="nnVer" title="' + esc(ver.title) + '">' + esc(ver.text) + '</small></a>' +
       '<nav class="nn-groups" aria-label="Nova">' + groups + '</nav>' +
       '<div class="nn-foot"><a class="nn-item" href="/chatbot" title="New chat in ChatBot">' + svg('chatbot') + '<span class="nn-l">New chat</span></a>' + meHtml() + '</div>';
     const out = root.querySelector('.nn-out');
@@ -216,6 +218,7 @@ body.nn-shell { flex-direction: row !important; }
     const t = token();
     if (!t) return;
     try {
+      fetch('/api/version').then(x => x.json()).then(v => { if (v && v.version) { ver = { text: 'v' + v.version, title: 'Version ' + v.version + (v.built ? ' · built ' + v.built : '') }; const el = document.getElementById('nnVer'); if (el) { el.textContent = ver.text; el.title = ver.title; } } }).catch(() => {});
       const r = await fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + t } });
       // Expired (30 days) or a disabled account: back to sign-in.
       if (r.status === 401) { signOut(); return; }
