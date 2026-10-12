@@ -356,8 +356,13 @@
     const view = $('convView'), sc0 = view.querySelector('.cv-scroll') || view;
     const was = sc0.scrollTop, atEnd = sc0.scrollTop + sc0.clientHeight >= sc0.scrollHeight - 30;
     document.querySelectorAll('#convRows .cb-row').forEach(x => x.classList.remove('on'));
-    const j = await fetch('/api/admin/client-bot/chats/' + id, { headers: H() }).then(r => r.json()).catch(() => ({}));
-    if (!j || !j.ok) return;
+    let status = 0;
+    const j = await fetch('/api/admin/client-bot/chats/' + id, { headers: H() }).then(r => { status = r.status; return r.json(); }).catch((e) => ({ error: String(e && e.message || e) }));
+    if (!j || !j.ok) {   // 1.19.37: say what went wrong instead of leaving the previous conversation on screen
+      view.classList.remove('cv-split');
+      view.innerHTML = '<div class="cb-empty">Could not open conversation #' + id + (status ? ' (HTTP ' + status + ')' : '') + (j && j.error ? ': ' + esc(String(j.error)) : '') + '<br><small>Try again, or reload the page.</small></div>';
+      return;
+    }
     const c = j.chat;
     // Fixed top (who, when, visitor chips, Mark as unread, close); only the conversation scrolls, with the rating and the
     // visit details at its end — the same layout as a TalkAi call.
