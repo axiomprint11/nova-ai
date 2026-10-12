@@ -184,7 +184,7 @@ admins can switch the user filter), "+ New chat" opens ChatBot, and a row of you
 has no Agents tab and Users has no per-member agents column: ChatBot's training opens from CRM Chat ("Train ChatBot",
 `trainAgent('chatbot')`) and TalkAi's from its page (`/admin?tab=agents&agent=talk-ai`).
 
-**One left menu.** `public/nova-nav.js` (`NovaNav.mount`) draws the same grouped menu (brand **NovaAI** with the running version beside it from `GET /api/version`, 1.19.34; page titles say NovaAI) on `/admin`, `/talk-ai` and
+**One left menu.** `public/nova-nav.js` (`NovaNav.mount`) draws the same grouped menu (brand **NovaAI** with the running version beside it from `GET /api/version`, 1.19.35; page titles say NovaAI) on `/admin`, `/talk-ai` and
 `/client-bot`: CRM Chat · Client ChatBot · TalkAi (each with its unread count) / Users · Domain Knowledge · Connectors /
 Installation Pricing · Delivery Pricing and Templates (both "Soon"); at the bottom New chat and who is signed in (photo or
 initial, name, email — from `/api/me`) with **Sign out** (`NovaNav.signOut()`: clears `axiom_token` / `axiom_user` /
@@ -211,7 +211,7 @@ buckets timestamps by Los Angeles day / Monday week / month.
 session: `my_orders` / `order_status` filter on `estimate_clientid` themselves; products are limited to active
 `axiom_print` products and `available_for_customers` is honoured. Admin console at `/client-bot` (Conversations is the first tab; Try it as any
 customer, Conversations — read/unread per admin in SQLite `client_chat_reads`, Refresh, Unread filter, Mark as unread /
-Mark all read, 👍/👎 per conversation with a "what wasn't right" note in SQLite `client_chat_ratings`, fed back into the
+Mark all read, 👍/👎 per conversation with a "what wasn't right" note in SQLite `client_chat_ratings` (since 1.19.35 the same card as a TalkAi call rating: a saved rating reads as a note card with tag, full note, "Rated bad by <who> · when", Edit and History (n) from `client_chat_rating_history`; the Good / Bad + growing-note editor shows only when nothing is saved or Edit is pressed), fed back into the
 prompt by `lessonsLayer()` as AVOID notes + good examples and managed under Training → Lessons — Training, Setup); public page `/client-chat` for the website iframe. Admins only until
 `CLIENT_BOT_PUBLIC=1`. Website sign-in: the header script reads the customer token from the site's saved
 state (`tokenKey: 'axiom-print-app'`, JSON) and Nova verifies it with `CUSTOMER_VERIFY_URL` (default laravelapi

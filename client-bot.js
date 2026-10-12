@@ -99,6 +99,9 @@ module.exports = function mountClientBot(app, deps) {
     db.run(`CREATE TABLE IF NOT EXISTS client_chat_ratings (
       chat_id INTEGER PRIMARY KEY, rating TEXT NOT NULL, note TEXT, active INTEGER NOT NULL DEFAULT 1,
       rated_by TEXT, rated_at TEXT DEFAULT CURRENT_TIMESTAMP)`);
+    // 1.19.35: every change of a rating is kept — who rated, what they wrote, when (as TalkAi's talk_rating_history)
+    db.run(`CREATE TABLE IF NOT EXISTS client_chat_rating_history (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, rating TEXT, note TEXT,
+      rated_by TEXT, rated_at TEXT DEFAULT (datetime('now')))`);
     // Read / unread in the admin Conversations list, per admin (like a phone's messages).
     db.run(`CREATE TABLE IF NOT EXISTS client_chat_reads (
       chat_id INTEGER NOT NULL, reader TEXT NOT NULL, read_at TEXT NOT NULL,
@@ -2537,9 +2540,15 @@ module.exports = function mountClientBot(app, deps) {
     const id = parseInt(req.params.id) || 0;
     const b = req.body || {};
     try {
-      if (b.rating !== 'up' && b.rating !== 'down') await dbRun('DELETE FROM client_chat_ratings WHERE chat_id = ?', [id]);
-      else await dbRun("INSERT OR REPLACE INTO client_chat_ratings (chat_id, rating, note, active, rated_by, rated_at) VALUES (?,?,?,1,?,datetime('now'))",
-        [id, b.rating, String(b.note || '').trim().slice(0, 1000) || null, readerOf(req)]);
+      const note = String(b.note || '').trim().slice(0, 1000) || null, who = String(req.user && (req.user.username || req.user.key) || 'admin').replace(/^(member|user):/, '').slice(0, 120);
+      const prev = await dbGet('SELECT rating, note FROM client_chat_ratings WHERE chat_id = ?', [id]).catch(() => null);
+      if (b.rating !== 'up' && b.rating !== 'down') {
+        if (prev) await dbRun('INSERT INTO client_chat_rating_history (chat_id, rating, note, rated_by) VALUES (?,?,?,?)', [id, 'cleared', null, who]);
+        await dbRun('DELETE FROM client_chat_ratings WHERE chat_id = ?', [id]);
+      } else {
+        if (!prev || prev.rating !== b.rating || (prev.note || '') !== (note || '')) await dbRun('INSERT INTO client_chat_rating_history (chat_id, rating, note, rated_by) VALUES (?,?,?,?)', [id, b.rating, note, who]);
+        await dbRun("INSERT OR REPLACE INTO client_chat_ratings (chat_id, rating, note, active, rated_by, rated_at) VALUES (?,?,?,1,?,datetime('now'))", [id, b.rating, note, who]);
+      }
       lessonsCache.at = 0;
       res.json({ ok: true });
     } catch (e) { console.error('CLIENT_BOT rating', e.message); res.status(500).json({ ok: false }); }
@@ -2647,7 +2656,8 @@ module.exports = function mountClientBot(app, deps) {
     const chat = await dbGet('SELECT * FROM client_chats WHERE id = ?', [parseInt(req.params.id)]);
     if (!chat) return res.status(404).json({ ok: false, error: 'Not found' });
     await markRead(chat.id, readerOf(req));                // opening it = read
-    const rating = await dbGet('SELECT rating, note, active FROM client_chat_ratings WHERE chat_id = ?', [chat.id]).catch(() => null);
+    const rating = await dbGet('SELECT rating, note, active, rated_by, rated_at FROM client_chat_ratings WHERE chat_id = ?', [chat.id]).catch(() => null);
+    if (rating) { rating.history = await dbAll('SELECT rating, note, rated_by, rated_at FROM client_chat_rating_history WHERE chat_id = ? ORDER BY id DESC', [chat.id]).catch(() => []); if (!rating.history.length) rating.history = [rating]; }
     const msgs = await dbAll('SELECT id, role, content, cards, tools, created_at, page_url, page_title FROM client_messages WHERE chat_id = ? ORDER BY id', [chat.id]);
     const files = await dbAll('SELECT ref, message_id, name, kind, size, info, preview_path FROM client_files WHERE chat_id = ? ORDER BY id', [chat.id]);
     res.json({ ok: true, chat: chat, visitor: VisitorInfo.visitor(chat), rating: rating || null, messages: msgs.map(m => ({ id: m.id, role: m.role, content: m.content, created_at: m.created_at,

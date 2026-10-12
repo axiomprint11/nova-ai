@@ -230,51 +230,46 @@
   });
 
   // ---- Thumbs up / down on a conversation: NovaAI learns from it ----
+  // 1.19.35: the same card as a TalkAi call rating — a saved rating reads as a note card (tag, full note, who / when)
+  // with Edit and History; the editor (Good / Bad + a growing note) shows only when nothing is saved or Edit is pressed.
+  const tagOf = (k) => k === 'up' || k === 'good' ? '👍 Good' : k === 'down' || k === 'bad' ? '👎 Bad' : 'Cleared';
   function rateBar(r) {
     r = r || {};
-    return '<div class="cb-rate" data-rating="' + esc(r.rating || '') + '">' +
-      '<span>Rate this conversation</span>' +
-      '<button type="button" class="cb-up' + (r.rating === 'up' ? ' on' : '') + '" title="Good \u2014 NovaAI will use it as an example">\ud83d\udc4d</button>' +
-      '<button type="button" class="cb-down' + (r.rating === 'down' ? ' on' : '') + '" title="Not good \u2014 say what was wrong and NovaAI will avoid it">\ud83d\udc4e</button>' +
-      (r.rating && r.active === 0 ? '<em>not used in answers</em>' : '') +
-      (r.note ? '<div class="cb-rate-saved"><b>' + (r.rating === 'up' ? 'What was good' : 'What wasn\u2019t right') + ':</b> ' + esc(r.note) + ' <button type="button" class="cb-rate-edit">Edit</button></div>' : '') +
-      '<div class="cb-rate-note" hidden><textarea rows="3" maxlength="1000"></textarea>' +
-      '<div><button type="button" class="cb-rate-save">Save</button><button type="button" class="cb-rate-x">Cancel</button>' +
-      '<small>NovaAI reads this in every new conversation (Training \u2192 Lessons).</small></div></div></div>';
-  }
-  function openNote(bar, kind, text) {
-    const box = bar.querySelector('.cb-rate-note'), ta = box.querySelector('textarea');
-    box.hidden = false; box.dataset.kind = kind;
-    ta.placeholder = kind === 'down' ? 'What wasn\u2019t right? e.g. \u201cAsked for the quantity instead of pricing the default\u201d, \u201cToo long\u201d, \u201cWrong product suggested\u201d'
-      : 'What was good? (optional) e.g. \u201cShort answer, priced straight away, offered the coupon\u201d';
-    ta.value = text || ''; ta.focus();
+    const hist = r.history || [];
+    const view = r.rating ? '<div class="cb-rate-view"><span class="cb-rate-tag ' + esc(r.rating) + '">' + tagOf(r.rating) + '</span>' +
+        (r.note ? '<div class="cb-rate-text">' + esc(r.note) + '</div>' : '<div class="cb-rate-text none">No note</div>') +
+        '<div class="cb-rate-meta"><span>Rated ' + (r.rating === 'up' ? 'good' : 'bad') + ' by ' + esc(String(r.rated_by || '').replace(/^(member|user):/, '')) + ' · ' + esc(rel(r.rated_at)) + (r.active === 0 ? ' · <em>not used in answers</em>' : '') + '</span>' +
+        '<a href="#" class="cb-rate-edit">Edit</a>' + (hist.length > 1 ? '<a href="#" class="cb-rate-hist">History (' + hist.length + ')</a>' : '') + '</div>' +
+        (hist.length > 1 ? '<div class="cb-rate-histlist" hidden>' + hist.map(h => '<div class="cb-rate-h"><span class="cb-rate-tag sm ' + esc(h.rating) + '">' + tagOf(h.rating) + '</span><span class="cb-rate-hw">' + esc(String(h.rated_by || '').replace(/^(member|user):/, '')) + ' · ' + esc(rel(h.rated_at)) + '</span>' + (h.note ? '<div class="cb-rate-hn">' + esc(h.note) + '</div>' : '') + '</div>').join('') + '</div>' : '') + '</div>' : '';
+    const editor = '<div class="cb-rate-row"' + (r.rating ? ' hidden' : '') + '>' +
+      '<button type="button" class="cb-rate-btn cb-up' + (r.rating === 'up' ? ' on' : '') + '" data-k="up">👍 Good</button>' +
+      '<button type="button" class="cb-rate-btn cb-down' + (r.rating === 'down' ? ' on' : '') + '" data-k="down">👎 Bad</button>' +
+      '<textarea class="cb-rate-ta" rows="1" maxlength="1000" placeholder="What was right or wrong? e.g. asked for the quantity instead of pricing the default; wrong product suggested">' + esc(r.note || '') + '</textarea>' +
+      '<button type="button" class="cb-rate-save">Save</button>' + (r.rating ? '<button type="button" class="cb-rate-x">Cancel</button>' : '') + '</div>';
+    return '<div class="cb-rate" data-rating="' + esc(r.rating || '') + '"><div class="cb-rate-hd"><b>Rate this conversation</b><span>for training — a Bad with a note tells NovaAI what not to repeat (Training → Lessons)</span></div>' + view + editor + '</div>';
   }
   async function saveRating(rating, note) {
     await fetch('/api/admin/client-bot/chats/' + openId + '/rating', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, H()),
       body: JSON.stringify({ rating: rating, note: note || '' }) }).catch(() => {});
     await openConvo(openId, true);
   }
+  const growTa = (ta) => { ta.style.height = 'auto'; ta.style.height = Math.min(160, ta.scrollHeight + 2) + 'px'; };
+  $('convView').addEventListener('input', (e) => { if (e.target.classList && e.target.classList.contains('cb-rate-ta')) growTa(e.target); });
+  $('convView').addEventListener('keydown', (e) => { if (e.target.classList && e.target.classList.contains('cb-rate-ta') && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); const b = e.target.closest('.cb-rate').querySelector('.cb-rate-save'); if (b) b.click(); } });
   $('convView').addEventListener('click', async (e) => {
     const bar = e.target.closest('.cb-rate');
     if (!bar || !openId) return;
-    const cur = bar.dataset.rating;
-    const saved = bar.querySelector('.cb-rate-saved');
-    const curNote = saved ? saved.textContent.replace(/^[^:]*:\s*/, '').replace(/\s*Edit$/, '') : '';
-    if (e.target.closest('.cb-up')) {
-      if (cur === 'up') { await saveRating(null); return; }          // click again: take it back
-      await saveRating('up', '');
-      const nb = $('convView').querySelector('.cb-rate');
-      if (nb) openNote(nb, 'up', ''); return;
-    }
-    if (e.target.closest('.cb-down')) {
-      if (cur === 'down' && !bar.querySelector('.cb-rate-note').hidden) return;
-      openNote(bar, 'down', cur === 'down' ? curNote : ''); return;
-    }
-    if (e.target.closest('.cb-rate-edit')) { openNote(bar, cur || 'down', curNote); return; }
-    if (e.target.closest('.cb-rate-x')) { bar.querySelector('.cb-rate-note').hidden = true; return; }
+    const row = bar.querySelector('.cb-rate-row'), view = bar.querySelector('.cb-rate-view'), ta = bar.querySelector('.cb-rate-ta');
+    const btn = e.target.closest('.cb-rate-btn');
+    if (btn) { const on = btn.classList.contains('on'); bar.querySelectorAll('.cb-rate-btn').forEach(x => x.classList.remove('on')); if (!on) btn.classList.add('on'); bar.dataset.picked = on ? '' : btn.dataset.k; if (!on && btn.dataset.k === 'down') ta.focus(); return; }
+    if (e.target.closest('.cb-rate-edit')) { e.preventDefault(); if (view) view.hidden = true; row.hidden = false; growTa(ta); ta.focus(); return; }
+    if (e.target.closest('.cb-rate-hist')) { e.preventDefault(); const l = bar.querySelector('.cb-rate-histlist'); l.hidden = !l.hidden; e.target.textContent = (l.hidden ? 'History (' : 'Hide history (') + l.children.length + ')'; return; }
+    if (e.target.closest('.cb-rate-x')) { row.hidden = true; if (view) view.hidden = false; return; }
     if (e.target.closest('.cb-rate-save')) {
-      const box = bar.querySelector('.cb-rate-note');
-      await saveRating(box.dataset.kind || 'down', box.querySelector('textarea').value.trim());
+      const picked = bar.dataset.picked != null ? bar.dataset.picked : bar.dataset.rating, note = ta.value.trim();
+      if (!picked) { if (bar.dataset.rating && confirm('Remove the rating from this conversation?')) await saveRating(null); else ta.focus(); return; }
+      if (picked === 'down' && !note && !confirm('Save Bad without a note? A note is what trains NovaAI.')) return;
+      await saveRating(picked, note);
     }
   });
 

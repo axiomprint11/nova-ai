@@ -271,10 +271,12 @@ is open ("Updated … ago" under the filters). The staff **Admin** menu shows th
 
 ## Thumbs up / down and lessons
 
-Every open conversation has a **👍 / 👎** bar at the top. 👍 saves straight away and offers an optional note ("what was
-good"); 👎 opens a box for **what wasn't right**. The rating shows as a badge in the list; **Edit** changes the note, and
-clicking the active thumb again clears the rating. Ratings live in SQLite `client_chat_ratings` (one per chat: rating,
-note, active, who rated, when).
+Every open conversation ends with a **Rate this conversation** card — the same card as a TalkAi call rating (1.19.35).
+Unrated: **👍 Good** / **👎 Bad** buttons, a note box that grows as you type (Enter saves, Shift+Enter for a new line) and
+Save; a Bad without a note asks first. Rated: the tag, the full note, "Rated bad by <who> · when", **Edit** (reopens the
+editor with Cancel) and **History (n)** — every earlier rating with who changed it and when. Saving with neither thumb
+picked offers to remove the rating. Ratings live in SQLite `client_chat_ratings` (one per chat: rating, note, active, who
+rated, when); every change is also kept in `client_chat_rating_history`.
 
 Ratings feed NovaAI's future answers through a **lessons layer** added to the system prompt (`lessonsLayer()`, cached
 60 s and refreshed on every change):

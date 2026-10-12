@@ -78,19 +78,18 @@
   .cb-listbar button:hover, .cb-tr-unread:hover { text-decoration: underline; }
   .cb-tr-unread { float: right; font-size: 12px; }
   /* thumbs up / down */
-  .cb-rate { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; padding-top: 9px; border-top: 1px dashed var(--line); font-size: 12px; color: var(--muted); }
-  .cb-rate > button { width: 34px; height: 30px; border: 1px solid var(--line); border-radius: 8px; background: #fff; cursor: pointer; font-size: 15px; line-height: 1; filter: grayscale(1); opacity: .75; }
-  .cb-rate > button:hover { filter: none; opacity: 1; border-color: var(--indigo); }
-  .cb-rate > button.on { filter: none; opacity: 1; }
-  .cb-rate > button.cb-up.on { background: #ecfdf5; border-color: #6ee7b7; }
-  .cb-rate > button.cb-down.on { background: #fef2f2; border-color: #fca5a5; }
-  .cb-rate em { font-style: normal; color: #b45309; }
-  .cb-rate-saved { flex-basis: 100%; color: var(--ink); font-size: 12.5px; }
-  .cb-rate-saved button, .cb-rate-note small + button { border: none; background: none; color: var(--indigo-dark); font: 600 12px/1 inherit; cursor: pointer; }
-  .cb-rate-note { flex-basis: 100%; }
-  .cb-rate-note[hidden] { display: none; }
-  .cb-rate-note textarea { width: 100%; box-sizing: border-box; margin: 4px 0 6px; font: 13px/1.4 inherit; padding: 8px 10px; border-radius: 8px; }
-  .cb-rate-note div { display: flex; align-items: center; gap: 8px; }
+  .cb-rate { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fcfcfe; font-size: 13px; }
+  .cb-rate-hd { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; } .cb-rate-hd span { color: var(--muted); font-size: 12.5px; }
+  .cb-rate-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .cb-rate-row[hidden] { display: none; }
+  .cb-rate-btn { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; font: 600 12.5px/1.2 inherit; cursor: pointer; color: var(--ink-soft); }
+  .cb-rate-btn.cb-up.on { background: #d1fae5; border-color: #6ee7b7; color: #065f46; } .cb-rate-btn.cb-down.on { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
+  .cb-rate-ta { flex: 1; min-width: 220px; margin: 0; padding: 7px 10px; font: inherit; font-size: 13px; line-height: 1.4; border: 1px solid var(--line); border-radius: 8px; resize: none; overflow: auto; }
+  .cb-rate-save { border: 1px solid var(--indigo); background: #fff; color: var(--indigo-dark); border-radius: 8px; padding: 6px 12px; font: 600 12.5px/1.2 inherit; cursor: pointer; } .cb-rate-x { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; font: 600 12.5px/1.2 inherit; cursor: pointer; color: var(--ink-soft); }
+  .cb-rate-view { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; } .cb-rate-view[hidden] { display: none; }
+  .cb-rate-tag { flex: none; border-radius: 8px; padding: 6px 12px; font: 600 12.5px/1.2 inherit; background: #ececf4; color: #4b4b66; } .cb-rate-tag.up { background: #d1fae5; color: #065f46; } .cb-rate-tag.down { background: #fee2e2; color: #991b1b; } .cb-rate-tag.sm { padding: 3px 8px; font-size: 11.5px; }
+  .cb-rate-text { flex: 1 1 280px; min-width: 0; white-space: pre-wrap; line-height: 1.45; color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; } .cb-rate-text.none { color: #a3a3b8; font-style: italic; }
+  .cb-rate-meta { flex: 1 0 100%; display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12.5px; } .cb-rate-meta em { font-style: normal; color: #b45309; } .cb-rate-meta a { color: var(--indigo-dark); font-weight: 600; text-decoration: none; } .cb-rate-meta a:hover { text-decoration: underline; }
+  .cb-rate-histlist { flex: 1 0 100%; border-top: 1px dashed var(--line); margin-top: 4px; padding-top: 8px; display: grid; gap: 8px; } .cb-rate-histlist[hidden] { display: none; } .cb-rate-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; } .cb-rate-hw { color: var(--muted); } .cb-rate-hn { flex: 1 0 100%; white-space: pre-wrap; color: var(--ink-soft); padding-left: 4px; line-height: 1.4; }
   .cb-rate-save { padding: 6px 14px; border: none; border-radius: 8px; background: var(--indigo); color: #fff; font: 600 12.5px/1 inherit; cursor: pointer; }
   .cb-rate-x { border: none; background: none; color: var(--muted); cursor: pointer; font: 600 12.5px/1 inherit; }
   .cb-rt { font-size: 12px; margin-left: 2px; }
