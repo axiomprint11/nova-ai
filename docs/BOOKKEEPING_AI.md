@@ -360,7 +360,11 @@ that expands it (1.19.12); an open question is a small **AI question** button at
 **Link…** (a material from the catalog via the materials picker, a **machine payment** — a lease or loan
 instalment for one of our machines, `machinePicker` over Accounts → Equipment, which also puts the bill and its purchase on
 that machine (`equipment_id`) — or a job by estimate number E1234567; `line.material_id / material_name / equipment_id /
-equipment_name / estimate_no`) · amount. `POST /api/bookkeeping/bills/:id/lines` saves the whole
+equipment_name / estimate_no / material_photo / linked_by`). A linked material shows its photo beside the chip (hover for a
+large one). **Nova remembers how lines were linked** (1.19.15): saving a link stores vendor + the line's wording (dates and
+parentheses stripped, `lineKey()`) → material / machine / category in `bk_line_links` (`learnLineLink`; unlinking forgets
+it), and every new bill from that vendor gets the same links applied on creation (`applyLineLinks`, exact wording first,
+then the same start) — those chips carry an **auto** badge, `linked_by: 'rule'` · amount. `POST /api/bookkeeping/bills/:id/lines` saves the whole
 line list. Under the lines, every email behind the bill (`bills[].emails`: the one it was read from, the receipt
 that paid it, its purchase's confirmation and deliveries — role, subject, time, open / closed) with each attachment
 as a chip (one click opens it). Clicking an email opens it in a popup (`emailModal`: header, body, attachments) with

@@ -85,7 +85,11 @@ module.exports = function mountBookkeeping(app, deps) {
       vendor_id INTEGER, mode TEXT, purchase_price REAL, purchase_date TEXT, down_payment REAL, loan_amount REAL, loan_term INTEGER, loan_rate REAL, loan_start TEXT, monthly_payment REAL,
       lease_term INTEGER, lease_start TEXT, lease_monthly REAL, life_years REAL, salvage REAL, notes TEXT, updated_by TEXT, updated_at TEXT, synced_at TEXT)`);
     ['bk_bills', 'bk_transactions', 'bk_purchases'].forEach(t => db.run('ALTER TABLE ' + t + ' ADD COLUMN equipment_id INTEGER', () => {}));
-    db.run('ALTER TABLE bk_bills ADD COLUMN merged_into INTEGER', () => {});   // a duplicate folded into the bill it repeats (1.19.14)
+    db.run('ALTER TABLE bk_bills ADD COLUMN merged_into INTEGER', () => {});
+    // How bill lines were linked by hand: vendor + the line's wording → material / machine. The next bill from that
+    // vendor with the same wording links by itself (1.19.15).
+    db.run(`CREATE TABLE IF NOT EXISTS bk_line_links (id INTEGER PRIMARY KEY AUTOINCREMENT, vendor_id INTEGER, pattern TEXT, material_id INTEGER, material_name TEXT, material_photo TEXT,
+      equipment_id INTEGER, equipment_name TEXT, category TEXT, uses INTEGER DEFAULT 1, created_by TEXT, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT, UNIQUE(vendor_id, pattern))`);   // a duplicate folded into the bill it repeats (1.19.14)
     // What is inside a purchase: the line items the AI read from its email / bill (name, qty, amount, picture), each one
     // linked to a material in the catalog (or left Unknown) and to a chart-of-accounts category; shipping / tax / fees
     // are rows of their own kind, so the small shipping part of an invoice can go to Shipping.
@@ -799,6 +803,24 @@ module.exports = function mountBookkeeping(app, deps) {
   // department chips). `materials.supplier` is free text today ("Kelly", "Kelly Paper", "KellyPaper" all mean Kelly Paper)
   // — it is linked to the directory by name until the CRM gives it a supplier id (then use that column here).
   const matNorm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\b(inc|llc|co|corp|corporation|company|the)\b/g, ' ').replace(/\s+/g, ' ').trim();
+  const lineKey = (t) => matNorm(String(t || '').replace(/\(.*?\)/g, ' ').replace(/\d{1,2}\/\d{1,2}\/\d{2,4}/g, ' ')).slice(0, 120);   // wording without dates / parentheses
+  // Remember how a person linked a line (and forget when they unlink).
+  async function learnLineLink(vendorId, line, who) {
+    const key = lineKey(line.description); if (!vendorId || !key) return;
+    if (!line.material_id && !line.equipment_id) { await dbRun('DELETE FROM bk_line_links WHERE vendor_id = ? AND pattern = ?', [vendorId, key]); return; }
+    await dbRun(`INSERT INTO bk_line_links (vendor_id, pattern, material_id, material_name, material_photo, equipment_id, equipment_name, category, created_by) VALUES (?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(vendor_id, pattern) DO UPDATE SET material_id = excluded.material_id, material_name = excluded.material_name, material_photo = excluded.material_photo, equipment_id = excluded.equipment_id, equipment_name = excluded.equipment_name, category = excluded.category, uses = uses + 1, updated_at = datetime('now')`,
+      [vendorId, key, line.material_id || null, line.material_name || null, line.material_photo || null, line.equipment_id || null, line.equipment_name || null, line.category || null, who]);
+  }
+  // Apply what was learned to a new bill's lines (exact wording first, then a line that starts the same way).
+  async function applyLineLinks(vendorId, lines) {
+    if (!vendorId || !lines.length) return lines;
+    const known = await dbAll('SELECT * FROM bk_line_links WHERE vendor_id = ?', [vendorId]); if (!known.length) return lines;
+    return lines.map(l => { if (!l || l.material_id || l.equipment_id) return l; const k = lineKey(l.description); if (!k) return l;
+      const hit = known.find(x => x.pattern === k) || known.find(x => k.startsWith(x.pattern + ' ') || x.pattern.startsWith(k + ' '));
+      if (!hit) return l;
+      return Object.assign({}, l, { material_id: hit.material_id || null, material_name: hit.material_name || null, material_photo: hit.material_photo || null, equipment_id: hit.equipment_id || null, equipment_name: hit.equipment_name || null, category: l.category || hit.category || null, linked_by: 'rule' }); });
+  }
   function supplierFor(text, list) {
     const n = matNorm(text); if (!n) return null;
     const cands = list.filter(v => v.source !== 'bill' && v._m);
@@ -1013,7 +1035,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const main = atts[0] || null;
     const ins = await dbRun('INSERT INTO bk_bills (email_id, vendor, vendor_id, invoice_no, invoice_date, due_date, terms, subtotal, tax, total, currency, kind, duplicate_of, lines, file, file_name, status, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       [em.id, vendor, v ? v.id : null, invNo || null, j.invoice_date || null, j.due_date || null, String(j.terms || '').slice(0, 60), Number(j.subtotal) || null, Number(j.tax) || null, Number(j.total) || 0,
-        String(j.currency || 'USD').slice(0, 8), j.kind, dup ? dup.id : null, JSON.stringify((j.lines || []).slice(0, 60)), main ? main.file : null, main ? main.name : null, 'draft', String(j.note || '').slice(0, 500)]);
+        String(j.currency || 'USD').slice(0, 8), j.kind, dup ? dup.id : null, JSON.stringify(await applyLineLinks(v ? v.id : null, (j.lines || []).slice(0, 60))), main ? main.file : null, main ? main.name : null, 'draft', String(j.note || '').slice(0, 500)]);
     const billId = ins.lastID;
     const conf = Math.max(0, Math.min(1, Number(j.confidence) || 0));
     const newVendor = v && !v.approved;
@@ -1636,10 +1658,11 @@ module.exports = function mountBookkeeping(app, deps) {
   // connected these are set by hand here; nothing moves money.
   // Fix the lines of a bill by hand: category, and what each line is — a material from the catalog or a job (estimate number).
   app.post('/api/bookkeeping/bills/:id/lines', ...guard, async (req, res) => {
-    const id = parseInt(req.params.id), who = userId(req); const b = await dbGet('SELECT id, purchase_id, lines FROM bk_bills WHERE id = ?', [id]); if (!b) return res.json({ ok: false, error: 'No such bill' });
+    const id = parseInt(req.params.id), who = userId(req); const b = await dbGet('SELECT id, purchase_id, vendor_id, lines FROM bk_bills WHERE id = ?', [id]); if (!b) return res.json({ ok: false, error: 'No such bill' });
     const lines = (Array.isArray(req.body && req.body.lines) ? req.body.lines : []).slice(0, 80).map(l => ({ description: String(l.description || '').slice(0, 300), qty: l.qty != null && l.qty !== '' ? Number(l.qty) : null, unit_price: l.unit_price != null && l.unit_price !== '' ? Number(l.unit_price) : null, amount: l.amount != null && l.amount !== '' ? Number(l.amount) : null,
-      category: String(l.category || '').slice(0, 120) || null, material_id: parseInt(l.material_id) || null, material_name: l.material_id ? String(l.material_name || '').slice(0, 200) : null, estimate_no: String(l.estimate_no || '').replace(/[^0-9]/g, '').slice(0, 12) || null, equipment_id: parseInt(l.equipment_id) || null, equipment_name: l.equipment_id ? String(l.equipment_name || '').slice(0, 200) : null }));
+      category: String(l.category || '').slice(0, 120) || null, material_id: parseInt(l.material_id) || null, material_name: l.material_id ? String(l.material_name || '').slice(0, 200) : null, estimate_no: String(l.estimate_no || '').replace(/[^0-9]/g, '').slice(0, 12) || null, equipment_id: parseInt(l.equipment_id) || null, equipment_name: l.equipment_id ? String(l.equipment_name || '').slice(0, 200) : null, material_photo: l.material_id && /^https?:\/\//.test(String(l.material_photo || '')) ? String(l.material_photo).slice(0, 500) : null, linked_by: l.linked_by === 'rule' && (l.material_id || l.equipment_id) ? 'rule' : ((l.material_id || l.equipment_id) ? 'hand' : null) }));
     await dbRun("UPDATE bk_bills SET lines = ?, updated_at = datetime('now') WHERE id = ?", [JSON.stringify(lines), id]);
+    for (const l of lines) { try { await learnLineLink(b.vendor_id, l, who); } catch (e) {} }
     // a line that is a machine payment (lease / loan) puts the bill on that machine, so its payment history is complete
     const eqLine = lines.find(l => l.equipment_id);
     await dbRun('UPDATE bk_bills SET equipment_id = ? WHERE id = ?', [eqLine ? eqLine.equipment_id : null, id]);
