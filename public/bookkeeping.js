@@ -402,7 +402,18 @@
     const intro = view === 'waiting' ? 'Emails you marked Transaction: proof of a payment with no bank line yet. Nova proposes the bank line when it lands (same amount to the cent); you confirm. After ' + esc(S.waiting_days) + ' days they are emailed to ' + esc(S.alert_to) + '.'
       : view === 'notreceived' ? 'Goods bought (by category) with no arrival attached. Mark them received when they come, partly received with a note, or cancelled. After ' + esc(S.notreceived_days) + ' days they are emailed to ' + esc(S.alert_to) + '.'
       : 'Everything we bought, one row per purchase, with its four slots: bill · bank line · confirmation · delivery. Hover a slot for what is in it; click the vendor for the emails and items behind it.';
-    const row = (p) => '<tr data-pid="' + p.id + '"><td>' + esc(p.date || '') + '</td><td><a href="#" class="bk-name" data-open="' + p.id + '">' + esc(p.vendor || '?') + '</a>' + (p.order_no ? '<div class="bk-muted">#' + esc(p.order_no) + '</div>' : '') + (p.note ? '<div class="bk-dim">' + esc(p.note) + '</div>' : '') + puInfo(p) + '</td>' +
+    // 1.19.30: US date with the time it was first seen under it; the vendor as the bill card shows it (logo, tag, change / link to a vendor)
+    const usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : String(d || ''); };
+    const tm = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(ts) ? '' : 'Z')); return isNaN(d) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }); };
+    const vlogo = (c) => c && c.photo ? '<img class="bk-logo bk-vl" src="' + esc(c.photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;bk-logo bk-vl ph&quot;>' + esc(String(c.name || '?').charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo bk-vl ph' + (c ? '' : ' none') + '">' + esc(c ? String(c.name).charAt(0).toUpperCase() : '?') + '</span>';
+    const kindTag = (k) => k ? '<span class="bk-src ' + esc(k) + '">' + esc(k === 'bill' ? 'from a bill' : k) + '</span>' : '';
+    const vendorCell = (p) => { const c = p.vendor_card, linked = c && c.kind !== 'bill', sg = p.suggestions || [];
+      const act = '<a href="#" class="bl-vact" data-pvlink="' + p.id + '">' + (linked ? 'change' : (sg.length ? 'pick another' : 'link to a vendor')) + '</a>';
+      return '<div class="bl-vendor pu-vendor">' + vlogo(linked ? c : null) + '<div class="bl-vname"><a href="#" class="pu-vn" data-open="' + p.id + '">' + esc(p.vendor || '?') + '</a> ' + act +
+        (linked ? '<div class="bk-dim">' + kindTag(c.kind) + (c.name !== p.vendor ? ' ' + esc(c.name) : '') + (c.specialty ? ' · ' + esc(c.specialty) : '') + '</div>'
+          : '<div class="bl-unlinked">Not in the CRM directory' + (sg.length ? ' — is it ' + sg.map(x => '<a href="#" class="bl-sug" data-pvpair="' + p.id + '" data-vid="' + x.id + '" title="' + Math.round(x.score * 100) + '% match">' + esc(x.name) + '</a>').join(' or ') + '?' : '') + '</div>') +
+        (p.order_no || p.note ? '<div class="bk-muted">' + (p.order_no ? '#' + esc(p.order_no) : '') + (p.order_no && p.note ? ' · ' : '') + (p.note ? '<span class="bk-dim">' + esc(p.note) + '</span>' : '') + '</div>' : '') + puInfo(p) + '</div></div>'; };
+    const row = (p) => '<tr data-pid="' + p.id + '"><td class="pu-date">' + esc(usD(p.date)) + (tm(p.when) ? '<div class="bk-dim">' + esc(tm(p.when)) + '</div>' : '') + '</td><td>' + vendorCell(p) + '</td>' +
       '<td class="num">' + (p.amount != null ? usd(p.amount) : '<span class="bk-dim">—</span>') + '</td><td>' + (p.category ? catLabel(p.category) : '<span class="bk-dim">—</span>') + '</td><td>' + slots(p) + '</td><td>' + puStatus(p) + '</td>' +
       '<td class="pu-acts">' + (p.status === 'awaiting bank' && p.suggest ? '<button class="bk-btn sm p" data-sug="' + p.id + '">' + p.suggest + ' bank line' + (p.suggest === 1 ? '' : 's') + ' match</button>' : p.status === 'awaiting bank' ? '<button class="bk-btn sm" data-sug="' + p.id + '">Pick bank line…</button>' : '') +
         (p.expects_delivery && p.received !== 'yes' && !p.cancelled ? '<button class="bk-btn sm" data-recv="' + p.id + '" data-s="yes">Received</button><button class="bk-btn sm" data-recv="' + p.id + '" data-s="partial">Partly</button>' : '') +
@@ -413,6 +424,10 @@
       '<table class="bk pu-table"><thead><tr><th>Date</th><th>Vendor</th><th class="num">Amount</th><th>Category</th><th>Paperwork</th><th>Status</th><th></th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table>' +
       (!rows.length ? '<div class="bk-muted" style="padding:14px 0">' + (view === 'list' ? 'No purchases yet. They appear when you press Bill, Transaction or Arrival on an email, or when a bank line is categorized.' : 'Nothing here.') + '</div>' : '') + '</div>';
     v.querySelectorAll('[data-open]').forEach(a => a.onclick = (e) => { e.preventDefault(); purchaseView(Number(a.dataset.open), () => loadPurchases(view)); });
+    const setPV = async (pid, vid) => { const r = await post('/api/bookkeeping/purchases/' + pid + '/vendor', { vendor_id: vid, remember: true }); if (!r.ok) return alert(r.error); loadPurchases(view); };
+    v.querySelectorAll('[data-pvlink]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); const p = rows.find(x => String(x.id) === a.dataset.pvlink); vendorPicker(a, { vendor: p.vendor || '', suggestions: p.suggestions || [] }, (vid) => setPV(p.id, vid)); });
+    v.querySelectorAll('[data-pvpair]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); setPV(a.dataset.pvpair, Number(a.dataset.vid)); });
+    v.querySelectorAll('.pu-slots').forEach(sl => { sl.onclick = (ev) => { ev.preventDefault(); const tr = sl.closest('tr'); paperworkPop(sl, Number(tr.dataset.pid)); }; });
     v.querySelectorAll('[data-recv]').forEach(b => b.onclick = async () => {
       const st = b.dataset.s; let note = '';
       if (st === 'partial' || st === 'cancel') { note = await askText(st === 'partial' ? 'What arrived, what is missing?' : 'Why? (cancelled, refunded, returned…)', { title: st === 'partial' ? 'Partly received' : 'Cancel this purchase' }); if (note == null) return; }
@@ -585,6 +600,30 @@
     el.querySelector('[data-no]').onclick = () => el.remove(); el.onclick = (ev) => { if (ev.target === el) el.remove(); };
   }
   // An email in a popup (from a bill or a purchase): header, body, attachments, and "Take me to the Inbox".
+  // 1.19.30: click the paperwork icons → what each slot holds (bill, bank lines, confirmation, deliveries); emails open, the bill goes to Bills
+  async function paperworkPop(anchor, pid) {
+    document.querySelectorAll('.ckp-pop').forEach(p => p.remove());
+    const j = await api('/api/bookkeeping/purchases/' + pid); if (!j.ok) return alert(j.error);
+    const p = j.purchase, usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : String(d || ''); };
+    const em = (e) => '<div class="pw-i"><a href="#" data-em="' + e.id + '">' + esc(e.subject || '(no subject)') + '</a><small>' + esc(usD(e.received_at)) + (e.attachments ? ' · ' + e.attachments + ' attachment' + (e.attachments === 1 ? '' : 's') : '') + '</small></div>';
+    const grp = (k, title, body, empty) => '<div class="pw-g"><div class="pw-h"><span class="pu-slot ' + k + (body ? ' on' : '') + '">' + iconSvg(SLOT_ICON[k]) + '</span>' + title + '</div>' + (body || '<div class="pw-none">' + empty + '</div>') + '</div>';
+    const conf = p.emails.filter(e => e.role === 'confirmation'), dels = p.emails.filter(e => e.role === 'delivery');
+    const pop = document.createElement('div'); pop.className = 'ckp-pop single pw-pop'; pop.addEventListener('click', (e) => e.stopPropagation());
+    pop.innerHTML = '<div class="pw-t">Paperwork for ' + esc(p.vendor || '?') + (p.order_no ? ' <small>#' + esc(p.order_no) + '</small>' : '') + '</div>' +
+      grp('bill', 'Bill', p.bill ? '<div class="pw-i"><a href="#" data-gobill="' + p.bill.id + '">Bill #' + p.bill.id + (p.bill.invoice_no ? ' · ' + esc(p.bill.invoice_no) : '') + '</a><small>' + esc(usD(p.bill.invoice_date)) + ' · ' + usd(p.bill.total) + ' · ' + esc(p.bill.status) + '</small></div>' : '', 'No bill') +
+      grp('bank', 'Bank line' + (p.txns.length === 1 ? '' : 's'), p.txns.length ? p.txns.map(t => '<div class="pw-i"><span>' + esc(t.merchant || t.name) + '</span><small>' + esc(usD(t.date)) + ' · ' + usd(Math.abs(t.amount)) + (t.account_name ? ' · ' + esc(t.account_name) : '') + '</small></div>').join('') : '', p.no_paperwork ? 'Bank line only — no paperwork expected' : 'No bank line yet') +
+      grp('conf', 'Confirmation', conf.length ? conf.map(em).join('') : '', 'No confirmation email') +
+      grp('arr', 'Delivery', dels.length ? dels.map(em).join('') : '', p.expects_delivery ? 'No delivery email yet' : 'Nothing to receive') +
+      '<div class="ckp-foot"><a href="#" data-openp="' + p.id + '">Open the purchase</a> <span class="bk-dim">· emails, attachments, items</span></div>';
+    document.body.appendChild(pop);
+    const r = anchor.getBoundingClientRect(), W = Math.min(400, window.innerWidth - 16);
+    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) + 'px'; pop.style.width = W + 'px';
+    const below = window.innerHeight - r.bottom - 8; if (below >= 300) { pop.style.top = (r.bottom + 4) + 'px'; pop.style.maxHeight = Math.min(460, below) + 'px'; } else { pop.style.bottom = (window.innerHeight - r.top + 4) + 'px'; pop.style.maxHeight = Math.min(460, r.top - 8) + 'px'; }
+    const close = () => { pop.remove(); document.removeEventListener('click', close); }; setTimeout(() => document.addEventListener('click', close), 0);
+    pop.querySelectorAll('[data-em]').forEach(a => a.onclick = (e) => { e.preventDefault(); close(); emailModal(Number(a.dataset.em)); });
+    pop.querySelectorAll('[data-gobill]').forEach(a => a.onclick = (e) => { e.preventDefault(); close(); show('bills', p.bill.status === 'draft' ? 'pending' : p.bill.status); setTimeout(() => { const c = document.querySelector('.bl-card[data-bill="' + a.dataset.gobill + '"]'); if (c) { c.scrollIntoView({ block: 'center', behavior: 'smooth' }); c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 1800); } }, 700); });
+    pop.querySelectorAll('[data-openp]').forEach(a => a.onclick = (e) => { e.preventDefault(); close(); purchaseView(p.id, () => loadPurchases(lastSub.purchases)); });
+  }
   async function emailModal(id) {
     const j = await api('/api/bookkeeping/emails/' + id); if (!j.ok) return alert(j.error);
     const e = j.email; const dec = (t) => { const d = document.createElement('textarea'); d.innerHTML = String(t || ''); return d.value; };
