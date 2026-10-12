@@ -2653,18 +2653,28 @@ module.exports = function mountClientBot(app, deps) {
   });
 
   app.get('/api/admin/client-bot/chats/:id', auth, adminOnly, async (req, res) => {
-    const chat = await dbGet('SELECT * FROM client_chats WHERE id = ?', [parseInt(req.params.id)]);
-    if (!chat) return res.status(404).json({ ok: false, error: 'Not found' });
-    await markRead(chat.id, readerOf(req));                // opening it = read
-    const rating = await dbGet('SELECT rating, note, active, rated_by, rated_at FROM client_chat_ratings WHERE chat_id = ?', [chat.id]).catch(() => null);
-    if (rating) { rating.history = await dbAll('SELECT rating, note, rated_by, rated_at FROM client_chat_rating_history WHERE chat_id = ? ORDER BY id DESC', [chat.id]).catch(() => []); if (!rating.history.length) rating.history = [rating]; }
-    const msgs = await dbAll('SELECT id, role, content, cards, tools, created_at, page_url, page_title FROM client_messages WHERE chat_id = ? ORDER BY id', [chat.id]);
-    const files = await dbAll('SELECT ref, message_id, name, kind, size, info, preview_path FROM client_files WHERE chat_id = ? ORDER BY id', [chat.id]);
-    res.json({ ok: true, chat: chat, visitor: VisitorInfo.visitor(chat), rating: rating || null, messages: msgs.map(m => ({ id: m.id, role: m.role, content: m.content, created_at: m.created_at,
-      page_url: m.page_url || null, page_title: m.page_title || null,
-      cards: m.cards ? JSON.parse(m.cards) : [], tools: m.tools ? JSON.parse(m.tools) : [],
-      files: files.filter(f => f.message_id === m.id).map(f => ({ id: f.ref, name: f.name, kind: f.kind, size: f.size, info: f.info,
-        preview: !!f.preview_path })) })) });
+    try {
+      const chat = await dbGet('SELECT * FROM client_chats WHERE id = ?', [parseInt(req.params.id)]);
+      if (!chat) return res.status(404).json({ ok: false, error: 'Not found' });
+      await markRead(chat.id, readerOf(req));                // opening it = read
+      let rating = null;
+      try {
+        rating = await dbGet('SELECT rating, note, active, rated_by, rated_at FROM client_chat_ratings WHERE chat_id = ?', [chat.id]);
+        if (rating) { rating.history = await dbAll('SELECT rating, note, rated_by, rated_at FROM client_chat_rating_history WHERE chat_id = ? ORDER BY id DESC', [chat.id]); if (!rating.history.length) rating.history = [rating]; }
+      } catch (e) { console.error('CLIENT_BOT chat rating', e.message); if (rating) rating.history = [rating]; }
+      const msgs = await dbAll('SELECT id, role, content, cards, tools, created_at, page_url, page_title FROM client_messages WHERE chat_id = ? ORDER BY id', [chat.id]);
+      const files = await dbAll('SELECT ref, message_id, name, kind, size, info, preview_path FROM client_files WHERE chat_id = ? ORDER BY id', [chat.id]);
+      const parse = (t) => { if (!t) return []; try { const v = JSON.parse(t); return Array.isArray(v) ? v : []; } catch (e) { return []; } };
+      let visitor = null; try { visitor = VisitorInfo.visitor(chat); } catch (e) { console.error('CLIENT_BOT visitor info', e.message); }
+      res.json({ ok: true, chat: chat, visitor: visitor, rating: rating || null, messages: msgs.map(m => ({ id: m.id, role: m.role, content: m.content, created_at: m.created_at,
+        page_url: m.page_url || null, page_title: m.page_title || null,
+        cards: parse(m.cards), tools: parse(m.tools),
+        files: files.filter(f => f.message_id === m.id).map(f => ({ id: f.ref, name: f.name, kind: f.kind, size: f.size, info: f.info,
+          preview: !!f.preview_path })) })) });
+    } catch (e) {
+      console.error('CLIENT_BOT chat ' + req.params.id, e.stack || e.message);   // 1.19.38: a JSON error the page can show, and the cause in pm2 logs
+      res.status(500).json({ ok: false, error: e.message });
+    }
   });
 
   app.get('/api/admin/client-bot/rules', auth, adminOnly, async (req, res) => {
