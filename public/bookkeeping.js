@@ -547,6 +547,36 @@
   }
 
   // ---------------------------------------------------------------- Bills
+  // What a bill line is: a material from the catalog, or a job in the system by its estimate number (E1234567).
+  function lineLinkPicker(line, done) {
+    const el = document.createElement('div'); el.className = 'bk-modal';
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(480px,100%)"><div class="bk-modal-title">Link this line</div><div class="bk-muted" style="margin-bottom:10px">' + esc(line.description || '') + '</div>' +
+      '<div class="vp-list"><div class="vp-i" data-mat><span class="mv-ic" style="--kc:#4338ca;--kbg:#eef2ff">' + iconSvg('layers') + '</span><span class="vp-n">Material from the catalog<small>' + (line.material_id ? 'now: ' + esc(line.material_name || '#' + line.material_id) : 'search the CRM materials list') + '</small></span></div></div>' +
+      '<div class="vp-h">OR a job</div><div class="bk-row" style="gap:8px"><input class="bk" id="llEst" placeholder="Estimate number, e.g. E1180747" value="' + esc(line.estimate_no ? 'E' + line.estimate_no : '') + '" style="flex:1;margin:0"><button class="bk-btn sm p" data-est>Link job</button></div>' +
+      '<div class="bk-ask-acts">' + (line.material_id || line.estimate_no ? '<button class="bk-btn" data-clear>Unlink</button>' : '') + '<button class="bk-btn" data-no>Cancel</button></div></div>';
+    document.body.appendChild(el);
+    const close = () => el.remove();
+    el.querySelector('[data-no]').onclick = close; el.onclick = (ev) => { if (ev.target === el) close(); };
+    el.querySelector('[data-mat]').onclick = () => { close(); materialPicker(line.description, (m) => { if (m) done({ material: m }); }); };
+    el.querySelector('[data-est]').onclick = () => { const n = $('llEst').value.replace(/[^0-9]/g, ''); if (!n) return alert('Type the estimate number (E followed by digits).'); close(); done({ estimate: n }); };
+    const cl = el.querySelector('[data-clear]'); if (cl) cl.onclick = () => { close(); done({}); };
+    $('llEst').onkeydown = (e) => { if (e.key === 'Enter') el.querySelector('[data-est]').click(); };
+  }
+  // An email in a popup (from a bill or a purchase): header, body, attachments, and "Take me to the Inbox".
+  async function emailModal(id) {
+    const j = await api('/api/bookkeeping/emails/' + id); if (!j.ok) return alert(j.error);
+    const e = j.email; const dec = (t) => { const d = document.createElement('textarea'); d.innerHTML = String(t || ''); return d.value; };
+    const el = document.createElement('div'); el.className = 'bk-modal';
+    el.innerHTML = '<div class="bk-modal-box em-modal"><div class="bk-modal-title" style="display:flex;align-items:center;gap:10px">' + esc(dec(e.subject) || '(no subject)') + '<span class="sp"></span><button class="bk-btn sm p" data-inbox>' + iconSvg('mail') + 'Take me to the Inbox</button><button class="em-close" data-no aria-label="Close">×</button></div>' +
+      '<div class="bk-muted" style="margin-bottom:8px">' + esc(e.from_addr || '') + ' · ' + esc(when(e.received_at)) + (e.read_by ? ' · closed' : ' · open') + '</div>' +
+      (e.attachments.length ? '<div class="bl-emails" style="margin:0 0 8px">' + e.attachments.map(a => '<a href="#" class="bl-att" data-i="' + a.i + '" data-kind="' + a.kind + '" title="' + esc(a.name) + '">' + iconSvg('paperclip') + esc(a.name) + '</a>').join('') + '</div>' : '') +
+      '<div class="em-modal-body">' + (e.body_html ? '<iframe class="em-html" sandbox="allow-same-origin allow-popups" referrerpolicy="no-referrer" style="width:100%;height:60vh;border:0"></iframe>' : '<div class="em-body">' + esc(e.body || e.snippet || '') + '</div>') + '</div></div>';
+    document.body.appendChild(el);
+    const fr = el.querySelector('iframe'); if (fr) fr.srcdoc = '<base target="_blank"><style>body{font:14px/1.5 system-ui,sans-serif;color:#222;margin:12px}img{max-width:100%}</style>' + e.body_html;
+    const close = () => el.remove(); el.querySelector('[data-no]').onclick = close; el.onclick = (ev) => { if (ev.target === el) close(); };
+    el.querySelector('[data-inbox]').onclick = () => { close(); ibFilter = 'open'; ibOpen = e.id; show('inbox'); };
+    el.querySelectorAll('.bl-att').forEach(a => a.onclick = async (ev) => { ev.preventDefault(); const r = await fetch('/api/bookkeeping/emails/' + id + '/att/' + a.dataset.i, { headers: { 'Authorization': 'Bearer ' + token } }); if (!r.ok) return alert('File not available.'); viewFile(URL.createObjectURL(await r.blob()), a.dataset.kind, a.title); });
+  }
   async function loadBills(sub) {
     billSub = BILL_SUBS[sub] ? sub : billSub;
     const v = $('vBills');
@@ -561,22 +591,27 @@
         (linked ? '<div class="bk-dim">' + kindTag(c.kind) + (c.name !== b.vendor ? ' ' + esc(c.name) : '') + (c.specialty ? ' · ' + esc(c.specialty) : '') + ' · <a href="#" data-link="' + b.id + '">change</a></div>'
           : '<div class="bl-unlinked">Not in the CRM directory' + (b.suggestions.length ? ' — is it ' + b.suggestions.map(sg => '<a href="#" class="bl-sug" data-pair="' + b.id + '" data-vid="' + sg.id + '" title="' + Math.round(sg.score * 100) + '% match">' + esc(sg.name) + '</a>').join(' or ') + '?' : '') + ' <a href="#" data-link="' + b.id + '">' + (b.suggestions.length ? 'pick another' : 'link to a vendor') + '</a></div>') + '</div></div>';
     };
+    const usDate = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : String(d || ''); };
+    const ROLE = { bill: 'Bill', receipt: 'Receipt', confirmation: 'Confirmation', delivery: 'Delivery' };
+    const lineLink = (l) => l.material_id ? '<button class="bk-btn sm bl-link on" data-ll title="Material from the catalog">' + esc(l.material_name || 'Material #' + l.material_id) + '</button>' : l.estimate_no ? '<button class="bk-btn sm bl-link on" data-ll title="Job in the system">E' + esc(l.estimate_no) + '</button>' : '<button class="bk-btn sm bl-link" data-ll title="Link this line to a material from the catalog, or to a job by its estimate number">Link…</button>';
     const billCard = (b) => {
       const tot = b.lines.reduce((a, l) => a + (Number(l.amount) || 0), 0);
       const pend = b.proposal_status === 'pending';
+      const emails = b.emails || [];
       return '<div class="bl-card' + (b.status === 'rejected' ? ' off' : '') + '" data-bill="' + b.id + '"><div class="bl-head">' + vendorBlock(b) +
         '<div class="bl-meta"><div><span class="bk-tag">' + esc(KIND[b.kind] || b.kind) + '</span> ' + (b.invoice_no ? '<b>#' + esc(b.invoice_no) + '</b>' : '<span class="bk-dim">no number</span>') + (b.duplicate_of ? ' <span class="bk-tag rejected">possible duplicate of #' + b.duplicate_of + '</span>' : '') + '</div>' +
-          '<div class="bk-muted">' + (b.invoice_date ? 'Dated ' + esc(b.invoice_date) : '') + (b.due_date ? ' · due <b>' + esc(b.due_date) + '</b>' : '') + (b.terms ? ' · ' + esc(b.terms) : '') + (b.received_at ? ' · received ' + when(b.received_at) : '') + '</div></div>' +
+          '<div class="bk-muted">' + (b.invoice_date ? 'Dated ' + esc(usDate(b.invoice_date)) : '') + (b.due_date ? ' · due <b>' + esc(usDate(b.due_date)) + '</b>' : '') + (b.terms ? ' · ' + esc(b.terms) : '') + (b.received_at ? ' · received ' + when(b.received_at) : '') + '</div></div>' +
         '<div class="bl-total"><b>' + usd(b.total) + '</b><span class="bk-tag ' + esc(b.status) + '">' + esc(b.status) + '</span></div></div>' +
-        (b.note || b.proposal_reason ? '<div class="bl-note">' + esc(b.note || b.proposal_reason) + '</div>' : '') +
-        (b.question ? '<div class="bl-q">' + esc(b.question.question) + ' <span class="bk-dim">— answer it in the Daily Brief</span></div>' : '') +
-        (b.lines.length ? '<table class="bk bl-lines"><tbody>' + b.lines.map(l => '<tr><td>' + esc(l.description || '') + (l.qty && l.unit_price ? ' <span class="bk-dim">' + esc(l.qty) + ' × ' + usd(l.unit_price) + '</span>' : '') + '</td><td class="bk-muted">' + catLabel(l.category || '') + '</td><td class="num">' + usd(l.amount) + '</td></tr>').join('') +
-          (b.subtotal != null || b.tax ? '<tr class="sum"><td></td><td class="bk-muted">' + (b.subtotal != null ? 'Subtotal ' + usd(b.subtotal) : '') + (b.tax ? ' · tax ' + usd(b.tax) : '') + '</td><td class="num">' + usd(b.total) + '</td></tr>' : (Math.abs(tot - b.total) > 0.01 && tot ? '<tr class="sum"><td></td><td class="bk-dim">lines add up to ' + usd(tot) + '</td><td></td></tr>' : '')) + '</tbody></table>' : '') +
-        '<div class="bl-acts">' + (b.file ? '<a href="#" class="bk-btn sm" data-file="' + b.id + '">Open the file</a>' : '') + (b.subject ? '<span class="bk-dim bl-subj" title="' + esc(b.from_addr || '') + '">✉ ' + esc(b.subject) + '</span>' : '') + '<span class="sp"></span>' +
+        (b.note || b.proposal_reason ? '<div class="bl-note"><b>AI Summary:</b> ' + esc(b.note || b.proposal_reason) + '</div>' : '') +
+        (b.lines.length ? '<table class="bk bl-lines"><tbody>' + b.lines.map((l, i) => '<tr data-li="' + i + '"><td>' + esc(l.description || '') + (l.qty && l.unit_price ? ' <span class="bk-dim">' + esc(l.qty) + ' × ' + usd(l.unit_price) + '</span>' : '') + '</td><td class="bl-cat">' + catSelect(l.category || '', 'bl-catv', 'Category') + '</td><td class="bl-lk">' + lineLink(l) + '</td><td class="num">' + usd(l.amount) + '</td></tr>').join('') +
+          (b.subtotal != null || b.tax ? '<tr class="sum"><td></td><td colspan="2" class="bk-muted">' + (b.subtotal != null ? 'Subtotal ' + usd(b.subtotal) : '') + (b.tax ? ' · tax ' + usd(b.tax) : '') + '</td><td class="num">' + usd(b.total) + '</td></tr>' : (Math.abs(tot - b.total) > 0.01 && tot ? '<tr class="sum"><td></td><td colspan="2" class="bk-dim">lines add up to ' + usd(tot) + '</td><td></td></tr>' : '')) + '</tbody></table>' : '') +
+        (emails.length ? '<div class="bl-emails">' + emails.map(e => '<span class="bl-em"><a href="#" class="bl-emlink" data-em="' + e.id + '" title="' + esc(e.from_addr || '') + '">' + iconSvg('mail') + '<span class="bl-role">' + esc(ROLE[e.role] || e.role) + '</span>' + esc(e.subject || '(no subject)') + '<small>' + esc(when(e.received_at)) + (e.open ? '' : ' · closed') + '</small></a>' +
+          e.attachments.map(a => '<a href="#" class="bl-att" data-em="' + e.id + '" data-i="' + a.i + '" data-kind="' + a.kind + '" title="' + esc(a.name) + '">' + iconSvg('paperclip') + esc(a.name) + '</a>').join('') + '</span>').join('') + '</div>' : '') +
+        '<div class="bl-acts">' + (b.file ? '<a href="#" class="bk-btn sm" data-file="' + b.id + '">Open the file</a>' : '') + (b.question ? '<button class="bk-btn sm bl-qbtn" data-q="' + b.id + '">' + iconSvg('sparkles') + 'AI question</button>' : '') + '<span class="sp"></span>' +
           (pend ? '<button class="bk-btn sm ok" data-bapprove="' + b.proposal_id + '">Approve</button><button class="bk-btn sm bad" data-breject="' + b.proposal_id + '">Reject</button>' : '') +
           (b.status === 'approved' ? '<button class="bk-btn sm" data-bstatus="scheduled" data-bid="' + b.id + '">Schedule payment…</button><button class="bk-btn sm ok" data-bstatus="paid" data-bid="' + b.id + '">Mark paid…</button>' : '') +
-          (b.status === 'scheduled' ? '<span class="bk-muted">to pay ' + esc(b.scheduled_for || '') + '</span><button class="bk-btn sm ok" data-bstatus="paid" data-bid="' + b.id + '">Mark paid…</button><button class="bk-btn sm" data-bstatus="approved" data-bid="' + b.id + '">Unschedule</button>' : '') +
-          (b.status === 'paid' ? '<span class="bk-muted">paid ' + esc(b.paid_at || '') + (b.paid_note ? ' · ' + esc(b.paid_note) : '') + '</span><button class="bk-btn sm" data-bstatus="approved" data-bid="' + b.id + '">Not paid after all</button>' : '') + '</div></div>';
+          (b.status === 'scheduled' ? '<span class="bk-muted">to pay ' + esc(usDate(b.scheduled_for || '')) + '</span><button class="bk-btn sm ok" data-bstatus="paid" data-bid="' + b.id + '">Mark paid…</button><button class="bk-btn sm" data-bstatus="approved" data-bid="' + b.id + '">Unschedule</button>' : '') +
+          (b.status === 'paid' ? '<span class="bk-muted">paid ' + esc(usDate(b.paid_at || '')) + (b.paid_note ? ' · ' + esc(b.paid_note) : '') + '</span><button class="bk-btn sm" data-bstatus="approved" data-bid="' + b.id + '">Not paid after all</button>' : '') + '</div></div>';
     };
     const bills = j.bills || [];
     const TITLES = { pending: ['Pending', 'Bill drafts waiting for your decision.', 'No bill drafts waiting.'], approved: ['Approved', 'Approved and waiting to be paid — schedule a pay date or mark them paid as you go. (Paying through BILL comes in a later phase; nothing moves money here.)', 'Nothing approved and unpaid.'], scheduled: ['Scheduled', 'Approved bills with a pay date.', 'Nothing scheduled.'], paid: ['Paid', 'Paid bills, newest first.', 'Nothing paid yet.'] };
@@ -586,11 +621,19 @@
     if (billSub === 'paid') main.sort((a, b) => String(b.paid_at || '').localeCompare(String(a.paid_at || '')));
     const total = main.reduce((a, b) => a + (Number(b.total) || 0), 0);
     v.innerHTML = '<div class="bk-card"><h2>' + t[0] + ' bills ' + qHelp('bills', 'Bills', 'Bills BookkeeperAI read from ' + esc(ov ? ov.connections.gmail.inbox : 'the inbox') + '. Each one is paired with a CRM supplier or vendor — when the name is not an exact match, pick the right one once and the next bill from them links by itself. Pending → Approved → Scheduled → Paid.') + '<span class="sp"></span><span class="bk-muted">' + main.length + ' bill' + (main.length === 1 ? '' : 's') + (main.length ? ' · ' + usd(total) : '') + '</span>' + (billSub === 'pending' ? '<button class="bk-btn" id="scanNow">Scan the inbox now</button>' : '') + '</h2>' +
-      '<div class="bk-muted" style="margin-bottom:10px">' + t[1] + '</div>' +
+      (billSub === 'pending' ? '' : '<div class="bk-muted" style="margin-bottom:10px">' + t[1] + '</div>') +
       (main.length ? main.map(billCard).join('') : '<div class="bk-muted" style="padding:10px 0">' + t[2] + '</div>') +
       (rejected.length ? '<details class="bl-done"><summary>' + rejected.length + ' rejected</summary>' + rejected.map(billCard).join('') + '</details>' : '') + '</div>';
     if ($('scanNow')) $('scanNow').onclick = async () => { $('scanNow').disabled = true; const r = await post('/api/bookkeeping/scan', {}); if (!r.ok) alert(r.error); loadBills(); overview(); };
     v.querySelectorAll('[data-file]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); openFile(a.dataset.file); });
+    v.querySelectorAll('[data-q]').forEach(bt => bt.onclick = () => { const b = bills.find(x => String(x.id) === bt.dataset.q); if (b && b.question) ask(b.question.question, { title: 'AI question — answer it in the Daily Brief', ok: 'OK', cancel: false }); });
+    v.querySelectorAll('.bl-emlink').forEach(a => a.onclick = (ev) => { ev.preventDefault(); emailModal(Number(a.dataset.em)); });
+    v.querySelectorAll('.bl-att').forEach(a => a.onclick = async (ev) => { ev.preventDefault(); const r = await fetch('/api/bookkeeping/emails/' + a.dataset.em + '/att/' + a.dataset.i, { headers: { 'Authorization': 'Bearer ' + token } }); if (!r.ok) return alert('File not available.'); viewFile(URL.createObjectURL(await r.blob()), a.dataset.kind, a.title); });
+    // lines: category and link edits save the whole line list of that bill
+    const saveLines = async (card) => { const b = bills.find(x => String(x.id) === card.dataset.bill); if (!b) return; const r = await post('/api/bookkeeping/bills/' + b.id + '/lines', { lines: b.lines }); if (!r.ok) alert(r.error); };
+    v.querySelectorAll('.bl-lines tr[data-li] .ckp').forEach(w => w.addEventListener('change', () => { const card = w.closest('.bl-card'), b = bills.find(x => String(x.id) === card.dataset.bill); const l = b.lines[Number(w.closest('tr').dataset.li)]; l.category = w.querySelector('.ckp-val').value; saveLines(card); }));
+    v.querySelectorAll('[data-ll]').forEach(bt => bt.onclick = () => { const card = bt.closest('.bl-card'), b = bills.find(x => String(x.id) === card.dataset.bill), tr = bt.closest('tr'), l = b.lines[Number(tr.dataset.li)];
+      lineLinkPicker(l, async (res) => { l.material_id = res.material ? res.material.id : null; l.material_name = res.material ? res.material.name : null; l.estimate_no = res.estimate || null; tr.querySelector('.bl-lk').innerHTML = lineLink(l); tr.querySelector('[data-ll]').onclick = bt.onclick; await saveLines(card); }); });
     v.querySelectorAll('[data-bstatus]').forEach(b => b.onclick = async () => {
       const to = b.dataset.bstatus; let date = '', note = '';
       const d7 = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10), d0 = new Date().toISOString().slice(0, 10);
@@ -670,7 +713,7 @@
       '<div class="ib-split' + (ibOpen ? '' : ' lines') + '" id="ibSplit"><div class="ib-list">' + all.filter(isOpen).map(row).join('') + '<div class="ib-divider" id="ibClosedHead">Closed <b></b></div>' + all.filter(m => !isOpen(m)).map(row).join('') + (!all.length ? '<div class="bk-muted" style="padding:14px 0">Nothing scanned yet — press Scan now.</div>' : '') + '<div class="bk-muted" id="ibNone" style="display:none;padding:14px 10px">Nothing matches.</div></div>' +
       '<div class="ib-pane" id="ibPane"><div class="ib-empty">Select an email to read it</div></div></div></div>';
     const paneOn = (on) => { $('ibSplit').classList.toggle('lines', !on); };
-    if (ibOpen && all.some(m => m.id === ibOpen)) { const r0 = v.querySelector('.ib-row[data-m="' + ibOpen + '"]'); if (r0) r0.classList.add('open'); openEmail(ibOpen); }
+    if (ibOpen && all.some(m => m.id === ibOpen)) { const r0 = v.querySelector('.ib-row[data-m="' + ibOpen + '"]'); if (r0) { r0.classList.add('open'); setTimeout(() => r0.scrollIntoView({ block: 'center' }), 50); } openEmail(ibOpen); }
     const filter = () => { const q = $('ibQ').value.trim().toLowerCase(); let n = 0; v.querySelectorAll('.ib-row').forEach(r => { const inB = ibFilter === 'open' ? OPEN.indexOf(r.dataset.b) > -1 : r.dataset.b === ibFilter; const on = inB && (!q || r.dataset.q.indexOf(q) > -1); r.style.display = on ? '' : 'none'; if (on) n++; }); $('ibNone').style.display = n || !all.length ? 'none' : ''; v.querySelectorAll('#ibActs > [data-for]').forEach(x => { x.style.display = x.dataset.for === ibFilter ? '' : 'none'; }); 
 
       const nc = Array.from(v.querySelectorAll('.ib-row[data-o="0"]')).filter(r => r.style.display !== 'none').length; const hd = $('ibClosedHead'); hd.style.display = nc && ibFilter !== 'done' ? '' : 'none'; hd.querySelector('b').textContent = nc; };

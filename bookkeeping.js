@@ -1620,11 +1620,30 @@ module.exports = function mountBookkeeping(app, deps) {
       r.suggestions = (!v || v.source === 'bill') ? (await suggestVendors(r.vendor, r.from_addr, 3)).map(x => Object.assign(vendorCard(x.vendor), { score: x.score })) : [];
       const q = r.proposal_id ? await dbGet('SELECT id, question, answer FROM bk_questions WHERE proposal_id = ? ORDER BY id DESC LIMIT 1', [r.proposal_id]) : null;
       r.question = q && !q.answer ? q : null;
+      // every email behind the bill: the one it was read from, the receipt that paid it, and its purchase's confirmation / deliveries — each with its attachments
+      const pu = r.purchase_id ? await dbGet('SELECT confirm_email_id, arrival_email_ids FROM bk_purchases WHERE id = ?', [r.purchase_id]) : null;
+      const ids = [r.email_id, r.receipt_email_id, pu && pu.confirm_email_id].concat(pu ? jarr(pu.arrival_email_ids) : []).filter(Boolean).filter((x, i, a) => a.indexOf(x) === i);
+      r.emails = ids.length ? (await dbAll('SELECT id, subject, from_addr, received_at, kind, status, read_by, attachments FROM bk_emails WHERE id IN (' + ids.map(() => '?').join(',') + ') ORDER BY received_at', ids)).map(e => {
+        const atts = jarr(e.attachments).map((a, i) => ({ i, name: a.name, kind: /\.pdf$/i.test(a.file || a.name || '') || /pdf/.test(a.mime || '') ? 'pdf' : 'image' }));
+        return { id: e.id, subject: e.subject, from_addr: e.from_addr, received_at: e.received_at, open: !e.read_by, role: e.id === r.email_id ? 'bill' : e.id === r.receipt_email_id ? 'receipt' : e.id === (pu && pu.confirm_email_id) ? 'confirmation' : 'delivery', attachments: atts };
+      }) : [];
     }
     res.json({ ok: true, bills: rows });
   });
   // Bill life after approval: approved → scheduled (a pay date) → paid (date + how). Until BILL / QuickBooks are
   // connected these are set by hand here; nothing moves money.
+  // Fix the lines of a bill by hand: category, and what each line is — a material from the catalog or a job (estimate number).
+  app.post('/api/bookkeeping/bills/:id/lines', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), who = userId(req); const b = await dbGet('SELECT id, purchase_id, lines FROM bk_bills WHERE id = ?', [id]); if (!b) return res.json({ ok: false, error: 'No such bill' });
+    const lines = (Array.isArray(req.body && req.body.lines) ? req.body.lines : []).slice(0, 80).map(l => ({ description: String(l.description || '').slice(0, 300), qty: l.qty != null && l.qty !== '' ? Number(l.qty) : null, unit_price: l.unit_price != null && l.unit_price !== '' ? Number(l.unit_price) : null, amount: l.amount != null && l.amount !== '' ? Number(l.amount) : null,
+      category: String(l.category || '').slice(0, 120) || null, material_id: parseInt(l.material_id) || null, material_name: l.material_id ? String(l.material_name || '').slice(0, 200) : null, estimate_no: String(l.estimate_no || '').replace(/[^0-9]/g, '').slice(0, 12) || null }));
+    await dbRun("UPDATE bk_bills SET lines = ?, updated_at = datetime('now') WHERE id = ?", [JSON.stringify(lines), id]);
+    if (b.purchase_id) {   // the purchase's items that came from this bill follow (same position)
+      const items = await dbAll("SELECT id, pos FROM bk_purchase_items WHERE purchase_id = ? AND source = 'bill' ORDER BY pos, id", [b.purchase_id]);
+      items.forEach((it, i) => { const l = lines[i]; if (l) dbRun("UPDATE bk_purchase_items SET category = ?, material_id = ?, updated_at = datetime('now') WHERE id = ?", [l.category, l.material_id, it.id]); });
+    }
+    await audit(who, 'bill.lines', id, { n: lines.length }); res.json({ ok: true });
+  });
   app.post('/api/bookkeeping/bills/:id/status', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), to = String(req.body && req.body.status || ''), date = String(req.body && req.body.date || '').slice(0, 10), note = String(req.body && req.body.note || '').slice(0, 200);
     const b = await dbGet('SELECT * FROM bk_bills WHERE id = ?', [id]); if (!b) return res.json({ ok: false, error: 'No such bill' });

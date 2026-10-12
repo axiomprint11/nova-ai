@@ -345,6 +345,17 @@ the list scrolls under them (`.bk-main` scrolls; its top padding lives on `.bk-v
 Search boxes everywhere are regular weight and right-aligned on their row.
 
 ## Bills tab and vendor pairing
+### The bill card (1.19.11)
+No subtitle on Pending. Dates in US format (10-10-2026). The AI's note is prefixed **AI Summary:**; an open question
+is a small **AI question** button (popup, "answer it in the Daily Brief") instead of a banner. Lines: description ·
+**Category** (a picker — changing it saves the line, and the purchase item that came from this bill follows) ·
+**Link…** (a material from the catalog via the materials picker, or a job by estimate number E1234567;
+`line.material_id / material_name / estimate_no`) · amount. `POST /api/bookkeeping/bills/:id/lines` saves the whole
+line list. Under the lines, every email behind the bill (`bills[].emails`: the one it was read from, the receipt
+that paid it, its purchase's confirmation and deliveries — role, subject, time, open / closed) with each attachment
+as a chip (one click opens it). Clicking an email opens it in a popup (`emailModal`: header, body, attachments) with
+**Take me to the Inbox**, which opens that email in the Inbox (All, open or closed) with the row scrolled into view.
+
 The Bills tab has four sub-tabs by status — **Pending** (drafts; rejected folded below), **Approved**, **Scheduled**,
 **Paid** — each with a count. After approval a bill is moved by hand: "Schedule payment…" (a pay date →
 `bk_bills.scheduled_for`), "Mark paid…" (date + how → `paid_at`, `paid_note`), and back (`POST
