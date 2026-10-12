@@ -77,7 +77,7 @@
     $('nPending').textContent = ov.counts.pending || '';
     $('nTxns').textContent = ov.counts.txn_open || ''; $('nTxns').title = (ov.counts.txn_open || 0) + ' transactions without a decided category';
     $('nBills').textContent = ov.counts.bill_drafts || ''; $('nBills').title = (ov.counts.bill_drafts || 0) + ' bill drafts waiting';
-    const bs = ov.counts.bills_by_status || {}; $('nBillsPending').textContent = bs.draft || ''; $('nBillsApproved').textContent = bs.approved || ''; $('nBillsScheduled').textContent = bs.scheduled || ''; $('nBillsPaid').textContent = bs.paid || ''; if ($('nBillsRejected')) $('nBillsRejected').textContent = bs.rejected || '';
+    const bs = ov.counts.bills_by_status || {}; $('nBillsPending').textContent = bs.draft || 0; $('nBillsApproved').textContent = bs.approved || 0; $('nBillsScheduled').textContent = bs.scheduled || 0; $('nBillsPaid').textContent = bs.paid || 0; if ($('nBillsRejected')) $('nBillsRejected').textContent = bs.rejected || 0;
     $('nInbox').textContent = (ov.counts.inbox_new || 0) + (ov.counts.inbox_messages || 0) || ''; $('nInbox').title = (ov.counts.inbox_new || 0) + ' not looked at yet, ' + (ov.counts.inbox_messages || 0) + ' messages for a person';
     const rs = $('runState');
     if (ov.running) { rs.className = 'bk-pill off'; rs.textContent = 'Running…'; }
@@ -396,7 +396,7 @@
     const q = (v.querySelector('input[name=q]') || {}).value || '';
     const j = await api('/api/bookkeeping/purchases?view=' + view + '&q=' + encodeURIComponent(q)); if (!j.ok) { v.innerHTML = '<div class="bk-card">' + esc(j.error) + '</div>'; return; }
     const rows = j.purchases || [];
-    $('nWaiting').textContent = j.counts.waiting || ''; $('nNotReceived').textContent = j.counts.notreceived || '';
+    $('nWaiting').textContent = j.counts.waiting || 0; $('nNotReceived').textContent = j.counts.notreceived || 0;
     const S = ov.settings;
     const intro = view === 'waiting' ? 'Emails you marked Transaction: proof of a payment with no bank line yet. Nova proposes the bank line when it lands (same amount to the cent); you confirm. After ' + esc(S.waiting_days) + ' days they are emailed to ' + esc(S.alert_to) + '.'
       : view === 'notreceived' ? 'Goods bought (by category) with no arrival attached. Mark them received when they come, partly received with a note, or cancelled. After ' + esc(S.notreceived_days) + ' days they are emailed to ' + esc(S.alert_to) + '.'
