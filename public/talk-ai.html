@@ -144,7 +144,12 @@
   .tk-rate { margin-top: 18px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fcfcfe; }
   .tk-rate-hd { display: flex; align-items: center; gap: 10px; font-size: 13px; margin-bottom: 8px; flex-wrap: wrap; }
   .tk-rate-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .tk-rate-row input { flex: 1; min-width: 220px; margin: 0; padding: 7px 10px; font-size: 13px; }
+  .tk-rate-row textarea { flex: 1; min-width: 220px; margin: 0; padding: 7px 10px; font: inherit; font-size: 13px; line-height: 1.4; border: 1px solid var(--line); border-radius: 8px; resize: none; overflow: auto; }
+  .tk-rate-row.hidden, .tk-rate-view.hidden { display: none; }
+  .tk-rate-view { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+  .tk-rate-tag { flex: none; border-radius: 8px; padding: 6px 12px; font: 600 12.5px/1.2 inherit; } .tk-rate-tag.good { background: #d1fae5; color: #065f46; } .tk-rate-tag.bad { background: #fee2e2; color: #991b1b; }
+  .tk-rate-note { flex: 1 1 280px; min-width: 0; white-space: pre-wrap; font-size: 13px; line-height: 1.45; color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; } .tk-rate-note.none { color: #a3a3b8; font-style: italic; }
+  .tk-rate-meta { flex: 1 0 100%; display: flex; align-items: center; gap: 10px; } .tk-rate-edit { color: var(--indigo-dark); font-weight: 600; font-size: 12.5px; text-decoration: none; } .tk-rate-edit:hover { text-decoration: underline; }
   .tk-rate-btn { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; font: 600 12.5px/1.2 inherit; cursor: pointer; color: var(--ink-soft); }
   .tk-rate-btn.good.on { background: #dcfce7; border-color: #86efac; color: #166534; }
   .tk-rate-btn.bad.on { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }

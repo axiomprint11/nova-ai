@@ -311,26 +311,36 @@
     // The team's rating: Good / Bad + a note. It trains NovaAI — a Bad with a note becomes an AVOID line in the
     // phone prompt, a Good a short example.
     const tr = c.team_rating || null;
-    const rate = '<div class="tk-rate" id="callRate"><div class="tk-rate-hd"><b>Rate this call</b><span class="tk-foot-st">for training \u2014 a Bad with a note tells NovaAI what not to repeat</span></div>' +
-      '<div class="tk-rate-row"><button type="button" class="tk-rate-btn good' + (tr && tr.rating === 'good' ? ' on' : '') + '" data-rate="good">\ud83d\udc4d Good</button>' +
-      '<button type="button" class="tk-rate-btn bad' + (tr && tr.rating === 'bad' ? ' on' : '') + '" data-rate="bad">\ud83d\udc4e Bad</button>' +
-      '<input type="text" id="rateNote" placeholder="What was right or wrong? e.g. should have offered a callback instead of asking twice" value="' + esc(tr ? tr.note || '' : '') + '">' +
-      '<button type="button" class="tk-notify" id="rateSave">Save</button><span class="tk-foot-st" id="rateMsg">' + (tr ? 'Rated ' + esc(tr.rating) + ' by ' + esc(tr.rated_by || '') + ' \u00b7 ' + esc(rel(tr.rated_at)) : '') + '</span></div></div>';
+    // 1.19.31: a saved rating reads as a note card (full text, who, when) with Edit; the editor shows only when there is nothing saved or Edit is pressed
+    const ratedLine = tr ? 'Rated ' + esc(tr.rating) + ' by ' + esc(tr.rated_by || '') + ' · ' + esc(rel(tr.rated_at)) : '';
+    const viewHtml = tr ? '<div class="tk-rate-view"><span class="tk-rate-tag ' + esc(tr.rating) + '">' + (tr.rating === 'good' ? '👍 Good' : '👎 Bad') + '</span>' +
+        (tr.note ? '<div class="tk-rate-note">' + esc(tr.note) + '</div>' : '<div class="tk-rate-note none">No note</div>') +
+        '<div class="tk-rate-meta"><span class="tk-foot-st">' + ratedLine + '</span><a href="#" class="tk-rate-edit" id="rateEdit">Edit</a></div></div>' : '';
+    const editHtml = '<div class="tk-rate-row' + (tr ? ' hidden' : '') + '" id="rateEditor"><button type="button" class="tk-rate-btn good' + (tr && tr.rating === 'good' ? ' on' : '') + '" data-rate="good">👍 Good</button>' +
+      '<button type="button" class="tk-rate-btn bad' + (tr && tr.rating === 'bad' ? ' on' : '') + '" data-rate="bad">👎 Bad</button>' +
+      '<textarea id="rateNote" rows="1" placeholder="What was right or wrong? e.g. should have offered a callback instead of asking twice">' + esc(tr ? tr.note || '' : '') + '</textarea>' +
+      '<button type="button" class="tk-notify" id="rateSave">Save</button>' + (tr ? '<button type="button" class="tk-rate-btn" id="rateCancel">Cancel</button>' : '') + '<span class="tk-foot-st" id="rateMsg"></span></div>';
+    const rate = '<div class="tk-rate" id="callRate"><div class="tk-rate-hd"><b>Rate this call</b><span class="tk-foot-st">for training — a Bad with a note tells NovaAI what not to repeat</span></div>' + viewHtml + editHtml + '</div>';
     v.innerHTML = '<div class="tk-dtop">' + html.slice(0, topLen) + '</div><div class="tk-scroll" id="callScroll">' + html.slice(topLen) + rate + foot + '</div>';
     (function () {
       let picked = tr ? tr.rating : null;
-      const btns = v.querySelectorAll('.tk-rate-btn');
-      btns.forEach(b => b.onclick = () => { picked = picked === b.dataset.rate ? null : b.dataset.rate; btns.forEach(x => x.classList.toggle('on', x.dataset.rate === picked)); if (picked === 'bad') $('rateNote').focus(); });
+      const btns = v.querySelectorAll('.tk-rate-btn[data-rate]'), note = $('rateNote');
+      const grow = () => { note.style.height = 'auto'; note.style.height = Math.min(160, note.scrollHeight + 2) + 'px'; };
+      btns.forEach(b => b.onclick = () => { picked = picked === b.dataset.rate ? null : b.dataset.rate; btns.forEach(x => x.classList.toggle('on', x.dataset.rate === picked)); if (picked === 'bad') note.focus(); });
+      const openEditor = () => { const vw = v.querySelector('.tk-rate-view'); if (vw) vw.classList.add('hidden'); $('rateEditor').classList.remove('hidden'); grow(); note.focus(); };
+      if ($('rateEdit')) $('rateEdit').onclick = (e) => { e.preventDefault(); openEditor(); };
+      if ($('rateCancel')) $('rateCancel').onclick = () => { $('rateEditor').classList.add('hidden'); const vw = v.querySelector('.tk-rate-view'); if (vw) vw.classList.remove('hidden'); };
       $('rateSave').onclick = async () => {
-        const note = $('rateNote').value.trim();
-        if (picked === 'bad' && !note && !confirm('Save Bad without a note? A note is what trains NovaAI.')) return;
+        const text = note.value.trim();
+        if (picked === 'bad' && !text && !confirm('Save Bad without a note? A note is what trains NovaAI.')) return;
         $('rateSave').disabled = true;
-        const j = await api('/api/admin/talk/calls/' + id + '/rate', { method: 'POST', body: JSON.stringify({ rating: picked, note: note }) });
+        const j = await api('/api/admin/talk/calls/' + id + '/rate', { method: 'POST', body: JSON.stringify({ rating: picked, note: text }) });
         $('rateSave').disabled = false;
-        $('rateMsg').textContent = j.ok ? (picked ? 'Saved \u2014 NovaAI learns from it on its next call.' : 'Rating cleared.') : (j.error || 'Could not save');
-        loadCalls();
+        if (!j.ok) { $('rateMsg').textContent = j.error || 'Could not save'; return; }
+        loadCalls(); openCall(id);   // redraw: the saved rating shows as the note card
       };
-      $('rateNote').onkeydown = (e) => { if (e.key === 'Enter') $('rateSave').click(); };
+      note.oninput = grow; grow();
+      note.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('rateSave').click(); } };
     })();
     $('callBack').onclick = () => { $('vCalls').classList.remove('detail'); current = null; history.replaceState(null, '', '/talk-ai'); showCallsOverview(); };
     $('callUnread').onclick = async () => { await api('/api/admin/talk/calls/' + id + '/unread', { method: 'POST', body: '{}' }); current = null; loadCalls(); $('vCalls').classList.remove('detail'); v.innerHTML = '<div class="tk-empty">Marked as unread.</div>'; };
