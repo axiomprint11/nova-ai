@@ -2660,8 +2660,8 @@ module.exports = function mountClientBot(app, deps) {
       let rating = null;
       try {
         rating = await dbGet('SELECT rating, note, active, rated_by, rated_at FROM client_chat_ratings WHERE chat_id = ?', [chat.id]);
-        if (rating) { rating.history = await dbAll('SELECT rating, note, rated_by, rated_at FROM client_chat_rating_history WHERE chat_id = ? ORDER BY id DESC', [chat.id]); if (!rating.history.length) rating.history = [rating]; }
-      } catch (e) { console.error('CLIENT_BOT chat rating', e.message); if (rating) rating.history = [rating]; }
+        if (rating) { rating.history = await dbAll('SELECT rating, note, rated_by, rated_at FROM client_chat_rating_history WHERE chat_id = ? ORDER BY id DESC', [chat.id]); if (!rating.history.length) rating.history = [{ rating: rating.rating, note: rating.note, rated_by: rating.rated_by, rated_at: rating.rated_at }]; }
+      } catch (e) { console.error('CLIENT_BOT chat rating', e.message); if (rating) rating.history = [{ rating: rating.rating, note: rating.note, rated_by: rating.rated_by, rated_at: rating.rated_at }]; }
       const msgs = await dbAll('SELECT id, role, content, cards, tools, created_at, page_url, page_title FROM client_messages WHERE chat_id = ? ORDER BY id', [chat.id]);
       const files = await dbAll('SELECT ref, message_id, name, kind, size, info, preview_path FROM client_files WHERE chat_id = ? ORDER BY id', [chat.id]);
       const parse = (t) => { if (!t) return []; try { const v = JSON.parse(t); return Array.isArray(v) ? v : []; } catch (e) { return []; } };

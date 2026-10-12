@@ -2098,7 +2098,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     c.emails = await dbAll('SELECT id, kind, to_addr, bcc, subject, html, text, ok, error, created_at FROM talk_emails WHERE call_id = ? ORDER BY id', [id]).catch(() => []);
     c.team_rating = await dbGet('SELECT rating, note, rated_by, rated_at FROM talk_ratings WHERE call_id = ? AND active = 1', [id]).catch(() => null) || null;
     c.rating_history = await dbAll('SELECT rating, note, rated_by, rated_at FROM talk_rating_history WHERE call_id = ? ORDER BY id DESC', [id]).catch(() => []);
-    if (c.team_rating && !c.rating_history.length) c.rating_history = [c.team_rating];   // rated before the history existed
+    if (c.team_rating && !c.rating_history.length) c.rating_history = [{ rating: c.team_rating.rating, note: c.team_rating.note, rated_by: c.team_rating.rated_by, rated_at: c.team_rating.rated_at }];   // rated before the history existed
     try { c.quotes = c.quotes ? JSON.parse(c.quotes) : []; } catch (e) { c.quotes = []; }
     c.page_url = c.share_token ? NOVA_URL + '/talk/c/' + c.share_token : null; delete c.share_token;
     const ln = c.line_id ? await dbGet('SELECT am_name FROM talk_lines WHERE id = ?', [c.line_id]).catch(() => null) : null;
