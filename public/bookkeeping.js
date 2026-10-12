@@ -51,7 +51,7 @@
     const name = m ? m.name : t, init = esc(String(name).trim().charAt(0).toUpperCase() || '?');
     return '<span class="bk-who" title="' + esc(name) + (m && m.email && m.email !== name ? ' · ' + esc(m.email) : '') + '">' + (m && m.photo ? '<img src="' + esc(m.photo) + '" alt="" onerror="this.replaceWith(document.createTextNode(\'' + init + '\'))">' : init) + '</span>';
   }
-  const noteHtml = (n) => esc(n || '').replace(/((?:marked read|moved to \S+|set aside|approved|rejected|answered) by )(\S+)/g, (_, pre, w) => pre + whoHtml(w));
+  const noteHtml = (n) => esc(n || '').replace(/((?:marked read|moved to \S+|set aside|do later|approved|rejected|answered) by )(\S+)/g, (_, pre, w) => pre + whoHtml(w));
   // A styled yes / no instead of the browser's confirm(). Resolves true on the main button, false on Cancel / Esc / backdrop.
   function ask(text, opt) {
     opt = opt || {};
@@ -630,7 +630,7 @@
     const isOpen = (m) => !m.read_by && !m.aside && st(m) !== 'error';   // open = still unread in Gmail (bill drafts included until Gmail says read)
     const basket = (m) => { if (m.aside) return 'done'; const k = kindOf(m); if (!k) return 'unrated'; return { bill: 'bill', message: 'message', advertisement: 'ads', receipt: 'receipt', arrival: 'arrival' }[k] || 'other'; };
     // the main chips, then the rest behind "More baskets" (same colours as the AI's tags)
-    const BASKETS = [['open', 'All', 'mail'], ['unrated', 'New', 'sparkles'], ['bill', 'Bills', 'file'], ['receipt', 'Transactions', 'receipt'], ['arrival', 'Delivery', 'package'], ['message', 'Messages', 'users'], ['ads', 'Ads', 'megaphone'], ['other', 'Other', 'folder'], ['done', 'Set aside', 'clock']];
+    const BASKETS = [['open', 'All', 'mail'], ['unrated', 'New', 'sparkles'], ['bill', 'Bills', 'file'], ['receipt', 'Transactions', 'receipt'], ['arrival', 'Delivery', 'package'], ['message', 'Messages', 'users'], ['ads', 'Ads', 'megaphone'], ['other', 'Other', 'folder'], ['done', 'Do Later', 'clock']];
     const MAIN = ['open', 'bill', 'receipt', 'arrival', 'message', 'ads', 'other', 'done'], MORE = [];   // every basket on the line (1.19.3)
     const bc = {}, cc = {};   // open / closed counts per basket
     all.forEach(m => { const b = basket(m); if (b === 'done') { bc.done = (bc.done || 0) + 1; return; } if (isOpen(m)) bc[b] = (bc[b] || 0) + 1; else cc[b] = (cc[b] || 0) + 1; });
@@ -745,7 +745,7 @@
         case 'rated': return 'Rated <b>' + esc(KIND[d.kind] || d.kind || '?') + (d.confidence != null ? ' ' + Math.round(d.confidence * 100) + '%' : '') + '</b>';
         case 'read': return 'Marked as read' + (d.basket ? ' (with all ' + esc(d.basket) + ')' : d.picked ? ' (picked)' : '');
         case 'unread': return 'Marked as unread';
-        case 'move': return 'Moved to <b>' + esc(d.kind === 'aside' ? 'Set aside' : KIND[d.kind] || d.kind) + '</b>';
+        case 'move': return 'Moved to <b>' + esc(d.kind === 'aside' ? 'Do Later' : KIND[d.kind] || d.kind) + '</b>';
         case 'bill': return 'Converted to <b>bill #' + esc(d.bill_id) + '</b>' + (d.total != null ? ' · ' + usd(d.total) : '');
         case 'vendor': return d.vendor_id ? 'Linked sender to a vendor' + (d.address ? ' (' + esc(d.address) + ')' : '') : 'Unlinked sender';
         case 'match': return d.bill_id ? 'Matched to <b>bill #' + esc(d.bill_id) + '</b>' + (d.was && d.was !== 'paid' ? ' → paid' : '') : 'Matched to bank line #' + esc(d.transaction_id);
@@ -831,7 +831,7 @@
   // The "Move to" menu: the baskets in their colours. cur = the kind to leave out; pick(kind) does the move.
   function moveMenu(anchor, cur, pick) {
     document.querySelectorAll('.thf-pop').forEach(p => p.remove());
-    const items = [['bill', 'Bills', 'file', 'bill'], ['receipt', 'Transactions', 'receipt', 'receipt'], ['message', 'Messages', 'users', 'message'], ['arrival', 'Delivery', 'package', 'arrival'], ['advertisement', 'Ads', 'megaphone', 'ads'], ['other', 'Other', 'folder', 'other'], ['aside', 'Set aside', 'clock', 'done']].filter(([kk]) => kk !== cur);
+    const items = [['bill', 'Bills', 'file', 'bill'], ['receipt', 'Transactions', 'receipt', 'receipt'], ['message', 'Messages', 'users', 'message'], ['arrival', 'Delivery', 'package', 'arrival'], ['advertisement', 'Ads', 'megaphone', 'ads'], ['other', 'Other', 'folder', 'other'], ['aside', 'Do Later', 'clock', 'done']].filter(([kk]) => kk !== cur);
     const pop = document.createElement('div'); pop.className = 'thf-pop mv-pop';
     pop.innerHTML = '<div class="thf-list">' + items.map(([kk, l, ic, cls]) => '<div class="thf-i mv-i k-' + cls + '" data-v="' + kk + '"><span class="mv-ic">' + iconSvg(ic) + '</span><span class="thf-t">' + l + '</span></div>').join('') + '</div>';
     document.body.appendChild(pop);
@@ -862,7 +862,7 @@
       (j.matched && (j.matched.bill || j.matched.txn) ? '<span class="em-matched">' + (j.matched.bill ? '<a href="#" data-gobills class="em-match">Matched · bill #' + j.matched.bill.id + ' · ' + esc(j.matched.bill.vendor || '') + (j.matched.bill.invoice_no ? ' ' + esc(j.matched.bill.invoice_no) : '') + ' · ' + usd(j.matched.bill.total) + ' · ' + esc(j.matched.bill.status) + '</a>' : '<span class="em-match">Matched · ' + esc(j.matched.txn.date) + ' ' + esc(j.matched.txn.name) + ' · ' + usd(Math.abs(j.matched.txn.amount)) + '</span>') + '<button class="bk-btn sm" data-unmatch title="Remove the match">×</button></span>' : '<button class="ib-chip k-receipt' + (mainK === 'receipt' ? ' main' : '') + '" data-match title="This email is proof of a payment: match it to the bank line or bill, or let it wait for the bank under Purchases">' + iconSvg('receipt') + 'Transaction</button>') +
       (k !== 'parsed' ? '<button class="ib-chip k-arrival' + (mainK === 'arrival' ? ' main' : '') + '" data-arrival title="Shipped / delivered: attach this email to the purchase it belongs to and record what came">' + iconSvg('package') + 'Delivery</button>' : '') +
       (k !== 'parsed' ? '<button class="ib-chip k-move" data-movebtn>' + iconSvg('folder') + 'Move to <span class="thf-c"></span></button>' : '') +
-      (!e.read_by && !e.aside && k !== 'error' ? '<button class="bk-btn sm ico big" data-read title="Mark as read — here and in Gmail" aria-label="Mark as read">' + iconSvg('mailopen') + '</button>' : '<button class="bk-btn sm ico big" data-unread title="Mark as unread — here and in Gmail" aria-label="Mark as unread">' + iconSvg('mail') + '</button>') + '<button class="bk-btn sm ico" data-hist title="History — what was done with this email, and by whom" aria-label="History">' + iconSvg('clock') + '</button>' + '<span class="sp"></span><span class="em-verdict">' + (e.aside ? '<span class="ib-tag skipped">set aside</span>' : '') + (e.kind ? '<span class="ib-kind ' + esc(e.kind) + '"' + (e.note ? ' data-tip="' + esc(e.note) + '"' : '') + '>' + esc(KIND[e.kind] || e.kind) + (e.confidence != null ? ' ' + Math.round(e.confidence * 100) + '%' : '') + '</span>' : '') + (e.note ? '' : '<span class="bk-muted">' + esc(k === 'new' ? 'Not rated yet.' : '') + '</span>') + (j.bill ? ' <a href="#" data-gobills>bill #' + j.bill.id + ' (' + esc(j.bill.status) + ')</a>' : '') + '</span></div>' +
+      (!e.read_by && !e.aside && k !== 'error' ? '<button class="bk-btn sm ico big" data-read title="Mark as read — here and in Gmail" aria-label="Mark as read">' + iconSvg('mailopen') + '</button>' : '<button class="bk-btn sm ico big" data-unread title="Mark as unread — here and in Gmail" aria-label="Mark as unread">' + iconSvg('mail') + '</button>') + '<button class="bk-btn sm ico" data-hist title="History — what was done with this email, and by whom" aria-label="History">' + iconSvg('clock') + '</button>' + '<span class="sp"></span><span class="em-verdict">' + (e.aside ? '<span class="ib-tag skipped">do later</span>' : '') + (e.kind ? '<span class="ib-kind ' + esc(e.kind) + '"' + (e.note ? ' data-tip="' + esc(e.note) + '"' : '') + '>' + esc(KIND[e.kind] || e.kind) + (e.confidence != null ? ' ' + Math.round(e.confidence * 100) + '%' : '') + '</span>' : '') + (e.note ? '' : '<span class="bk-muted">' + esc(k === 'new' ? 'Not rated yet.' : '') + '</span>') + (j.bill ? ' <a href="#" data-gobills>bill #' + j.bill.id + ' (' + esc(j.bill.status) + ')</a>' : '') + '</span></div>' +
       (e.attachments.length ? '<div class="em-atts">' + e.attachments.map(att).join('') + '</div>' : '') +
       (htmlBody || '<div class="em-body">' + esc(body).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>') + '</div>') + '</div>';
     const close = () => { el.innerHTML = '<div class="ib-empty">Select an email to read it</div>'; };

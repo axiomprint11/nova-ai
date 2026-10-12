@@ -2036,7 +2036,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const em = await dbGet('SELECT id, status, read_by, aside FROM bk_emails WHERE id = ?', [id]); if (!em) return res.json({ ok: false, error: 'No such email' });
     if (em.status === 'parsed') return res.json({ ok: false, error: 'It is a bill draft already.' });
     if (kind === 'aside') {   // Set aside is the manual basket: parked by a person, rating kept, Gmail untouched
-      await dbRun("UPDATE bk_emails SET status = 'skipped', aside = 1, read_by = 'user', note = ? WHERE id = ?", ['set aside by ' + userId(req), id]);
+      await dbRun("UPDATE bk_emails SET status = 'skipped', aside = 1, read_by = 'user', note = ? WHERE id = ?", ['do later by ' + userId(req), id]);
       await audit(userId(req), 'email.move', id, { kind }); return res.json({ ok: true });
     }
     // read in Gmail already → only the rating changes (it stays under Everything else); otherwise it is open again

@@ -233,7 +233,7 @@ refuses (missing `gmail.modify` scope) nothing changes here and the dialog says 
 only the buttons do. Every basket has **Open** (unread in Gmail) / **Closed** (read) segments with counts, so a basket
 keeps its history; the chip count is the open count, action bars show in Open only. A wrong count is fixed by Scan now.
 
-### Baskets (1.19.5): All · Bills · Transactions · Delivery (shipped / tracking / delivered; kind `arrival`) · Messages · Ads · Other · Set aside, all on one line — no "New" chip and no "More baskets" menu; Scan sits at the right of the action row under the search, and mail not yet rated shows under All until the next scan sorts it
+### Baskets (1.19.5): All · Bills · Transactions · Delivery (shipped / tracking / delivered; kind `arrival`) · Messages · Ads · Other · Do Later (the manual basket, `aside`; was "Set aside"), all on one line — no "New" chip and no "More baskets" menu; Scan sits at the right of the action row under the search, and mail not yet rated shows under All until the next scan sorts it
 The AI's kinds are `bill`, `receipt` (a purchase: an order confirmation, "thanks for your order", a payment receipt or
 charge confirmation), `arrival` (a delivery notification: shipped, out for delivery, delivered, tracking), `message`,
 `advertisement`, `other` (account alerts, system mail, anything unclear). The old `notification` kind and the Notices
