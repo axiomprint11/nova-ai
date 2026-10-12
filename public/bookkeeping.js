@@ -552,15 +552,30 @@
     const el = document.createElement('div'); el.className = 'bk-modal';
     el.innerHTML = '<div class="bk-modal-box" style="width:min(480px,100%)"><div class="bk-modal-title">Link this line</div><div class="bk-muted" style="margin-bottom:10px">' + esc(line.description || '') + '</div>' +
       '<div class="vp-list"><div class="vp-i" data-mat><span class="mv-ic" style="--kc:#4338ca;--kbg:#eef2ff">' + iconSvg('layers') + '</span><span class="vp-n">Material from the catalog<small>' + (line.material_id ? 'now: ' + esc(line.material_name || '#' + line.material_id) : 'search the CRM materials list') + '</small></span></div></div>' +
+      '<div class="vp-list" style="margin-top:6px"><div class="vp-i" data-mach><span class="mv-ic" style="--kc:#1e40af;--kbg:#dbeafe">' + iconSvg('printer') + '</span><span class="vp-n">Machine payment<small>' + (line.equipment_id ? 'now: ' + esc(line.equipment_name || '#' + line.equipment_id) : 'a lease or loan payment for one of our machines') + '</small></span></div></div>' +
       '<div class="vp-h">OR a job</div><div class="bk-row" style="gap:8px"><input class="bk" id="llEst" placeholder="Estimate number, e.g. E1180747" value="' + esc(line.estimate_no ? 'E' + line.estimate_no : '') + '" style="flex:1;margin:0"><button class="bk-btn sm p" data-est>Link job</button></div>' +
-      '<div class="bk-ask-acts">' + (line.material_id || line.estimate_no ? '<button class="bk-btn" data-clear>Unlink</button>' : '') + '<button class="bk-btn" data-no>Cancel</button></div></div>';
+      '<div class="bk-ask-acts">' + (line.material_id || line.estimate_no || line.equipment_id ? '<button class="bk-btn" data-clear>Unlink</button>' : '') + '<button class="bk-btn" data-no>Cancel</button></div></div>';
     document.body.appendChild(el);
     const close = () => el.remove();
     el.querySelector('[data-no]').onclick = close; el.onclick = (ev) => { if (ev.target === el) close(); };
     el.querySelector('[data-mat]').onclick = () => { close(); materialPicker(line.description, (m) => { if (m) done({ material: m }); }); };
+    el.querySelector('[data-mach]').onclick = () => { close(); machinePicker((m) => { if (m) done({ equipment: m }); }); };
     el.querySelector('[data-est]').onclick = () => { const n = $('llEst').value.replace(/[^0-9]/g, ''); if (!n) return alert('Type the estimate number (E followed by digits).'); close(); done({ estimate: n }); };
     const cl = el.querySelector('[data-clear]'); if (cl) cl.onclick = () => { close(); done({}); };
     $('llEst').onkeydown = (e) => { if (e.key === 'Enter') el.querySelector('[data-est]').click(); };
+  }
+  // Pick one of our machines (Accounts → Equipment); financed ones first, with their monthly payment.
+  async function machinePicker(pick) {
+    const j = await api('/api/bookkeeping/equipment?fresh=0'); const list = (j.equipment || []).filter(e => e.active).sort((a, b) => ((b.mode === 'loan' || b.mode === 'lease') ? 1 : 0) - ((a.mode === 'loan' || a.mode === 'lease') ? 1 : 0) || String(a.name).localeCompare(b.name));
+    const MODE = { owned: 'Owned', loan: 'Loan', lease: 'Lease' };
+    const el = document.createElement('div'); el.className = 'bk-modal';
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(520px,100%)"><div class="bk-modal-title">Which machine?</div><input class="bk" id="mcQ" placeholder="Search machines" style="width:100%"><div class="vp-list" id="mcList" style="margin-top:8px;max-height:50vh;overflow:auto"></div><div class="bk-ask-acts"><button class="bk-btn" data-no>Cancel</button></div></div>';
+    document.body.appendChild(el);
+    const paint = () => { const q = $('mcQ').value.trim().toLowerCase(); const hits = list.filter(e => !q || (e.name + ' ' + (e.team || '') + ' ' + (e.vendor_name || '')).toLowerCase().indexOf(q) > -1);
+      $('mcList').innerHTML = hits.length ? hits.map(e => '<div class="vp-i" data-e="' + e.id + '">' + (e.photo ? '<img class="pv-ph sm" src="' + esc(e.photo) + '" alt="">' : '<span class="pv-ph sm ph">' + esc(e.name.charAt(0)) + '</span>') + '<span class="vp-n">' + esc(e.name) + (e.mode ? ' <span class="eq-mode ' + e.mode + '">' + MODE[e.mode] + '</span>' : '') + '<small>' + esc([e.team, e.vendor_name, e.schedule && e.schedule.monthly ? usd(e.schedule.monthly) + '/mo' : ''].filter(Boolean).join(' · ')) + '</small></span></div>').join('') : '<div class="bk-dim" style="padding:8px">No machine matches.</div>';
+      el.querySelectorAll('[data-e]').forEach(i => i.onclick = () => { const m = list.find(x => x.id === Number(i.dataset.e)); el.remove(); pick(m); }); };
+    $('mcQ').oninput = paint; paint(); $('mcQ').focus();
+    el.querySelector('[data-no]').onclick = () => el.remove(); el.onclick = (ev) => { if (ev.target === el) el.remove(); };
   }
   // An email in a popup (from a bill or a purchase): header, body, attachments, and "Take me to the Inbox".
   async function emailModal(id) {
@@ -593,7 +608,7 @@
     };
     const usDate = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : String(d || ''); };
     const ROLE = { bill: 'Bill', receipt: 'Receipt', confirmation: 'Confirmation', delivery: 'Delivery' };
-    const lineLink = (l) => l.material_id ? '<button class="bk-btn sm bl-link on" data-ll title="Material from the catalog">' + esc(l.material_name || 'Material #' + l.material_id) + '</button>' : l.estimate_no ? '<button class="bk-btn sm bl-link on" data-ll title="Job in the system">E' + esc(l.estimate_no) + '</button>' : '<button class="bk-btn sm bl-link" data-ll title="Link this line to a material from the catalog, or to a job by its estimate number">Link…</button>';
+    const lineLink = (l) => l.material_id ? '<button class="bk-btn sm bl-link on" data-ll title="Material from the catalog">' + esc(l.material_name || 'Material #' + l.material_id) + '</button>' : l.equipment_id ? '<button class="bk-btn sm bl-link on eq" data-ll title="Machine payment (lease or loan)">' + iconSvg('printer') + esc(l.equipment_name || 'Machine #' + l.equipment_id) + '</button>' : l.estimate_no ? '<button class="bk-btn sm bl-link on" data-ll title="Job in the system">E' + esc(l.estimate_no) + '</button>' : '<button class="bk-btn sm bl-link" data-ll title="Link this line to a material from the catalog, or to a job by its estimate number">Link…</button>';
     const billCard = (b) => {
       const tot = b.lines.reduce((a, l) => a + (Number(l.amount) || 0), 0);
       const pend = b.proposal_status === 'pending';
@@ -608,7 +623,7 @@
         (emails.length ? '<div class="bl-emails">' + emails.map(e => '<span class="bl-em"><a href="#" class="bl-emlink" data-em="' + e.id + '" title="' + esc(e.from_addr || '') + '">' + iconSvg('mail') + '<span class="bl-role">' + esc(ROLE[e.role] || e.role) + '</span>' + esc(e.subject || '(no subject)') + '<small>' + esc(when(e.received_at)) + (e.open ? '' : ' · closed') + '</small></a>' +
           e.attachments.map(a => '<a href="#" class="bl-att" data-em="' + e.id + '" data-i="' + a.i + '" data-kind="' + a.kind + '" title="' + esc(a.name) + '">' + iconSvg('paperclip') + esc(a.name) + '</a>').join('') + '</span>').join('') + '</div>' : '') +
         '<div class="bl-acts"><span class="sp"></span>' +
-          (pend ? '<button class="bk-btn sm ok" data-bapprove="' + b.proposal_id + '">Approve</button><button class="bk-btn sm bad" data-breject="' + b.proposal_id + '">Reject</button>' : '') +
+          (pend ? '<button class="bk-btn ok bl-decide" data-bapprove="' + b.proposal_id + '">Approve</button><button class="bk-btn bad bl-decide" data-breject="' + b.proposal_id + '">Reject</button>' : '') +
           (b.status === 'approved' ? '<button class="bk-btn sm" data-bstatus="scheduled" data-bid="' + b.id + '">Schedule payment…</button><button class="bk-btn sm ok" data-bstatus="paid" data-bid="' + b.id + '">Mark paid…</button>' : '') +
           (b.status === 'scheduled' ? '<span class="bk-muted">to pay ' + esc(usDate(b.scheduled_for || '')) + '</span><button class="bk-btn sm ok" data-bstatus="paid" data-bid="' + b.id + '">Mark paid…</button><button class="bk-btn sm" data-bstatus="approved" data-bid="' + b.id + '">Unschedule</button>' : '') +
           (b.status === 'paid' ? '<span class="bk-muted">paid ' + esc(usDate(b.paid_at || '')) + (b.paid_note ? ' · ' + esc(b.paid_note) : '') + '</span><button class="bk-btn sm" data-bstatus="approved" data-bid="' + b.id + '">Not paid after all</button>' : '') + '</div></div>';
@@ -633,7 +648,7 @@
     const saveLines = async (card) => { const b = bills.find(x => String(x.id) === card.dataset.bill); if (!b) return; const r = await post('/api/bookkeeping/bills/' + b.id + '/lines', { lines: b.lines }); if (!r.ok) alert(r.error); };
     v.querySelectorAll('.bl-lines tr[data-li] .ckp').forEach(w => w.addEventListener('change', () => { const card = w.closest('.bl-card'), b = bills.find(x => String(x.id) === card.dataset.bill); const l = b.lines[Number(w.closest('tr').dataset.li)]; l.category = w.querySelector('.ckp-val').value; saveLines(card); }));
     v.querySelectorAll('[data-ll]').forEach(bt => bt.onclick = () => { const card = bt.closest('.bl-card'), b = bills.find(x => String(x.id) === card.dataset.bill), tr = bt.closest('tr'), l = b.lines[Number(tr.dataset.li)];
-      lineLinkPicker(l, async (res) => { l.material_id = res.material ? res.material.id : null; l.material_name = res.material ? res.material.name : null; l.estimate_no = res.estimate || null; tr.querySelector('.bl-lk').innerHTML = lineLink(l); tr.querySelector('[data-ll]').onclick = bt.onclick; await saveLines(card); }); });
+      lineLinkPicker(l, async (res) => { l.material_id = res.material ? res.material.id : null; l.material_name = res.material ? res.material.name : null; l.estimate_no = res.estimate || null; l.equipment_id = res.equipment ? res.equipment.id : null; l.equipment_name = res.equipment ? res.equipment.name : null; tr.querySelector('.bl-lk').innerHTML = lineLink(l); tr.querySelector('[data-ll]').onclick = bt.onclick; await saveLines(card); }); });
     v.querySelectorAll('[data-bstatus]').forEach(b => b.onclick = async () => {
       const to = b.dataset.bstatus; let date = '', note = '';
       const d7 = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10), d0 = new Date().toISOString().slice(0, 10);

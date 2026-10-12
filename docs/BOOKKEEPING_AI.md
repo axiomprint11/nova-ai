@@ -351,8 +351,10 @@ are on the email row). Dates in US format (10-10-2026). The AI's note is one cla
 that expands it (1.19.12); an open question is a small **AI question** button at the right of that line (popup,
 "answer it in the Daily Brief"). Lines: description ·
 **Category** (a picker — changing it saves the line, and the purchase item that came from this bill follows) ·
-**Link…** (a material from the catalog via the materials picker, or a job by estimate number E1234567;
-`line.material_id / material_name / estimate_no`) · amount. `POST /api/bookkeeping/bills/:id/lines` saves the whole
+**Link…** (a material from the catalog via the materials picker, a **machine payment** — a lease or loan
+instalment for one of our machines, `machinePicker` over Accounts → Equipment, which also puts the bill and its purchase on
+that machine (`equipment_id`) — or a job by estimate number E1234567; `line.material_id / material_name / equipment_id /
+equipment_name / estimate_no`) · amount. `POST /api/bookkeeping/bills/:id/lines` saves the whole
 line list. Under the lines, every email behind the bill (`bills[].emails`: the one it was read from, the receipt
 that paid it, its purchase's confirmation and deliveries — role, subject, time, open / closed) with each attachment
 as a chip (one click opens it). Clicking an email opens it in a popup (`emailModal`: header, body, attachments) with

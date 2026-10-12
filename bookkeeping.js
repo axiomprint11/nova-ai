@@ -1636,8 +1636,12 @@ module.exports = function mountBookkeeping(app, deps) {
   app.post('/api/bookkeeping/bills/:id/lines', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), who = userId(req); const b = await dbGet('SELECT id, purchase_id, lines FROM bk_bills WHERE id = ?', [id]); if (!b) return res.json({ ok: false, error: 'No such bill' });
     const lines = (Array.isArray(req.body && req.body.lines) ? req.body.lines : []).slice(0, 80).map(l => ({ description: String(l.description || '').slice(0, 300), qty: l.qty != null && l.qty !== '' ? Number(l.qty) : null, unit_price: l.unit_price != null && l.unit_price !== '' ? Number(l.unit_price) : null, amount: l.amount != null && l.amount !== '' ? Number(l.amount) : null,
-      category: String(l.category || '').slice(0, 120) || null, material_id: parseInt(l.material_id) || null, material_name: l.material_id ? String(l.material_name || '').slice(0, 200) : null, estimate_no: String(l.estimate_no || '').replace(/[^0-9]/g, '').slice(0, 12) || null }));
+      category: String(l.category || '').slice(0, 120) || null, material_id: parseInt(l.material_id) || null, material_name: l.material_id ? String(l.material_name || '').slice(0, 200) : null, estimate_no: String(l.estimate_no || '').replace(/[^0-9]/g, '').slice(0, 12) || null, equipment_id: parseInt(l.equipment_id) || null, equipment_name: l.equipment_id ? String(l.equipment_name || '').slice(0, 200) : null }));
     await dbRun("UPDATE bk_bills SET lines = ?, updated_at = datetime('now') WHERE id = ?", [JSON.stringify(lines), id]);
+    // a line that is a machine payment (lease / loan) puts the bill on that machine, so its payment history is complete
+    const eqLine = lines.find(l => l.equipment_id);
+    await dbRun('UPDATE bk_bills SET equipment_id = ? WHERE id = ?', [eqLine ? eqLine.equipment_id : null, id]);
+    if (b.purchase_id) await dbRun('UPDATE bk_purchases SET equipment_id = ? WHERE id = ?', [eqLine ? eqLine.equipment_id : null, b.purchase_id]);
     if (b.purchase_id) {   // the purchase's items that came from this bill follow (same position)
       const items = await dbAll("SELECT id, pos FROM bk_purchase_items WHERE purchase_id = ? AND source = 'bill' ORDER BY pos, id", [b.purchase_id]);
       items.forEach((it, i) => { const l = lines[i]; if (l) dbRun("UPDATE bk_purchase_items SET category = ?, material_id = ?, updated_at = datetime('now') WHERE id = ?", [l.category, l.material_id, it.id]); });
