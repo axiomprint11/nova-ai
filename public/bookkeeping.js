@@ -654,14 +654,18 @@
       // one action bar per basket: review, then one click for the whole basket
       '<div class="ib-bar ib-acts" id="ibActs">' +
         '<span class="ib-selbar" id="ibSelBar" style="display:none"><b id="ibSelN"></b> selected <button class="bk-btn sm p" data-selread>Mark as read</button><button class="bk-btn sm" data-selmove>Move to <span class="thf-c"></span></button><button class="bk-btn sm" data-selclear>Clear</button></span>' +
-        (bc.ads ? '<span data-for="ads"><span class="bk-muted">Promotions and newsletters, with how sure BookkeeperAI is.</span> <button class="bk-btn sm" data-aside="advertisement">Mark all ' + bc.ads + ' ads as read</button></span>' : '') +
-        (bc.receipt ? '<span data-for="receipt"><span class="bk-muted">Purchases: order confirmations and payment receipts — press Transaction on each to file it.</span> <button class="bk-btn sm" data-aside="receipt">Mark all ' + bc.receipt + ' as read</button></span>' : '') +
-        (bc.arrival ? '<span data-for="arrival"><span class="bk-muted">Shipping and delivery notifications (shipped, tracking number, delivered) — press Delivery on each when the goods are here.</span> <button class="bk-btn sm" data-aside="arrival">Mark all ' + bc.arrival + ' as read</button></span>' : '') +
-        (bc.other ? '<span data-for="other"><span class="bk-muted">Account notices, system mail and anything that fits no basket — open them, or move them with "Move to".</span> <button class="bk-btn sm" data-aside="other">Mark all ' + bc.other + ' as read</button></span>' : '') +
-        (bc.bill ? '<span data-for="bill"><span class="bk-muted">Rated as bills — nothing is filed until you press Bill on one (or Turn all).</span> ' + (billsToRead ? '<button class="bk-btn sm p" data-parseall>Turn all ' + billsToRead + ' into bills</button>' : '') + '<button class="bk-btn sm" data-aside="bill">Mark all ' + bc.bill + ' as read</button></span>' : '') +
-        (bc.message ? '<span data-for="message"><span class="bk-muted">People writing to accounting — for a person to answer.</span> <button class="bk-btn sm" data-aside="message">Mark all ' + bc.message + ' as read</button></span>' : '') +
-        '<span data-for="open"><span class="bk-muted">' + (bc.unrated ? bc.unrated + ' not sorted yet — Scan puts them in their baskets.' : 'Everything is sorted. Incoming mail is checked every ' + esc(ov.settings.poll_min) + ' min (or press Scan).') + '</span></span>' +
-        '<button class="bk-btn p sm" id="scanNow2" style="margin-left:auto" title="' + esc(ov && ov.connections.gmail.last_scan ? 'Last checked ' + when(ov.connections.gmail.last_scan) : 'Not checked yet') + '">Scan</button>' +
+        (() => { const D = (ov && ov.baskets) || {}; const txt = (k) => String(D[k] || '').replace('{poll}', ov.settings.poll_min);
+          const head = (k, title) => '<b class="ib-bname">' + esc(title) + '</b>' + qHelp('basket_' + k, title, '<p>' + esc(txt(k)) + '</p><p class="bk-dim">Change the words under Settings → Inbox; the AI sorts by them.</p>');
+          const readBtn = (k, n) => n ? '<button class="bk-btn sm" data-aside="' + k + '">Mark all ' + n + ' as read</button>' : '';
+          return '<span data-for="bill">' + head('bill', 'Bills') + (bc.bill ? '<button class="bk-btn sm p" data-parseall>Turn ' + bc.bill + ' into bills</button>' + readBtn('bill', bc.bill) : '') + '</span>' +
+            '<span data-for="receipt">' + head('receipt', 'Transactions') + readBtn('receipt', bc.receipt) + '</span>' +
+            '<span data-for="arrival">' + head('arrival', 'Delivery') + readBtn('arrival', bc.arrival) + '</span>' +
+            '<span data-for="message">' + head('message', 'Messages') + readBtn('message', bc.message) + '</span>' +
+            '<span data-for="ads">' + head('advertisement', 'Ads') + readBtn('advertisement', bc.ads) + '</span>' +
+            '<span data-for="other">' + head('other', 'Other') + readBtn('other', bc.other) + '</span>' +
+            '<span data-for="done">' + head('aside', 'Do Later') + '</span>' +
+            '<span data-for="open">' + head('all', 'All') + '<span class="bk-muted">' + (bc.unrated ? bc.unrated + ' not sorted yet — Scan puts them in their baskets.' : esc(txt('all'))) + '</span></span>'; })() +
+        '<span class="bk-muted ib-last" style="margin-left:auto">' + esc(ov && ov.connections.gmail.last_scan ? 'Last scanned ' + when(ov.connections.gmail.last_scan) : 'Not scanned yet') + '</span><button class="bk-btn p sm ico" id="scanNow2" title="Scan the inbox now" aria-label="Scan now">' + iconSvg('refresh') + '</button>' +
         '</div>' +
       '<div class="ib-split' + (ibOpen ? '' : ' lines') + '" id="ibSplit"><div class="ib-list">' + all.filter(isOpen).map(row).join('') + '<div class="ib-divider" id="ibClosedHead">Closed <b></b></div>' + all.filter(m => !isOpen(m)).map(row).join('') + (!all.length ? '<div class="bk-muted" style="padding:14px 0">Nothing scanned yet — press Scan now.</div>' : '') + '<div class="bk-muted" id="ibNone" style="display:none;padding:14px 10px">Nothing matches.</div></div>' +
       '<div class="ib-pane" id="ibPane"><div class="ib-empty">Select an email to read it</div></div></div></div>';
@@ -725,11 +729,10 @@
       b.disabled = true; const r = await post('/api/bookkeeping/inbox/set-aside', { kinds, min: 0 }); if (!r.ok) await ask(r.error, { title: 'Not marked read', ok: 'OK', cancel: false }); await overview(); loadInbox();
     });
     const pa = v.querySelector('[data-parseall]'); if (pa) pa.onclick = async () => {
-      const ids = all.filter(m => basket(m) === 'bill' && st(m) !== 'parsed').map(m => m.id);
-      if (!await ask('BookkeeperAI reads each one in full and files a draft under Bills for you to approve.', { title: 'Turn ' + ids.length + ' email' + (ids.length === 1 ? '' : 's') + ' into bills?', ok: 'Turn into bills' })) return;
-      pa.disabled = true; const prog = $('ibProg'), txt = $('ibProgText'); prog.style.display = '';
-      for (let i = 0; i < ids.length; i++) { txt.textContent = 'Reading bill ' + (i + 1) + ' of ' + ids.length + ' in full…'; const row = v.querySelector('.ib-row[data-m="' + ids[i] + '"]'); if (row) row.classList.add('rated'); const r = await post('/api/bookkeeping/emails/' + ids[i] + '/parse', {}); if (!r.ok) console.warn(r.error); }
-      txt.textContent = 'Done — see Bills.'; await overview(); setTimeout(loadInbox, 600);
+      const ids = all.filter(m => isOpen(m) && basket(m) === 'bill').map(m => m.id);
+      if (!await ask('You go through them one by one: for each email you choose the purchase it belongs to, or start a new one. Emails not read yet are read in full and filed as drafts under Bills.', { title: 'Turn ' + ids.length + ' email' + (ids.length === 1 ? '' : 's') + ' into bills?', ok: 'Start' })) return;
+      for (let i = 0; i < ids.length; i++) { const go = await billFlow(ids[i], null, { step: (i + 1) + ' of ' + ids.length }); if (go === 'stop') break; }
+      await overview(); loadInbox();
     };
     $('nInbox').textContent = openN || '';
   }
@@ -770,6 +773,29 @@
     const paint = () => { const q = $('vpQ').value.trim().toLowerCase(); const hits = list.filter(v => !q || (v.name + ' ' + (v.email || '')).toLowerCase().indexOf(q) > -1).slice(0, 60); $('vpList').innerHTML = hits.map(v => '<div class="vp-i" data-v="' + v.id + '">' + (v.photo ? '<img src="' + esc(v.photo) + '" alt="">' : '<span class="em-vinit">' + esc(v.name.charAt(0)) + '</span>') + '<span class="vp-n">' + esc(v.name) + (v.email ? ' <small>' + esc(v.email) + '</small>' : '') + '</span>' + (v.kind ? '<span class="bk-src ' + esc(v.kind) + '">' + esc(v.kind) + '</span>' : '') + '</div>').join('') || '<div class="bk-muted" style="padding:10px">No vendor matches.</div>'; $('vpList').querySelectorAll('.vp-i').forEach(i => i.onclick = () => { el.remove(); pick(Number(i.dataset.v)); }); };
     $('vpQ').oninput = paint; paint(); $('vpQ').focus();
     el.querySelector('[data-no]').onclick = () => el.remove(); el.onclick = (ev) => { if (ev.target === el) el.remove(); };
+  }
+  // Bill: before anything is filed, choose the purchase this bill belongs to — one Nova found by order number, amount or
+  // vendor — or start a new one. Then the email is read in full (if it was not already) and the draft lands under Bills.
+  // Resolves 'done' / 'skip' / 'stop' (used by Turn all to walk through the basket).
+  async function billFlow(id, done, opt) {
+    opt = opt || {};
+    const j = await post('/api/bookkeeping/emails/' + id + '/bill', {}); if (!j.ok) { alert(j.error); return 'skip'; }
+    const x = j.extract || {}, list = j.purchases || [];
+    return new Promise((resolve) => {
+      const el = document.createElement('div'); el.className = 'bk-modal';
+      el.innerHTML = '<div class="bk-modal-box" style="width:min(560px,100%)"><div class="bk-modal-title">Bill' + (opt.step ? ' <span class="bk-muted" style="font-weight:500">· ' + esc(opt.step) + '</span>' : '') + '</div>' +
+        '<div class="bk-muted" style="margin-bottom:10px">' + (j.already ? 'Already read: bill #' + j.bill.id + ' — ' : 'Read from the email: ') + '<b>' + esc(x.vendor || '?') + '</b>' + (x.amount != null ? ' · <b>' + usd(x.amount) + '</b>' : '') + (x.order_no ? ' · #' + esc(x.order_no) : '') + (x.date ? ' · ' + esc(x.date) : '') + '. Which purchase is it?</div>' +
+        (list.length ? '<div class="vp-h">Open purchases that fit</div><div class="vp-list">' + list.map(p => '<div class="vp-i" data-p="' + p.id + '"><span class="mv-ic" style="--kc:#1e40af;--kbg:#dbeafe">' + iconSvg('cart') + '</span><span class="vp-n">' + esc(p.vendor || '?') + (p.amount != null ? ' · ' + usd(p.amount) : '') + (p.order_no ? ' · #' + esc(p.order_no) : '') + ' <small>' + esc(p.date || '') + ' · ' + esc(p.status) + (p.why ? ' · ' + esc(p.why) : '') + '</small></span></div>').join('') + '</div><div class="vp-h">OR</div>' : '') +
+        '<div class="vp-list"><div class="vp-i" data-new><span class="mv-ic" style="--kc:#065f46;--kbg:#d1fae5">' + iconSvg('sparkles') + '</span><span class="vp-n">New purchase from this bill<small>' + (list.length ? 'when nothing above is it' : 'nothing open matches it') + '</small></span></div></div>' +
+        '<div class="bk-ask-acts">' + (opt.step ? '<button class="bk-btn" data-stop>Stop</button><button class="bk-btn" data-skip>Skip this one</button>' : '<button class="bk-btn" data-skip>Cancel</button>') + '</div></div>';
+      document.body.appendChild(el);
+      const finish = (v) => { el.remove(); resolve(v); };
+      const go = async (body) => { el.querySelectorAll('.vp-i').forEach(i => { i.style.pointerEvents = 'none'; i.style.opacity = '.6'; }); const r = await post('/api/bookkeeping/emails/' + id + '/bill', body); if (!r.ok) { alert(r.error); return finish('skip'); } if (done) done(r); finish('done'); };
+      el.querySelectorAll('[data-p]').forEach(i => i.onclick = () => go({ purchase_id: Number(i.dataset.p) }));
+      el.querySelector('[data-new]').onclick = () => go({ new: 1 });
+      el.querySelector('[data-skip]').onclick = () => finish('skip'); const st = el.querySelector('[data-stop]'); if (st) st.onclick = () => finish('stop');
+      el.onclick = (ev) => { if (ev.target === el) finish(opt.step ? 'stop' : 'skip'); };
+    });
   }
   // Transaction: Nova reads the email for vendor / amount / order number, then offers the bank lines with that exact
   // amount, a bill with that invoice number, or "wait for the bank" (a purchase with the bank slot empty).
@@ -884,7 +910,7 @@
     // image thumbnails
     e.attachments.filter(a => a.kind === 'image').forEach(async a => { try { const r = await fetch('/api/bookkeeping/emails/' + id + '/att/' + a.i, { headers: authHdr }); if (r.ok) { const u = URL.createObjectURL(await r.blob()); const t = el.querySelector('.em-att[data-i="' + a.i + '"] .em-thumb'); if (t) t.style.backgroundImage = 'url(' + u + ')'; } } catch (er) {} });
     el.querySelectorAll('.em-att').forEach(a => a.onclick = async (ev) => { ev.preventDefault(); const r = await fetch('/api/bookkeeping/emails/' + id + '/att/' + a.dataset.i, { headers: authHdr }); if (!r.ok) return alert('File not available.'); const u = URL.createObjectURL(await r.blob()); viewFile(u, a.dataset.kind, a.title); });
-    const p1 = el.querySelector('[data-parse]'); if (p1) p1.onclick = async () => { p1.disabled = true; p1.textContent = 'Reading…'; const r = await post('/api/bookkeeping/emails/' + id + '/parse', {}); if (!r.ok) alert(r.error); close(); await overview(); loadInbox(); };
+    const p1 = el.querySelector('[data-parse]'); if (p1) p1.onclick = () => billFlow(id, () => { close(); overview(); loadInbox(); });
     const r1 = el.querySelector('[data-read]'); if (r1) r1.onclick = async () => { r1.disabled = true; const r = await post('/api/bookkeeping/emails/' + id + '/read', {}); if (!r.ok) { await ask(r.error, { title: 'Not marked read', ok: 'OK', cancel: false }); r1.disabled = false; return; } close(); await overview(); loadInbox(); };
     const u1 = el.querySelector('[data-unread]'); if (u1) u1.onclick = async () => { u1.disabled = true; const r = await post('/api/bookkeeping/emails/' + id + '/unread', {}); if (!r.ok) { await ask(r.error, { title: 'Not marked unread', ok: 'OK', cancel: false }); u1.disabled = false; return; } close(); await overview(); loadInbox(); };
     // the avatar is the vendor: hover tells who, a click offers Link / Change / Unlink
@@ -970,6 +996,7 @@
   // ---------------------------------------------------------------- Chart of Accounts (types of expense → sub categories, with colors and icons)
   // One line-icon set (24px grid, stroke 2) so every type and sub category looks the same family; keys are stored in the chart.
   const ICON_PATH = {
+    refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>',
     printer: '<path d="M6 9V3h12v6"/><rect x="6" y="14" width="12" height="7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>',
     file: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/>',
     droplet: '<path d="M12 3s-6 6.5-6 11a6 6 0 0 0 12 0c0-4.5-6-11-6-11z"/>',
@@ -1343,6 +1370,10 @@
         : '<div class="bk-muted">No bank connected yet.</div>') +
       '<ol class="bk-steps"><li>Create a Plaid account at dashboard.plaid.com (the Transactions product; Sandbox to try, then request Production / Limited Production).</li><li>Put <code>PLAID_CLIENT_ID</code>, <code>PLAID_SECRET</code> and <code>PLAID_ENV=sandbox|production</code> in <code>.env</code> and restart Nova.</li><li>Nothing to set in the dashboard\u2019s Webhooks page (that page is only for Transfer / Wallet / Income events): the Transactions webhook <code>' + esc(c.chat.plaid_webhook_url) + '</code> is attached to every bank connection Nova creates. Allowed redirect URIs are not needed.</li><li>Press <b>Connect a bank</b> and sign in to each bank (2 accounts). Transactions sync straight away; the webhook keeps them current, the daily run syncs again.</li></ol></div>' +
       // Gmail
+      '<div class="bk-card"><h2>Inbox ' + qHelp('inbox_baskets', 'Inbox baskets', 'What each basket means, in your words. The (?) next to a basket in the Inbox shows this text, and BookkeeperAI sorts incoming mail by these definitions — change them and the next scan sorts by the new words. Do Later is never filled by the AI.') + '</h2>' +
+      '<div class="bk-muted" style="margin-bottom:8px">How BookkeeperAI decides which basket an email goes to. Edit freely; {poll} in the All line becomes the minutes between checks.</div>' +
+      [['all', 'All'], ['bill', 'Bills'], ['receipt', 'Transactions'], ['arrival', 'Delivery'], ['message', 'Messages'], ['advertisement', 'Ads'], ['other', 'Other'], ['aside', 'Do Later']].map(([k, l]) => '<label class="bk-row" style="gap:10px;align-items:flex-start;margin:6px 0"><b style="flex:0 0 110px;padding-top:7px;font-size:13px">' + l + '</b><textarea class="bk bkt" data-basket="' + k + '" rows="2" style="flex:1;margin:0;font-size:13px;resize:vertical">' + esc((ov.baskets || {})[k] || '') + '</textarea></label>').join('') +
+      '<div class="bk-row" style="margin-top:6px"><button class="bk-btn p" id="basketsSave">Save baskets</button><button class="bk-btn" id="basketsReset" title="Back to the built-in wording">Reset to defaults</button><span class="bk-muted" id="basketsMsg"></span></div></div>' +
       '<div class="bk-card"><h2>Accounting inbox — ' + esc(c.gmail.inbox) + ' ' + pill(c.gmail.key, 'service account key present', 'gmail-key.json missing') + '<span class="sp"></span><button class="bk-btn" id="scanNow2">Scan now</button></h2>' +
       '<div class="bk-muted">Read with the same Google service account Nova uses for order@ (domain-wide delegation). Polled every ' + esc(c.gmail.poll_min) + ' min' + (c.gmail.last_scan ? ' · last scan ' + when(c.gmail.last_scan) : ' · not scanned yet') + '. Gmail push: ' + (c.gmail.push && c.gmail.topic ? '<span class="bk-pill on">configured</span>' + (c.gmail.watch_expires ? ' watch until ' + when(c.gmail.watch_expires) : ' — press Start watch') : '<span class="bk-pill off">not set up (polling only)</span>') + '</div>' +
       '<ol class="bk-steps"><li>Nothing to do for reading: the delegation that covers order@ covers accounting@ too (scope gmail.readonly). If scanning fails with "unauthorized_client", add the scope in Google Admin → Security → API controls → Domain-wide delegation.</li>' +
@@ -1366,6 +1397,8 @@
       '<div class="bk-row" style="margin-top:10px"><button class="bk-btn p" id="connSave">Save</button><span class="bk-muted" id="connMsg"></span></div></div>' +
       '<div class="bk-card"><h2>Who can open this tab</h2><div class="bk-muted">' + esc(c.users.join(', ')) + ' (BOOKKEEPER_USERS in .env; you are signed in as ' + esc(ov.me) + ').</div></div></div>';
     $('alertNow').onclick = async () => { $('alertNow').disabled = true; const r = await post('/api/bookkeeping/purchases/alert', {}); $('connMsg').textContent = r.ok ? (r.sent ? 'Sent: ' + r.n + ' overdue purchase(s) to ' + ov.settings.alert_to + '.' : 'Nothing overdue — no email sent.') : r.error; $('alertNow').disabled = false; };
+    $('basketsSave').onclick = async () => { const o = {}; v.querySelectorAll('textarea[data-basket]').forEach(t => { o[t.dataset.basket] = t.value.trim(); }); const r = await post('/api/bookkeeping/settings', { baskets: JSON.stringify(o) }); $('basketsMsg').textContent = r.ok ? 'Saved — the next scan sorts by these.' : (r.error || 'Not saved'); ov = null; };
+    $('basketsReset').onclick = async () => { if (!await ask('Put the built-in wording back in every basket?', { title: 'Reset basket definitions', ok: 'Reset' })) return; await post('/api/bookkeeping/settings', { baskets: '{}' }); ov = null; loadConn(); };
     $('connSave').onclick = async () => { const b = { run_at: $('sRunAt').value, poll_min: $('sPoll').value, backfill_days: $('sBack').value, waiting_days: $('aWait').value, notreceived_days: $('aRecv').value, alert_to: $('aTo').value.trim(), alert_at: $('aAt').value, triage_ad: $('tAd').value / 100, triage_notice: $('tNotice').value / 100, triage_bill: $('tBill').value / 100, triage_message: $('tMsg').value / 100, triage_auto: $('tAuto').checked ? 1 : 0 }; if ($('sHook').value.trim()) b.chat_webhook = $('sHook').value.trim(); await post('/api/bookkeeping/settings', b); $('connMsg').textContent = 'Saved.'; loadConn(); };
     $('chatTest').onclick = async () => { $('chatTest').disabled = true; const r = await post('/api/bookkeeping/chat/test', {}); $('connMsg').textContent = r.ok ? 'Sent via ' + r.posted.via + '.' : r.error; $('chatTest').disabled = false; };
     $('scanNow2').onclick = async () => { $('scanNow2').disabled = true; const r = await post('/api/bookkeeping/scan', {}); $('connMsg').textContent = r.ok ? 'Scanned: ' + r.scan.new + ' new email(s), ' + r.parsed.bills + ' bill draft(s).' : r.error; loadConn(); };

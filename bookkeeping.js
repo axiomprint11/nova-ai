@@ -156,7 +156,7 @@ module.exports = function mountBookkeeping(app, deps) {
   ];
   const DEFAULT_CATEGORIES = DEFAULT_CHART;
   const SETTING_DEFAULTS = {
-    run_at: env('BOOKKEEPER_RUN_AT') || '07:00', poll_min: parseInt(env('BOOKKEEPER_POLL_MIN')) || 60, threshold: 0.75,
+    run_at: env('BOOKKEEPER_RUN_AT') || '07:00', poll_min: parseInt(env('BOOKKEEPER_POLL_MIN')) || 30, threshold: 0.75,
     triage_ad: 0.95, triage_bill: 0.8, triage_notice: 0.75, triage_message: 0.6,   // inbox triage: when BookkeeperAI acts on its own
     triage_auto: 0,   // 0 = BookkeeperAI only RATES emails; a person sets them aside ("Set aside all ads"). 1 = it sets aside by itself above the thresholds.
     categories: DEFAULT_CATEGORIES.join('\n'), chat_webhook: env('BOOKKEEPER_CHAT_WEBHOOK') || '', chat_space: '',
@@ -165,12 +165,25 @@ module.exports = function mountBookkeeping(app, deps) {
     notes: 'AxiomPrint is a print shop in Glendale, CA. Inks, paper, printing supplies and outsourced printing are cost of goods. Equipment over $2,500 is a fixed asset, not an expense. Transfers between our own accounts and credit card payments are not expenses.'
   };
   let settingsCache = null;
+  // The inbox baskets: what each one means, in the team's words. Shown under the (?) of every basket, edited under
+  // Settings → Inbox, and given to the light model as the sorting rules — change the words and the sorting follows.
+  const BASKET_DEFAULTS = {
+    all: 'Everything is sorted. Incoming mail is checked every {poll} min (or press Scan).',
+    bill: 'Any incoming email is categorized as a bill if there is a future payment to be made. Mostly will have a PDF attachment.',
+    receipt: 'Any incoming email that is related to payments is categorized here. It can be a subscription payment, a QuickBooks scheduled payment, any "thank you for your payment" email, or an order confirmation.',
+    arrival: 'Any email that is related to delivery, shipment or arrival notices (shipped, tracking number, out for delivery, delivered) goes here.',
+    message: 'Emails that come directly from people to our accounting team. It can be about filling out forms, requesting a 1099, a question, a reply.',
+    advertisement: 'Emails that contain advertising, promotions, subscription-based marketing and newsletters.',
+    other: 'Any email that could not be placed in one of the other baskets (account notices, system mail, anything unclear).',
+    aside: 'We push emails here by hand to deal with later. The AI never puts anything here.' };
+  const BASKET_ORDER = ['all', 'bill', 'receipt', 'arrival', 'message', 'advertisement', 'other', 'aside'];
+  function basketDefs(s) { let o = {}; try { o = JSON.parse(s.baskets || '{}') || {}; } catch (e) {} const out = {}; BASKET_ORDER.forEach(k => { out[k] = String(o[k] || BASKET_DEFAULTS[k]).slice(0, 600); }); return out; }
   async function settings() {
     if (settingsCache) return settingsCache;
     const rows = await dbAll('SELECT key, value FROM bk_settings');
     const s = Object.assign({}, SETTING_DEFAULTS);
     rows.forEach(r => { s[r.key] = r.value; });
-    s.poll_min = Math.max(2, parseInt(s.poll_min) || 60); s.threshold = Number(s.threshold) || 0.75; s.backfill_days = parseInt(s.backfill_days) || 30;
+    s.poll_min = Math.max(2, parseInt(s.poll_min) || 30); s.threshold = Number(s.threshold) || 0.75; s.backfill_days = parseInt(s.backfill_days) || 30;
     ['triage_ad', 'triage_bill', 'triage_notice', 'triage_message'].forEach(k => { s[k] = Math.max(0.3, Math.min(1, Number(s[k]) || SETTING_DEFAULTS[k])); });
     s.triage_auto = String(s.triage_auto) === '1' || s.triage_auto === true ? 1 : 0;
     settingsCache = s;
@@ -653,6 +666,7 @@ module.exports = function mountBookkeeping(app, deps) {
     // Only unread mail comes in. Closed is what was dealt with from here on; mail read in Gmail before Nova ever saw it
     // is not imported (1.18.23 — rows the earlier import brought in as read are dropped once).
     await dbRun("DELETE FROM bk_emails WHERE read_by = 'gmail' AND COALESCE(aside, 0) = 0 AND id NOT IN (SELECT email_id FROM bk_bills WHERE email_id IS NOT NULL)");
+    if (!s.inbox_poll_30) { if (parseInt(s.poll_min) === 60) await setSetting('poll_min', 30, 'system'); await setSetting('inbox_poll_30', 1, 'system'); }   // once (1.19.7): the hourly check becomes half-hourly
     if (!s.inbox_reset_1830) {   // once (1.18.30): Closed starts empty — open = unread in Gmail, closed = closed from here, bill drafts included
       await dbRun("DELETE FROM bk_emails WHERE status IN ('skipped', 'error') AND COALESCE(aside, 0) = 0 AND id NOT IN (SELECT email_id FROM bk_bills WHERE email_id IS NOT NULL)");
       await dbRun("UPDATE bk_emails SET read_by = NULL WHERE COALESCE(aside, 0) = 0");
@@ -1047,7 +1061,10 @@ module.exports = function mountBookkeeping(app, deps) {
       const listing = batch.map(m => { let atts = []; try { atts = JSON.parse(m.attachments || '[]'); } catch (e) {} return m.id + ' | from: ' + m.from_addr + ' | subject: ' + m.subject + ' | attachments: ' + (atts.map(a => a.name).join(', ') || 'none') + ' | text: ' + String(m.body || m.snippet || '').replace(/\s+/g, ' ').slice(0, 400); }).join('\n');
       let j = null;
       try {
-        const r = await anthropic.messages.create({ model: MODEL_LIGHT, max_tokens: 2000, system: 'You sort the accounting inbox of AxiomPrint, a print shop. For each email say what it is. Kinds: advertisement (marketing, promotions, newsletters, sales), receipt (a purchase: an order confirmation, "thanks for your order", a payment receipt or charge confirmation — proof that we bought or paid for something), arrival (a delivery notification: shipped, out for delivery, delivered, your package arrived, tracking updates for goods coming to us), bill (an invoice, statement or credit memo sent by a system or a no-reply / billing address, or anything with an invoice-like attachment and no personal note), message (a real person writing to us — a question, a reply, a request; this includes a person sending or chasing an invoice with their own words, since we may need to answer them: a human-written email that contains a bill is a message, not a bill), other (account alerts, calendar, system mail, anything unclear). When in doubt between advertisement and anything else, say the other thing — a missed advertisement costs nothing, a missed bill or message does. Return ONLY JSON.',
+        const B = basketDefs(s);
+        const r = await anthropic.messages.create({ model: MODEL_LIGHT, max_tokens: 2000, system: 'You sort the accounting inbox of AxiomPrint, a print shop, into these baskets (the team\'s own definitions):\n' +
+          'bill — ' + B.bill + '\nreceipt — ' + B.receipt + '\narrival — ' + B.arrival + '\nmessage — ' + B.message + ' A human-written email that contains or chases an invoice is a message, not a bill, since we may need to answer them.\nadvertisement — ' + B.advertisement + '\nother — ' + B.other +
+          '\nFor each email say which basket. When in doubt between advertisement and anything else, say the other thing — a missed advertisement costs nothing, a missed bill or message does. Return ONLY JSON.',
           messages: [{ role: 'user', content: 'EMAILS\n' + listing + '\n\nReturn ONLY JSON: {"items": [{"id": <id>, "kind": "advertisement"|"receipt"|"arrival"|"bill"|"message"|"other", "confidence": 0.0, "why": "<a few words>"}]}' }] });
         j = jsonOf((r.content || []).filter(b => b.type === 'text').map(b => b.text).join(''));
       } catch (e) { errlog('triage', e.message); break; }
@@ -1523,7 +1540,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const url = (ph) => !ph ? null : /^https?:\/\//.test(ph) ? ph : 'https://axiomprint.s3.us-west-1.amazonaws.com/MemberImages/' + String(ph).replace(/^\/+/, '');
       people = ms.map(m => ({ email: m.email, username: m.username, name: m.display_name || m.username || m.email, photo: url(m.photo || img[m.axiom_user_id] || img2[String(m.email || '').toLowerCase()] || null) }));
     } catch (e) {}
-    res.json({ ok: true, me: userId(req), people, settings: Object.assign({}, s, { chat_webhook: s.chat_webhook ? '(set)' : '' }), chart: chartOf(s), counts, brief, last_run: lastRun, running: !!running,
+    res.json({ ok: true, me: userId(req), people, settings: Object.assign({}, s, { chat_webhook: s.chat_webhook ? '(set)' : '' }), baskets: basketDefs(s), basket_defaults: BASKET_DEFAULTS, chart: chartOf(s), counts, brief, last_run: lastRun, running: !!running,
       connections: {
         plaid: { configured: plaidReady(), env: PLAID_ENV, items },
         gmail: { inbox: INBOX, key: fs.existsSync(keyPath), last_scan: (await dbGet("SELECT at FROM bk_audit WHERE action = 'gmail.scan' ORDER BY id DESC LIMIT 1") || {}).at || null,
@@ -1876,6 +1893,33 @@ module.exports = function mountBookkeeping(app, deps) {
     await dbRun("UPDATE bk_emails SET status = ?, read_by = NULL, aside = 0, note = ? WHERE id = ?", [em.status === 'parsed' ? 'parsed' : em.kind === 'message' ? 'message' : 'new', 'marked unread by ' + userId(req), id]);
     await audit(userId(req), 'email.unread', id, null); res.json({ ok: true });
   });
+  // Bill: file the email as a bill. No choice → what Nova reads from it and the open purchases it could belong to
+  // (same order number, then same vendor); with purchase_id (join) or new:1 → the full read (or, already read, just the
+  // join) and the bill's purchase. Nothing is filed without this choice.
+  app.post('/api/bookkeeping/emails/:id/bill', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), b = req.body || {}, who = userId(req);
+    const em = await dbGet('SELECT * FROM bk_emails WHERE id = ?', [id]); if (!em) return res.json({ ok: false, error: 'No such email' });
+    try {
+      const bill = em.status === 'parsed' ? await dbGet('SELECT id, vendor, vendor_id, invoice_no, invoice_date, total, status, purchase_id FROM bk_bills WHERE email_id = ? ORDER BY id DESC LIMIT 1', [id]) : null;
+      if (!b.purchase_id && !b.new) {
+        const x = bill ? { vendor: bill.vendor, amount: bill.total, date: bill.invoice_date, order_no: bill.invoice_no || '', what: '' } : await extractPayment(em);
+        const vid = (bill && bill.vendor_id) || em.vendor_id || -1;
+        const byNo = x.order_no ? await dbAll("SELECT p.*, v.name AS vendor_name FROM bk_purchases p LEFT JOIN bk_vendors v ON v.id = p.vendor_id WHERE p.cancelled = 0 AND p.bill_id IS NULL AND p.order_no IS NOT NULL AND REPLACE(UPPER(p.order_no), '-', '') = ? ORDER BY p.id DESC LIMIT 5", [x.order_no.toUpperCase().replace(/-/g, '')]) : [];
+        const byVendor = await dbAll("SELECT p.*, v.name AS vendor_name FROM bk_purchases p LEFT JOIN bk_vendors v ON v.id = p.vendor_id WHERE p.cancelled = 0 AND p.bill_id IS NULL AND p.vendor_id = ? AND p.date >= date('now', '-120 days') ORDER BY p.id DESC LIMIT 8", [vid]);
+        const byAmount = x.amount ? await dbAll("SELECT p.*, v.name AS vendor_name FROM bk_purchases p LEFT JOIN bk_vendors v ON v.id = p.vendor_id WHERE p.cancelled = 0 AND p.bill_id IS NULL AND ABS(p.amount - ?) < 0.005 AND p.date >= date('now', '-120 days') ORDER BY p.id DESC LIMIT 5", [x.amount]) : [];
+        const seen = {}; const list = [].concat(byNo.map(p => Object.assign(p, { why: 'order #' + x.order_no })), byAmount.map(p => Object.assign(p, { why: 'same amount' })), byVendor.map(p => Object.assign(p, { why: 'same vendor' }))).filter(p => !seen[p.id] && (seen[p.id] = 1));
+        return res.json({ ok: true, extract: x, bill, already: !!bill, purchases: list.map(p => ({ id: p.id, vendor: p.vendor_name || p.vendor, amount: p.amount, date: p.date, order_no: p.order_no, status: purchaseStatus(p, null), why: p.why })) });
+      }
+      let pid = parseInt(b.purchase_id) || 0, billId = bill ? bill.id : null;
+      if (pid && !(await dbGet('SELECT id FROM bk_purchases WHERE id = ?', [pid]))) throw new Error('No such purchase');
+      if (!bill) { if (pid) await dbRun('UPDATE bk_emails SET purchase_id = ? WHERE id = ?', [pid, id]); billId = await parseEmail(Object.assign({}, em, { purchase_id: pid || em.purchase_id }), who); const nb = await dbGet('SELECT purchase_id FROM bk_bills WHERE id = ?', [billId]); pid = nb && nb.purchase_id || pid; }
+      else if (pid) { await attachTo(pid, { bill_id: bill.id }, who); await dbRun('UPDATE bk_emails SET purchase_id = ? WHERE id = ?', [pid, id]); try { await fillItemsFromBill(pid, await dbGet('SELECT * FROM bk_bills WHERE id = ?', [bill.id]), who); } catch (e) {} }
+      else if (!bill.purchase_id) { pid = await newPurchase({ vendor_id: bill.vendor_id, vendor: bill.vendor, amount: bill.total, date: bill.invoice_date, order_no: bill.invoice_no, bill_id: bill.id }, who); await dbRun('UPDATE bk_emails SET purchase_id = ? WHERE id = ?', [pid, id]); try { await fillItemsFromBill(pid, await dbGet('SELECT * FROM bk_bills WHERE id = ?', [bill.id]), who); } catch (e) {} }
+      else pid = bill.purchase_id;
+      await audit(who, 'email.bill.purchase', id, { bill_id: billId, purchase_id: pid, joined: !!b.purchase_id });
+      res.json({ ok: true, bill_id: billId, purchase_id: pid });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
   app.post('/api/bookkeeping/emails/:id/parse', ...guard, async (req, res) => {
     const em = await dbGet('SELECT * FROM bk_emails WHERE id = ?', [parseInt(req.params.id)]);
     if (!em) return res.json({ ok: false, error: 'No such email' });
@@ -1984,7 +2028,7 @@ module.exports = function mountBookkeeping(app, deps) {
   app.get('/api/bookkeeping/activity', ...guard, async (req, res) => res.json({ ok: true, runs: await dbAll('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 40'), audit: await dbAll('SELECT * FROM bk_audit ORDER BY id DESC LIMIT 200'), briefs: await dbAll('SELECT day, stats, posted_at, post_error FROM bk_briefs ORDER BY day DESC LIMIT 30') }));
   app.post('/api/bookkeeping/settings', ...guard, async (req, res) => {
     const b = req.body || {};
-    for (const k of ['run_at', 'poll_min', 'threshold', 'notes', 'chat_webhook', 'backfill_days', 'triage_ad', 'triage_bill', 'triage_notice', 'triage_message', 'triage_auto', 'notreceived_days', 'waiting_days', 'alert_to', 'alert_at']) if (b[k] !== undefined) await setSetting(k, b[k] === true ? 1 : b[k] === false ? 0 : b[k], userId(req));
+    for (const k of ['run_at', 'poll_min', 'threshold', 'notes', 'chat_webhook', 'backfill_days', 'triage_ad', 'triage_bill', 'triage_notice', 'triage_message', 'triage_auto', 'notreceived_days', 'waiting_days', 'alert_to', 'alert_at', 'baskets']) if (b[k] !== undefined) await setSetting(k, b[k] === true ? 1 : b[k] === false ? 0 : b[k], userId(req));
     if (b.categories !== undefined) await saveChart(parseChartText(b.categories, chartTree(await settings())), userId(req));
     await audit(userId(req), 'settings', null, Object.keys(b));
     res.json({ ok: true, settings: await settings() });

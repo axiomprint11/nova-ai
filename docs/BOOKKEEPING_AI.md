@@ -233,6 +233,20 @@ refuses (missing `gmail.modify` scope) nothing changes here and the dialog says 
 only the buttons do. Every basket has **Open** (unread in Gmail) / **Closed** (read) segments with counts, so a basket
 keeps its history; the chip count is the open count, action bars show in Open only. A wrong count is fixed by Scan now.
 
+### Basket definitions (1.19.7)
+Settings → **Inbox** holds one sentence per basket (All · Bills · Transactions · Delivery · Messages · Ads · Other ·
+Do Later; `bk_settings.baskets` JSON, defaults `BASKET_DEFAULTS`, `basketDefs()`), in the team's words. The same text
+shows under the **(?)** beside the basket name on the Inbox action row, and is the sorting rule the light model gets
+(`triageEmails` builds its system prompt from them) — change the words and the next scan sorts by them. Do Later is
+never filled by the AI. The inbox is checked every **30 min** by default (`poll_min`; a 60 left from before is set to
+30 once, `inbox_poll_30`). The action row ends with "Last scanned <when>" and a refresh-icon Scan button.
+
+**Bill flow (1.19.7)**: pressing **Bill** on an email (or **Turn N into bills**, which walks the whole basket one email
+at a time with Stop / Skip) first asks which purchase it belongs to — open purchases Nova found by order number, amount
+or vendor — or "New purchase from this bill"; only then is the email read in full (`POST /emails/:id/bill`:
+no choice → `extract` + `purchases`; `purchase_id` or `new:1` → `parseEmail` with that purchase, or just the join for an
+email already read). Both basket buttons ask before they act.
+
 ### Baskets (1.19.5): All · Bills · Transactions · Delivery (shipped / tracking / delivered; kind `arrival`) · Messages · Ads · Other · Do Later (the manual basket, `aside`; was "Set aside"), all on one line — no "New" chip and no "More baskets" menu; Scan sits at the right of the action row under the search, and mail not yet rated shows under All until the next scan sorts it
 The AI's kinds are `bill`, `receipt` (a purchase: an order confirmation, "thanks for your order", a payment receipt or
 charge confirmation), `arrival` (a delivery notification: shipped, out for delivery, delivered, tracking), `message`,
