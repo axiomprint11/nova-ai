@@ -236,7 +236,9 @@ module.exports = function mountBookkeeping(app, deps) {
       let color = /^#[0-9a-f]{6}$/i.test(String(t.color || '')) ? String(t.color).toLowerCase() : PALETTE[i % PALETTE.length];
       if (OLD_COLOR[color]) color = OLD_COLOR[color];            // the 1.16.2 darker palette → its lighter twin
       const kids = []; const seen = {};
-      (Array.isArray(t.children) ? t.children : []).forEach(c => { const n = cleanName(c && c.name); if (n && !seen[n]) { seen[n] = 1; kids.push({ name: n, icon: iconKey(c.icon) }); } });
+      (Array.isArray(t.children) ? t.children : []).forEach(c => { const n = cleanName(c && c.name); if (n && !seen[n]) { seen[n] = 1;
+        const gk = []; (Array.isArray(c.children) ? c.children : []).forEach(g => { const gn = cleanName(g && g.name); if (gn && !seen[gn]) { seen[gn] = 1; gk.push({ name: gn, icon: iconKey(g.icon) }); } });   // third level (1.19.17)
+        kids.push({ name: n, icon: iconKey(c.icon), children: gk }); } });
       // delivery: does money under this type buy something that has to arrive? (goods → receiving status on the purchase)
       const delivery = t.delivery === 0 || t.delivery === false ? 0 : t.delivery === 1 || t.delivery === true ? 1 : (/cost of goods|supplies|equipment|inventory|material|asset/i.test(name) ? 1 : 0);
       out.push({ name, color, icon: iconKey(t.icon), delivery, children: kids });
@@ -250,13 +252,11 @@ module.exports = function mountBookkeeping(app, deps) {
   // Flat view: [{ name, parent, children, color, icon }] — parents first, their subs after each (file order).
   function chartOf(s) {
     const out = [];
-    chartTree(s).forEach(t => { out.push({ name: t.name, parent: null, children: t.children.length, color: t.color, icon: t.icon, delivery: t.delivery }); t.children.forEach(c => out.push({ name: c.name, parent: t.name, color: t.color, icon: c.icon || '', delivery: t.delivery })); });
-    return out;
-  }
+    chartTree(s).forEach(t => { out.push({ name: t.name, parent: null, children: t.children.length, color: t.color, icon: t.icon, delivery: t.delivery }); t.children.forEach(c => { out.push({ name: c.name, parent: t.name, top: t.name, children: (c.children || []).length, color: t.color, icon: c.icon || t.icon, delivery: t.delivery }); (c.children || []).forEach(g => out.push({ name: g.name, parent: c.name, top: t.name, level: 3, color: t.color, icon: g.icon || c.icon || t.icon, delivery: t.delivery })); }); }); return out; }
   const categoriesOf = (s) => { const seen = {}; return chartOf(s).filter(c => c.parent || !c.children).map(c => c.name).filter(n => !seen[n] && (seen[n] = 1)); };
   const parentOf = (s, name) => { const c = chartOf(s).find(x => x.name === name && x.parent); return c ? c.parent : null; };
   // The chart as the AI reads it: "Cost of Goods Sold: Paper; Inks & Toner | Facilities: Rent; …"
-  const chartText = (s) => chartTree(s).map(t => t.children.length ? t.name + ': ' + t.children.map(c => c.name).join('; ') : t.name).join(' | ');
+  const chartText = (s) => chartTree(s).map(t => t.children.length ? t.name + ': ' + t.children.map(c => c.name + ((c.children || []).length ? ' (' + c.children.map(g => g.name).join(', ') + ')' : '')).join('; ') : t.name).join(' | ');
   async function saveChart(tree, who) {
     tree = normTree(tree);
     await setSetting('chart_json', JSON.stringify(tree), who);
@@ -270,6 +270,8 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!name) return tree;
     if (!parent) { if (!tree.some(t => t.name === name)) tree.push({ name, color: DEFAULT_STYLE[name] ? DEFAULT_STYLE[name][0] : PALETTE[tree.length % PALETTE.length], icon: DEFAULT_STYLE[name] ? DEFAULT_STYLE[name][1] : '', children: [] }); }
     else {
+      const sub = tree.flatMap(x => x.children.map(c => Object.assign({ _top: x }, { ref: c }))).find(k => k.ref.name === parent);
+      if (sub) { sub.ref.children = sub.ref.children || []; if (!sub.ref.children.some(g => g.name === name)) sub.ref.children.push({ name, icon: '' }); return saveChart(tree, who); }
       let t = tree.find(x => x.name === parent);
       if (!t) { t = { name: parent, color: DEFAULT_STYLE[parent] ? DEFAULT_STYLE[parent][0] : PALETTE[tree.length % PALETTE.length], icon: DEFAULT_STYLE[parent] ? DEFAULT_STYLE[parent][1] : '', children: [] }; tree.push(t); }
       if (!t.children.some(c => c.name === name)) t.children.push({ name, icon: SUB_ICON[name] || '' });
@@ -288,7 +290,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!from || !to || from === to) return { ok: false, error: 'Nothing to rename' };
     const tree = chartTree(await settings());
     let hit = false;
-    tree.forEach(t => { if (t.name === from) { t.name = to; hit = true; } t.children.forEach(c => { if (c.name === from) { c.name = to; hit = true; } }); });
+    tree.forEach(t => { if (t.name === from) { t.name = to; hit = true; } t.children.forEach(c => { if (c.name === from) { c.name = to; hit = true; } (c.children || []).forEach(g => { if (g.name === from) { g.name = to; hit = true; } }); }); });
     if (!hit) return { ok: false, error: 'Not in the chart' };
     await saveChart(tree, who);
     await dbRun('UPDATE bk_transactions SET category = ? WHERE category = ?', [to, from]);

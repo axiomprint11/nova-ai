@@ -139,6 +139,14 @@ categorization Rules and Materials & GEO types (`?tab=accounts&sub=chart`; `show
 Connections and Activity stay in the small row.
 
 ### Chart of Accounts — a styled tree
+**Three levels** (1.19.17): a type of expense → sub categories → optional sub-sub categories (Cost of Goods Sold →
+Paper → Coated / Uncoated). In the editor every sub category has a dashed "+ sub category under …" line (Enter adds),
+and its sub-subs sit indented under it with the same rename / icon / order / remove controls (a sub with a used
+sub-sub cannot be removed). Names stay unique across the whole chart. Pickers list sub-subs indented under their sub
+(a search match shows its parent too); `catLabel` prints Type › Sub › Sub-sub. `chartOf()` rows carry `level: 3` and
+`top`; `categoriesOf()` includes them; the AI's chart line reads "Paper (Coated, Uncoated)"; `addCategory(name, parent)`
+with a sub as parent adds a third-level entry; `renameCategory` follows all three levels.
+
 Canonical form `bk_settings.chart_json`: `[{ name, color, icon, children: [{ name, icon }] }]` — a **type of expense**
 with its color and icon, and its **sub categories**. `bk_settings.categories` (the indented text) is regenerated from it
 on every save for the AI prompt (`chartText()`: "Cost of Goods Sold: Paper; Inks & Toner | …", answer with the sub

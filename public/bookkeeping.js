@@ -173,7 +173,7 @@
   // carrying the value (`cls` on both the wrapper and the input, so `root.querySelector('.cls').value` still works; several
   // choices are joined with "; "). Click → a popover: search, the types of expense as collapsible groups, "+ New category…".
   const parentOf = (name) => { const c = chart.find(x => x.name === name && x.parent); return c ? c.parent : ''; };
-  const catLabel = (name) => { const p = parentOf(name); return p ? esc(p) + ' <span class="bk-dim">›</span> ' + esc(name) : esc(name || ''); };
+  const catLabel = (name) => { const p = parentOf(name); if (!p) return esc(name || ''); const gp = parentOf(p); return (gp ? esc(gp) + ' <span class="bk-dim">›</span> ' : '') + esc(p) + ' <span class="bk-dim">›</span> ' + esc(name); };
   const splitCats = (v) => String(v || '').split(/\s*[;|\n]\s*/).map(x => x.trim()).filter(Boolean);
   const catSelect = (cur, cls, blank, o) => {
     o = o || {}; const vals = splitCats(cur);
@@ -215,13 +215,16 @@
       const f = q.value.trim().toLowerCase(); let html = '';
       const tops = chart.filter(c => !c.parent);
       tops.forEach(t => {
-        const kids = t.children ? chart.filter(c => c.parent === t.name).map(c => c.name) : [t.name];
-        const show = f ? kids.filter(k => k.toLowerCase().indexOf(f) > -1 || t.name.toLowerCase().indexOf(f) > -1) : kids;
+        const subs = t.children ? chart.filter(c => c.parent === t.name) : [];
+        const kidsAll = t.children ? subs.flatMap(c => [{ name: c.name, lvl: 2, kids: chart.filter(g => g.parent === c.name).map(g => g.name) }].concat(chart.filter(g => g.parent === c.name).map(g => ({ name: g.name, lvl: 3, up: c.name })))) : [{ name: t.name, lvl: 1 }];
+        const kids = kidsAll.map(k => k.name), lvlOf = {}, info = {}; kidsAll.forEach(k => { lvlOf[k.name] = k.lvl; info[k.name] = k; });
+        const hit = (n) => n.toLowerCase().indexOf(f) > -1;
+        const show = f ? kids.filter(k => hit(k) || hit(t.name) || (info[k].kids || []).some(hit) || (info[k].up && hit(info[k].up))) : kids;   // a match shows its sub above it and its sub-subs below
         if (!show.length) return;
         const col = !f && ckpCollapsed[t.name] && !show.some(k => vals.indexOf(k) > -1);
         const nSel = kids.filter(k => vals.indexOf(k) > -1).length;
         html += '<div class="ckp-g' + (col ? ' col' : '') + '" data-g="' + esc(t.name) + '"><div class="ckp-gh"><span class="ckp-tri"></span>' + tile(t.color, t.icon, 'sm', '') + esc(t.name) + (nSel ? '<b>' + nSel + '</b>' : '') + '<small>' + kids.length + '</small></div>' +
-          (t.children ? show.map(k => '<div class="ckp-i' + (vals.indexOf(k) > -1 ? ' on' : '') + '" data-v="' + esc(k) + '"><span class="ckp-ck"></span>' + esc(k) + '</div>').join('') : '<div class="ckp-i top' + (vals.indexOf(t.name) > -1 ? ' on' : '') + '" data-v="' + esc(t.name) + '"><span class="ckp-ck"></span>use as is</div>') + '</div>';
+          (t.children ? show.map(k => '<div class="ckp-i' + (vals.indexOf(k) > -1 ? ' on' : '') + (lvlOf[k] === 3 ? ' l3' : '') + '" data-v="' + esc(k) + '"><span class="ckp-ck"></span>' + esc(k) + '</div>').join('') : '<div class="ckp-i top' + (vals.indexOf(t.name) > -1 ? ' on' : '') + '" data-v="' + esc(t.name) + '"><span class="ckp-ck"></span>use as is</div>') + '</div>';
       });
       vals.filter(v => categories.indexOf(v) < 0).forEach(v => { html += '<div class="ckp-g"><div class="ckp-i on" data-v="' + esc(v) + '"><span class="ckp-ck"></span>' + esc(v) + ' <small class="bk-dim">not in the chart</small></div></div>'; });
       list.innerHTML = html || '<div class="bk-muted" style="padding:10px 12px">No match — add it below.</div>';
@@ -1166,7 +1169,10 @@
       '<label class="bk-row" style="gap:8px;align-items:center;margin:10px 0 12px;font-size:13px"><input type="checkbox" id="coaDeliv"' + (t.delivery ? ' checked' : '') + '> Expects delivery <span class="bk-muted">— money under this type buys goods that must arrive; purchases get a receiving status and show under Not received</span></label>' +
       '<div class="bk-muted" style="margin-bottom:4px">Sub categories' + (t.children.length ? '' : ' <span class="bk-dim">— none yet: the type itself is used on transactions until you add some</span>') + '</div>' +
       '<div id="coaKids">' + t.children.map((k, i) => '<div class="coa-k" data-k="' + i + '"><span data-kicon="' + i + '" title="Icon">' + tile(t.color, k.icon, iconKey(k.icon) ? '' : 'empty', '·') + '</span><input class="kn" value="' + esc(k.name) + '"><span class="use">' + esc(useText(coaUsage[k.name])) + '</span>' +
-        '<span class="coa-mv"><button data-kup="' + i + '"' + (i ? '' : ' disabled') + '>▲</button><button data-kdown="' + i + '"' + (i < t.children.length - 1 ? '' : ' disabled') + '>▼</button></span><button class="del" data-kdel="' + i + '" title="' + (inUse(k.name) ? 'In use — rename it instead' : 'Remove') + '"' + (inUse(k.name) ? ' disabled' : '') + '>×</button></div>').join('') + '</div>' +
+        '<span class="coa-mv"><button data-kup="' + i + '"' + (i ? '' : ' disabled') + '>▲</button><button data-kdown="' + i + '"' + (i < t.children.length - 1 ? '' : ' disabled') + '>▼</button></span><button class="del" data-kdel="' + i + '" title="' + (inUse(k.name) ? 'In use — rename it instead' : 'Remove') + '"' + (inUse(k.name) ? ' disabled' : '') + '>×</button></div>' +
+        ((k.children || []).map((g, gi) => '<div class="coa-k coa-g" data-k="' + i + '" data-g="' + gi + '"><span class="coa-gl"></span><span data-gicon="' + i + ':' + gi + '" title="Icon">' + tile(t.color, g.icon, iconKey(g.icon) ? '' : 'empty', '·') + '</span><input class="gn" value="' + esc(g.name) + '"><span class="use">' + esc(useText(coaUsage[g.name])) + '</span>' +
+          '<span class="coa-mv"><button data-gup="' + i + ':' + gi + '"' + (gi ? '' : ' disabled') + '>▲</button><button data-gdown="' + i + ':' + gi + '"' + (gi < k.children.length - 1 ? '' : ' disabled') + '>▼</button></span><button class="del" data-gdel="' + i + ':' + gi + '" title="' + (inUse(g.name) ? 'In use — rename it instead' : 'Remove') + '"' + (inUse(g.name) ? ' disabled' : '') + '>×</button></div>').join('')) +
+        '<div class="coa-k coa-g coa-gadd" data-k="' + i + '"><span class="coa-gl"></span><input class="bk" data-gnew="' + i + '" placeholder="+ sub category under ' + esc(k.name) + '…"></div>').join('') + '</div>' +
       '<div class="coa-foot"><input class="bk" id="coaNewKid" placeholder="New sub category under ' + esc(t.name) + '…"><button class="bk-btn sm p" id="coaAddKid">Add</button></div>' +
       '<div class="coa-foot" style="border-top:0;margin-top:6px;justify-content:flex-end"><button class="bk-btn sm bad" id="coaDelType"' + (t.children.some(k => inUse(k.name)) || inUse(t.name) ? ' disabled title="Some of it is in use"' : '') + '>Delete this type</button></div>';
     $('coaIcon').onclick = (e) => iconPicker(e.currentTarget, t.icon, (ic) => { t.icon = ic; drawChart(); saveChart(); });
@@ -1179,7 +1185,15 @@
     ed.querySelectorAll('[data-kicon]').forEach(el => el.onclick = (e) => { const i = Number(el.dataset.kicon); iconPicker(e.currentTarget, t.children[i].icon, (ic) => { t.children[i].icon = ic; drawChart(); saveChart(); }); });
     ed.querySelectorAll('[data-kup]').forEach(b => b.onclick = () => { const i = Number(b.dataset.kup); [t.children[i - 1], t.children[i]] = [t.children[i], t.children[i - 1]]; drawChart(); saveChart(); });
     ed.querySelectorAll('[data-kdown]').forEach(b => b.onclick = () => { const i = Number(b.dataset.kdown); [t.children[i + 1], t.children[i]] = [t.children[i], t.children[i + 1]]; drawChart(); saveChart(); });
-    ed.querySelectorAll('[data-kdel]').forEach(b => b.onclick = async () => { const i = Number(b.dataset.kdel); if (!await ask('Remove "' + t.children[i].name + '"?')) return; t.children.splice(i, 1); drawChart(); saveChart(); });
+    ed.querySelectorAll('[data-kdel]').forEach(b => b.onclick = async () => { const i = Number(b.dataset.kdel); if ((t.children[i].children || []).some(g => inUse(g.name))) { status('A sub category under it is in use.', true); return; } if (!await ask('Remove "' + t.children[i].name + '"' + ((t.children[i].children || []).length ? ' and its ' + t.children[i].children.length + ' sub categories' : '') + '?')) return; t.children.splice(i, 1); drawChart(); saveChart(); });
+    // third level
+    const gref = (b, key) => { const [i, gi] = b.dataset[key].split(':').map(Number); return { k: t.children[i], i, gi }; };
+    ed.querySelectorAll('input.gn').forEach(inp => inp.onchange = () => { const row = inp.closest('.coa-k'); const g = t.children[Number(row.dataset.k)].children[Number(row.dataset.g)]; rename(g.name, inp.value.trim(), false); });
+    ed.querySelectorAll('[data-gicon]').forEach(el => el.onclick = (e) => { const { k, gi } = gref(el, 'gicon'); iconPicker(e.currentTarget, k.children[gi].icon, (ic) => { k.children[gi].icon = ic; drawChart(); saveChart(); }); });
+    ed.querySelectorAll('[data-gup]').forEach(b => b.onclick = () => { const { k, gi } = gref(b, 'gup'); [k.children[gi - 1], k.children[gi]] = [k.children[gi], k.children[gi - 1]]; drawChart(); saveChart(); });
+    ed.querySelectorAll('[data-gdown]').forEach(b => b.onclick = () => { const { k, gi } = gref(b, 'gdown'); [k.children[gi + 1], k.children[gi]] = [k.children[gi], k.children[gi + 1]]; drawChart(); saveChart(); });
+    ed.querySelectorAll('[data-gdel]').forEach(b => b.onclick = async () => { const { k, gi } = gref(b, 'gdel'); if (!await ask('Remove "' + k.children[gi].name + '"?')) return; k.children.splice(gi, 1); drawChart(); saveChart(); });
+    ed.querySelectorAll('[data-gnew]').forEach(inp => inp.onkeydown = (e) => { if (e.key !== 'Enter') return; const n = inp.value.trim(); if (!n) return; const k = t.children[Number(inp.dataset.gnew)]; if (categories.indexOf(n) > -1 || coa.some(x => x.name === n || x.children.some(c => c.name === n || (c.children || []).some(g => g.name === n)))) { status('"' + n + '" is already in the chart.', true); return; } k.children = k.children || []; k.children.push({ name: n, icon: '' }); drawChart(); saveChart(); setTimeout(() => { const nx = ed.querySelector('[data-gnew="' + t.children.indexOf(k) + '"]'); if (nx) nx.focus(); }, 0); });
     const addKid = () => { const n = $('coaNewKid').value.trim(); if (!n) return; if (categories.indexOf(n) > -1 || t.children.some(k => k.name === n)) { status('"' + n + '" is already in the chart.', true); return; } t.children.push({ name: n, icon: '' }); drawChart(); saveChart(); setTimeout(() => $('coaNewKid') && $('coaNewKid').focus(), 0); };
     $('coaAddKid').onclick = addKid; $('coaNewKid').onkeydown = (e) => { if (e.key === 'Enter') addKid(); };
     $('coaDelType').onclick = async () => { if (!await ask('Delete the type "' + t.name + '" and its sub categories?')) return; coa.splice(coaSel, 1); coaSel = Math.max(0, coaSel - 1); drawChart(); saveChart(); };
