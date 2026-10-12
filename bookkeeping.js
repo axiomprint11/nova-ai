@@ -85,6 +85,12 @@ module.exports = function mountBookkeeping(app, deps) {
       vendor_id INTEGER, mode TEXT, purchase_price REAL, purchase_date TEXT, down_payment REAL, loan_amount REAL, loan_term INTEGER, loan_rate REAL, loan_start TEXT, monthly_payment REAL,
       lease_term INTEGER, lease_start TEXT, lease_monthly REAL, life_years REAL, salvage REAL, notes TEXT, updated_by TEXT, updated_at TEXT, synced_at TEXT)`);
     ['bk_bills', 'bk_transactions', 'bk_purchases'].forEach(t => db.run('ALTER TABLE ' + t + ' ADD COLUMN equipment_id INTEGER', () => {}));
+    // What is inside a purchase: the line items the AI read from its email / bill (name, qty, amount, picture), each one
+    // linked to a material in the catalog (or left Unknown) and to a chart-of-accounts category; shipping / tax / fees
+    // are rows of their own kind, so the small shipping part of an invoice can go to Shipping.
+    db.run(`CREATE TABLE IF NOT EXISTS bk_purchase_items (id INTEGER PRIMARY KEY AUTOINCREMENT, purchase_id INTEGER, pos INTEGER DEFAULT 0, kind TEXT DEFAULT 'item', name TEXT, qty REAL, unit_price REAL, amount REAL,
+      photo TEXT, material_id INTEGER, category TEXT, email_id INTEGER, source TEXT, created_by TEXT, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
+    db.run('CREATE INDEX IF NOT EXISTS bk_pitem_p ON bk_purchase_items(purchase_id)');
     db.run(`CREATE TABLE IF NOT EXISTS bk_emails (id INTEGER PRIMARY KEY AUTOINCREMENT, gmail_id TEXT UNIQUE, thread_id TEXT, from_addr TEXT,
       subject TEXT, received_at TEXT, snippet TEXT, body TEXT, attachments TEXT, status TEXT DEFAULT 'new', note TEXT,
       created_at TEXT DEFAULT (datetime('now')))`);
@@ -454,6 +460,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const rows = await dbAll("SELECT id, date, name, merchant, amount, category, vendor_id, account_name FROM bk_transactions WHERE purchase_id IS NULL AND ABS(ABS(amount) - ?) < 0.005 AND date BETWEEN date(?, '-10 days') AND date(?, '+20 days') ORDER BY date DESC LIMIT 10", [Math.abs(p.amount), p.date || today(), p.date || today()]);
     return rows.map(t => Object.assign(t, { same_vendor: !!(p.vendor_id && t.vendor_id === p.vendor_id) })).sort((a, b) => (b.same_vendor ? 1 : 0) - (a.same_vendor ? 1 : 0));
   }
+  const laDayOf = (ts) => { const d = new Date(String(ts || '').replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(String(ts || '')) ? '' : 'Z')); return isNaN(d) ? today() : d.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }); };
   // What an email says about a payment: vendor, amount, date, order number (the light model, text only).
   async function extractPayment(em) {
     const text = 'From: ' + em.from_addr + '\nSubject: ' + em.subject + '\nDate: ' + em.received_at + '\n\n' + String(em.body || em.snippet || '').slice(0, 5000);
@@ -461,8 +468,74 @@ module.exports = function mountBookkeeping(app, deps) {
       const r = await anthropic.messages.create({ model: MODEL_LIGHT, max_tokens: 300, system: 'You read one email from the accounting inbox of a print shop and pull out the payment facts. Return ONLY JSON.',
         messages: [{ role: 'user', content: text + '\n\nReturn ONLY JSON: {"vendor": "<company that was paid or will ship>", "amount": <total charged, number, or null>, "date": "YYYY-MM-DD or null", "order_no": "<order / invoice / confirmation number or empty>", "what": "<a few words: what was bought>"}' }] });
       const j = jsonOf((r.content || []).filter(b => b.type === 'text').map(b => b.text).join('')) || {};
-      return { vendor: String(j.vendor || '').slice(0, 120), amount: j.amount != null && isFinite(Number(j.amount)) ? Math.abs(Number(j.amount)) : null, date: /^\d{4}-\d{2}-\d{2}$/.test(String(j.date || '')) ? j.date : String(em.received_at || '').slice(0, 10), order_no: String(j.order_no || '').slice(0, 60), what: String(j.what || '').slice(0, 120) };
-    } catch (e) { errlog('extract payment', e.message); return { vendor: '', amount: null, date: String(em.received_at || '').slice(0, 10), order_no: '', what: '' }; }
+      return { vendor: String(j.vendor || '').slice(0, 120), amount: j.amount != null && isFinite(Number(j.amount)) ? Math.abs(Number(j.amount)) : null, date: /^\d{4}-\d{2}-\d{2}$/.test(String(j.date || '')) ? j.date : laDayOf(em.received_at), order_no: String(j.order_no || '').slice(0, 60), what: String(j.what || '').slice(0, 120) };
+    } catch (e) { errlog('extract payment', e.message); return { vendor: '', amount: null, date: laDayOf(em.received_at), order_no: '', what: '' }; }
+  }
+  // The HTML of an order / delivery email as text the light model can read, with product pictures kept as [IMG url]
+  // tokens next to their lines (tracking pixels, spacers and logos dropped) so each item can carry its photo.
+  function emailForItems(em) {
+    let h = String(em.body_html || '');
+    if (!h) return String(em.body || em.snippet || '').slice(0, 12000);
+    h = h.replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, ' ');
+    h = h.replace(/<img\b[^>]*>/gi, (tag) => {
+      const src = (/\bsrc=["']([^"']+)["']/i.exec(tag) || [])[1] || '';
+      const w = parseInt((/\bwidth=["']?(\d+)/i.exec(tag) || [])[1] || '0'), hgt = parseInt((/\bheight=["']?(\d+)/i.exec(tag) || [])[1] || '0');
+      if (!/^https?:\/\//.test(src) || (w && w < 40) || (hgt && hgt < 40) || /pixel|spacer|1x1|logo|icon|badge|tracking|beacon|\.gif(\?|$)/i.test(src)) return ' ';
+      return ' [IMG ' + src + '] ';
+    });
+    h = h.replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d|table)>/gi, '\n').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+    return h.replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim().slice(0, 14000);
+  }
+  // The line items of a purchase, read from one email (order confirmation, delivery notice, receipt) by the light model.
+  async function extractItems(em) {
+    const text = 'From: ' + em.from_addr + '\nSubject: ' + em.subject + '\n\n' + emailForItems(em);
+    try {
+      const r = await anthropic.messages.create({ model: MODEL_LIGHT, max_tokens: 1500, system: 'You read one email from the accounting inbox of a print shop and list what was bought. Product pictures appear as [IMG url] tokens near their lines — give each item the picture that belongs to it (never a logo). Shipping, tax and fees are separate lines. Return ONLY JSON.',
+        messages: [{ role: 'user', content: text + '\n\nReturn ONLY JSON: {"items": [{"name": "<product as written>", "qty": 1, "unit_price": null, "amount": null, "image": "<url or empty>"}], "shipping": null, "tax": null, "total": null, "order_no": "<order / confirmation number or empty>"}' }] });
+      const j = jsonOf((r.content || []).filter(b => b.type === 'text').map(b => b.text).join('')) || {};
+      const num = (x) => x == null || x === '' || !isFinite(Number(x)) ? null : Math.round(Math.abs(Number(x)) * 100) / 100;
+      const items = (Array.isArray(j.items) ? j.items : []).filter(i => i && i.name).slice(0, 40).map(i => ({ name: String(i.name).slice(0, 200), qty: num(i.qty) || 1, unit_price: num(i.unit_price), amount: num(i.amount), photo: /^https?:\/\//.test(String(i.image || '')) ? String(i.image).slice(0, 500) : null }));
+      return { items, shipping: num(j.shipping), tax: num(j.tax), total: num(j.total), order_no: String(j.order_no || '').slice(0, 60) };
+    } catch (e) { errlog('extract items', e.message); return { items: [], shipping: null, tax: null, total: null, order_no: '' }; }
+  }
+  // The chart's category for shipping / tax lines, if the chart has one.
+  async function categoryLike(re) { const s = await settings(); return categoriesOf(s).find(n => re.test(n)) || null; }
+  // Fill a purchase's items from an email (only when it has none yet — a second email never duplicates the list).
+  async function fillItemsFromEmail(pid, em, who) {
+    const have = await dbGet('SELECT COUNT(*) AS n FROM bk_purchase_items WHERE purchase_id = ?', [pid]); if (have && have.n) return 0;
+    const x = await extractItems(em); if (!x.items.length && x.shipping == null) return 0;
+    const p = await dbGet('SELECT category, amount, order_no FROM bk_purchases WHERE id = ?', [pid]);
+    let pos = 0;
+    for (const i of x.items) await dbRun('INSERT INTO bk_purchase_items (purchase_id, pos, kind, name, qty, unit_price, amount, photo, category, email_id, source, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', [pid, pos++, 'item', i.name, i.qty, i.unit_price, i.amount != null ? i.amount : (i.unit_price != null ? Math.round(i.unit_price * i.qty * 100) / 100 : null), i.photo, p && p.category || null, em.id, 'email', who]);
+    if (x.shipping) await dbRun('INSERT INTO bk_purchase_items (purchase_id, pos, kind, name, qty, amount, category, email_id, source, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)', [pid, pos++, 'shipping', 'Shipping', 1, x.shipping, await categoryLike(/shipping|freight|postage|delivery/i), em.id, 'email', who]);
+    if (x.tax) await dbRun('INSERT INTO bk_purchase_items (purchase_id, pos, kind, name, qty, amount, category, email_id, source, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)', [pid, pos++, 'tax', 'Sales tax', 1, x.tax, await categoryLike(/sales tax|^tax/i), em.id, 'email', who]);
+    const sets = [], args = [];
+    if (p && p.amount == null && x.total) { sets.push('amount = ?'); args.push(x.total); }
+    if (p && !p.order_no && x.order_no) { sets.push('order_no = ?'); args.push(x.order_no); }
+    if (sets.length) await dbRun('UPDATE bk_purchases SET ' + sets.join(', ') + ' WHERE id = ?', args.concat([pid]));
+    return x.items.length;
+  }
+  // Fill from a bill's own lines (the full read already has them).
+  async function fillItemsFromBill(pid, bill, who) {
+    const have = await dbGet('SELECT COUNT(*) AS n FROM bk_purchase_items WHERE purchase_id = ?', [pid]); if (have && have.n) return 0;
+    const lines = jarr(bill.lines); let pos = 0;
+    for (const l of lines) { if (!l || !(l.description || l.name)) continue; const nm = String(l.description || l.name); const ship = /shipping|freight|postage|delivery/i.test(nm), tax = /\btax\b/i.test(nm);
+      await dbRun('INSERT INTO bk_purchase_items (purchase_id, pos, kind, name, qty, unit_price, amount, category, email_id, source, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)', [pid, pos++, ship ? 'shipping' : tax ? 'tax' : 'item', nm.slice(0, 200), Number(l.qty) || 1, l.unit_price != null ? Number(l.unit_price) : null, l.amount != null ? Number(l.amount) : null, l.category || null, bill.email_id || null, 'bill', who]); }
+    if (bill.shipping && !lines.some(l => /shipping|freight/i.test(l.description || ''))) await dbRun('INSERT INTO bk_purchase_items (purchase_id, pos, kind, name, qty, amount, category, source, created_by) VALUES (?,?,?,?,?,?,?,?,?)', [pid, pos++, 'shipping', 'Shipping', 1, Number(bill.shipping), await categoryLike(/shipping|freight|postage|delivery/i), 'bill', who]);
+    if (bill.tax && !lines.some(l => /\btax\b/i.test(l.description || ''))) await dbRun('INSERT INTO bk_purchase_items (purchase_id, pos, kind, name, qty, amount, category, source, created_by) VALUES (?,?,?,?,?,?,?,?,?)', [pid, pos++, 'tax', 'Sales tax', 1, Number(bill.tax), await categoryLike(/sales tax|^tax/i), 'bill', who]);
+    return pos;
+  }
+  // One purchase in full: its slots, every email behind it (with attachment counts), its items and bank lines.
+  async function purchaseDetail(pid) {
+    const p = await dbGet('SELECT p.*, v.name AS vendor_name, v.photo AS vendor_photo FROM bk_purchases p LEFT JOIN bk_vendors v ON v.id = p.vendor_id WHERE p.id = ?', [pid]); if (!p) return null;
+    const bill = p.bill_id ? await dbGet('SELECT id, status, invoice_no, invoice_date, total, email_id, paid_at FROM bk_bills WHERE id = ?', [p.bill_id]) : null;
+    const emailIds = [p.confirm_email_id, bill && bill.email_id].concat(jarr(p.arrival_email_ids)).filter(Boolean).filter((x, i, a) => a.indexOf(x) === i);
+    const emails = emailIds.length ? await dbAll('SELECT id, subject, from_addr, received_at, kind, decided_kind, attachments FROM bk_emails WHERE id IN (' + emailIds.map(() => '?').join(',') + ') ORDER BY received_at', emailIds) : [];
+    emails.forEach(e => { const a = jarr(e.attachments); e.attachments = a.length; e.attachment_names = a.map(x => x.name).slice(0, 6); e.role = e.id === p.confirm_email_id ? 'confirmation' : (bill && e.id === bill.email_id) ? 'bill' : 'delivery'; });
+    const txns = jarr(p.txn_ids); const tx = txns.length ? await dbAll('SELECT id, date, name, merchant, amount, account_name, category FROM bk_transactions WHERE id IN (' + txns.map(() => '?').join(',') + ')', txns) : [];
+    const items = await dbAll('SELECT i.*, m.name AS material_name, m.photo AS material_photo, m.geo_type FROM bk_purchase_items i LEFT JOIN bk_materials m ON m.id = i.material_id WHERE i.purchase_id = ? ORDER BY i.pos, i.id', [pid]);
+    const eq = p.equipment_id ? await dbGet('SELECT id, name FROM bk_equipment WHERE id = ?', [p.equipment_id]) : null;
+    return Object.assign({}, p, { vendor: p.vendor_name || p.vendor, bill, emails, txns: tx, items, equipment: eq, status: purchaseStatus(p, bill), paired: tx.length > 0 });
   }
   // An email is handled: read in Gmail (first), closed here, the person's decision kept.
   async function handleEmail(em, kind, who, note) {
@@ -487,7 +560,12 @@ module.exports = function mountBookkeeping(app, deps) {
       const confirm = p.confirm_email_id ? await dbGet('SELECT id, subject, received_at FROM bk_emails WHERE id = ?', [p.confirm_email_id]) : null;
       const status = purchaseStatus(p, bill);
       const age = Math.floor((Date.now() - new Date((p.date || p.created_at) + 'T12:00:00Z').getTime()) / 86400000);
-      out.push(Object.assign({}, p, { vendor: p.vendor_name || p.vendor, bill, txns: tx, confirm, arrivals: arr.length, status, days: age,
+      const emailIds = [p.confirm_email_id].concat(arr).filter(Boolean);
+      const ems = emailIds.length ? await dbAll('SELECT id, subject, received_at, attachments FROM bk_emails WHERE id IN (' + emailIds.map(() => '?').join(',') + ')', emailIds) : [];
+      const atts = ems.reduce((a, e) => a + jarr(e.attachments).length, 0) + (bill && bill.id ? (await dbGet('SELECT attachments FROM bk_emails WHERE id = (SELECT email_id FROM bk_bills WHERE id = ?)', [bill.id]).then(r => r ? jarr(r.attachments).length : 0)) : 0);
+      const its = await dbGet('SELECT COUNT(*) AS n, SUM(kind = \'item\') AS items, SUM(material_id IS NOT NULL) AS linked FROM bk_purchase_items WHERE purchase_id = ?', [p.id]);
+      out.push(Object.assign({}, p, { vendor: p.vendor_name || p.vendor, bill, txns: tx, confirm, arrivals: arr.length, status, days: age, paired: tx.length > 0,
+        emails: ems.length + (bill && bill.id ? 1 : 0), email_subjects: ems.map(e => e.subject).slice(0, 5), attachments: atts, items: its ? its.items || 0 : 0, items_linked: its ? its.linked || 0 : 0,
         late: (status === 'awaiting bank' && age >= s.waiting_days) || ((status === 'not received' || status === 'partly received') && age >= s.notreceived_days),
         suggest: status === 'awaiting bank' ? (await suggestTxns(p)).length : 0 }));
     }
@@ -933,8 +1011,8 @@ module.exports = function mountBookkeeping(app, deps) {
     await dbRun("UPDATE bk_emails SET status = 'parsed', kind = 'bill', note = ? WHERE id = ?", ['Bill draft #' + billId, em.id]);
     const eqId = await equipmentFor(v ? v.id : null, Number(j.total) || 0); if (eqId) await dbRun('UPDATE bk_bills SET equipment_id = ? WHERE id = ?', [eqId, billId]);   // a loan / lease payment bill belongs to its machine
     // the bill's purchase: new, or the one its email already belongs to (an arrival or a confirmation came first)
-    if (em.purchase_id) await attachTo(em.purchase_id, { bill_id: billId }, who);
-    else { const firstCat = ((j.lines || []).find(l => l && l.category) || {}).category || null; const pid = await newPurchase({ vendor_id: v ? v.id : null, vendor, amount: Number(j.total) || 0, date: j.invoice_date || today(), order_no: invNo || null, category: firstCat, bill_id: billId }, who); await dbRun('UPDATE bk_emails SET purchase_id = ? WHERE id = ?', [pid, em.id]); if (eqId) await dbRun('UPDATE bk_purchases SET equipment_id = ? WHERE id = ?', [eqId, pid]); }
+    if (em.purchase_id) { await attachTo(em.purchase_id, { bill_id: billId }, who); try { await fillItemsFromBill(em.purchase_id, Object.assign({}, j, { lines: JSON.stringify(j.lines || []), email_id: em.id }), who); } catch (e) {} }
+    else { const firstCat = ((j.lines || []).find(l => l && l.category) || {}).category || null; const pid = await newPurchase({ vendor_id: v ? v.id : null, vendor, amount: Number(j.total) || 0, date: j.invoice_date || today(), order_no: invNo || null, category: firstCat, bill_id: billId }, who); await dbRun('UPDATE bk_emails SET purchase_id = ? WHERE id = ?', [pid, em.id]); if (eqId) await dbRun('UPDATE bk_purchases SET equipment_id = ? WHERE id = ?', [eqId, pid]);  try { await fillItemsFromBill(pid, Object.assign({}, j, { lines: JSON.stringify(j.lines || []), email_id: em.id }), who); } catch (e) {} }
     markReadInGmail([em.id], who).then(r => { if (r.ok && r.n) return dbRun("UPDATE bk_emails SET read_by = 'user' WHERE id = ?", [em.id]); }).catch(() => {});   // handled → read in Gmail → closed here (quietly; the scope may be missing)
     if (conf < s.threshold || dup || newVendor) {
       const q = dup ? 'This looks like a duplicate of bill #' + dup.id + ' (' + vendor + (invNo ? ' #' + invNo : '') + '). Is it the same bill?'
@@ -1712,6 +1790,7 @@ module.exports = function mountBookkeeping(app, deps) {
         await dbRun('UPDATE bk_transactions SET receipt_email_id = ? WHERE id = ?', [id, tx.id]); await dbRun('UPDATE bk_emails SET matched_txn_id = ? WHERE id = ?', [tx.id, id]);
       } else if (pid) { await attachTo(pid, { confirm_email_id: id }, who); }
       else { pid = await newPurchase({ vendor_id: em.vendor_id, vendor: x.vendor || String(em.from_addr || '').replace(/<.*$/, '').trim(), amount: x.amount, date: x.date, order_no: x.order_no || null, confirm_email_id: id, note: x.what || null }, who); }
+      try { await fillItemsFromEmail(pid, em, who); } catch (e) { errlog('items', e.message); }
       await handleEmail(em, 'receipt', who, 'transaction — purchase #' + pid + ' by ' + who);
       await audit(who, 'email.transaction', id, { purchase_id: pid, bill_id: b.bill_id || null, transaction_id: b.transaction_id || null });
       res.json({ ok: true, purchase_id: pid });
@@ -1734,6 +1813,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const received = b.received === 'partial' ? 'partial' : 'yes'; let pid = parseInt(b.purchase_id) || 0; const x = b.extract || {};
       if (!pid) pid = await newPurchase({ vendor_id: em.vendor_id, vendor: x.vendor || String(em.from_addr || '').replace(/<.*$/, '').trim(), amount: x.amount, date: x.date, order_no: x.order_no || null, arrival_email_ids: [id], expects_delivery: 1 }, who);
       await attachTo(pid, { arrival_email_id: id, received, note: b.note ? String(b.note).slice(0, 300) : null }, who);
+      try { await fillItemsFromEmail(pid, em, who); } catch (e) { errlog('items', e.message); }
       await handleEmail(em, 'arrival', who, 'arrival — purchase #' + pid + ' (' + received + ') by ' + who);
       await audit(who, 'email.arrival', id, { purchase_id: pid, received });
       res.json({ ok: true, purchase_id: pid });
@@ -1741,6 +1821,36 @@ module.exports = function mountBookkeeping(app, deps) {
   });
   // Purchases views + actions.
   app.get('/api/bookkeeping/purchases', ...guard, async (req, res) => { try { const view = String(req.query.view || 'all'); const rows = await purchaseRows(view, String(req.query.q || '').trim()); res.json({ ok: true, purchases: rows, counts: { waiting: rows.filter(r => r.status === 'awaiting bank').length, notreceived: rows.filter(r => r.status === 'not received' || r.status === 'partly received').length } }); } catch (e) { res.json({ ok: false, error: e.message }); } });
+  // One purchase in full, its items, and edits to them.
+  app.get('/api/bookkeeping/purchases/:id', ...guard, async (req, res) => { const d = await purchaseDetail(parseInt(req.params.id)); if (!d) return res.json({ ok: false, error: 'No such purchase' }); res.json({ ok: true, purchase: d }); });
+  app.post('/api/bookkeeping/purchases/:id/items', ...guard, async (req, res) => {   // the whole list, as shown: rows with an id are updated, without one inserted, missing ones removed
+    const pid = parseInt(req.params.id), who = userId(req); const p = await dbGet('SELECT id FROM bk_purchases WHERE id = ?', [pid]); if (!p) return res.json({ ok: false, error: 'No such purchase' });
+    const items = Array.isArray(req.body && req.body.items) ? req.body.items.slice(0, 80) : [];
+    const keep = []; let pos = 0;
+    for (const i of items) {
+      const kind = ['item', 'shipping', 'tax', 'fee', 'discount'].indexOf(i.kind) > -1 ? i.kind : 'item', name = String(i.name || '').trim().slice(0, 200); if (!name) continue;
+      const num = (x) => x == null || x === '' || !isFinite(Number(x)) ? null : Math.round(Number(x) * 100) / 100;
+      const vals = [pos++, kind, name, num(i.qty) || 1, num(i.unit_price), num(i.amount), parseInt(i.material_id) || null, String(i.category || '').slice(0, 120) || null, /^https?:\/\//.test(String(i.photo || '')) ? String(i.photo).slice(0, 500) : null];
+      if (i.id && (await dbGet('SELECT id FROM bk_purchase_items WHERE id = ? AND purchase_id = ?', [parseInt(i.id), pid]))) { await dbRun("UPDATE bk_purchase_items SET pos = ?, kind = ?, name = ?, qty = ?, unit_price = ?, amount = ?, material_id = ?, category = ?, photo = ?, updated_at = datetime('now') WHERE id = ?", vals.concat([parseInt(i.id)])); keep.push(parseInt(i.id)); }
+      else { const r = await dbRun("INSERT INTO bk_purchase_items (purchase_id, pos, kind, name, qty, unit_price, amount, material_id, category, photo, source, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,'hand',?)", [pid].concat(vals, [who])); keep.push(r.lastID); }
+    }
+    await dbRun('DELETE FROM bk_purchase_items WHERE purchase_id = ?' + (keep.length ? ' AND id NOT IN (' + keep.map(() => '?').join(',') + ')' : ''), [pid].concat(keep));
+    await audit(who, 'purchase.items', pid, { n: keep.length });
+    res.json({ ok: true, purchase: await purchaseDetail(pid) });
+  });
+  app.post('/api/bookkeeping/purchases/:id/items/extract', ...guard, async (req, res) => {   // read the items again from one of the purchase's emails (replaces the list)
+    const pid = parseInt(req.params.id), who = userId(req); const d = await purchaseDetail(pid); if (!d) return res.json({ ok: false, error: 'No such purchase' });
+    const emId = parseInt(req.body && req.body.email_id) || (d.emails[0] || {}).id; if (!emId) return res.json({ ok: false, error: 'This purchase has no email to read.' });
+    const em = await dbGet('SELECT * FROM bk_emails WHERE id = ?', [emId]); if (!em) return res.json({ ok: false, error: 'No such email' });
+    await dbRun('DELETE FROM bk_purchase_items WHERE purchase_id = ?', [pid]);
+    const n = await fillItemsFromEmail(pid, em, who); await audit(who, 'purchase.items.extract', pid, { email_id: emId, n });
+    res.json({ ok: true, n, purchase: await purchaseDetail(pid) });
+  });
+  app.get('/api/bookkeeping/materials/pick', ...guard, async (req, res) => {   // a short list for the item → material picker
+    const q = String(req.query.q || '').trim().toLowerCase(); const l = '%' + q + '%';
+    const rows = await dbAll('SELECT id, name, photo, geo_type, geo_sub_type, code FROM bk_materials WHERE ? = \'\' OR LOWER(name) LIKE ? OR LOWER(COALESCE(code, \'\')) LIKE ? OR LOWER(COALESCE(geo_type, \'\')) LIKE ? ORDER BY name LIMIT 40', [q, l, l, l]);
+    res.json({ ok: true, materials: rows });
+  });
   app.get('/api/bookkeeping/purchases/:id/suggest', ...guard, async (req, res) => { const p = await dbGet('SELECT * FROM bk_purchases WHERE id = ?', [parseInt(req.params.id)]); if (!p) return res.json({ ok: false, error: 'No such purchase' }); res.json({ ok: true, transactions: await suggestTxns(p) }); });
   app.post('/api/bookkeeping/purchases/:id/attach', ...guard, async (req, res) => { try { const pid = parseInt(req.params.id), tid = parseInt(req.body && req.body.transaction_id); if (!tid) return res.json({ ok: false, error: 'Which bank line?' }); const tx = await dbGet('SELECT id, purchase_id FROM bk_transactions WHERE id = ?', [tid]); if (!tx) return res.json({ ok: false, error: 'No such transaction' }); if (tx.purchase_id && tx.purchase_id !== pid) return res.json({ ok: false, error: 'That bank line already belongs to purchase #' + tx.purchase_id }); await attachTo(pid, { txn_id: tid }, userId(req)); res.json({ ok: true }); } catch (e) { res.json({ ok: false, error: e.message }); } });
   app.post('/api/bookkeeping/purchases/:id/receive', ...guard, async (req, res) => {

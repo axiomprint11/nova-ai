@@ -233,7 +233,7 @@ refuses (missing `gmail.modify` scope) nothing changes here and the dialog says 
 only the buttons do. Every basket has **Open** (unread in Gmail) / **Closed** (read) segments with counts, so a basket
 keeps its history; the chip count is the open count, action bars show in Open only. A wrong count is fixed by Scan now.
 
-### Baskets (1.19.3): All · Bills · Transactions · Arrivals · Messages · Ads · Other · Set aside, all on one line — no "New" chip and no "More baskets" menu; Scan sits at the right of the action row under the search, and mail not yet rated shows under All until the next scan sorts it
+### Baskets (1.19.5): All · Bills · Transactions · Delivery (shipped / tracking / delivered; kind `arrival`) · Messages · Ads · Other · Set aside, all on one line — no "New" chip and no "More baskets" menu; Scan sits at the right of the action row under the search, and mail not yet rated shows under All until the next scan sorts it
 The AI's kinds are `bill`, `receipt` (a purchase: an order confirmation, "thanks for your order", a payment receipt or
 charge confirmation), `arrival` (a delivery notification: shipped, out for delivery, delivered, tracking), `message`,
 `advertisement`, `other` (account alerts, system mail, anything unclear). The old `notification` kind and the Notices
@@ -292,6 +292,19 @@ when the bank line lands Nova proposes it on the row ("1 bank line matches" → 
 **All here** / **Part** records the arrival (or starts a purchase when nothing matches). Arrival closes nothing else.
 Both leave the email handled (closed, read in Gmail) and are logged (`email.transaction`, `email.arrival`, shown in the
 email's history).
+
+**Inside a purchase (1.19.5)** — click the vendor on a Purchases row (or the "1 email · 2 attachments · 3 items" line
+under it; the email subjects show on hover). The view lists every email behind the purchase (confirmation, bill,
+delivery — with attachment counts, click to open in the Inbox), the bank line it is **Paired** with (the pill also
+shows on the row), and its **line items** (`bk_purchase_items`): when a Delivery / Transaction starts or joins a
+purchase, the light model reads the email (`extractItems()`: HTML flattened with product pictures kept as `[IMG url]`
+tokens, `emailForItems()`) into items with name, qty, unit price, amount and photo, plus Shipping and Sales tax lines
+of their own `kind` (`fillItemsFromEmail`, only when the purchase has no items yet; a bill's own `lines` fill them via
+`fillItemsFromBill`). Each line has a **Material** from the catalog (`materials/pick` search; left **Unknown** until
+the material exists in the CRM) and a **Category** from the chart — so the small shipping part of an invoice can go to
+Freight & Shipping (the chart category matching shipping/freight is preset). Lines are editable (+ Line, kind, ×,
+"Read from email" to re-extract) and saved as a whole with `POST /purchases/:id/items`; `GET /purchases/:id` returns
+the detail. The basket and button are called **Delivery** (shipped, tracking, delivered) since 1.19.5.
 
 **Alerts** (Settings → Alerts): purchases waiting for the bank for more than `waiting_days` (30) and goods not received
 after `notreceived_days` (30) are emailed as one list to `alert_to` (gary@axiomprint.com, `BOOKKEEPER_ALERT_TO`) every

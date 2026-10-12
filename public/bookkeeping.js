@@ -380,7 +380,10 @@
     '<span class="pu-slot bill' + (p.bill ? ' on' : '') + '" title="' + esc(p.bill ? 'Bill #' + p.bill.id + ' · ' + p.bill.status : 'No bill') + '">' + iconSvg('file') + '</span>' +
     '<span class="pu-slot bank' + (p.txns.length ? ' on' : '') + '" title="' + esc(p.txns.length ? p.txns.map(t => t.date + ' ' + t.name + ' ' + usd(Math.abs(t.amount))).join(', ') : p.no_paperwork ? 'Bank line (no paperwork expected)' : 'No bank line yet') + '">' + iconSvg('landmark') + '</span>' +
     '<span class="pu-slot conf' + (p.confirm ? ' on' : '') + '" title="' + esc(p.confirm ? 'Confirmation: ' + p.confirm.subject : 'No confirmation email') + '">' + iconSvg('receipt') + '</span>' +
-    '<span class="pu-slot arr' + (p.arrivals ? ' on' : '') + '" title="' + esc(p.arrivals ? p.arrivals + ' arrival email' + (p.arrivals === 1 ? '' : 's') : p.expects_delivery ? 'No arrival yet' : 'Nothing to receive') + '">' + iconSvg('package') + '</span></span>';
+    '<span class="pu-slot arr' + (p.arrivals ? ' on' : '') + '" title="' + esc(p.arrivals ? p.arrivals + ' delivery email' + (p.arrivals === 1 ? '' : 's') : p.expects_delivery ? 'No delivery yet' : 'Nothing to receive') + '">' + iconSvg('package') + '</span></span>' + (p.paired ? '<span class="pu-paired" title="' + esc(p.txns.map(t => t.date + ' ' + t.name + ' ' + usd(Math.abs(t.amount))).join(', ')) + '">Paired</span>' : '');
+  // what is behind the row: emails · attachments · items, with the email subjects on hover
+  const puInfo = (p) => { const bits = []; if (p.emails) bits.push(p.emails + ' ' + (p.emails === 1 ? 'email' : 'emails')); if (p.attachments) bits.push(p.attachments + ' ' + (p.attachments === 1 ? 'attachment' : 'attachments')); if (p.items) bits.push(p.items + ' ' + (p.items === 1 ? 'item' : 'items') + (p.items_linked ? ' · ' + p.items_linked + ' linked' : '')); if (!bits.length) return '';
+    return '<a href="#" class="pu-info" data-open="' + p.id + '"' + (p.email_subjects && p.email_subjects.length ? ' data-tip="' + esc(p.email_subjects.join('\n')) + '"' : '') + '>' + bits.join(' · ') + '</a>'; };
   const puStatus = (p) => '<span class="pu-st ' + (p.late ? 'late' : p.status === 'closed' ? 'closed' : p.status === 'awaiting bank' ? 'bank' : /received/.test(p.status) ? 'recv' : '') + '">' + esc(p.status) + (p.late ? ' · ' + p.days + ' days' : '') + '</span>';
   async function loadPurchases(view) {
     const v = $(view === 'waiting' ? 'vPurchWaiting' : view === 'notreceived' ? 'vPurchNotReceived' : 'vPurchList');
@@ -392,8 +395,8 @@
     const S = ov.settings;
     const intro = view === 'waiting' ? 'Emails you marked Transaction: proof of a payment with no bank line yet. Nova proposes the bank line when it lands (same amount to the cent); you confirm. After ' + esc(S.waiting_days) + ' days they are emailed to ' + esc(S.alert_to) + '.'
       : view === 'notreceived' ? 'Goods bought (by category) with no arrival attached. Mark them received when they come, partly received with a note, or cancelled. After ' + esc(S.notreceived_days) + ' days they are emailed to ' + esc(S.alert_to) + '.'
-      : 'Everything we bought, one row per purchase, with its four slots: bill · bank line · confirmation · arrival. Hover a slot for what is in it.';
-    const row = (p) => '<tr data-pid="' + p.id + '"><td>' + esc(p.date || '') + '</td><td><b>' + esc(p.vendor || '?') + '</b>' + (p.order_no ? '<div class="bk-muted">#' + esc(p.order_no) + '</div>' : '') + (p.note ? '<div class="bk-dim">' + esc(p.note) + '</div>' : '') + '</td>' +
+      : 'Everything we bought, one row per purchase, with its four slots: bill · bank line · confirmation · delivery. Hover a slot for what is in it; click the vendor for the emails and items behind it.';
+    const row = (p) => '<tr data-pid="' + p.id + '"><td>' + esc(p.date || '') + '</td><td><a href="#" class="bk-name" data-open="' + p.id + '">' + esc(p.vendor || '?') + '</a>' + (p.order_no ? '<div class="bk-muted">#' + esc(p.order_no) + '</div>' : '') + (p.note ? '<div class="bk-dim">' + esc(p.note) + '</div>' : '') + puInfo(p) + '</td>' +
       '<td class="num">' + (p.amount != null ? usd(p.amount) : '<span class="bk-dim">—</span>') + '</td><td>' + (p.category ? catLabel(p.category) : '<span class="bk-dim">—</span>') + '</td><td>' + slots(p) + '</td><td>' + puStatus(p) + '</td>' +
       '<td class="pu-acts">' + (p.status === 'awaiting bank' && p.suggest ? '<button class="bk-btn sm p" data-sug="' + p.id + '">' + p.suggest + ' bank line' + (p.suggest === 1 ? '' : 's') + ' match</button>' : p.status === 'awaiting bank' ? '<button class="bk-btn sm" data-sug="' + p.id + '">Pick bank line…</button>' : '') +
         (p.expects_delivery && p.received !== 'yes' && !p.cancelled ? '<button class="bk-btn sm" data-recv="' + p.id + '" data-s="yes">Received</button><button class="bk-btn sm" data-recv="' + p.id + '" data-s="partial">Partly</button>' : '') +
@@ -403,6 +406,7 @@
       '<table class="bk pu-table"><thead><tr><th>Date</th><th>Vendor</th><th class="num">Amount</th><th>Category</th><th>Paperwork</th><th>Status</th><th></th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table>' +
       (!rows.length ? '<div class="bk-muted" style="padding:14px 0">' + (view === 'list' ? 'No purchases yet. They appear when you press Bill, Transaction or Arrival on an email, or when a bank line is categorized.' : 'Nothing here.') + '</div>' : '') + '</div>';
     v.querySelector('input[name=q]').onkeydown = (e) => { if (e.key === 'Enter') loadPurchases(view); };
+    v.querySelectorAll('[data-open]').forEach(a => a.onclick = (e) => { e.preventDefault(); purchaseView(Number(a.dataset.open), () => loadPurchases(view)); });
     v.querySelectorAll('[data-recv]').forEach(b => b.onclick = async () => {
       const st = b.dataset.s; let note = '';
       if (st === 'partial' || st === 'cancel') { note = await askText(st === 'partial' ? 'What arrived, what is missing?' : 'Why? (cancelled, refunded, returned…)', { title: st === 'partial' ? 'Partly received' : 'Cancel this purchase' }); if (note == null) return; }
@@ -418,6 +422,54 @@
       document.body.appendChild(el); el.querySelector('[data-no]').onclick = () => el.remove(); el.onclick = (ev) => { if (ev.target === el) el.remove(); };
       el.querySelectorAll('[data-t]').forEach(i => i.onclick = async () => { el.remove(); const r = await post('/api/bookkeeping/purchases/' + pid + '/attach', { transaction_id: Number(i.dataset.t) }); if (!r.ok) return alert(r.error); loadPurchases(view); overview(); });
     });
+  }
+  // One purchase: the emails behind it (with attachments), the bank line it is paired with, and its line items —
+  // each with a picture when the email had one, a material from the catalog (or Unknown) and a category.
+  async function purchaseView(pid, done) {
+    const j = await api('/api/bookkeeping/purchases/' + pid); if (!j.ok) return alert(j.error);
+    let p = j.purchase; let items = p.items.map(i => Object.assign({}, i));
+    const el = document.createElement('div'); el.className = 'bk-modal';
+    const dateS = (d) => d ? String(d).slice(0, 10) : '';
+    const ROLE = { confirmation: ['Confirmation', 'receipt', '#115e59', '#ccfbf1'], bill: ['Bill', 'file', '#065f46', '#d1fae5'], delivery: ['Delivery', 'package', '#92400e', '#fef3c7'] };
+    const emailRow = (e) => { const r = ROLE[e.role] || ROLE.delivery; return '<div class="pv-em"><span class="mv-ic" style="--kc:' + r[2] + ';--kbg:' + r[3] + '">' + iconSvg(r[1]) + '</span><span class="vp-n"><a href="#" data-em="' + e.id + '">' + esc(e.subject || '(no subject)') + '</a><div class="bk-dim">' + r[0] + ' · ' + esc(dateS(e.received_at)) + (e.attachments ? ' · ' + e.attachments + ' attachment' + (e.attachments === 1 ? '' : 's') + (e.attachment_names.length ? ': ' + esc(e.attachment_names.join(', ')) : '') : '') + '</div></span></div>'; };
+    const KIND = { item: 'Item', shipping: 'Shipping', tax: 'Tax', fee: 'Fee', discount: 'Discount' };
+    const itemRow = (i, k) => '<tr data-k="' + k + '" class="pv-it ' + esc(i.kind) + '"><td>' + (i.kind === 'item' ? (i.photo || i.material_photo ? '<img class="pv-ph" src="' + esc(i.photo || i.material_photo) + '" alt="" onerror="this.style.visibility=\'hidden\'">' : '<span class="pv-ph ph"></span>') : '<span class="pv-ph ph">' + iconSvg(i.kind === 'shipping' ? 'truck' : 'receipt') + '</span>') + '</td>' +
+      '<td><input class="bk pv-name" value="' + esc(i.name || '') + '" placeholder="Item"><div class="bk-dim"><select class="pv-kind">' + Object.keys(KIND).map(x => '<option value="' + x + '"' + (i.kind === x ? ' selected' : '') + '>' + KIND[x] + '</option>').join('') + '</select></div></td>' +
+      '<td class="num"><input class="bk pv-qty" type="number" step="any" value="' + esc(i.qty != null ? i.qty : 1) + '" style="width:60px"></td><td class="num"><input class="bk pv-amt" type="number" step="0.01" value="' + esc(i.amount != null ? i.amount : '') + '" placeholder="0.00" style="width:92px"></td>' +
+      '<td>' + (i.kind === 'item' ? '<button class="bk-btn sm pv-mat' + (i.material_id ? ' on' : '') + '">' + (i.material_id ? esc(i.material_name || 'Material #' + i.material_id) : 'Unknown') + '</button>' : '<span class="bk-dim">—</span>') + '</td>' +
+      '<td>' + catSelect(i.category || '', 'pv-cat', 'Category') + '</td><td><button class="bk-btn sm pv-rm" title="Remove">×</button></td></tr>';
+    const paint = () => {
+      const sum = items.reduce((a, i) => a + (Number(i.amount) || 0), 0);
+      el.innerHTML = '<div class="bk-modal-box pv-box"><div class="bk-modal-title">' + esc(p.vendor || '?') + (p.amount != null ? ' · ' + usd(p.amount) : '') + (p.order_no ? ' · #' + esc(p.order_no) : '') + '</div>' +
+        '<div class="bk-muted" style="margin-bottom:10px">' + esc(p.date || '') + ' · ' + esc(p.status) + (p.category ? ' · ' + esc(p.category) : '') + (p.equipment ? ' · machine: ' + esc(p.equipment.name) : '') + '</div>' +
+        '<div class="pv-cols"><div><div class="vp-h">Emails (' + p.emails.length + ')</div>' + (p.emails.length ? p.emails.map(emailRow).join('') : '<div class="bk-dim">None — this purchase came from a bank line.</div>') + '</div>' +
+        '<div><div class="vp-h">Payment</div>' + (p.txns.length ? p.txns.map(t => '<div class="pv-em"><span class="mv-ic" style="--kc:#1e40af;--kbg:#dbeafe">' + iconSvg('landmark') + '</span><span class="vp-n"><span class="pu-paired">Paired</span> ' + esc(t.date) + ' · ' + esc(t.merchant || t.name) + ' · <b>' + usd(Math.abs(t.amount)) + '</b><div class="bk-dim">' + esc(t.account_name || '') + (t.category ? ' · ' + esc(t.category) : '') + '</div></span></div>').join('') : '<div class="bk-dim">' + (p.bill ? 'Bill #' + p.bill.id + ' · ' + esc(p.bill.status) + ' — ' : '') + 'no bank line yet; it pairs when the payment lands.</div>') + '</div></div>' +
+        '<div class="vp-h" style="display:flex;align-items:center;gap:8px">Items (' + items.filter(i => i.kind === 'item').length + ')<span class="sp"></span>' + (p.emails.length ? '<button class="bk-btn sm" data-reread title="Let Nova read the items again from the email (replaces this list)">Read from email</button>' : '') + '<button class="bk-btn sm" data-addrow>+ Line</button></div>' +
+        '<table class="bk pv-items"><thead><tr><th></th><th>What</th><th class="num">Qty</th><th class="num">Amount</th><th>Material</th><th>Category</th><th></th></tr></thead><tbody>' + items.map(itemRow).join('') + '</tbody></table>' +
+        (items.length ? '<div class="bk-dim" style="text-align:right;margin-top:4px">Lines ' + usd(sum) + (p.amount != null && Math.abs(sum - p.amount) > 0.005 ? ' · purchase ' + usd(p.amount) + ' · <b>' + (sum > p.amount ? '+' : '−') + usd(Math.abs(sum - p.amount)) + '</b>' : p.amount != null ? ' · matches the purchase' : '') + '</div>' : '<div class="bk-dim">No items yet' + (p.emails.length ? ' — press Read from email, or add lines by hand.' : ' — add lines by hand.') + '</div>') +
+        '<div class="bk-ask-acts"><button class="bk-btn" data-no>Close</button><button class="bk-btn p" data-yes>Save items</button></div></div>';
+      el.querySelector('[data-no]').onclick = () => el.remove();
+      el.querySelector('[data-yes]').onclick = async () => { collect(); const r = await post('/api/bookkeeping/purchases/' + pid + '/items', { items }); if (!r.ok) return alert(r.error); p = r.purchase; items = p.items.map(i => Object.assign({}, i)); paint(); if (done) done(); };
+      const rr = el.querySelector('[data-reread]'); if (rr) rr.onclick = async () => { if (items.length && !confirm('Replace the list with what Nova reads from the email?')) return; rr.disabled = true; const r = await post('/api/bookkeeping/purchases/' + pid + '/items/extract', { email_id: p.emails[0].id }); if (!r.ok) return alert(r.error); p = r.purchase; items = p.items.map(i => Object.assign({}, i)); paint(); if (done) done(); };
+      el.querySelector('[data-addrow]').onclick = () => { collect(); items.push({ kind: 'item', name: '', qty: 1, amount: null, category: p.category || '' }); paint(); el.querySelector('tr[data-k="' + (items.length - 1) + '"] .pv-name').focus(); };
+      el.querySelectorAll('[data-em]').forEach(a => a.onclick = (e) => { e.preventDefault(); el.remove(); ibOpen = Number(a.dataset.em); show('inbox'); });
+      el.querySelectorAll('.pv-rm').forEach(b => b.onclick = () => { collect(); items.splice(Number(b.closest('tr').dataset.k), 1); paint(); });
+      el.querySelectorAll('.pv-kind').forEach(sel => sel.onchange = () => { collect(); paint(); });
+      el.querySelectorAll('.pv-mat').forEach(b => b.onclick = () => { collect(); const k = Number(b.closest('tr').dataset.k); materialPicker(items[k].name, (m) => { items[k].material_id = m ? m.id : null; items[k].material_name = m ? m.name : null; items[k].material_photo = m ? m.photo : null; paint(); }); });
+    };
+    const collect = () => { el.querySelectorAll('tr[data-k]').forEach(tr => { const i = items[Number(tr.dataset.k)]; if (!i) return; i.name = tr.querySelector('.pv-name').value; i.kind = tr.querySelector('.pv-kind').value; i.qty = tr.querySelector('.pv-qty').value; i.amount = tr.querySelector('.pv-amt').value; i.category = tr.querySelector('.pv-cat.ckp-val').value; }); };
+    paint(); document.body.appendChild(el); el.onclick = (ev) => { if (ev.target === el) el.remove(); };
+  }
+  // Pick a material from the catalog for a line item (or clear it back to Unknown).
+  async function materialPicker(seed, pick) {
+    const el = document.createElement('div'); el.className = 'bk-modal';
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(520px,100%)"><div class="bk-modal-title">Which material is this?</div><input class="bk" id="mpQ" placeholder="Search the materials catalog" value="' + esc(String(seed || '').split(/[,(–—-]/)[0].trim().slice(0, 40)) + '" style="width:100%"><div class="vp-list" id="mpList" style="margin-top:8px;max-height:50vh;overflow:auto"></div><div class="bk-ask-acts"><button class="bk-btn" data-clear>Unknown (no material)</button><button class="bk-btn" data-no>Cancel</button></div></div>';
+    document.body.appendChild(el);
+    let t = null;
+    const load = async () => { const j = await api('/api/bookkeeping/materials/pick?q=' + encodeURIComponent($('mpQ').value.trim())); const list = j.materials || []; $('mpList').innerHTML = list.length ? list.map(m => '<div class="vp-i" data-m="' + m.id + '">' + (m.photo ? '<img class="pv-ph sm" src="' + esc(m.photo) + '" alt="">' : '<span class="pv-ph sm ph"></span>') + '<span class="vp-n">' + esc(m.name) + '<small>' + esc([m.geo_type, m.geo_sub_type, m.code].filter(Boolean).join(' · ')) + '</small></span></div>').join('') : '<div class="bk-dim" style="padding:8px">Nothing in the catalog matches — keep it Unknown until the material is added in the CRM.</div>';
+      el.querySelectorAll('[data-m]').forEach(i => i.onclick = () => { const m = list.find(x => x.id === Number(i.dataset.m)); el.remove(); pick(m); }); };
+    $('mpQ').oninput = () => { clearTimeout(t); t = setTimeout(load, 250); }; $('mpQ').focus(); load();
+    el.querySelector('[data-no]').onclick = () => el.remove(); el.querySelector('[data-clear]').onclick = () => { el.remove(); pick(null); }; el.onclick = (ev) => { if (ev.target === el) el.remove(); };
   }
   // A one-line text question (note), resolves the text or null.
   function askText(label, opt) {
@@ -561,7 +613,7 @@
     const all = e.emails || [];
     const st = (m) => m.status === 'parsed' ? 'parsed' : m.status === 'error' ? 'error' : m.status === 'new' ? 'new' : m.status === 'message' ? 'message' : 'skipped';
     const counts = { all: all.length, parsed: 0, skipped: 0, new: 0, message: 0, ai: 0 }; all.forEach(m => { counts[st(m)] = (counts[st(m)] || 0) + 1; if (m.read_by === 'ai') counts.ai++; });
-    const KIND = { advertisement: 'Ad', arrival: 'Arrival', receipt: 'Transaction', bill: 'Bill', message: 'Message', other: 'Other', notification: 'Other' };
+    const KIND = { advertisement: 'Ad', arrival: 'Delivery', receipt: 'Transaction', bill: 'Bill', message: 'Message', other: 'Other', notification: 'Other' };
     // the tag is the basket: a bill draft is a Bill whatever it was rated; rated with nothing fitting = Other
     const kindOf = (m) => st(m) === 'parsed' ? 'bill' : m.kind || (m.triaged_at ? 'other' : null);
     const kindTag = (m) => { const k = kindOf(m); return k ? '<span class="ib-kind ' + esc(k) + '"' + (m.note ? ' data-tip="' + esc(m.note) + '"' : '') + '>' + esc(KIND[k] || k) + (m.confidence != null && k === m.kind ? ' ' + Math.round(m.confidence * 100) + '%' : '') + '</span>' : ''; };
@@ -578,7 +630,7 @@
     const isOpen = (m) => !m.read_by && !m.aside && st(m) !== 'error';   // open = still unread in Gmail (bill drafts included until Gmail says read)
     const basket = (m) => { if (m.aside) return 'done'; const k = kindOf(m); if (!k) return 'unrated'; return { bill: 'bill', message: 'message', advertisement: 'ads', receipt: 'receipt', arrival: 'arrival' }[k] || 'other'; };
     // the main chips, then the rest behind "More baskets" (same colours as the AI's tags)
-    const BASKETS = [['open', 'All', 'mail'], ['unrated', 'New', 'sparkles'], ['bill', 'Bills', 'file'], ['receipt', 'Transactions', 'receipt'], ['arrival', 'Arrivals', 'package'], ['message', 'Messages', 'users'], ['ads', 'Ads', 'megaphone'], ['other', 'Other', 'folder'], ['done', 'Set aside', 'clock']];
+    const BASKETS = [['open', 'All', 'mail'], ['unrated', 'New', 'sparkles'], ['bill', 'Bills', 'file'], ['receipt', 'Transactions', 'receipt'], ['arrival', 'Delivery', 'package'], ['message', 'Messages', 'users'], ['ads', 'Ads', 'megaphone'], ['other', 'Other', 'folder'], ['done', 'Set aside', 'clock']];
     const MAIN = ['open', 'bill', 'receipt', 'arrival', 'message', 'ads', 'other', 'done'], MORE = [];   // every basket on the line (1.19.3)
     const bc = {}, cc = {};   // open / closed counts per basket
     all.forEach(m => { const b = basket(m); if (b === 'done') { bc.done = (bc.done || 0) + 1; return; } if (isOpen(m)) bc[b] = (bc[b] || 0) + 1; else cc[b] = (cc[b] || 0) + 1; });
@@ -604,7 +656,7 @@
         '<span class="ib-selbar" id="ibSelBar" style="display:none"><b id="ibSelN"></b> selected <button class="bk-btn sm p" data-selread>Mark as read</button><button class="bk-btn sm" data-selmove>Move to <span class="thf-c"></span></button><button class="bk-btn sm" data-selclear>Clear</button></span>' +
         (bc.ads ? '<span data-for="ads"><span class="bk-muted">Promotions and newsletters, with how sure BookkeeperAI is.</span> <button class="bk-btn sm" data-aside="advertisement">Mark all ' + bc.ads + ' ads as read</button></span>' : '') +
         (bc.receipt ? '<span data-for="receipt"><span class="bk-muted">Purchases: order confirmations and payment receipts — press Transaction on each to file it.</span> <button class="bk-btn sm" data-aside="receipt">Mark all ' + bc.receipt + ' as read</button></span>' : '') +
-        (bc.arrival ? '<span data-for="arrival"><span class="bk-muted">Delivery notifications — press Arrival on each to record what came.</span> <button class="bk-btn sm" data-aside="arrival">Mark all ' + bc.arrival + ' as read</button></span>' : '') +
+        (bc.arrival ? '<span data-for="arrival"><span class="bk-muted">Shipping and delivery notifications (shipped, tracking number, delivered) — press Delivery on each when the goods are here.</span> <button class="bk-btn sm" data-aside="arrival">Mark all ' + bc.arrival + ' as read</button></span>' : '') +
         (bc.other ? '<span data-for="other"><span class="bk-muted">Account notices, system mail and anything that fits no basket — open them, or move them with "Move to".</span> <button class="bk-btn sm" data-aside="other">Mark all ' + bc.other + ' as read</button></span>' : '') +
         (bc.bill ? '<span data-for="bill"><span class="bk-muted">Rated as bills — nothing is filed until you press Bill on one (or Turn all).</span> ' + (billsToRead ? '<button class="bk-btn sm p" data-parseall>Turn all ' + billsToRead + ' into bills</button>' : '') + '<button class="bk-btn sm" data-aside="bill">Mark all ' + bc.bill + ' as read</button></span>' : '') +
         (bc.message ? '<span data-for="message"><span class="bk-muted">People writing to accounting — for a person to answer.</span> <button class="bk-btn sm" data-aside="message">Mark all ' + bc.message + ' as read</button></span>' : '') +
@@ -685,7 +737,7 @@
   async function emailHistory(id, anchor) {
     document.querySelectorAll('.thf-pop').forEach(p => p.remove());
     const j = await api('/api/bookkeeping/emails/' + id + '/history'); if (!j.ok) return alert(j.error);
-    const KIND = { advertisement: 'Ad', arrival: 'Arrival', receipt: 'Transaction', bill: 'Bill', message: 'Message', other: 'Other', notification: 'Other' };
+    const KIND = { advertisement: 'Ad', arrival: 'Delivery', receipt: 'Transaction', bill: 'Bill', message: 'Message', other: 'Other', notification: 'Other' };
     const line = (h) => {
       const d = h.detail || {};
       switch (h.action) {
@@ -745,10 +797,10 @@
     const x = j.extract || {}, list = j.purchases || [];
     const el = document.createElement('div'); el.className = 'bk-modal';
     const rowP = (p) => '<div class="vp-i pu-pick" data-p="' + p.id + '"><span class="mv-ic" style="--kc:#9a3412;--kbg:#fde8d8">' + iconSvg('package') + '</span><span class="vp-n">' + esc(p.vendor || '?') + (p.order_no ? ' · #' + esc(p.order_no) : '') + ' <small>' + (p.amount != null ? usd(p.amount) + ' · ' : '') + esc(p.date || '') + (p.received === 'partial' ? ' · partly received' : '') + (p.why ? ' · ' + esc(p.why) : '') + '</small></span><span class="bk-row" style="gap:4px"><button class="bk-btn sm p" data-all>All here</button><button class="bk-btn sm" data-part>Part</button></span></div>';
-    el.innerHTML = '<div class="bk-modal-box" style="width:min(600px,100%)"><div class="bk-modal-title">Arrival</div>' +
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(600px,100%)"><div class="bk-modal-title">Delivery</div>' +
       '<div class="bk-muted" style="margin-bottom:10px">Read from the email: <b>' + esc(x.vendor || '?') + '</b>' + (x.order_no ? ' · #' + esc(x.order_no) : '') + (x.what ? ' · ' + esc(x.what) : '') + '. Which purchase did this deliver?</div>' +
       (list.length ? '<div class="vp-list">' + list.map(rowP).join('') + '</div>' : '<div class="bk-muted">No open goods purchase matches. Start one from this arrival; the bill or bank line can attach later.</div>') +
-      '<div class="vp-h">Or</div><div class="vp-list"><div class="vp-i" data-start><span class="mv-ic">' + iconSvg('sparkles') + '</span><span class="vp-n">New purchase from this arrival <small>when nothing above is it</small></span></div></div>' +
+      '<div class="vp-h">Or</div><div class="vp-list"><div class="vp-i" data-start><span class="mv-ic">' + iconSvg('sparkles') + '</span><span class="vp-n">New purchase from this delivery <small>when nothing above is it</small></span></div></div>' +
       '<div class="bk-ask-acts"><button class="bk-btn" data-no>Cancel</button></div></div>';
     document.body.appendChild(el); el.querySelector('[data-no]').onclick = () => el.remove(); el.onclick = (ev) => { if (ev.target === el) el.remove(); };
     const go = async (body) => { el.remove(); const r = await post('/api/bookkeeping/emails/' + id + '/arrival', Object.assign({ extract: x }, body)); if (!r.ok) return ask(r.error, { title: 'Not done', ok: 'OK', cancel: false }); done(); };
@@ -779,7 +831,7 @@
   // The "Move to" menu: the baskets in their colours. cur = the kind to leave out; pick(kind) does the move.
   function moveMenu(anchor, cur, pick) {
     document.querySelectorAll('.thf-pop').forEach(p => p.remove());
-    const items = [['bill', 'Bills', 'file', 'bill'], ['receipt', 'Transactions', 'receipt', 'receipt'], ['message', 'Messages', 'users', 'message'], ['arrival', 'Arrivals', 'package', 'arrival'], ['advertisement', 'Ads', 'megaphone', 'ads'], ['other', 'Other', 'folder', 'other'], ['aside', 'Set aside', 'clock', 'done']].filter(([kk]) => kk !== cur);
+    const items = [['bill', 'Bills', 'file', 'bill'], ['receipt', 'Transactions', 'receipt', 'receipt'], ['message', 'Messages', 'users', 'message'], ['arrival', 'Delivery', 'package', 'arrival'], ['advertisement', 'Ads', 'megaphone', 'ads'], ['other', 'Other', 'folder', 'other'], ['aside', 'Set aside', 'clock', 'done']].filter(([kk]) => kk !== cur);
     const pop = document.createElement('div'); pop.className = 'thf-pop mv-pop';
     pop.innerHTML = '<div class="thf-list">' + items.map(([kk, l, ic, cls]) => '<div class="thf-i mv-i k-' + cls + '" data-v="' + kk + '"><span class="mv-ic">' + iconSvg(ic) + '</span><span class="thf-t">' + l + '</span></div>').join('') + '</div>';
     document.body.appendChild(pop);
@@ -792,7 +844,7 @@
   async function openEmail(id) {
     const j = await api('/api/bookkeeping/emails/' + id); if (!j.ok) return alert(j.error);
     const e = j.email, k = e.status === 'parsed' ? 'parsed' : e.status === 'error' ? 'error' : e.status === 'new' ? 'new' : e.status === 'message' ? 'message' : 'skipped';
-    const KIND = { advertisement: 'Ad', arrival: 'Arrival', receipt: 'Transaction', bill: 'Bill', message: 'Message', other: 'Other', notification: 'Other' };
+    const KIND = { advertisement: 'Ad', arrival: 'Delivery', receipt: 'Transaction', bill: 'Bill', message: 'Message', other: 'Other', notification: 'Other' };
     const dec = (t) => { const d = document.createElement('textarea'); d.innerHTML = String(t || ''); return d.value; };
     const fromName = (f) => { const mm = /^\s*"?([^"<]*?)"?\s*<([^>]+)>/.exec(f || ''); return mm ? (mm[1].trim() || mm[2]) : String(f || '').replace(/^"|"$/g, ''); };
     const fromAddr = (f) => { const mm = /<([^>]+)>/.exec(f || ''); return mm ? mm[1] : String(f || ''); };
@@ -808,7 +860,7 @@
       // the basket's own button is the main one (outlined): Bills → Bill, Transactions → Transaction, Arrivals → Arrival
       '<div class="em-acts">' + (k !== 'parsed' ? '<button class="ib-chip k-bill' + (mainK === 'bill' ? ' main' : '') + '" data-parse title="Read this email in full and file it as a bill draft under Bills">' + iconSvg('file') + 'Bill</button>' : '<button class="ib-chip k-bill on" data-gobills title="This email is a bill draft already — open it under Bills">' + iconSvg('file') + 'Bill →</button>') +
       (j.matched && (j.matched.bill || j.matched.txn) ? '<span class="em-matched">' + (j.matched.bill ? '<a href="#" data-gobills class="em-match">Matched · bill #' + j.matched.bill.id + ' · ' + esc(j.matched.bill.vendor || '') + (j.matched.bill.invoice_no ? ' ' + esc(j.matched.bill.invoice_no) : '') + ' · ' + usd(j.matched.bill.total) + ' · ' + esc(j.matched.bill.status) + '</a>' : '<span class="em-match">Matched · ' + esc(j.matched.txn.date) + ' ' + esc(j.matched.txn.name) + ' · ' + usd(Math.abs(j.matched.txn.amount)) + '</span>') + '<button class="bk-btn sm" data-unmatch title="Remove the match">×</button></span>' : '<button class="ib-chip k-receipt' + (mainK === 'receipt' ? ' main' : '') + '" data-match title="This email is proof of a payment: match it to the bank line or bill, or let it wait for the bank under Purchases">' + iconSvg('receipt') + 'Transaction</button>') +
-      (k !== 'parsed' ? '<button class="ib-chip k-arrival' + (mainK === 'arrival' ? ' main' : '') + '" data-arrival title="The goods came: attach this email to the purchase it belongs to">' + iconSvg('package') + 'Arrival</button>' : '') +
+      (k !== 'parsed' ? '<button class="ib-chip k-arrival' + (mainK === 'arrival' ? ' main' : '') + '" data-arrival title="Shipped / delivered: attach this email to the purchase it belongs to and record what came">' + iconSvg('package') + 'Delivery</button>' : '') +
       (k !== 'parsed' ? '<button class="ib-chip k-move" data-movebtn>' + iconSvg('folder') + 'Move to <span class="thf-c"></span></button>' : '') +
       (!e.read_by && !e.aside && k !== 'error' ? '<button class="bk-btn sm ico big" data-read title="Mark as read — here and in Gmail" aria-label="Mark as read">' + iconSvg('mailopen') + '</button>' : '<button class="bk-btn sm ico big" data-unread title="Mark as unread — here and in Gmail" aria-label="Mark as unread">' + iconSvg('mail') + '</button>') + '<button class="bk-btn sm ico" data-hist title="History — what was done with this email, and by whom" aria-label="History">' + iconSvg('clock') + '</button>' + '<span class="sp"></span><span class="em-verdict">' + (e.aside ? '<span class="ib-tag skipped">set aside</span>' : '') + (e.kind ? '<span class="ib-kind ' + esc(e.kind) + '"' + (e.note ? ' data-tip="' + esc(e.note) + '"' : '') + '>' + esc(KIND[e.kind] || e.kind) + (e.confidence != null ? ' ' + Math.round(e.confidence * 100) + '%' : '') + '</span>' : '') + (e.note ? '' : '<span class="bk-muted">' + esc(k === 'new' ? 'Not rated yet.' : '') + '</span>') + (j.bill ? ' <a href="#" data-gobills>bill #' + j.bill.id + ' (' + esc(j.bill.status) + ')</a>' : '') + '</span></div>' +
       (e.attachments.length ? '<div class="em-atts">' + e.attachments.map(att).join('') + '</div>' : '') +
@@ -1299,7 +1351,7 @@
       '<div class="bk-muted" style="margin-top:12px"><label><input type="checkbox" id="tAuto"' + (s.triage_auto ? ' checked' : '') + '> <b>Let BookkeeperAI set emails aside by itself</b> (off: it only rates them and you click "Set aside all ads" in the Inbox)</label></div>' +
       '<div class="bk-muted" style="margin-top:8px"><b>Confidence it needs</b> to…</div>' +
       '<div class="bk-row" style="margin-top:6px;gap:16px"><label class="bk-muted">set an <b>ad / receipt</b> aside <input class="bk" id="tAd" type="number" min="30" max="100" value="' + Math.round(s.triage_ad * 100) + '" style="width:64px">%</label>' +
-      '<label class="bk-muted">set an <b>arrival</b> aside <input class="bk" id="tNotice" type="number" min="30" max="100" value="' + Math.round(s.triage_notice * 100) + '" style="width:64px">%</label>' +
+      '<label class="bk-muted">set a <b>delivery</b> notice aside <input class="bk" id="tNotice" type="number" min="30" max="100" value="' + Math.round(s.triage_notice * 100) + '" style="width:64px">%</label>' +
       '<label class="bk-muted">treat as a <b>bill</b> to be paid <input class="bk" id="tBill" type="number" min="30" max="100" value="' + Math.round(s.triage_bill * 100) + '" style="width:64px">%</label>' +
       '<label class="bk-muted">keep a <b>message</b> for a person <input class="bk" id="tMsg" type="number" min="30" max="100" value="' + Math.round(s.triage_message * 100) + '" style="width:64px">%</label></div>' +
       '<div class="bk-dim" style="margin-top:4px">Below the bill threshold it still reads the email in full before deciding — a missed bill costs more than a model call.</div></div>' +
