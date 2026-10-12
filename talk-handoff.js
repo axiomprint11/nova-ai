@@ -110,7 +110,8 @@ module.exports = function talkHandoff(o) {
   const SUM_SYSTEM = [
     'You write the call summary AxiomPrint’s customer-service team reads after NovaAI (AxiomPrint’s AI phone assistant) answered a client call.',
     'Dialpad shows these calls as missed, so the team uses your summary to decide whether to call the client back.',
-    'Return ONLY JSON: {"summary": "...", "callback": true|false, "callback_reason": "..." }.',
+    'Return ONLY JSON: {"summary": "...", "callback": true|false, "callback_reason": "...", "asked_for": "..." }.',
+    'asked_for: the AxiomPrint team member the caller asked to speak with or leave a message for, exactly as the caller said the name ("Josie", "Armine", "my account manager"); "" when they asked for nobody in particular.',
     'summary: 2 to 4 plain sentences, third person, like "Elena from Biohackers World called about 2 custom 3x5 ft flags. NovaAI quoted $86.40 for 2 and emailed the quote to elena@... She plans to order online."',
     'Name the caller (and company) when known, what they wanted, product/quantity/size, prices NovaAI gave (exactly as in the facts), order numbers, what was sent, and what was agreed.',
     'callback: true when the caller asked for a person or a call back, left a message, was upset, NovaAI could not help or did not finish, the call dropped mid-way, or there is anything the team must do.',
@@ -145,7 +146,7 @@ module.exports = function talkHandoff(o) {
       const txt = (r.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
       const j = JSON.parse((txt.match(/\{[\s\S]*\}/) || ['{}'])[0]);
       if (!j.summary) throw new Error('no summary');
-      return { summary: String(j.summary).slice(0, 1200), callback: !!j.callback, callback_reason: j.callback ? String(j.callback_reason || 'Call the client back.').slice(0, 300) : '', by: 'nova' };
+      return { summary: String(j.summary).slice(0, 1200), callback: !!j.callback, callback_reason: j.callback ? String(j.callback_reason || 'Call the client back.').slice(0, 300) : '', asked_for: String(j.asked_for || '').trim().slice(0, 80), by: 'nova' };
     } catch (e) {
       console.error('TALKAI ai summary', e.message);
       const fallback = c.summary && !/couldn.t be generated/i.test(c.summary) ? c.summary : null;
@@ -159,6 +160,15 @@ module.exports = function talkHandoff(o) {
     if (f.c.ai_summary && !force) return f;
     const s = await aiSummary(f);
     await dbRun('UPDATE talk_calls SET ai_summary = ?, callback = ?, callback_reason = ? WHERE id = ?', [s.summary, s.callback ? 1 : 0, s.callback_reason || null, callId]);
+    // 1.19.45: the caller asked for someone but no message was taken (hung up, kept insisting on a transfer…):
+    // pair the name with the team directory so the summary reaches that person, not only the group.
+    if (s.asked_for && !(f.staff && f.staff.email) && o.team && !/\b(account|my)\s+(manager|rep)\b/i.test(s.asked_for)) {
+      try {
+        const r = await o.team.find(s.asked_for, {});
+        if (r && r.match && r.match.email) await dbRun('UPDATE talk_calls SET for_staff = ? WHERE id = ?', [JSON.stringify({ asked: s.asked_for, id: r.match.id, name: r.match.name, first: r.match.first, email: r.match.email, title: r.match.title || null, why: 'summary' }), callId]);
+        else if (!f.staff) await dbRun('UPDATE talk_calls SET for_staff = ? WHERE id = ?', [JSON.stringify({ asked: s.asked_for, id: null, name: null, email: null, why: 'not found' }), callId]);
+      } catch (e) { console.error('TALKAI asked_for lookup', e.message); }
+    }
     return facts(callId);
   }
 
@@ -166,12 +176,12 @@ module.exports = function talkHandoff(o) {
   function csrEmail(f) {
     const c = f.c, cb = Number(c.callback) === 1;
     const who = f.person ? f.person + (f.company ? ' (' + f.company + ')' : '') : pretty(c.from_number) || 'Unknown caller';
-    const subject = 'NovaAI answered: ' + who + (f.person ? ' · ' + pretty(c.from_number) : '') + ' — ' + (cb ? 'CALL BACK' : 'no callback needed');
+    const subject = 'NovaAI answered: ' + who + (f.person ? ' · ' + pretty(c.from_number) : '') + (f.staff && f.staff.first ? ' — asked for ' + f.staff.first : '') + ' — ' + (cb ? 'CALL BACK' : 'no callback needed');
     const row = (k, v) => v ? '<tr><td style="padding:4px 14px 4px 0;color:#6b7280;white-space:nowrap;vertical-align:top">' + htmlEsc(k) + '</td><td style="padding:4px 0">' + v + '</td></tr>' : '';
     const quotes = f.quotes.map(q => '<div style="margin:2px 0"><b>' + htmlEsc(q.product) + '</b> — ' + (q.rows || []).map(r => htmlEsc(r.quantity) + ' for $' + htmlEsc(usd2(r.price))).join(', ') + '</div>').join('');
     const sentTo = f.emails.filter(e => e.ok && ['notes', 'csr', 'relay'].indexOf(e.kind) === -1).map(e => htmlEsc(e.to_addr)).join(', ');
     const banner = cb
-      ? '<div style="background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:10px;padding:10px 14px;font-weight:700">Call back: ' + htmlEsc(c.callback_reason || 'see below') + '</div>'
+      ? '<div style="background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:10px;padding:10px 14px;font-weight:700">' + (f.staff && f.staff.first ? htmlEsc(f.staff.first) + ', this one is for you — the caller asked for you. ' : '') + 'Call back: ' + htmlEsc(c.callback_reason || 'see below') + '</div>'
       : '<div style="background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;border-radius:10px;padding:10px 14px;font-weight:700">Handled by NovaAI — no callback needed</div>';
     const html = '<div style="font:14px/1.55 Arial,sans-serif;color:#1f2937;max-width:640px">' + banner +
       '<p style="margin:14px 0 6px;font-size:12px;font-weight:700;letter-spacing:.04em;color:#6b7280">AI SUMMARY</p>' +
@@ -202,12 +212,17 @@ module.exports = function talkHandoff(o) {
     if (!f) return { sent: false, error: 'No such call.' };
     if (f.c.csr_sent_at && !force) return { sent: false, already: f.c.csr_sent_at };
     const m = csrEmail(f);
+    // 1.19.45: asked for a person → the summary goes TO that person, the CSR list on Cc (nobody else calls the client first).
+    const person = f.staff && f.staff.email ? f.staff.email : null;
+    const to = person || s.csr_to;
+    const cc = person ? s.csr_to.split(/[,;\s]+/).filter(a => a && a.toLowerCase() !== person.toLowerCase()).join(', ') : '';
+    const toLabel = person ? person + (cc ? ' (cc ' + cc + ')' : '') : s.csr_to;
     try {
-      await deps.sendMail({ to: s.csr_to, subject: m.subject, html: m.html, text: m.text });
-      await dbRun("UPDATE talk_calls SET csr_sent_at = datetime('now'), csr_to = ? WHERE id = ?", [s.csr_to, callId]);
-      await dbRun('INSERT INTO talk_emails (call_id, kind, to_addr, bcc, subject, html, text, ok) VALUES (?,?,?,?,?,?,?,1)', [callId, 'csr', s.csr_to, null, m.subject, m.html, m.text]).catch(() => {});
-      hit('csr-summary', true, 'Call ' + callId + ' → ' + s.csr_to);
-      return { sent: true, to: s.csr_to };
+      await deps.sendMail({ to: to, cc: cc || undefined, subject: m.subject, html: m.html, text: m.text });
+      await dbRun("UPDATE talk_calls SET csr_sent_at = datetime('now'), csr_to = ? WHERE id = ?", [toLabel, callId]);
+      await dbRun('INSERT INTO talk_emails (call_id, kind, to_addr, bcc, subject, html, text, ok) VALUES (?,?,?,?,?,?,?,1)', [callId, 'csr', toLabel, null, m.subject, m.html, m.text]).catch(() => {});
+      hit('csr-summary', true, 'Call ' + callId + ' → ' + toLabel);
+      return { sent: true, to: toLabel };
     } catch (e) {
       hit('csr-summary', false, 'Call ' + callId + ': ' + e.message);
       return { sent: false, error: e.message };
@@ -258,6 +273,7 @@ module.exports = function talkHandoff(o) {
     if (!deps.sendMail) return { sent: false, error: 'Email is not available.' };
     if (f.c.source !== 'phone' && !opts.force) return { sent: false, error: 'Test call.' };
     if (f.c.staff_sent_at && !opts.force) return { sent: false, already: f.c.staff_sent_at };
+    if (!opts.force && f.c.csr_to && String(f.c.csr_to).toLowerCase().indexOf(String(f.staff.email).toLowerCase()) === 0) return { sent: false, covered: 'The call summary already went to ' + f.staff.email + '.' };
     if (opts.fallback && !f.c.ai_summary) {
       const sm = await aiSummary(f).catch(() => null);
       if (sm && sm.by !== 'rule') f.c = Object.assign({}, f.c, { ai_summary: sm.summary });

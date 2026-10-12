@@ -275,7 +275,7 @@ shows the list read-only (edit it on the website); "Extra closed days for the ph
 Clients dial the Axiom main line (747) 888-7777 on Dialpad. Missed team calls go to the missed-call number ((747) 335-2887), and after-hours calls go to the TalkAi number ((747) 350-0012). Dialpad logs all of these as missed. To stop the team calling back about calls NovaAI already handled, `talk-handoff.js` runs after the post-call transcript arrives:
 
 1. **AI summary.** Claude writes 2–4 sentences from the transcript and the call facts (prices, emails, message taken, transfer), plus whether someone should call back and why.
-2. **CSR email.** It goes to *CSR team — AI summary email* (Training → Numbers and messages), headed "no callback needed" or "CALL BACK: why". It shows on the call as *CSR team notified*.
+2. **CSR email.** It goes to *CSR team — AI summary email* (Training → Numbers and messages), headed "no callback needed" or "CALL BACK: why". It shows on the call as *CSR team notified*. **Asked for a person** (1.19.45): when the caller wanted a team member — a message taken for them, or just "I need to talk to Josie" with no message — the summary names them (`asked_for`), Nova pairs the name with the team directory, and the email goes **To that person** with the CSR list on **Cc** (subject "… — asked for Josie — CALL BACK", banner "Josie, this one is for you"). Nobody else calls the client first, and the person does not get a second "message" email.
 3. **CRM webhook.** If a URL is set and `TALKAI_WEBHOOK_SECRET` is in .env, the call is POSTed about 90 s later. See docs/TALKAI_CRM_WEBHOOK.md.
 
 On a call, the AI summary box has *Write it again*, *Send to CSR again* and *Webhook data*.

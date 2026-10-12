@@ -1916,7 +1916,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     } finally { audioBusy.delete(c.id); }
   }
   const handoff = require('./talk-handoff')({ app, deps, dbGet, dbAll, dbRun, settings, env, hit, NOVA_URL, AUDIO_DIR, callLink, htmlEsc, usd2,
-    fetchAudio, auth, adminOnly });
+    fetchAudio, auth, adminOnly, team });
   function fetchAudioSoon(callId) {
     [20, 120, 600].forEach(sec => setTimeout(() => fetchAudio(callId, 'after the call').catch(() => {}), sec * 1000).unref());
   }
