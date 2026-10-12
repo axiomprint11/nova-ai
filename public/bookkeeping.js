@@ -27,6 +27,7 @@
   // sub tabs as chips with an icon each (same look as the Inbox baskets)
   const SUB_ICON = { pending: 'clock', approved: 'check', scheduled: 'calendar', paid: 'dollar', rejected: 'x', list: 'cart', bank: 'landmark', waiting: 'clock', notreceived: 'package', vendors: 'users', equipment: 'printer', chart: 'layers', rules: 'target', materials: 'box' };
   document.querySelectorAll('.bk-sub button').forEach(b => { b.onclick = () => show(b.closest('.bk-view').dataset.v, b.dataset.s); });
+  $('puQ').onkeydown = (e) => { if (e.key === 'Enter') { const sub = lastSub.purchases; sub === 'bank' ? loadTxns() : loadPurchases(sub); } };   // 1.19.29: one search for every Purchases view
   const lastSub = {}; Object.keys(TABS).forEach(k => { try { lastSub[k] = localStorage.getItem('bk_sub_' + k) || TABS[k].first; } catch (e) { lastSub[k] = TABS[k].first; } });
   function show(v, sub) {
     Object.keys(TABS).forEach(k => { if (TABS[k].subs[v] && v !== k) { sub = v; v = k; } });
@@ -393,7 +394,7 @@
   async function loadPurchases(view) {
     const v = $(view === 'waiting' ? 'vPurchWaiting' : view === 'notreceived' ? 'vPurchNotReceived' : 'vPurchList');
     if (!ov) await overview();
-    const q = (v.querySelector('input[name=q]') || {}).value || '';
+    const q = ($('puQ') || {}).value || '';
     const j = await api('/api/bookkeeping/purchases?view=' + view + '&q=' + encodeURIComponent(q)); if (!j.ok) { v.innerHTML = '<div class="bk-card">' + esc(j.error) + '</div>'; return; }
     const rows = j.purchases || [];
     $('nWaiting').textContent = j.counts.waiting || 0; $('nNotReceived').textContent = j.counts.notreceived || 0;
@@ -407,10 +408,10 @@
         (p.expects_delivery && p.received !== 'yes' && !p.cancelled ? '<button class="bk-btn sm" data-recv="' + p.id + '" data-s="yes">Received</button><button class="bk-btn sm" data-recv="' + p.id + '" data-s="partial">Partly</button>' : '') +
         (!p.cancelled && p.status !== 'closed' ? '<button class="bk-btn sm" data-recv="' + p.id + '" data-s="cancel" title="Cancelled or refunded — stops the reminders">Cancel</button>' : p.cancelled ? '<button class="bk-btn sm" data-recv="' + p.id + '" data-s="reopen">Reopen</button>' : '') +
         (p.expects_delivery ? '<button class="bk-btn sm ico" data-flag="' + p.id + '" data-e="0" title="This is a service, nothing arrives">' + iconSvg('zap') + '</button>' : '<button class="bk-btn sm ico" data-flag="' + p.id + '" data-e="1" title="Goods — something should arrive">' + iconSvg('package') + '</button>') + '</td></tr>';
-    v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top"><span class="bk-muted" style="flex:1;min-width:0">' + intro + '</span><input name="q" placeholder="Search" value="' + esc(q) + '" style="flex:0 0 160px"></div>' +
+    const title = view === 'waiting' ? 'Waiting for the bank' : view === 'notreceived' ? 'Not received' : 'Purchases';
+    v.innerHTML = '<div class="bk-card"><h2>' + title + ' ' + qHelp('purch_' + view, title, intro) + '<span class="sp"></span><span class="bk-muted">' + rows.length + ' purchase' + (rows.length === 1 ? '' : 's') + '</span></h2>' +
       '<table class="bk pu-table"><thead><tr><th>Date</th><th>Vendor</th><th class="num">Amount</th><th>Category</th><th>Paperwork</th><th>Status</th><th></th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table>' +
       (!rows.length ? '<div class="bk-muted" style="padding:14px 0">' + (view === 'list' ? 'No purchases yet. They appear when you press Bill, Transaction or Arrival on an email, or when a bank line is categorized.' : 'Nothing here.') + '</div>' : '') + '</div>';
-    v.querySelector('input[name=q]').onkeydown = (e) => { if (e.key === 'Enter') loadPurchases(view); };
     v.querySelectorAll('[data-open]').forEach(a => a.onclick = (e) => { e.preventDefault(); purchaseView(Number(a.dataset.open), () => loadPurchases(view)); });
     v.querySelectorAll('[data-recv]').forEach(b => b.onclick = async () => {
       const st = b.dataset.s; let note = '';
@@ -492,7 +493,8 @@
   async function loadTxns() {
     const v = $('vTxns');
     if (!ov) await overview();
-    const st = txnSt, q = (v.querySelector('input[name=q]') || {}).value || '';
+    const st = txnSt, q = ($('puQ') || {}).value || '';
+    if (!$('nWaiting').textContent) api('/api/bookkeeping/purchases?view=list').then(j => { if (j.ok) { $('nWaiting').textContent = j.counts.waiting || 0; $('nNotReceived').textContent = j.counts.notreceived || 0; } });
     const cat = st === 'categorized';
     let qs = '?status=' + encodeURIComponent(st) + '&q=' + encodeURIComponent(q);
     if (cat) { const [f, t] = periodRange(TF.period); qs += '&from=' + f + '&to=' + t + ['type', 'category', 'vendor_id', 'source', 'min', 'max', 'account'].map(k => TF[k] ? '&' + k + '=' + encodeURIComponent(TF[k]) : '').join(''); }
@@ -512,7 +514,7 @@
       date: { type: 'range', kind: 'date', from: TF.period === 'custom' ? TF.from : '', to: TF.period === 'custom' ? TF.to : '', period: TF.period, defaultPeriod: '30', presets: PERIODS },
       amount: { type: 'range', kind: 'number', from: TF.min, to: TF.max }
     } : null;
-    v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top">' + chip('', 'All') + chip('pending', 'Pending', bs.pending || 0) + chip('new', 'New', bs.new || 0) + chip('categorized', 'Categorized') + '<span class="sp"></span><input name="q" placeholder="Search name, vendor or category" value="' + esc(q) + '"><button class="bk-btn ico" id="syncNow" title="Sync with Bank" aria-label="Sync with Bank">' + syncIcon + '</button></div>' + fbar + chart +
+    v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top">' + chip('', 'All') + chip('pending', 'Pending', bs.pending || 0) + chip('new', 'New', bs.new || 0) + chip('categorized', 'Categorized') + '<span class="sp"></span><button class="bk-btn ico" id="syncNow" title="Sync with Bank" aria-label="Sync with Bank">' + syncIcon + '</button></div>' + fbar + chart +
       '<table class="bk tx-table"><thead><tr><th>' + (cat ? thFilter('date', 'Date', FO.date) : 'Date') + '</th><th>Description' + (cat ? ' · ' + thFilter('vendor', 'Vendor', FO.vendor, TF.vendor_id) : '') + '</th><th>' + (cat ? thFilter('account', 'Account', FO.account, TF.account) : 'Account') + '</th><th class="num">' + (cat ? thFilter('amount', 'Amount', FO.amount) : 'Amount') + '</th><th>' + (cat ? thFilter('type', 'Category', FO.type, TF.type ? 'T:' + TF.type : TF.category ? 'C:' + TF.category : '') + ' · ' + thFilter('source', 'Set by', FO.source, TF.source) : 'Category <span class="bk-dim" style="font-weight:500">pick to set</span>') + '</th></tr></thead><tbody>' +
       (j.transactions || []).map(t => '<tr><td>' + esc(t.date) + (t.pending ? ' <span class="bk-tag">pending</span>' : '') + '</td><td>' + esc(t.merchant || t.name) + (t.merchant && t.merchant !== t.name ? '<div class="bk-muted">' + esc(t.name) + '</div>' : '') +
         (t.vendor_name ? '<div><span class="bk-src ' + esc(t.vendor_source || '') + '">' + (t.vendor_source === 'suppliers' ? 'supplier' : t.vendor_source === 'vendors' ? 'vendor' : 'from a bill') + '</span> ' + esc(t.vendor_name) + ' <a href="#" class="bk-muted" data-setv="' + t.id + '" title="Link to another supplier / vendor">change</a></div>' : '<div><a href="#" class="bk-muted" data-setv="' + t.id + '">link to a supplier / vendor</a></div>') +
@@ -521,7 +523,6 @@
         '<td data-txid="' + t.id + '"><div class="bk-row" style="gap:8px;flex-wrap:nowrap">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : 'Choose…') + (t.category ? '<span class="bk-tag ' + esc(t.category_source || '') + '" title="How it was set">' + esc(t.category_source || '') + '</span>' : '<span class="bk-tag ' + esc(t.status) + '">' + esc(t.status) + '</span>') + '</div></td></tr>').join('') + '</tbody></table>' +
       (!(j.transactions || []).length ? '<div class="bk-muted" style="padding:14px 0">No transactions yet — connect a bank under Connections, then Sync.</div>' : '') + '</div>';
     v.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { txnSt = b.dataset.st; loadTxns(); });
-    v.querySelector('input[name=q]').onkeydown = (e) => { if (e.key === 'Enter') loadTxns(); };
     const saveTF = () => { try { localStorage.setItem('bk_txn_filters', JSON.stringify(TF)); } catch (e) {} loadTxns(); };
     v.querySelectorAll('[data-period]').forEach(b => b.onclick = () => { TF.period = b.dataset.period; saveTF(); });
     if ($('tfFrom')) { $('tfFrom').onchange = () => { TF.from = $('tfFrom').value; saveTF(); }; $('tfTo').onchange = () => { TF.to = $('tfTo').value; saveTF(); }; }
@@ -725,10 +726,11 @@
       '<span class="ib-l2"><b>' + esc(m.subject || '(no subject)') + '</b></span><span class="ib-l3"><span class="ib-snip">' + esc(m.snippet || '') + '</span><span class="ib-att"><span class="ib-clip">' + (m.attachments.length ? clip + ' ' + m.attachments.length : '') + '</span>' + kindTag(m) + '</span></span></span>' +
       '<span class="ib-line">' + avatar(m) + '<span class="ib-from" title="' + esc(fromAddr(m.from_addr)) + '">' + esc(fromName(m.from_addr)) + '</span><span class="ib-text"><b>' + esc(m.subject || '(no subject)') + '</b><span class="ib-snip"> — ' + esc(m.snippet || '') + '</span></span><span class="ib-att"><span class="ib-clip">' + (m.attachments.length ? clip + ' ' + m.attachments.length : '') + '</span>' + kindTag(m) + '</span><span class="ib-time">' + esc(day(m.received_at)) + '</span></span>' +
       '</div>'; };
-    v.innerHTML = '<div class="bk-card">' +
+    const ibQv = ($('ibQ') || {}).value || '';
+    v.innerHTML = '<div class="bk-sub ib-sub"><span class="ib-chips">' + BASKETS.filter(([k]) => MAIN.indexOf(k) > -1).map(([k, l, ic]) => '<button class="ib-chip k-' + k + (ibFilter === k ? ' on' : '') + '" data-f="' + k + '">' + iconSvg(ic) + l + '<b>' + (bc[k] || 0) + '</b></button>').join('') +
+        '</span><span class="sp"></span><input id="ibQ" class="bk sub-q" placeholder="Search" autocomplete="off" value="' + esc(ibQv) + '"></div>' +
+      '<div class="bk-card">' +
       '<div class="ib-progress" id="ibProg" style="display:none"><span class="ib-spin"></span><span id="ibProgText"></span></div>' +
-      '<div class="ib-bar ib-top"><span class="ib-chips">' + BASKETS.filter(([k]) => MAIN.indexOf(k) > -1).map(([k, l, ic]) => '<button class="ib-chip k-' + k + (ibFilter === k ? ' on' : '') + '" data-f="' + k + '">' + iconSvg(ic) + l + '<b>' + (bc[k] || 0) + '</b></button>').join('') +
-        '</span><input id="ibQ" placeholder="Search"></div>' +
       // one action bar per basket: review, then one click for the whole basket
       '<div class="ib-bar ib-acts" id="ibActs">' +
         '<span class="ib-selbar" id="ibSelBar" style="display:none"><b id="ibSelN"></b> selected <button class="bk-btn sm p" data-selread>Mark as read</button><button class="bk-btn sm" data-selmove>Move to <span class="thf-c"></span></button><button class="bk-btn sm" data-selclear>Clear</button></span>' +

@@ -1916,7 +1916,7 @@ module.exports = function mountBookkeeping(app, deps) {
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // Purchases views + actions.
-  app.get('/api/bookkeeping/purchases', ...guard, async (req, res) => { try { const view = String(req.query.view || 'all'); const rows = await purchaseRows(view, String(req.query.q || '').trim()); res.json({ ok: true, purchases: rows, counts: { waiting: rows.filter(r => r.status === 'awaiting bank').length, notreceived: rows.filter(r => r.status === 'not received' || r.status === 'partly received').length } }); } catch (e) { res.json({ ok: false, error: e.message }); } });
+  app.get('/api/bookkeeping/purchases', ...guard, async (req, res) => { try { const view = String(req.query.view || 'all'); const q = String(req.query.q || '').trim(); const rows = await purchaseRows(view, q); const all = view === 'list' && !q ? rows : await purchaseRows('list', ''); res.json({ ok: true, purchases: rows, counts: { waiting: all.filter(r => r.status === 'awaiting bank').length, notreceived: all.filter(r => r.status === 'not received' || r.status === 'partly received').length } }); } catch (e) { res.json({ ok: false, error: e.message }); } });
   // One purchase in full, its items, and edits to them.
   app.get('/api/bookkeeping/purchases/:id', ...guard, async (req, res) => { const d = await purchaseDetail(parseInt(req.params.id)); if (!d) return res.json({ ok: false, error: 'No such purchase' }); res.json({ ok: true, purchase: d }); });
   app.post('/api/bookkeeping/purchases/:id/items', ...guard, async (req, res) => {   // the whole list, as shown: rows with an id are updated, without one inserted, missing ones removed
