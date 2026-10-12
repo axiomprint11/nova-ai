@@ -346,8 +346,10 @@ Search boxes everywhere are regular weight and right-aligned on their row.
 
 ## Bills tab and vendor pairing
 ### The bill card (1.19.11)
-No subtitle on Pending. Dates in US format (10-10-2026). The AI's note is prefixed **AI Summary:**; an open question
-is a small **AI question** button (popup, "answer it in the Daily Brief") instead of a banner. Lines: description ·
+No subtitle and no "Scan the inbox now" on Pending (scanning lives in the Inbox); no "Open the file" (the attachments
+are on the email row). Dates in US format (10-10-2026). The AI's note is one clamped **AI Summary:** line with a chevron
+that expands it (1.19.12); an open question is a small **AI question** button at the right of that line (popup,
+"answer it in the Daily Brief"). Lines: description ·
 **Category** (a picker — changing it saves the line, and the purchase item that came from this bill follows) ·
 **Link…** (a material from the catalog via the materials picker, or a job by estimate number E1234567;
 `line.material_id / material_name / estimate_no`) · amount. `POST /api/bookkeeping/bills/:id/lines` saves the whole
