@@ -408,7 +408,7 @@
     const vlogo = (c) => c && c.photo ? '<img class="bk-logo bk-vl" src="' + esc(c.photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;bk-logo bk-vl ph&quot;>' + esc(String(c.name || '?').charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo bk-vl ph' + (c ? '' : ' none') + '">' + esc(c ? String(c.name).charAt(0).toUpperCase() : '?') + '</span>';
     const kindTag = (k) => k ? '<span class="bk-src ' + esc(k) + '">' + esc(k === 'bill' ? 'from a bill' : k) + '</span>' : '';
     const vendorCell = (p) => { const c = p.vendor_card, linked = c && c.kind !== 'bill', sg = p.suggestions || [];
-      const act = '<a href="#" class="bl-vact" data-pvlink="' + p.id + '">' + (linked ? 'change' : (sg.length ? 'pick another' : 'link to a vendor')) + '</a>';
+      const act = '<a href="#" class="bl-vact" data-pvlink="' + p.id + '">' + (linked ? 'change' : (sg.length ? 'pick another' : 'Link')) + '</a>';
       return '<div class="bl-vendor pu-vendor">' + vlogo(linked ? c : null) + '<div class="bl-vname"><a href="#" class="pu-vn" data-open="' + p.id + '">' + esc(p.vendor || '?') + '</a> ' + act +
         (linked ? '<div class="bk-dim">' + kindTag(c.kind) + (c.name !== p.vendor ? ' ' + esc(c.name) : '') + (c.specialty ? ' · ' + esc(c.specialty) : '') + '</div>'
           : '<div class="bl-unlinked">Not in the CRM directory' + (sg.length ? ' — is it ' + sg.map(x => '<a href="#" class="bl-sug" data-pvpair="' + p.id + '" data-vid="' + x.id + '" title="' + Math.round(x.score * 100) + '% match">' + esc(x.name) + '</a>').join(' or ') + '?' : '') + '</div>') +
@@ -648,7 +648,7 @@
     const kindTag = (k) => k ? '<span class="bk-src ' + esc(k) + '">' + esc(k === 'bill' ? 'from a bill' : k) + '</span>' : '';
     const vendorBlock = (b) => {
       const c = b.vendor_card, linked = c && c.kind !== 'bill';
-      const act = '<a href="#" class="bl-vact" data-link="' + b.id + '">' + (linked ? 'change' : (b.suggestions.length ? 'pick another' : 'link to a vendor')) + '</a>';
+      const act = '<a href="#" class="bl-vact" data-link="' + b.id + '">' + (linked ? 'change' : (b.suggestions.length ? 'pick another' : 'Link')) + '</a>';
       return '<div class="bl-vendor">' + vlogo(linked ? c : null) + '<div class="bl-vname"><b>' + esc(b.vendor) + '</b> ' + act +
         (linked ? '<div class="bk-dim">' + kindTag(c.kind) + (c.name !== b.vendor ? ' ' + esc(c.name) : '') + (c.specialty ? ' · ' + esc(c.specialty) : '') + '</div>'
           : '<div class="bl-unlinked">Not in the CRM directory' + (b.suggestions.length ? ' — is it ' + b.suggestions.map(sg => '<a href="#" class="bl-sug" data-pair="' + b.id + '" data-vid="' + sg.id + '" title="' + Math.round(sg.score * 100) + '% match">' + esc(sg.name) + '</a>').join(' or ') + '?' : '') + '</div>') + '</div></div>';
