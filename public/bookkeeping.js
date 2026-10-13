@@ -4,6 +4,7 @@
   if (!token) { location.href = '/'; return; }
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : String(d || ''); };   // 2026-10-08 → 10-08-2026 (shared since 1.19.89)
   const usd = (n) => (Number(n) < 0 ? '-' : '') + '$' + Math.abs(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const when = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$/.test(ts) ? '' : 'Z')); return isNaN(d) ? ts : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
   async function api(path, opts) {
@@ -450,7 +451,6 @@
       : view === 'notreceived' ? 'Goods bought (by category) with no arrival attached. Mark them received when they come, partly received with a note, or cancelled. After ' + esc(S.notreceived_days) + ' days they are emailed to ' + esc(S.alert_to) + '.'
       : 'Everything we bought, one row per purchase, with its four slots: bill · bank line · confirmation · delivery. Hover a slot for what is in it; click the vendor for the emails and items behind it.';
     // 1.19.30: US date with the time it was first seen under it; the vendor as the bill card shows it (logo, tag, change / link to a vendor)
-    const usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : String(d || ''); };
     const tm = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(ts) ? '' : 'Z')); return isNaN(d) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }); };
     const vlogo = (c) => c && c.photo ? '<img class="bk-logo bk-vl" src="' + esc(c.photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;bk-logo bk-vl ph&quot;>' + esc(String(c.name || '?').charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo bk-vl ph' + (c ? '' : ' none') + '">' + esc(c ? String(c.name).charAt(0).toUpperCase() : '?') + '</span>';
     const kindTag = (k) => k ? '<span class="bk-src ' + esc(k) + '">' + esc(k === 'bill' ? 'from a bill' : k) + '</span>' : '';
@@ -596,19 +596,20 @@
     const aiIcon = '<svg class="tx-ai-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>';
     // 1.19.47: one row = date (+ when it was synced) · vendor (logo, name, Link / Change, the machine's near match with its
     // score) · description · account ("Wells Fargo - 6595" with the bank's logo) · amount · category.
-    const usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : String(d || ''); };
     // 1.19.55: the Date column is two lines — "Oct 12, 2026" over "5:17pm"
     const laD2 = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(ts) ? '' : 'Z')); if (isNaN(d)) return ''; const o = { timeZone: 'America/Los_Angeles' }; return esc(d.toLocaleDateString([], Object.assign({ month: 'short', day: 'numeric', year: 'numeric' }, o))) + '<div class="bk-dim">' + esc(d.toLocaleTimeString([], Object.assign({ hour: 'numeric', minute: '2-digit' }, o)).replace(' ', '').toLowerCase()) + '</div>'; };
     const SVG = (d) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
     const REFI = SVG('<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-5"/>');
     const RULEI = SVG('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1"/>');   // 1.19.77: the Rules tab's target
     const MAILI = SVG('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>');
+    const CHECKI = SVG('<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h6M6 14h4M15 13h3"/>');
     const isIncome = (name) => { const CH = (ov && ov.chart) || []; const c = CH.find(x => x.name === name); const top = c && c.parent ? CH.find(x => x.name === (parentOf(c.parent) || c.parent)) : c; return !!(top && top.income); };   // `chart` is the stats html here
     const PLUSV = SVG('<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>');
     const PEN = SVG('<path d="M4 20h4l10-10-4-4L4 16z"/><path d="M12.5 7.5l4 4"/>'), LINKI = SVG('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5"/>');
     // how it was paid (Plaid's payment_channel / check_number)
     const CHAN = { store: ['Store', SVG('<path d="M3 9l1.5-5h15L21 9"/><path d="M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/><path d="M5 12v9h14v-9"/><path d="M10 21v-6h4v6"/>')], online: ['Online', SVG('<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>')], check: ['Check', SVG('<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h6M7 14h3"/><path d="M15 14l1.5 1.5L19 12"/>')], other: ['Other', SVG('<path d="M4 12h16"/><path d="M14 6l6 6-6 6"/>')] };
-    const chanLine = (t) => { const c = CHAN[t.channel]; if (!c || t.channel === 'other') return ''; return '<span class="tx-chan" title="' + esc(c[0] + (t.check_no ? ' #' + t.check_no : '')) + '">' + c[1] + (t.check_no ? '<span>#' + esc(t.check_no) + '</span>' : '') + '</span>'; };
+    const chanLine = (t) => { const c = CHAN[t.channel]; if (!c || t.channel === 'other') return ''; return '<span class="tx-chan" title="' + esc(c[0] + (t.check_no ? ' #' + t.check_no : '')) + '">' + c[1] + '</span>'; };   // 1.19.89: the check number moved under the date
+    const checkLine = (t) => t.check_no ? '<div><a href="#" class="tx-check' + (t.has_check_image ? ' has' : '') + '" data-check="' + t.id + '" title="' + (t.has_check_image ? 'See the check' : 'Check #' + esc(t.check_no) + ' — attach a photo of it') + '">' + CHECKI + ' #' + esc(t.check_no) + '</a></div>' : '';
     const txWhen = (t) => { if (t.tx_time) { const d = new Date(t.tx_time); if (!isNaN(d)) return d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }).replace(/, (\d)/, ', $1').replace(' AM', 'am').replace(' PM', 'pm'); } const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(t.tx_date || t.date || '')); return m ? new Date(m[1], m[2] - 1, m[3]).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''; };
     const prettyCat = (t) => { const w = (x) => String(x || '').toLowerCase().split('_').filter(Boolean); const p = w(t.plaid_primary), d = w(t.plaid_category); if (!d.length) return ''; let rest = d; if (p.length && d.slice(0, p.length).join(' ') === p.join(' ')) rest = d.slice(p.length); const cap = (a) => a.length ? a.join(' ').replace(/^./, c => c.toUpperCase()) : ''; return cap(p) + (rest.length && rest.join(' ') !== p.join(' ') && cap(rest) !== 'Other' + (p.length ? ' ' + p.join(' ') : '') ? (p.length ? ' · ' : '') + cap(rest) : ''); };
     const CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
@@ -629,7 +630,7 @@
     const statsBar = txStats ? '<div class="bk-filters tx-stats-bar"><span class="bk-muted">Period</span>' + PERIODS.map(pp => '<button class="ib-chip sm' + (TF.period === pp.v && !TF.from ? ' on' : '') + '" data-period="' + pp.v + '">' + esc(pp.l) + '</button>').join('') + '<span class="sp"></span><button class="bk-btn sm" id="tfMore" title="Vendor, account, amount and category filters">' + (anyF && TF.period === '30' ? 'Filtered' : 'Filter…') + '</button></div>' : '';
     v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top"><span class="bk-muted">' + (j.matched != null ? j.matched : (j.transactions || []).length) + ' ' + (st ? (STL[st] || '').toLowerCase() + ' ' : '') + 'line' + (j.matched === 1 ? '' : 's') + (TF.period === '30' && !TF.from ? ' in the last 30 days' : '') + ((j.transactions || []).length < (j.matched || 0) ? ' · showing the first ' + j.transactions.length : '') + '</span><span class="sp"></span>' + (anyF ? '<button class="bk-btn sm" id="tfClear" title="Remove every column filter">× Clear filters</button>' : '') + '<button class="bk-btn ico" id="syncNow" title="Sync with Bank" aria-label="Sync with Bank">' + syncIcon + '</button></div>' + fbar + statsBar + chart +
       (txStats ? '' : '<table class="bk tx-table"><thead><tr><th class="tx-date">' + thFilter('date', 'Date', FO.date) + '</th><th class="tx-vth">' + thFilter('vkind', 'Vendor', FO.vkind, TF.vkind) + thFilter('vendor', 'Company', FO.vendor, TF.vendor_id) + '</th><th>Description</th><th>' + thFilter('account', 'Account', FO.account, TF.account) + '</th><th class="num">' + thFilter('amount', 'Amount', FO.amount) + '</th><th>' + thFilter('type', 'Category', FO.type, TF.type ? 'T:' + TF.type : TF.category ? 'C:' + TF.category : '') + '</th><th>Status</th></tr></thead><tbody>' +
-      (j.transactions || []).map(t => '<tr><td class="tx-date" title="Synced from the bank · bank date ' + esc(usD(t.date)) + (t.pending ? ' (still pending at the bank)' : '') + '">' + laD2(t.created_at) + '</td>' +
+      (j.transactions || []).map(t => '<tr><td class="tx-date" title="Synced from the bank · bank date ' + esc(usD(t.date)) + (t.pending ? ' (still pending at the bank)' : '') + '">' + laD2(t.created_at) + checkLine(t) + '</td>' +
         '<td>' + vendorCell(t) + '</td><td class="tx-desc-td" title="' + esc([prettyCat(t) ? 'Bank category: ' + prettyCat(t) : '', t.place].filter(Boolean).join(' · ')) + '">' + esc(t.merchant || t.name) + ((t.orig_desc || t.name) !== (t.merchant || t.name) ? '<div class="bk-muted tx-orig">' + esc(t.orig_desc || t.name) + '</div>' : '') + '</td><td>' + bankCell(t) + '</td>' +
         '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '"><div class="tx-amt">' + usd(-t.amount) + chanLine(t) + '</div><div class="tx-when bk-dim" title="When the transaction happened' + (t.pending ? ' (still pending at the bank)' : '') + '">' + esc(txWhen(t)) + '</div></td>' +
         '<td data-txid="' + t.id + '">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : (t.amount < 0 ? 'Income…' : 'Choose…'), { only: t.amount < 0 ? 'income' : 'expense' }) +
@@ -667,6 +668,8 @@
         if (r.ok && who) { const ok = await ask('Always file ' + who + ' as ' + inp.value + '? A rule categorizes every future line from ' + who + ' on its own (and any pending ones now). You can edit or remove it under Accounts → Rules.', { title: 'Make it a rule?', ok: 'Yes, create the rule', cancel: 'Not now' }); if (ok) { const rr = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/rule', {}); if (!rr.ok) alert(rr.error || 'Could not create the rule.'); } }
         setTimeout(() => { tr.classList.remove('saved', 'failed'); loadTxns(); overview(); }, 700); }); });
     v.querySelectorAll('[data-ref]').forEach(a => a.onclick = (e) => { e.preventDefault(); refundPicker(a, Number(a.dataset.ref), (j.transactions || []).find(x => x.id === Number(a.dataset.ref))); });
+    // 1.19.89: the check number opens the check's photo, or a box to attach one (paste, drop or upload)
+    v.querySelectorAll('[data-check]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = (j.transactions || []).find(x => x.id === Number(a.dataset.check)); if (t) checkPop(t); });
     // 1.19.79: Notify Accounts Receivable about a customer payment
     v.querySelectorAll('[data-ar]').forEach(a => a.onclick = async (e) => {
       e.preventDefault(); const t = (j.transactions || []).find(x => x.id === Number(a.dataset.ar)); if (!t) return;
@@ -1207,7 +1210,6 @@
     const cands = j.candidates || [];
     const pop = document.createElement('div'); pop.className = 'ckp-pop single';
     pop.addEventListener('click', (e) => e.stopPropagation());
-    const usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : String(d || ''); };
     pop.innerHTML = '<div class="ckp-gh" style="padding:10px 12px 4px">Which charge does this ' + usd(-t.amount) + ' give back?</div><div class="ckp-list">' +
       (cands.length ? cands.map(c => '<div class="ckp-i vp" data-c="' + c.id + '"><span class="rf-amt' + (Math.abs(Math.abs(c.amount) - Math.abs(t.amount)) < 0.005 ? ' same' : '') + '">' + usd(-c.amount) + '</span><span class="rf-txt"><b>' + esc(c.merchant || c.name) + '</b><small>' + esc(usD(c.date)) + (c.category ? ' · ' + esc(c.category) : '') + (c.vendor_name && c.vendor_name !== (c.merchant || c.name) ? ' · ' + esc(c.vendor_name) : '') + '</small></span>' + (c.score >= 3 ? '<span class="bk-tag approved">same amount + merchant</span>' : c.score === 2 ? '<span class="bk-tag">same amount</span>' : '') + '</div>').join('')
         : '<div class="bk-muted" style="padding:10px 12px">No charge with this amount or merchant in the last 120 days.</div>') +
@@ -1220,6 +1222,39 @@
     const away = (e) => { if (!pop.contains(e.target)) close(); }, esc1 = (e) => { if (e.key === 'Escape') close(); };
     setTimeout(() => { document.addEventListener('click', away); document.addEventListener('keydown', esc1); }, 0);
     pop.querySelectorAll('[data-c]').forEach(el => el.onclick = async () => { const rr = await post('/api/bookkeeping/transactions/' + id + '/refund', { of: Number(el.dataset.c) }); close(); if (!rr.ok) alert(rr.error); loadTxns(); overview(); });
+  }
+  // 1.19.89: a check's photo. The bank feed never carries check images (Plaid does not deliver them), so the picture is one a
+  // person attaches — pasted (Ctrl+V), dropped or uploaded — shrunk to 1400px JPEG in the browser and kept on the line.
+  function checkPop(t) {
+    const el = document.createElement('div'); el.className = 'bk-modal';
+    const url = '/api/bookkeeping/transactions/' + t.id + '/check-image';
+    const draw = (has) => {
+      el.innerHTML = '<div class="bk-modal-box" style="width:min(820px,100%)"><div class="bk-modal-title">Check #' + esc(t.check_no) + ' <span class="bk-muted" style="font-weight:400">· ' + usd(-t.amount) + ' · ' + esc(usD(t.date)) + (t.merchant || t.name ? ' · ' + esc(t.merchant || t.name) : '') + '</span></div>' +
+        (has ? '<div class="ck-img"><img alt="Check #' + esc(t.check_no) + '"></div><div class="bk-row" style="margin-top:10px"><button class="bk-btn sm" id="ckReplace">Replace</button><button class="bk-btn sm bad" id="ckRemove">Remove</button><span class="sp"></span><button class="bk-btn bk-x">Close</button></div>'
+          : '<div class="ck-drop" id="ckDrop" tabindex="0"><div><b>No picture of this check yet.</b></div><div class="bk-muted">Your bank\'s feed does not carry check images. Open the check in online banking, copy the image, then <b>paste it here (Ctrl+V)</b> — or drop / upload a photo.</div><div style="margin-top:10px"><button class="bk-btn sm" id="ckUpload">Upload a picture</button></div></div><input type="file" id="ckFile" accept="image/*" hidden><div class="bk-row" style="margin-top:10px"><span class="bk-muted" id="ckMsg"></span><span class="sp"></span><button class="bk-btn bk-x">Close</button></div>') + '</div>';
+      // the picture needs the bearer, which an <img src> cannot send — fetch it and show a blob URL
+      const im = el.querySelector('.ck-img img'); if (im) fetch(url, { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.ok ? r.blob() : null).then(bl => { if (bl) im.src = URL.createObjectURL(bl); });
+      const take = (f) => {
+        if (!f || !/^image\//.test(f.type)) return;
+        const img = new Image(); img.onload = async () => {
+          const W = Math.min(1400, img.width), H = Math.round(img.height * W / img.width), c = document.createElement('canvas'); c.width = W; c.height = H;
+          c.getContext('2d').drawImage(img, 0, 0, W, H); URL.revokeObjectURL(img.src);
+          const r = await post(url, { image: c.toDataURL('image/jpeg', 0.85) });
+          if (!r.ok) { const m = el.querySelector('#ckMsg'); if (m) m.textContent = r.error || 'Could not save.'; return; }
+          t.has_check_image = 1; draw(true); loadTxns();
+        };
+        img.src = URL.createObjectURL(f);
+      };
+      el.onpaste = (ev) => { const it = Array.from((ev.clipboardData || {}).items || []).find(x => /^image\//.test(x.type)); if (it) { ev.preventDefault(); take(it.getAsFile()); } };
+      const drop = el.querySelector('#ckDrop');
+      if (drop) { drop.focus(); drop.ondragover = (ev) => { ev.preventDefault(); drop.classList.add('over'); }; drop.ondragleave = () => drop.classList.remove('over'); drop.ondrop = (ev) => { ev.preventDefault(); drop.classList.remove('over'); take(ev.dataTransfer.files && ev.dataTransfer.files[0]); };
+        el.querySelector('#ckUpload').onclick = () => el.querySelector('#ckFile').click(); el.querySelector('#ckFile').onchange = () => take(el.querySelector('#ckFile').files[0]); }
+      const rep = el.querySelector('#ckReplace'); if (rep) rep.onclick = () => { t.has_check_image = 0; draw(false); };
+      const rm = el.querySelector('#ckRemove'); if (rm) rm.onclick = async () => { if (!(await ask('Remove the picture of check #' + t.check_no + '?', { ok: 'Remove', danger: true }))) return; await post(url, { image: null }); t.has_check_image = 0; draw(false); loadTxns(); };
+    };
+    draw(!!t.has_check_image);
+    el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) el.remove(); };
+    document.body.appendChild(el);
   }
   async function vendorPicker(anchor, bill, onPick, opts) {
     opts = opts || {}; const asFilter = !!opts.filter;   // 1.19.67: the same picker is the Bank feed's Company header filter
@@ -1603,7 +1638,6 @@
     const web = (x) => (x.bank && x.bank.website) || (() => { let d = {}; try { d = JSON.parse(x.details || '{}') || {}; } catch (e) {} return d.website || ''; })();
     const prettyPC = (c) => { const w = String(c || '').toLowerCase().split('_').filter(Boolean); return w.length ? w.join(' ').replace(/^./, ch => ch.toUpperCase()) : ''; };
     const CHW = { 'in store': 'Store', online: 'Online', other: 'Other' };
-    const usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : ''; };
     const bankCell = (x) => { const b = x.bank || {}; if (!b.txns) return '<span class="bk-dim">nothing linked yet</span>';
       return (b.place ? '<div>' + esc(b.place) + '</div>' : '') + (b.category ? '<div class="bk-muted">' + esc(prettyPC(b.category)) + '</div>' : '') +
         (b.channels.length ? '<div class="bk-dim">' + b.channels.map(c => esc(CHW[c.channel] || c.channel) + ' ' + c.n).join(' · ') + '</div>' : '') +

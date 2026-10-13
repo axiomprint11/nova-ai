@@ -54,6 +54,7 @@ module.exports = function mountBookkeeping(app, deps) {
     db.run('ALTER TABLE bk_transactions ADD COLUMN refund_of INTEGER', () => {});       // 1.19.60: a money-in line that gives back this charge (id)
     db.run('ALTER TABLE bk_transactions ADD COLUMN ar_notified_at TEXT', () => {});     // 1.19.79: Accounts Receivable told about this customer payment
     db.run('ALTER TABLE bk_transactions ADD COLUMN ar_notified_by TEXT', () => {});
+    db.run('ALTER TABLE bk_transactions ADD COLUMN check_image TEXT', () => {});        // 1.19.89: a photo of the check, attached by a person (data URL)
     ['vendor_by TEXT', 'vendor_score REAL', 'suggest_vendor_id INTEGER', 'suggest_score REAL'].forEach(c => db.run('ALTER TABLE bk_transactions ADD COLUMN ' + c, () => {}));   // 1.19.47: who linked the vendor (auto ≥ 95% / person) and the best near match
     db.run(`CREATE TABLE IF NOT EXISTS bk_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, txn_id TEXT UNIQUE, item_id TEXT, account_ref TEXT,
       account_name TEXT, date TEXT, name TEXT, merchant TEXT, amount REAL, pending INTEGER DEFAULT 0, plaid_category TEXT,
@@ -1772,7 +1773,7 @@ module.exports = function mountBookkeeping(app, deps) {
     by_status.pending = (by_status.new_status || 0) + (by_status.pending || 0) - by_status.new;   // the open lines older than a day
     const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id LEFT JOIN bk_proposals pr ON pr.id = t.proposal_id LEFT JOIN bk_transactions ro ON ro.id = t.refund_of LEFT JOIN bk_transactions rb ON rb.refund_of = t.id WHERE ' + where.join(' AND ');
     const rows = await dbAll('SELECT t.id, t.txn_id, t.account_name, t.account_ref, t.date, t.created_at, t.name, t.raw, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, ' +
-      't.refund_of, t.ar_notified_at, t.ar_notified_by, ro.date AS refund_of_date, ro.amount AS refund_of_amount, ro.merchant AS refund_of_merchant, ro.name AS refund_of_name, ro.category AS refund_of_category, rb.id AS refunded_by, rb.date AS refunded_by_date, rb.amount AS refunded_by_amount, ' +
+      't.refund_of, t.ar_notified_at, t.ar_notified_by, (t.check_image IS NOT NULL) AS has_check_image, ro.date AS refund_of_date, ro.amount AS refund_of_amount, ro.merchant AS refund_of_merchant, ro.name AS refund_of_name, ro.category AS refund_of_category, rb.id AS refunded_by, rb.date AS refunded_by_date, rb.amount AS refunded_by_amount, ' +
       'v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo, ba.institution, ba.logo AS bank_logo, ba.color AS bank_color, ba.accounts AS bank_accounts, pr.payload AS ai_payload, pr.confidence AS ai_conf, pr.reason AS ai_reason, pr.status AS ai_status' + W + ' ORDER BY t.date DESC, t.id DESC LIMIT 500', p);
     // the account's last digits ("Wells Fargo - 6595") and the near-match vendor for rows that never got one
     const VSEL = 'SELECT t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id WHERE t.id = ?';
@@ -1952,6 +1953,22 @@ module.exports = function mountBookkeeping(app, deps) {
     await dbRun('UPDATE bk_transactions SET ar_notified_at = ?, ar_notified_by = ? WHERE id = ?', [nowIso(), who, id]);
     await audit(who, 'ar.notify', id, { to: s.ar_to, cc: s.ar_cc, amount, note });
     res.json({ ok: true, to: s.ar_to, cc: s.ar_cc });
+  });
+  // 1.19.89: a photo of a check. Plaid never delivers check images, so a person pastes / uploads one (the browser shrinks it to
+  // 1400px JPEG); GET streams it, POST {image} stores it, POST {image:null} removes it.
+  app.get('/api/bookkeeping/transactions/:id/check-image', ...guard, async (req, res) => {
+    const t = await dbGet('SELECT check_image FROM bk_transactions WHERE id = ?', [parseInt(req.params.id)]);
+    const m = t && t.check_image && /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(t.check_image);
+    if (!m) return res.status(404).json({ ok: false, error: 'No check image' });
+    res.set('Content-Type', m[1]); res.set('Cache-Control', 'private, max-age=300'); res.send(Buffer.from(m[2], 'base64'));
+  });
+  app.post('/api/bookkeeping/transactions/:id/check-image', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), img = req.body.image;
+    if (img === null || img === '') { await dbRun('UPDATE bk_transactions SET check_image = NULL WHERE id = ?', [id]); await audit(userId(req), 'txn.check_image', id, { removed: true }); return res.json({ ok: true }); }
+    if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(String(img || '')) || String(img).length > 1500000) return res.json({ ok: false, error: 'Send a PNG / JPEG picture under 1 MB.' });
+    await dbRun('UPDATE bk_transactions SET check_image = ? WHERE id = ?', [img, id]);
+    await audit(userId(req), 'txn.check_image', id, { bytes: img.length });
+    res.json({ ok: true });
   });
   app.get('/api/bookkeeping/bills', ...guard, async (req, res) => {
     const rows = await dbAll('SELECT b.*, e.from_addr, e.subject, e.received_at, p.status AS proposal_status, p.confidence AS proposal_confidence, p.reason AS proposal_reason, p.decision AS rejected_note, p.decided_by AS rejected_by, p.decided_at AS rejected_at FROM bk_bills b LEFT JOIN bk_emails e ON e.id = b.email_id LEFT JOIN bk_proposals p ON p.id = b.proposal_id ORDER BY b.id DESC LIMIT 200');
