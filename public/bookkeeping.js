@@ -30,7 +30,11 @@
   const SUB_ICON = { nova: 'sparkles', all: 'landmark', new: 'sparkles', categorized: 'check', stats: 'trendup', pending: 'clock', old: 'calendar', approved: 'check', scheduled: 'calendar', paid: 'dollar', rejected: 'x', list: 'cart', bank: 'landmark', waiting: 'clock', notreceived: 'package', vendors: 'users', equipment: 'printer', chart: 'layers', rules: 'target', materials: 'box' };
   document.querySelectorAll('.bk-sub button').forEach(b => { b.onclick = () => show(b.closest('.bk-view').dataset.v, b.dataset.s); });
   $('puQ').onkeydown = (e) => { if (e.key === 'Enter') loadPurchases(lastSub.purchases); };   // 1.19.29: one search for every Purchases view
-  $('txQ').onkeydown = (e) => { if (e.key === 'Enter') loadTxns(); };
+  $('txQ').onkeydown = (e) => { if (e.key === 'Enter') loadTxns(); if (e.key === 'Escape') { $('txQ').value = ''; loadTxns(); } };
+  // 1.19.128: emptying the box (Backspace, the field's ×) goes back to the full list on its own; typing searches after a pause
+  let txQT = null, txQLast = '';
+  $('txQ').oninput = () => { const v = $('txQ').value.trim(); clearTimeout(txQT); if (!v && txQLast) { txQLast = ''; loadTxns(); return; } txQT = setTimeout(() => { if (v !== txQLast) { txQLast = v; loadTxns(); } }, 450); };
+  $('txQ').onsearch = () => { if (!$('txQ').value) loadTxns(); };
   const lastSub = {}; Object.keys(TABS).forEach(k => { try { lastSub[k] = localStorage.getItem('bk_sub_' + k) || TABS[k].first; } catch (e) { lastSub[k] = TABS[k].first; } });
   lastSub.bills = 'pending'; lastSub.bank = 'pending';   // 1.19.53: Bills and the Bank feed always open on Pending (All and the other statuses are a click away)
   function show(v, sub) {
@@ -599,7 +603,7 @@
     if (typeof sub === 'string') { txStats = sub === 'stats'; txnSt = txStats ? 'categorized' : sub; }   // '' = All; Stats = the charts over the categorized lines
     const v = $('vTxns');
     if (!ov) await overview();
-    const st = txnSt, q = ($('txQ') || {}).value || '';
+    const st = txnSt, q = (($('txQ') || {}).value || '').trim(); txQLast = q;
     if (!$('nWaiting').textContent) api('/api/bookkeeping/purchases?view=list').then(j => { if (j.ok) { $('nWaiting').textContent = j.counts.waiting || 0; $('nNotReceived').textContent = j.counts.notreceived || 0; } });
     const cat = st === 'categorized';
     // 1.19.49: the header filters work in every view (date defaults to the last 30 days); the status is a filter on the Category column.
