@@ -66,12 +66,14 @@
   document.addEventListener('mousedown', (e) => { downAt = e.target; }, true);
   document.addEventListener('click', (e) => { if (e.target.classList && e.target.classList.contains('bk-modal') && downAt !== e.target) { e.stopPropagation(); e.preventDefault(); } }, true);
   // A styled yes / no instead of the browser's confirm(). Resolves true on the main button, false on Cancel / Esc / backdrop.
+  // 1.19.117: a vendor name short enough for a question or a button — long official names get cut with an ellipsis
+  const shortName = (who, max) => { who = String(who || '').trim(); max = max || 26; return who.length > max ? who.slice(0, max - 1).trim() + '…' : who; };
   function ask(text, opt) {
     opt = opt || {};
     return new Promise((resolve) => {
       const el = document.createElement('div'); el.className = 'bk-modal bk-ask';
-      el.innerHTML = '<div class="bk-modal-box bk-ask-box">' + (opt.title ? '<div class="bk-modal-title">' + esc(opt.title) + '</div>' : '') + '<div class="bk-ask-text">' + esc(text) + '</div>' +
-        '<div class="bk-ask-acts">' + (opt.cancel === false ? '' : '<button class="bk-btn" data-no>' + esc(opt.cancel || 'Cancel') + '</button>') + (opt.alt ? '<button class="bk-btn" data-alt>' + esc(opt.alt) + '</button>' : '') + '<button class="bk-btn ' + (opt.danger ? 'bad' : 'p') + '" data-yes>' + esc(opt.ok || 'OK') + '</button></div></div>';
+      el.innerHTML = '<div class="bk-modal-box bk-ask-box">' + (opt.title ? '<div class="bk-modal-title">' + esc(opt.title) + '</div>' : '') + '<div class="bk-ask-text">' + esc(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') + '</div>' +
+        '<div class="bk-ask-acts">' + (opt.cancel === false ? '' : '<button class="bk-btn" data-no>' + esc(opt.cancel || 'Cancel') + '</button>') + (opt.alt ? '<button class="bk-btn" data-alt>' + esc(opt.alt) + '</button>' : '') + '<button class="bk-btn ' + (opt.danger ? 'bad' : 'p') + '" data-yes>' + esc(opt.ok || 'OK') + '</button></div></div>'   // 1.19.117: **bold** markup in the text (escaped first, so names are safe)
       document.body.appendChild(el);
       const done = (v) => { el.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
       const onKey = (e) => { if (e.key === 'Escape') done(false); if (e.key === 'Enter') done(true); };
@@ -685,7 +687,7 @@
       wrap.addEventListener('change', async () => { if (inp.value === last || !inp.value) return; last = inp.value; const r = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/category', { category: inp.value, source: td.dataset.src || 'manual' }); td.dataset.src = ''; const tr = td.closest('tr'); tr.classList.add(r.ok ? 'saved' : 'failed');
         // 1.19.85: a 90%+ suggestion taken → offer to make it a rule, so the next line from that company files itself
         const who = td.dataset.askrule; td.dataset.askrule = '';
-        if (r.ok && who) { const ok = await ask('Always file ' + who + ' as ' + inp.value + '? A rule categorizes every future line from ' + who + ' on its own (and any pending ones now). You can edit or remove it under Accounts → Rules. "Never for ' + who + '" stops this question for good (eBay, where every purchase is different).', { title: 'Make it a rule?', ok: 'Yes, create the rule', cancel: 'Not now', alt: 'Never for ' + who }); if (ok) { const rr = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/rule', ok === 'alt' ? { none: true } : {}); if (!rr.ok) alert(rr.error || 'Could not create the rule.'); } }   // 1.19.112: 'alt' = No rule
+        if (r.ok && who) { const sw = shortName(who); const ok = await ask('Always file **' + sw + '** as **' + inp.value + '**? A rule categorizes every future line from them on its own (and any pending ones now). Edit or remove it under Accounts → Rules. "Never" stops this question for good (eBay, where every purchase is different).', { title: 'Make it a rule?', ok: 'Yes, create the rule', cancel: 'Not now', alt: 'Never for ' + shortName(who, 18) }); if (ok) { const rr = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/rule', ok === 'alt' ? { none: true } : {}); if (!rr.ok) alert(rr.error || 'Could not create the rule.'); } }   // 1.19.112: 'alt' = No rule
         setTimeout(() => { tr.classList.remove('saved', 'failed'); loadTxns(); overview(); }, 700); }); });
     v.querySelectorAll('[data-ref]').forEach(a => a.onclick = (e) => { e.preventDefault(); refundPicker(a, Number(a.dataset.ref), (j.transactions || []).find(x => x.id === Number(a.dataset.ref))); });
     // 1.19.99: loan payments — match from the hint, unlink
@@ -710,7 +712,7 @@
     v.querySelectorAll('[data-norule]').forEach(a => a.onclick = async (e) => {
       e.preventDefault(); const t = (j.transactions || []).find(x => x.id === Number(a.dataset.norule)); if (!t) return;
       const who = t.vendor_name || t.merchant || t.name;
-      const ok = await ask('Never make a rule for ' + who + '? Lines from ' + who + ' will keep asking for a category by hand, and Nova stops offering "Make it a rule?" for it. Undo under Accounts → Rules.', { title: 'No rule for ' + who, ok: 'Yes, no rule' });
+      const ok = await ask('Never make a rule for **' + shortName(who) + '**? Their lines will keep asking for a category by hand, and Nova stops offering "Make it a rule?" for them. Undo under Accounts → Rules.', { title: 'No rule for ' + shortName(who), ok: 'Yes, no rule' });
       if (!ok) return;
       const r = await post('/api/bookkeeping/transactions/' + t.id + '/rule', { none: true });
       if (!r.ok) { alert(r.error || 'Could not save.'); return; }
@@ -720,7 +722,7 @@
     v.querySelectorAll('[data-mkrule]').forEach(a => a.onclick = async (e) => {
       e.preventDefault(); const t = (j.transactions || []).find(x => x.id === Number(a.dataset.mkrule)); if (!t) return;
       const who = t.vendor_name || t.merchant || t.name;
-      const ok = await ask('Always file ' + who + ' as ' + t.category + '? Every pending bank line from ' + who + ' gets this category now, and new ones as they come in. You can edit or remove the rule under Accounts → Rules.', { title: 'Create a rule', ok: 'Create rule' });
+      const ok = await ask('Always file **' + shortName(who) + '** as **' + t.category + '**? Every pending bank line from them gets this category now, and new ones as they come in. Edit or remove the rule under Accounts → Rules.', { title: 'Create a rule', ok: 'Create rule' });
       if (!ok) return;
       const r = await post('/api/bookkeeping/transactions/' + t.id + '/rule', {});
       if (!r.ok) { alert(r.error || 'Could not create the rule.'); return; }
