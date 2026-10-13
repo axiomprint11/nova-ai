@@ -173,7 +173,7 @@
       const r = btn.getBoundingClientRect(), W = Array.isArray(spec) ? 260 : 300; pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) + 'px'; pop.style.top = (r.bottom + 6) + 'px'; pop.style.width = W + 'px';
       const place = () => { const h = pop.offsetHeight; if (r.bottom + 6 + h > window.innerHeight - 8 && r.top - h - 6 > 8) pop.style.top = (r.top - h - 6) + 'px'; };   // flip above when short of room
       const close = () => { pop.remove(); document.removeEventListener('click', away); };
-      const away = (ev) => { if (!pop.contains(ev.target)) close(); }; setTimeout(() => document.addEventListener('click', away), 0);
+      const away = (ev) => { if (!pop.contains(ev.target) && !ev.target.closest('.nd-pop')) close(); }; setTimeout(() => document.addEventListener('click', away), 0);   // 1.19.136: a click in the date picker is inside
       if (Array.isArray(spec)) {
         pop.innerHTML = '<div class="thf-h">' + esc(label) + (cur ? '<button type="button" class="thf-clear thf-hclear">× Clear</button>' : '') + '</div>' + (spec.length > 8 ? '<div class="ckp-search"><input type="text" placeholder="Filter…"></div>' : '') + '<div class="thf-list">' + spec.map(o => '<div class="thf-i' + (o.v === cur ? ' on' : '') + '" data-v="' + esc(o.v) + '"><span class="ckp-ck"></span><span class="thf-t">' + o.l + '</span>' + (o.n != null ? '<small>' + o.n + '</small>' : '') + '</div>').join('') + '</div>';
         document.body.appendChild(pop); place();
@@ -1472,6 +1472,8 @@
   // One line-icon set (24px grid, stroke 2) so every type and sub category looks the same family; keys are stored in the chart.
   const ICON_PATH = {
     refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>',
+    upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/>',   // 1.19.136: loan documents
+    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
     chevron: '<path d="M6 9l6 6 6-6"/>',
     check: '<path d="M20 6L9 17l-5-5"/>',
     x: '<path d="M18 6L6 18"/><path d="M6 6l12 12"/>',
@@ -1927,13 +1929,13 @@
     const modePill = (e) => e.mode ? '<span class="eq-mode ' + e.mode + '">' + iconSvg(MODE[e.mode][1]) + MODE[e.mode][0] + '</span>' : '<span class="eq-mode none">not set</span>';
     const dateS = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString([], { month: 'short', year: 'numeric' }) : '';
     const finance = (e) => {
-      if (e.loan) { const L = e.loan; return '<div><b>' + usd(L.principal) + '</b>' + (L.down ? ' · ' + usd(L.down) + ' down' : '') + (L.lender ? ' · ' + esc(L.lender) : '') + '</div><div class="bk-dim">' + (L.kind === 'lease' ? 'Lease' : 'Financed ' + usd(L.financed)) + (L.term ? ' · ' + L.term + ' mo' : '') + (L.deferred ? ' after ' + L.deferred + ' skipped' : '') + (L.apr != null && L.kind !== 'lease' ? ' · ' + L.apr + '%' + (L.apr_given ? '' : ' effective') : '') + (e.schedule && e.schedule.end ? ' · ends ' + esc(dateS(e.schedule.end)) : '') + '</div><div class="bk-dim">from Loans &amp; Leases: <a href="#" data-lngo="' + L.id + '">' + esc(L.name) + '</a></div>'; }
+      if (e.loan) { const L = e.loan; return '<div><b>' + usd(L.principal) + '</b>' + (L.down ? ' · ' + usd(L.down) + ' down' : '') + (L.lender ? ' · ' + esc(L.lender) : '') + '</div><div class="bk-dim">' + (L.kind === 'lease' ? 'Lease' : 'Financed ' + usd(L.financed)) + (L.term ? ' · ' + L.term + ' mo' : '') + (L.deferred ? ' after ' + L.deferred + ' skipped' : '') + (L.apr != null && L.kind !== 'lease' ? ' · ' + L.apr + '%' + (L.apr_given ? '' : ' effective') : '') + (e.schedule && e.schedule.end ? ' · ends ' + esc(dateS(e.schedule.end)) : '') + (L.sales_tax ? ' · tax ' + usd(L.sales_tax) + (L.tax_in ? ' financed' : ' separate') : '') + '</div><div class="bk-dim">from Loans &amp; Leases: <a href="#" data-lngo="' + L.id + '">' + esc(L.name) + '</a></div>'; }
       if (e.mode === 'owned') return '<div>Bought ' + esc(dateS(e.purchase_date)) + (e.purchase_price != null ? ' for <b>' + usd(e.purchase_price) + '</b>' : '') + '</div><div class="bk-dim">' + (e.life_years || 7) + '-year straight line' + (e.salvage ? ', ' + usd(e.salvage) + ' salvage' : '') + '</div>';
       if (e.mode === 'loan') return '<div>' + (e.purchase_price != null ? '<b>' + usd(e.purchase_price) + '</b> ' : '') + esc(dateS(e.purchase_date)) + (e.down_payment ? ' · ' + usd(e.down_payment) + ' down' : '') + '</div><div class="bk-dim">Loan ' + (e.loan_amount != null ? usd(e.loan_amount) : '—') + (e.loan_term ? ' · ' + e.loan_term + ' mo' : '') + (e.loan_rate != null ? ' · ' + e.loan_rate + '%' : '') + (e.schedule && e.schedule.end ? ' · ends ' + esc(dateS(e.schedule.end)) : '') + '</div>';
       if (e.mode === 'lease') return '<div>Lease from ' + esc(dateS(e.lease_start)) + (e.lease_term ? ' · ' + e.lease_term + ' mo' : '') + '</div><div class="bk-dim">' + (e.schedule && e.schedule.end ? 'ends ' + esc(dateS(e.schedule.end)) + ' · ' : '') + 'all of it is an expense (P&amp;L)</div>';
       return '<span class="bk-dim">Owned, loan or lease? Press Edit.</span>';
     };
-    const monthly = (e) => e.schedule && e.schedule.monthly ? '<b>' + usd(e.schedule.monthly) + '</b><div class="bk-dim">' + e.schedule.months_done + ' of ' + (e.schedule.months_done + e.schedule.months_left) + ' paid</div>' + (e.schedule.months_done + e.schedule.months_left ? '<div class="eq-bar"><i style="width:' + Math.round(100 * e.schedule.months_done / (e.schedule.months_done + e.schedule.months_left)) + '%"></i></div>' : '') : '<span class="bk-dim">—</span>';
+    const monthly = (e) => e.schedule && e.schedule.monthly ? '<b>' + usd(e.schedule.monthly) + '</b>' + (e.schedule.property_tax ? '<div class="bk-dim">+ ' + usd(e.schedule.property_tax) + ' property tax = ' + usd(e.schedule.payment) + '</div>' : '') + '<div class="bk-dim">' + e.schedule.months_done + ' of ' + (e.schedule.months_done + e.schedule.months_left) + ' paid</div>' + (e.schedule.months_done + e.schedule.months_left ? '<div class="eq-bar"><i style="width:' + Math.round(100 * e.schedule.months_done / (e.schedule.months_done + e.schedule.months_left)) + '%"></i></div>' : '') : '<span class="bk-dim">—</span>';
     const paid = (e) => e.payments.n || e.payments.bills ? '<b>' + usd(e.payments.total) + '</b><div class="bk-dim">' + (e.payments.n ? e.payments.n + ' bank line' + (e.payments.n === 1 ? '' : 's') : '') + (e.payments.bills ? (e.payments.n ? ' · ' : '') + e.payments.bills + ' bill' + (e.payments.bills === 1 ? '' : 's') : '') + (e.payments.last ? ' · last ' + esc(e.payments.last) : '') + '</div>' : '<span class="bk-dim">none linked</span>';
     const value = (e) => {
       if (e.book && e.book.now != null) return '<b>' + usd(e.book.now) + '</b><div class="bk-dim">' + usd(e.book.year_start) + ' on Jan 1' + (e.book.yearly ? ' · ' + usd(e.book.yearly) + '/yr' : '') + '</div>' + (e.schedule && e.schedule.remaining ? '<div class="bk-dim">' + usd(e.schedule.remaining) + ' still to pay</div>' : '');
@@ -2020,10 +2022,10 @@
     const pic = (l) => l.equipment_photo ? '<img class="bk-logo bk-eq" src="' + esc(l.equipment_photo) + '" alt="">' : l.vendor_photo ? '<img class="bk-logo" src="' + esc(l.vendor_photo) + '" alt="">' : '<span class="bk-logo ph">' + esc(String(l.name || '?').charAt(0).toUpperCase()) + '</span>';
     const row = (l) => { const sch = l.schedule || {}, total = (sch.months_done || 0) + (sch.months_left || 0), pct = total ? Math.round(100 * (sch.months_done || 0) / total) : 0;
       return '<tr' + (l.status === 'paid' ? ' class="off"' : '') + '><td>' + pic(l) + '</td>' +
-        '<td><b>' + esc(l.name) + '</b> <span class="ln-kind ' + esc(l.kind) + '">' + esc(KIND[l.kind] || l.kind) + '</span>' + (l.source === 'equipment' ? '<div class="bk-dim">financing from the Equipment tab</div>' : l.equipment_name ? '<div class="bk-dim">for ' + esc(l.equipment_name) + '</div>' : '') + (l.status === 'paid' ? '<div class="bk-dim">paid off</div>' : '') + '</td>' +
+        '<td><b>' + esc(l.name) + '</b> <span class="ln-kind ' + esc(l.kind) + '">' + esc(KIND[l.kind] || l.kind) + '</span>' + (l.source === 'equipment' ? '<div class="bk-dim">financing from the Equipment tab</div>' : l.equipment_name ? '<div class="bk-dim">for ' + esc(l.equipment_name) + '</div>' : '') + (l.source === 'loan' ? '<div class="bk-dim"><a href="#" data-ldocs="' + l.id + '">' + (l.files ? l.files + ' document' + (l.files === 1 ? '' : 's') : 'add documents') + '</a></div>' : '') + (l.status === 'paid' ? '<div class="bk-dim">paid off</div>' : '') + '</td>' +
         '<td>' + esc(l.vendor_name || l.lender || '—') + '</td>' +
-        '<td>' + (l.principal != null ? '<b>' + usd(l.principal) + '</b>' : '<span class="bk-dim">—</span>') + '<div class="bk-dim">' + esc(dateS(l.start_date)) + (l.math && l.math.down ? ' · ' + usd(l.math.down) + ' down' : '') + (l.term_months ? ' · ' + l.term_months + ' mo' : '') + (l.math && l.math.deferred ? ' after ' + l.math.deferred + ' skipped' : '') + (l.math && l.math.apr != null && l.kind !== 'lease' ? ' · ' + l.math.apr + '% APR' + (l.math.apr_given ? '' : ' (effective)') : l.apr != null && l.apr !== '' ? ' · ' + l.apr + '% APR' : '') + '</div>' + (l.math && l.math.total_payback ? '<div class="bk-dim">' + usd(l.math.total_payback) + ' back in all</div>' : '') + '</td>' +
-        '<td class="num">' + (sch.monthly ? '<b>' + usd(sch.monthly) + '</b>' : '—') + (sch.next ? '<div class="bk-dim">next ' + esc(dateS(sch.next)) + '</div>' : '') + '</td>' +
+        '<td>' + (l.principal != null ? '<b>' + usd(l.principal) + '</b>' : '<span class="bk-dim">—</span>') + '<div class="bk-dim">' + esc(dateS(l.start_date)) + (l.math && l.math.down ? ' · ' + usd(l.math.down) + ' down' : '') + (l.term_months ? ' · ' + l.term_months + ' mo' : '') + (l.math && l.math.deferred ? ' after ' + l.math.deferred + ' skipped' : '') + (l.math && l.math.apr != null && l.kind !== 'lease' ? ' · ' + l.math.apr + '% APR' + (l.math.apr_given ? '' : ' (effective)') : l.apr != null && l.apr !== '' ? ' · ' + l.apr + '% APR' : '') + '</div>' + (l.math && l.math.total_payback ? '<div class="bk-dim">' + usd(l.math.total_payback) + ' back in all</div>' : '') + (l.math && l.math.sales_tax ? '<div class="bk-dim">' + usd(l.math.sales_tax) + ' sales tax ' + (l.math.tax_in ? 'financed' : 'paid separately') + '</div>' : '') + '</td>' +
+        '<td class="num">' + (sch.monthly ? '<b>' + usd(sch.monthly) + '</b>' : '—') + (l.math && l.math.property_tax ? '<div class="bk-dim">+ ' + usd(l.math.property_tax) + ' property tax = ' + usd(l.math.payment) + '</div>' : '') + (sch.next ? '<div class="bk-dim">next ' + esc(dateS(sch.next)) + '</div>' : '') + '</td>' +
         '<td>' + (total ? '<div>' + sch.months_done + ' of ' + total + ' paid</div><div class="ln-bar"><i style="width:' + pct + '%"></i></div>' : '<span class="bk-dim">open-ended</span>') + (sch.end ? '<div class="bk-dim">ends ' + esc(dateS(sch.end)) + '</div>' : '') + '</td>' +
         '<td class="num"><b>' + usd(l.balance || 0) + '</b>' + (l.interest_paid ? '<div class="bk-dim">' + usd(l.interest_paid) + ' interest so far</div>' : '') + (l.total_interest != null && l.total_interest > 0 ? '<div class="bk-dim">' + usd(l.total_interest) + ' over the term</div>' : '') + '</td>' +
         '<td class="num">' + (l.payments && (l.payments.n || l.payments.bills) ? '<b>' + usd(l.payments.total) + '</b><div class="bk-dim">' + (l.payments.n || 0) + ' bank line' + (l.payments.n === 1 ? '' : 's') + (l.payments.last ? ' · last ' + esc(dateS(l.payments.last)) : '') + '</div>' : '<span class="bk-dim">none linked</span>') + '</td>' +
@@ -2034,13 +2036,14 @@
       (loans.length ? '<table class="bk bk-dir"><thead><tr><th></th><th>Loan</th><th>Lender</th><th>Borrowed</th><th class="num">Monthly</th><th>Progress</th><th class="num">Balance</th><th class="num">Paid (bank)</th><th></th></tr></thead><tbody>' + loans.map(row).join('') + '</tbody></table>' : '<div class="bk-muted" style="padding:14px 0">No loans yet. Add one, or set a machine to "On a loan" / "Lease" under Equipment and it shows up here.</div>') + '</div>';
     $('lnAdd').onclick = () => loanForm({}, j, loadLoans);
     v.querySelectorAll('[data-ledit]').forEach(b => b.onclick = () => loanForm(loans.find(x => String(x.id) === b.dataset.ledit), j, loadLoans));
+    v.querySelectorAll('[data-ldocs]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); loanForm(loans.find(x => String(x.id) === a.dataset.ldocs), j, loadLoans); setTimeout(() => { const d = document.querySelector('#lnDrop'); if (d) d.scrollIntoView({ block: 'center' }); }, 50); });
     v.querySelectorAll('[data-eqgo]').forEach(b => b.onclick = () => show('equipment'));
   }
   function loanForm(l, j, done) {
     l = l || {}; const isEdit = !!l.id;
     const el = document.createElement('div'); el.className = 'bk-modal';
     const f = (k, label, type, extra, ph) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><input class="bk" name="' + k + '" type="' + (type || 'text') + '" value="' + esc(l[k] != null ? l[k] : '') + '"' + (extra || '') + (ph ? ' placeholder="' + esc(ph) + '"' : '') + '></label>';
-    const sel = (k, label, opts) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><select class="bk" name="' + k + '">' + opts.map(o => '<option value="' + esc(o[0]) + '"' + (String(l[k] == null ? '' : l[k]) === String(o[0]) ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') + '</select></label>';
+    const sel = (k, label, opts) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><select class="bk" name="' + k + '">' + opts.map(o => '<option value="' + esc(o[0]) + '"' + (String(l[k] == null ? (k === 'tax_in' ? '1' : '') : l[k]) === String(o[0]) ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') + '</select></label>';
     // 1.19.135: money fields are text with thousands separators ("395,000.00"); parsed on save
     const fmtMoney = (v) => { const n = Number(String(v == null ? '' : v).replace(/[$,\s]/g, '')); return v === '' || v == null || !isFinite(n) ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
     const money = (k, label, ph) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><input class="bk ln-money" name="' + k + '" type="text" inputmode="decimal" value="' + esc(fmtMoney(l[k])) + '"' + (ph ? ' placeholder="' + esc(ph) + '"' : '') + '></label>';
@@ -2051,10 +2054,14 @@
       f('start_date', 'Date borrowed / first payment', 'date') + f('deferred_months', 'Months with no payment first (optional)', 'number', ' step="1" min="0"', '0') +
       f('term_months', 'Number of monthly payments', 'number', ' step="1" min="0"', '72') + money('monthly', 'Monthly payment (blank = computed)', '5,808.00') +
       f('apr', 'APR % (blank = computed)', 'number', ' step="0.001" min="0"', '7.5') + money('total_payback', 'Total to be paid back (optional)', '457,676.00') +
-      money('balloon', 'Balloon at the end, if any') +
+      money('balloon', 'Balloon at the end, if any') + money('sales_tax', 'Sales tax on the deal', '34,000.00') +
+      sel('tax_in', 'Where the tax is', [['1', 'Financed with the product (inside the amount above)'], ['0', 'Paid separately (usually a lease)']]) +
+      money('property_tax_monthly', 'Property tax the lender adds per month', '0.00') +
       sel('equipment_id', 'Finances a machine (optional)', [['', '— none —']].concat((j.equipment || []).map(x => [x.id, x.name]))) + sel('status', 'Status', [['active', 'Active'], ['paid', 'Paid off']]) + '</div>' +
       '<div class="bk-dim" id="lnCalc" style="margin:8px 0 10px"></div>' +
       '<label class="nv-f"><span class="bk-muted">Notes</span><textarea class="bk" name="notes" rows="2">' + esc(l.notes || '') + '</textarea></label>' +
+      '<div class="ln-docs"><div class="bk-muted" style="margin-bottom:6px">Documents — the signed agreement, terms, payment schedule</div>' +
+      (isEdit ? '<div class="ln-drop" id="lnDrop" tabindex="0">' + iconSvg('upload') + '<div><b>Drop files here</b> or click to choose · PDF, pictures, Word, Excel · up to 25 MB each</div><input type="file" id="lnFile" multiple accept=".pdf,.png,.jpg,.jpeg,.docx,.xlsx,application/pdf,image/png,image/jpeg" hidden></div><div id="lnFiles" class="ln-files"></div>' : '<div class="bk-dim">Add the loan first, then its documents.</div>') + '</div>' +
       '<div class="bk-row nv-acts"><button class="bk-btn p" id="lnSave">' + (isEdit ? 'Save' : 'Add loan') + '</button><button class="bk-btn bk-x">Cancel</button>' + (isEdit ? '<span class="sp"></span><button class="bk-btn sm bad" id="lnDel">Delete</button>' : '') + '<span class="bk-muted" id="lnMsg"></span></div></div>';
     const close = () => el.remove(); el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
     document.body.appendChild(el); el.querySelector('[name=name]').focus();
@@ -2072,12 +2079,15 @@
         if (monthly * term + balloon <= fin + 0.005) eff = 0; else { let lo = 1e-7, hi = 0.1; for (let k = 0; k < 80; k++) { const mid = (lo + hi) / 2; if (pv(mid) > fin) lo = mid; else hi = mid; } eff = Math.round((lo + hi) / 2 * 12 * 100 * 1000) / 1000; }
       }
       if (!total && monthly && term) total = down + monthly * term + balloon;
+      const tax = num('sales_tax'), taxIn = el.querySelector('[name=tax_in]').value !== '0', prop = num('property_tax_monthly');
       if (!P && !monthly) { out.innerHTML = ''; return; }
       out.innerHTML = 'Financed <b>' + usd(fin) + '</b>' + (down ? ' after ' + usd(down) + ' down' : '') + (monthly ? ' · <b>' + usd(monthly) + '</b> × ' + term + (def ? ' after ' + def + ' month' + (def === 1 ? '' : 's') + ' with no payment' : '') : '') +
-        (eff != null && kind !== 'lease' ? ' · <b>' + eff + '%</b> APR' + (apr == null ? ' (computed from the payments)' : '') : '') + (total ? ' · total back <b>' + usd(total) + '</b>' + (total - P > 0 ? ' (' + usd(total - P) + ' interest)' : '') : '');
+        (eff != null && kind !== 'lease' ? ' · <b>' + eff + '%</b> APR' + (apr == null ? ' (computed from the payments)' : '') : '') + (total ? ' · total back <b>' + usd(total) + '</b>' + (total - P > 0 ? ' (' + usd(total - P) + ' interest)' : '') : '') +
+        (tax ? '<br>Sales tax ' + usd(tax) + (taxIn ? ' is inside the financed amount' : ' paid separately, on top') : '') +
+        (prop ? '<br>Bank payment <b>' + usd(monthly + prop) + '</b> = ' + usd(monthly) + ' + ' + usd(prop) + ' property tax (not part of the loan; ' + usd(prop * term) + ' over the term)' : '');
     };
     el.querySelectorAll('.ln-money').forEach(i => { i.addEventListener('blur', () => { i.value = fmtMoney(i.value); recalc(); }); i.addEventListener('input', recalc); });
-    el.querySelectorAll('[name=apr],[name=term_months],[name=deferred_months],[name=kind]').forEach(i => { i.addEventListener('input', recalc); i.addEventListener('change', recalc); });
+    el.querySelectorAll('[name=apr],[name=term_months],[name=deferred_months],[name=kind],[name=tax_in]').forEach(i => { i.addEventListener('input', recalc); i.addEventListener('change', recalc); });
     recalc();
     el.querySelector('#lnSave').onclick = async () => {
       const body = {}; el.querySelectorAll('[name]').forEach(i => { body[i.name] = i.classList.contains('ln-money') ? String(i.value).replace(/[$,\s]/g, '') : i.value; });
@@ -2085,7 +2095,40 @@
       const r = await post(isEdit ? '/api/bookkeeping/loans/' + l.id : '/api/bookkeeping/loans', body);
       if (!r.ok) { el.querySelector('#lnMsg').textContent = r.error || 'Could not save.'; return; }
       close(); done();
+      if (!isEdit && r.id) { const jj = await api('/api/bookkeeping/loans'); if (jj.ok) { const nl = (jj.loans || []).find(x => x.id === r.id); if (nl && await ask('**' + body.name.trim() + '** is saved. Add its documents now — the signed agreement, terms, schedule?', { ok: 'Add documents', cancel: 'Later' })) loanForm(nl, jj, done); } }
     };
+    // 1.19.136: documents — drop / choose / paste; raw upload with the name in a header; opened through the bearer as blob URLs
+    if (isEdit) {
+      const list = el.querySelector('#lnFiles'), drop = el.querySelector('#lnDrop'), pick = el.querySelector('#lnFile');
+      const kb = (n) => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+      const fIcon = (f) => f.ext === 'pdf' ? '<span class="ln-fi pdf">PDF</span>' : f.ext === 'docx' ? '<span class="ln-fi doc">DOC</span>' : f.ext === 'xlsx' ? '<span class="ln-fi xls">XLS</span>' : '<span class="ln-fi img">IMG</span>';
+      const paintFiles = async () => {
+        const r = await api('/api/bookkeeping/loans/' + l.id + '/files'); const files = r.files || [];
+        list.innerHTML = files.length ? files.map(f => '<div class="ln-file" data-f="' + f.id + '">' + fIcon(f) + '<div class="ln-fn"><a href="#" data-open="' + f.id + '" title="Open">' + esc(f.name) + '</a><div class="bk-dim">' + kb(f.size || 0) + (f.uploaded_by ? ' · ' + esc(f.uploaded_by.split('@')[0]) : '') + (f.created_at ? ' · ' + esc(new Date(f.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })) : '') + '</div></div>' +
+          '<a href="#" class="bk-dim" data-dl="' + f.id + '" title="Download">' + iconSvg('download') + '</a><a href="#" class="bk-dim" data-rm="' + f.id + '" title="Remove">×</a></div>').join('') : '<div class="bk-dim" style="padding:4px 2px">No documents yet.</div>';
+        list.querySelectorAll('[data-open]').forEach(a => a.onclick = async (ev) => { ev.preventDefault(); const rr = await fetch('/api/bookkeeping/files/' + a.dataset.open, { headers: { 'Authorization': 'Bearer ' + token } }); if (!rr.ok) return alert('File not available.'); window.open(URL.createObjectURL(await rr.blob()), '_blank', 'noopener'); });
+        list.querySelectorAll('[data-dl]').forEach(a => a.onclick = async (ev) => { ev.preventDefault(); const f = files.find(x => String(x.id) === a.dataset.dl); const rr = await fetch('/api/bookkeeping/files/' + a.dataset.dl + '?dl=1', { headers: { 'Authorization': 'Bearer ' + token } }); if (!rr.ok) return alert('File not available.'); const u = URL.createObjectURL(await rr.blob()); const x = document.createElement('a'); x.href = u; x.download = f ? f.name : 'document'; document.body.appendChild(x); x.click(); x.remove(); });
+        list.querySelectorAll('[data-rm]').forEach(a => a.onclick = async (ev) => { ev.preventDefault(); const f = files.find(x => String(x.id) === a.dataset.rm); if (!(await ask('Remove **' + (f ? f.name : 'this file') + '**?', { ok: 'Remove', danger: true }))) return; await post('/api/bookkeeping/files/' + a.dataset.rm + '/delete', {}); paintFiles(); });
+      };
+      const upload = async (fl) => {
+        const msg = el.querySelector('#lnMsg'); let n = 0;
+        for (const f of Array.from(fl || [])) {
+          msg.textContent = 'Uploading ' + f.name + '…';
+          const r = await fetch('/api/bookkeeping/loans/' + l.id + '/files', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(f.name) }, body: f }).then(x => x.json()).catch(e => ({ ok: false, error: e.message }));
+          if (!r.ok) { msg.textContent = f.name + ': ' + (r.error || 'could not upload'); continue; }
+          n++;
+        }
+        if (n) msg.textContent = n + ' file' + (n === 1 ? '' : 's') + ' added.';
+        paintFiles();
+      };
+      drop.onclick = () => pick.click(); drop.onkeydown = (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); pick.click(); } };
+      pick.onchange = () => { upload(pick.files); pick.value = ''; };
+      ['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, (ev) => { ev.preventDefault(); drop.classList.add('over'); }));
+      ['dragleave', 'drop'].forEach(t => drop.addEventListener(t, (ev) => { ev.preventDefault(); drop.classList.remove('over'); }));
+      drop.addEventListener('drop', (ev) => upload(ev.dataTransfer.files));
+      el.addEventListener('paste', (ev) => { const fs = Array.from((ev.clipboardData || {}).files || []); if (fs.length) { ev.preventDefault(); upload(fs); } });
+      paintFiles();
+    }
     const del = el.querySelector('#lnDel'); if (del) del.onclick = async () => { if (!(await ask('Delete "' + l.name + '"? Linked bank lines are kept, just unlinked.', { ok: 'Delete', danger: true }))) return; await post('/api/bookkeeping/loans/' + l.id + '/delete', {}); close(); done(); };
   }
   function equipmentEditor(e, vendors, done) {

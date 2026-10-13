@@ -107,7 +107,11 @@ module.exports = function mountBookkeeping(app, deps) {
     db.run('ALTER TABLE bk_transactions ADD COLUMN loan_id INTEGER', () => {});
     // 1.19.135: a loan can start with a down / advance payment, skip some months before the regular payments, and be
     // entered from the agreement's "total finance amount" instead of an APR (the effective rate is then solved).
-    ['down_payment REAL', 'deferred_months INTEGER', 'total_payback REAL'].forEach(c => db.run('ALTER TABLE bk_loans ADD COLUMN ' + c, () => {}));
+    // sales tax (inside the financed amount, or paid separately — leases usually) and the lender's monthly property-tax charge
+    // 1.19.136: documents behind a loan — the signed agreement, terms, schedules (PDF / image / Word / Excel) in FILES/loans
+    db.run(`CREATE TABLE IF NOT EXISTS bk_files (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, ref_id INTEGER NOT NULL, name TEXT, mime TEXT, size INTEGER, file TEXT NOT NULL, label TEXT, uploaded_by TEXT, created_at TEXT NOT NULL)`);
+    db.run('CREATE INDEX IF NOT EXISTS idx_bk_files_ref ON bk_files(kind, ref_id)', () => {});
+    ['down_payment REAL', 'deferred_months INTEGER', 'total_payback REAL', 'sales_tax REAL', 'tax_in INTEGER', 'property_tax_monthly REAL'].forEach(c => db.run('ALTER TABLE bk_loans ADD COLUMN ' + c, () => {}));
     // 1.19.119: the overseas team — people paid through Wise (graphic design, web development, customer service…).
     // Each member is also a Nova vendor (vendor_id) so the feed shows the person; `pay` per period and `wise_ref` match the
     // bank line (Wise puts no recipient name on the statement), `category` files it, `category_alt` is the web-dev
@@ -1045,9 +1049,9 @@ module.exports = function mountBookkeeping(app, deps) {
         const a = isLease ? { balance: left * m.monthly } : amort(m.financed, m.apr, m.term, m.monthly, Math.max(0, done - m.deferred));
         const lp = loanPaid[L.id]; if (lp) { out.payments.n += lp.n; out.payments.total = Math.round((out.payments.total + (lp.total || 0)) * 100) / 100; if (!out.payments.last || (lp.last && lp.last > out.payments.last)) out.payments.last = lp.last; }
         out.mode = isLease ? 'lease' : 'loan';
-        out.loan = { id: L.id, name: L.name, kind: L.kind, lender: L.vendor_name || L.lender || null, status: L.status, principal: m.principal, down: m.down, financed: m.financed, deferred: m.deferred, apr: m.apr, apr_given: m.apr_given, total_payback: m.total_payback, total_interest: m.total_interest, term: m.term };
+        out.loan = { id: L.id, name: L.name, kind: L.kind, lender: L.vendor_name || L.lender || null, status: L.status, principal: m.principal, down: m.down, financed: m.financed, deferred: m.deferred, apr: m.apr, apr_given: m.apr_given, total_payback: m.total_payback, total_interest: m.total_interest, term: m.term, sales_tax: m.sales_tax, tax_in: m.tax_in, property_tax: m.property_tax, payment: m.payment };
         if (!out.vendor_id && L.vendor_id) { out.vendor_id = L.vendor_id; out.vendor_name = L.vendor_name; out.vendor_photo = L.vendor_photo; }
-        out.schedule = { start: L.start_date, end: m.term ? addMonths(L.start_date, m.term + m.deferred) : null, months_done: done, months_left: left, monthly: m.monthly, remaining: Math.round((a.balance || 0) * 100) / 100 };
+        out.schedule = { start: L.start_date, end: m.term ? addMonths(L.start_date, m.term + m.deferred) : null, months_done: done, months_left: left, monthly: m.monthly, property_tax: m.property_tax, payment: m.payment, remaining: Math.round((a.balance || 0) * 100) / 100 };
         if (!isLease) { const ee = Object.assign({}, e, { purchase_price: Number(e.purchase_price) || m.principal, purchase_date: e.purchase_date || L.start_date }); out.purchase_price = ee.purchase_price; out.purchase_date = ee.purchase_date; out.book = { year_start: bookValue(ee, y0), now: bookValue(ee, null), yearly: ee.purchase_price && ee.life_years !== 0 ? Math.round(((Number(ee.purchase_price) || 0) - (Number(ee.salvage) || 0)) / (Number(ee.life_years) || 7) * 100) / 100 : null }; }
         return out;
       }
@@ -1093,16 +1097,20 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!monthly && apr != null && term) { const i = apr / 100 / 12; const g = financed * Math.pow(1 + i, deferred); monthly = i ? g * i / (1 - Math.pow(1 + i, -term)) : g / term; }
     let effective = apr; if (effective == null && monthly && term) effective = solveApr(financed, term, monthly, deferred, balloon);
     if (!total && monthly && term) total = down + monthly * term + balloon;
-    return { principal, down, deferred, term, balloon, financed, monthly: Math.round(monthly * 100) / 100, apr: effective, apr_given: apr != null, total_payback: Math.round(total * 100) / 100, total_interest: Math.round((total - principal) * 100) / 100 };
+    const tax = Number(l.sales_tax) || 0, taxIn = tax ? (l.tax_in == null ? 1 : Number(l.tax_in) ? 1 : 0) : null, propTax = Number(l.property_tax_monthly) || 0;
+    return { principal, down, deferred, term, balloon, financed, monthly: Math.round(monthly * 100) / 100, apr: effective, apr_given: apr != null, total_payback: Math.round(total * 100) / 100, total_interest: Math.round((total - principal) * 100) / 100,
+      sales_tax: tax, tax_in: taxIn, property_tax: propTax, payment: Math.round((monthly + propTax) * 100) / 100,   // payment = what leaves the bank each month
+      total_cost: Math.round((total + (tax && !taxIn ? tax : 0) + propTax * term) * 100) / 100 };   // everything paid over the term: payback + separate tax + property tax
   }
   async function loanRows() {
     const own = await dbAll('SELECT l.*, v.name AS vendor_name, v.photo AS vendor_photo, e.name AS equipment_name, e.photo AS equipment_photo FROM bk_loans l LEFT JOIN bk_vendors v ON v.id = l.vendor_id LEFT JOIN bk_equipment e ON e.id = l.equipment_id ORDER BY l.status, l.start_date DESC, l.id DESC');
     const paid = {}; (await dbAll('SELECT loan_id, COUNT(*) AS n, SUM(ABS(amount)) AS total, MAX(date) AS last FROM bk_transactions WHERE loan_id IS NOT NULL GROUP BY loan_id')).forEach(r => { paid[r.loan_id] = r; });
+    const nFiles = {}; (await dbAll("SELECT ref_id, COUNT(*) AS n FROM bk_files WHERE kind = 'loan' GROUP BY ref_id")).forEach(r => { nFiles[r.ref_id] = r.n; });
     const out = own.map(l => {
       const lm = loanMath(l), done = Math.min((lm.term + lm.deferred) || 9999, monthsSince(l.start_date)), left = Math.max(0, (lm.term + lm.deferred) - done);
       const a = l.kind === 'lease' ? { monthly: Number(l.monthly) || 0, balance: Math.round(left * (Number(l.monthly) || 0) * 100) / 100, interest_paid: 0, principal_paid: Math.round(done * (Number(l.monthly) || 0) * 100) / 100, total_interest: null } : (() => { const m = loanMath(l); const r = amort(m.financed, m.apr, m.term, m.monthly, Math.max(0, done - m.deferred)); r.monthly = m.monthly; r.total_interest = m.total_interest; return r; })();   // 1.19.135: down payment, deferred months, solved APR
       const p = paid[l.id] || { n: 0, total: 0, last: null };
-      return Object.assign({}, l, { source: 'loan', math: loanMath(l), schedule: { start: l.start_date, end: lm.term ? addMonths(l.start_date, lm.term + lm.deferred) : null, months_done: done, months_left: left, monthly: a.monthly, next: l.status === 'active' && left ? addMonths(l.start_date, done + 1) : null },
+      return Object.assign({}, l, { source: 'loan', files: nFiles[l.id] || 0, math: loanMath(l), schedule: { start: l.start_date, end: lm.term ? addMonths(l.start_date, lm.term + lm.deferred) : null, months_done: done, months_left: left, monthly: a.monthly, next: l.status === 'active' && left ? addMonths(l.start_date, done + 1) : null },
         balance: a.balance, interest_paid: a.interest_paid, principal_paid: a.principal_paid, total_interest: a.total_interest, payments: { n: p.n, total: Math.round((p.total || 0) * 100) / 100, last: p.last } });
     });
     // machines financed through the Equipment tab appear here too, read-only (edit them under Equipment)
@@ -2092,11 +2100,11 @@ module.exports = function mountBookkeeping(app, deps) {
       }
     }
     // 1.19.99: a money-out line that looks like a loan payment — the lender's company, or the exact monthly amount of an active loan
-    const activeLoans = (await dbAll("SELECT id, name, vendor_id, monthly, principal, apr, term_months, kind FROM bk_loans WHERE status = 'active'")).map(l => Object.assign(l, { monthly: Number(l.monthly) || (l.kind !== 'lease' && l.term_months ? amort(l.principal, l.apr, l.term_months, null, 0).monthly : 0) }));
+    const activeLoans = (await dbAll("SELECT * FROM bk_loans WHERE status = 'active'")).map(l => { const m = loanMath(l); return Object.assign(l, { monthly: m.payment || m.monthly, monthly_base: m.monthly }); });   // 1.19.136: the bank sees monthly + property tax
     if (activeLoans.length) for (const r of rows) {
       if (r.loan_id || r.transfer_of || r.refund_of || !(Number(r.amount) > 0)) continue;
       const amt = Number(r.amount);
-      const hit = activeLoans.find(l => r.vendor_id && l.vendor_id === r.vendor_id && (!l.monthly || Math.abs(Number(l.monthly) - amt) <= Math.max(1, amt * 0.02))) || activeLoans.find(l => l.monthly && Math.abs(Number(l.monthly) - amt) < 0.005);
+      const hit = activeLoans.find(l => r.vendor_id && l.vendor_id === r.vendor_id && (!l.monthly || Math.abs(Number(l.monthly) - amt) <= Math.max(1, amt * 0.02))) || activeLoans.find(l => (l.monthly && Math.abs(Number(l.monthly) - amt) < 0.005) || (l.monthly_base && Math.abs(Number(l.monthly_base) - amt) < 0.005));
       if (hit) r.loan_hint = { id: hit.id, name: hit.name };
     }
     // 1.19.119: overseas team — a linked line carries the person (flag, department); an open Wise payout carries `team_hint`
@@ -2764,13 +2772,13 @@ module.exports = function mountBookkeeping(app, deps) {
       const eq = await equipmentRows();
       const assets = eq.filter(e => e.book && e.book.now != null).reduce((n, e) => n + e.book.now, 0);
       const active = loans.filter(l => l.status === 'active');
-      const owed = active.reduce((n, l) => n + (l.balance || 0), 0), monthly = active.reduce((n, l) => n + (l.schedule.monthly || 0), 0);
+      const owed = active.reduce((n, l) => n + (l.balance || 0), 0), monthly = active.reduce((n, l) => n + ((l.math && l.math.payment) || l.schedule.monthly || 0), 0);
       res.json({ ok: true, loans, vendors: await dbAll('SELECT id, name, photo FROM bk_vendors ORDER BY name COLLATE NOCASE'), equipment: eq.map(e => ({ id: e.id, name: e.name, photo: e.photo, mode: e.mode })),
         sheet: { equipment_value: Math.round(assets * 100) / 100, owed: Math.round(owed * 100) / 100, monthly: Math.round(monthly * 100) / 100, net: Math.round((assets - owed) * 100) / 100, loans: active.length } });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
-  const LOAN_F = ['name', 'kind', 'lender', 'vendor_id', 'equipment_id', 'principal', 'down_payment', 'deferred_months', 'start_date', 'term_months', 'apr', 'monthly', 'balloon', 'total_payback', 'notes', 'status'];
-  const loanBody = (b) => { const o = {}; LOAN_F.forEach(k => { if (b[k] === undefined) return; let v = b[k]; if (['vendor_id', 'equipment_id', 'term_months', 'deferred_months'].indexOf(k) > -1) v = v === '' || v == null ? null : parseInt(String(v).replace(/[^0-9-]/g, '')); else if (['principal', 'apr', 'monthly', 'balloon', 'down_payment', 'total_payback'].indexOf(k) > -1) { v = v === '' || v == null ? null : Number(String(v).replace(/[$,\s]/g, '')); if (v != null && !isFinite(v)) v = null; } else v = v == null ? null : String(v).trim().slice(0, 500); o[k] = v; }); if (o.kind && ['loan', 'lease', 'credit_line'].indexOf(o.kind) < 0) o.kind = 'loan'; if (o.status && ['active', 'paid'].indexOf(o.status) < 0) o.status = 'active'; return o; };
+  const LOAN_F = ['name', 'kind', 'lender', 'vendor_id', 'equipment_id', 'principal', 'down_payment', 'deferred_months', 'start_date', 'term_months', 'apr', 'monthly', 'balloon', 'total_payback', 'sales_tax', 'tax_in', 'property_tax_monthly', 'notes', 'status'];
+  const loanBody = (b) => { const o = {}; LOAN_F.forEach(k => { if (b[k] === undefined) return; let v = b[k]; if (['vendor_id', 'equipment_id', 'term_months', 'deferred_months', 'tax_in'].indexOf(k) > -1) v = v === '' || v == null ? null : parseInt(String(v).replace(/[^0-9-]/g, '')); else if (['principal', 'apr', 'monthly', 'balloon', 'down_payment', 'total_payback', 'sales_tax', 'property_tax_monthly'].indexOf(k) > -1) { v = v === '' || v == null ? null : Number(String(v).replace(/[$,\s]/g, '')); if (v != null && !isFinite(v)) v = null; } else v = v == null ? null : String(v).trim().slice(0, 500); o[k] = v; }); if (o.kind && ['loan', 'lease', 'credit_line'].indexOf(o.kind) < 0) o.kind = 'loan'; if (o.status && ['active', 'paid'].indexOf(o.status) < 0) o.status = 'active'; return o; };
   app.post('/api/bookkeeping/loans', ...guard, async (req, res) => {
     const o = loanBody(req.body || {}); if (!o.name) return res.json({ ok: false, error: 'Give the loan a name.' });
     const keys = Object.keys(o); const r = await dbRun('INSERT INTO bk_loans (' + keys.join(', ') + ', created_by, updated_at) VALUES (' + keys.map(() => '?').join(', ') + ', ?, ?)', keys.map(k => o[k]).concat([userId(req), nowIso()]));
@@ -2783,7 +2791,62 @@ module.exports = function mountBookkeeping(app, deps) {
   });
   app.post('/api/bookkeeping/loans/:id/delete', ...guard, async (req, res) => {
     const id = parseInt(req.params.id); await dbRun('UPDATE bk_transactions SET loan_id = NULL WHERE loan_id = ?', [id]); await dbRun('DELETE FROM bk_loans WHERE id = ?', [id]);
+    for (const f of await dbAll("SELECT * FROM bk_files WHERE kind = 'loan' AND ref_id = ?", [id])) removeFile(f);
+    await dbRun("DELETE FROM bk_files WHERE kind = 'loan' AND ref_id = ?", [id]);
     await audit(userId(req), 'loan.delete', id); res.json({ ok: true });
+  });
+  // 1.19.136: documents on a loan — the signed contract, the terms, payment schedules. Raw body (the page sends the file as is,
+  // its name in X-File-Name); the type is read from the first bytes, never from the browser; 25 MB each; kept in FILES/loans.
+  const FILE_KINDS = [[/^%PDF/, 'application/pdf', 'pdf'], [/^\x89PNG/, 'image/png', 'png'], [/^\xff\xd8\xff/, 'image/jpeg', 'jpg'], [/^PK\x03\x04/, null, 'zip']];
+  function sniffFile(buf, name) {
+    const head = buf.slice(0, 8).toString('latin1');
+    for (const [re, mime, ext] of FILE_KINDS) if (re.test(head)) {
+      if (ext !== 'zip') return { mime, ext };
+      const zipHas = (s) => buf.indexOf(s) > -1 && buf.indexOf(s) < 4000;   // the first local header names the first entry
+      if (zipHas('word/')) return { mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', ext: 'docx' };
+      if (zipHas('xl/')) return { mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', ext: 'xlsx' };
+      return null;
+    }
+    return null;
+  }
+  const removeFile = (f) => { const full = path.resolve(FILES, f.file); if (full.indexOf(path.resolve(FILES)) === 0) { try { fs.unlinkSync(full); } catch (e) {} } };
+  const fileRow = (f) => ({ id: f.id, name: f.name, mime: f.mime, size: f.size, label: f.label, uploaded_by: f.uploaded_by, created_at: f.created_at, ext: String(f.file).split('.').pop() });
+  app.get('/api/bookkeeping/loans/:id/files', ...guard, async (req, res) => {
+    res.json({ ok: true, files: (await dbAll("SELECT * FROM bk_files WHERE kind = 'loan' AND ref_id = ? ORDER BY id", [parseInt(req.params.id)])).map(fileRow) });
+  });
+  app.post('/api/bookkeeping/loans/:id/files', ...guard, require('express').raw({ type: () => true, limit: 25 * 1024 * 1024 + 1024 }), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id); const loan = await dbGet('SELECT id FROM bk_loans WHERE id = ?', [id]); if (!loan) return res.status(404).json({ ok: false, error: 'No such loan' });
+      const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0); if (!buf.length) return res.json({ ok: false, error: 'Empty file' });
+      if (buf.length > 25 * 1024 * 1024) return res.json({ ok: false, error: 'Files up to 25 MB' });
+      const kind = sniffFile(buf); if (!kind) return res.json({ ok: false, error: 'PDF, picture (PNG / JPG), Word or Excel files only' });
+      let name = decodeURIComponent(String(req.get('x-file-name') || '')).replace(/[\\/\u0000-\u001f]/g, '').trim().slice(0, 160) || ('document.' + kind.ext);
+      const dir = path.join(FILES, 'loans'); fs.mkdirSync(dir, { recursive: true });
+      const file = 'loans/' + id + '-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex') + '.' + kind.ext;
+      fs.writeFileSync(path.join(FILES, file), buf);
+      const label = String(req.get('x-file-label') || '').slice(0, 80) || null;
+      const r = await dbRun('INSERT INTO bk_files (kind, ref_id, name, mime, size, file, label, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', ['loan', id, name, kind.mime, buf.length, file, label, userId(req), nowIso()]);
+      await audit(userId(req), 'loan.file', id, { file_id: r.lastID, name, size: buf.length });
+      res.json({ ok: true, file: fileRow(await dbGet('SELECT * FROM bk_files WHERE id = ?', [r.lastID])) });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  app.get('/api/bookkeeping/files/:id', ...guard, async (req, res) => {
+    const f = await dbGet('SELECT * FROM bk_files WHERE id = ?', [parseInt(req.params.id)]);
+    if (!f) return res.status(404).type('text/plain').send('No file');
+    const full = path.resolve(FILES, f.file);
+    if (full.indexOf(path.resolve(FILES)) !== 0 || !fs.existsSync(full)) return res.status(404).type('text/plain').send('No file');
+    res.setHeader('Content-Disposition', (req.query.dl ? 'attachment' : 'inline') + '; filename="' + String(f.name || f.file).replace(/["\\]/g, '') + '"');
+    res.setHeader('X-Content-Type-Options', 'nosniff'); res.type(f.mime || 'application/octet-stream');
+    fs.createReadStream(full).pipe(res);
+  });
+  app.post('/api/bookkeeping/files/:id/delete', ...guard, async (req, res) => {
+    const f = await dbGet('SELECT * FROM bk_files WHERE id = ?', [parseInt(req.params.id)]); if (!f) return res.json({ ok: false, error: 'No such file' });
+    removeFile(f); await dbRun('DELETE FROM bk_files WHERE id = ?', [f.id]);
+    await audit(userId(req), 'loan.file.delete', f.ref_id, { file_id: f.id, name: f.name }); res.json({ ok: true });
+  });
+  app.post('/api/bookkeeping/files/:id', ...guard, async (req, res) => {   // rename / relabel
+    const f = await dbGet('SELECT * FROM bk_files WHERE id = ?', [parseInt(req.params.id)]); if (!f) return res.json({ ok: false, error: 'No such file' });
+    await dbRun('UPDATE bk_files SET name = ?, label = ? WHERE id = ?', [String(req.body.name || f.name).slice(0, 160), req.body.label == null ? f.label : String(req.body.label).slice(0, 80) || null, f.id]); res.json({ ok: true });
   });
   // a bank line is a payment on a loan: link it and file it under the chart's Loan Payment (Principal) when that exists
   app.post('/api/bookkeeping/transactions/:id/loan', ...guard, async (req, res) => {

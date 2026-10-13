@@ -53,6 +53,25 @@
   .th-sel { font: 600 11.5px/1.2 inherit; color: var(--muted); border: 0; background: transparent; padding: 0; cursor: pointer; max-width: 150px; } .th-sel:hover { color: var(--indigo-dark); }
   .bk-ok { color: #9a99ad; font-size: 13px; } a.bk-approve { font-size: 12px; font-weight: 600; color: #b45309; text-decoration: none; background: #fef3c7; padding: 2px 8px; border-radius: 12px; } a.bk-approve:hover { background: #fde68a; }
   tr.saved td { background: #f0fdf4; transition: background .3s; } tr.failed td { background: #fef2f2; } .bk-check input { width: 16px; height: 16px; cursor: pointer; } .bk-dim { color: #9a99ad; font-size: 11px; }
+  /* 1.19.136: NovaDate — the date picker (nova-date.js) used by every date field on the page */
+  .nd-in { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a8aa3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='3'/%3E%3Cpath d='M16 2v4M8 2v4M3 10h18'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; background-size: 15px; padding-right: 32px; cursor: pointer; }
+  .nd-pop { position: fixed; z-index: 95; width: 272px; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 16px 48px rgba(20,20,40,.18); padding: 10px 10px 6px; font-size: 13px; color: var(--ink); user-select: none; }
+  .nd-head { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
+  .nd-nav { width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 7px; background: #fff; font: inherit; font-size: 17px; line-height: 1; color: var(--ink-soft); cursor: pointer; } .nd-nav:hover { background: #eef2ff; color: var(--indigo-dark); border-color: #c7d2fe; }
+  .nd-sel { flex: 1; min-width: 0; height: 28px; border: 1px solid transparent; border-radius: 7px; background: #fff; font: inherit; font-size: 13px; font-weight: 700; color: var(--ink); padding: 0 4px; cursor: pointer; } .nd-sel:hover { border-color: var(--line); background: #f8f8fc; } .nd-yr { flex: 0 0 74px; }
+  .nd-dow { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 2px; } .nd-dow span { padding: 4px 0; }
+  .nd-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .nd-d { height: 32px; border: 0; border-radius: 8px; background: none; font: inherit; font-size: 13px; color: var(--ink); cursor: pointer; } .nd-d:hover { background: #eef2ff; color: var(--indigo-dark); }
+  .nd-d.out { color: #c3c3d2; } .nd-d.we:not(.out) { color: var(--ink-soft); } .nd-d.today { box-shadow: inset 0 0 0 1.5px #c7d2fe; font-weight: 700; } .nd-d.sel, .nd-d.sel:hover { background: var(--indigo); color: #fff; font-weight: 700; }
+  .nd-foot { display: flex; align-items: center; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); } .nd-sp { flex: 1; }
+  .nd-lnk { border: 0; background: none; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--indigo-dark); padding: 6px 6px; border-radius: 6px; cursor: pointer; } .nd-lnk:hover { background: #eef2ff; }
+  /* 1.19.136: documents on a loan */
+  .ln-docs { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .ln-drop { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1.5px dashed #c7c7d6; border-radius: 10px; background: #fafafd; color: var(--ink-soft); font-size: 12.5px; cursor: pointer; } .ln-drop svg { width: 22px; height: 22px; flex: none; color: var(--indigo); } .ln-drop:hover, .ln-drop.over { border-color: var(--indigo); background: #eef2ff; } .ln-drop:focus { outline: 2px solid #c7d2fe; }
+  .ln-files { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .ln-file { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; } .ln-file:hover { background: #f6f6fb; } .ln-fn { flex: 1; min-width: 0; font-size: 13px; } .ln-fn a { color: var(--ink); font-weight: 600; text-decoration: none; } .ln-fn a:hover { color: var(--indigo-dark); text-decoration: underline; }
+  .ln-file [data-dl] svg { width: 16px; height: 16px; } .ln-file [data-rm] { font-size: 18px; line-height: 1; padding: 0 4px; text-decoration: none; } .ln-file [data-rm]:hover { color: #b91c1c; }
+  .ln-fi { flex: none; width: 36px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 10px; font-weight: 800; letter-spacing: .04em; color: #fff; background: #6b7280; } .ln-fi.pdf { background: #dc2626; } .ln-fi.doc { background: #2563eb; } .ln-fi.xls { background: #16a34a; } .ln-fi.img { background: #7c3aed; }
   .bk-modal { position: fixed; inset: 0; background: rgba(20, 20, 40, .45); display: grid; place-items: center; z-index: 50; padding: 20px; }
   .bk-modal-box { background: #fff; border-radius: 14px; padding: 18px 20px; width: min(520px, 100%); max-height: 90vh; overflow: auto; box-shadow: 0 20px 60px rgba(0,0,0,.25); }
   .bk-ask { z-index: 90; } .bk-ask-box { width: min(420px, 100%); padding: 22px 24px 18px; } .bk-ask .bk-modal-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; } .bk-ask-text { font-size: 13.5px; line-height: 1.55; color: var(--ink-soft); } .bk-ask-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
@@ -475,6 +494,7 @@
   <form class="bk-bub-in" id="bubForm"><input class="bk" id="bubIn" placeholder="Ask about a vendor, a category, a bill…" autocomplete="off"><button class="bk-btn p" id="bubSend" type="submit">Send</button></form>
 </div>
 <script src="/nova-nav.js"></script>
+<script src="/nova-date.js"></script>
 <script src="/bookkeeping.js"></script>
 </body>
 </html>

@@ -555,6 +555,15 @@ under the form updates as you type with the financed amount, monthly, APR, total
 machine shows on that machine's row under Equipment — pill, financing, monthly progress, payments and book value — with a
 link back to Loans & Leases.
 
+Taxes and documents (1.19.136): a loan records the **sales tax** on the deal and whether it was financed with the product
+(inside the amount borrowed) or paid separately (how leases usually work), and the **property tax a leasing company adds to
+the monthly payment** — Nova shows the bank payment (loan payment + property tax) beside the loan payment, matches either
+figure in the Bank feed, and keeps the property tax out of the amortization. The edit form has a **Documents** area:
+drop, choose or paste the signed agreement, terms and schedules (PDF, pictures, Word, Excel, up to 25 MB each); they are
+kept on the server, listed with who added them and when, and can be opened, downloaded or removed. Every date field in
+Bookkeeping now uses Nova's own calendar picker (month grid, month / year dropdowns, Today, Clear; dates read 10/01/2026
+and can be typed as 10/1/26).
+
 ### Rule amount conditions and "No rule" (1.19.112)
 
 - A rule can be limited to lines **over**, **under** or **exactly** an amount (the line's absolute amount, money in or out). Blank = any amount, so existing rules are unchanged. When a vendor has both a plain rule and an amount rule, the amount rule is tried first.
