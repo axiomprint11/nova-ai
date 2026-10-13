@@ -510,6 +510,7 @@
       el.querySelector('[data-no]').onclick = () => done(null); el.querySelector('[data-yes]').onclick = submit; el.onclick = (e) => { if (e.target === el) done(null); };
     });
   }
+  const AI_I = '<svg class="tx-aik" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/></svg>';
   let txStats = false;
   async function loadTxns(sub) {
     if (typeof sub === 'string') { txStats = sub === 'stats'; txnSt = txStats ? 'categorized' : sub; }   // '' = All; Stats = the charts over the categorized lines
@@ -534,7 +535,7 @@
     const FO = {
       status: [{ v: 'pending', l: 'Pending — no category yet', t: 'Pending', n: bs.pending || 0 }, { v: 'new', l: 'New — synced in the last 24 hours', t: 'New', n: bs.new || 0 }, { v: 'categorized', l: 'Categorized', n: bs.categorized || 0 }, { v: '', l: 'All statuses' }],
       type: [{ v: '', l: 'All categories' }].concat(chart_types().map(t => ({ v: 'T:' + t.name, l: tile(t.color, t.icon, 'sm', '') + ' ' + esc(t.name) })), cat ? (T.by_category || []).map(c => ({ v: 'C:' + c.category, l: catLabel(c.category), n: c.n })) : []),
-      vkind: [{ v: '', l: 'All' }, { v: 'supplier', l: '<span class="bk-src supplier">supplier</span>', t: 'Supplier' }, { v: 'vendor', l: '<span class="bk-src vendor">vendor</span>', t: 'Vendor' }, { v: 'nova', l: '<span class="bk-src nova">Nova vendor</span>', t: 'Nova vendor' }, { v: 'bill', l: '<span class="bk-src bill">from a bill</span>', t: 'From a bill' }, { v: 'none', l: 'Not linked' }],
+      vkind: [{ v: '', l: 'All' }, { v: 'supplier', l: '<span class="bk-src supplier">supplier</span>', t: 'Supplier' }, { v: 'vendor', l: '<span class="bk-src vendor">vendor</span>', t: 'Vendor' }, { v: 'nova', l: '<span class="bk-src nova">vendor' + AI_I + '</span>', t: 'Vendor ✦' }, { v: 'bill', l: '<span class="bk-src bill">from a bill</span>', t: 'From a bill' }, { v: 'none', l: 'Not linked' }],
       vendor: [{ v: '', l: 'All companies' }].concat((j.vendors || []).map(x => ({ v: String(x.id), l: esc(x.name) }))),
       source: [{ v: '', l: 'Any' }, { v: 'approved', l: 'Approved (AI proposed)' }, { v: 'manual', l: 'Manual' }, { v: 'rule', l: 'By rule' }],
       account: [{ v: '', l: 'All accounts' }].concat((j.accounts || []).map(a => ({ v: a.account_name, l: esc(a.label), t: a.short || a.label }))),
@@ -560,12 +561,13 @@
     const laT = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(ts) ? '' : 'Z')); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }); };
     const vlogo = (name, photo) => photo ? '<img class="bk-logo bk-vl" src="' + esc(photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;bk-logo bk-vl ph&quot;>' + esc(String(name || '?').charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo bk-vl ph' + (name ? '' : ' none') + '">' + esc(name ? String(name).charAt(0).toUpperCase() : '?') + '</span>';
     const kindTag = (t) => t.vendor_source === 'suppliers' ? 'supplier' : t.vendor_source === 'vendors' ? 'vendor' : t.vendor_source === 'nova' ? 'Nova vendor' : (t.vendor_kind || 'from a bill');
+    // 1.19.64: photo with the kind tag under it on the left; company name (+ Link / Change icon, match pill) on the right
+    const kindPill = (t) => t.vendor_source === 'nova' ? '<span class="bk-src nova" title="Nova vendor — kept in Nova, not in the CRM">vendor' + AI_I + '</span>' : '<span class="bk-src ' + esc(t.vendor_source || '') + '">' + esc(kindTag(t)) + '</span>';
     const vendorCell = (t) => {
-      if (t.vendor_id) return '<div class="bl-vendor pu-vendor">' + vlogo(t.vendor_name, t.vendor_photo) + '<div class="bl-vname"><b class="tx-vn">' + esc(t.vendor_name) + '</b> <a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Change vendor">' + PEN + '</a>' +
-        '<div class="bk-dim"><span class="bk-src ' + esc(t.vendor_source || '') + '">' + esc(kindTag(t)) + '</span></div>' + (t.vendor_by === 'auto' ? '<div class="tx-match ok">Matched ' + (t.vendor_score != null ? Math.round(t.vendor_score * 100) + '%' : 'by name') + '</div>' : t.vendor_by === 'person' ? '<div class="bk-dim">linked by a person</div>' : '') + '</div></div>';
-      // 1.19.60: "Matched 50%  [Use]" over the vendor's name
+      if (t.vendor_id) return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft">' + vlogo(t.vendor_name, t.vendor_photo) + kindPill(t) + '</div><div class="bl-vname"><b class="tx-vn">' + esc(t.vendor_name) + '</b> <a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Change vendor">' + PEN + '</a>' +
+        (t.vendor_by === 'auto' ? '<div class="tx-match ok">Matched ' + (t.vendor_score != null ? Math.round(t.vendor_score * 100) + '%' : 'by name') + '</div>' : t.vendor_by === 'person' ? '<div class="bk-dim">linked by a person</div>' : '') + '</div></div>';
       const sug = t.suggest_vendor_id ? '<div class="tx-sug"><span class="tx-match">Matched ' + Math.round((t.suggest_score || 0) * 100) + '%</span><button type="button" class="bk-btn sm p" data-usev="' + t.id + '" data-vid="' + t.suggest_vendor_id + '">Use</button></div><div class="tx-sug-n"><b>' + esc(t.suggest_name) + '</b></div>' : '';
-      return '<div class="bl-vendor pu-vendor">' + (t.plaid_logo ? vlogo(t.merchant || t.name, t.plaid_logo) : vlogo(null, null)) + '<div class="bl-vname"><span class="bl-unlinked">Not linked</span> <a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Link to a vendor">' + LINKI + '</a>' + sug + '</div></div>';
+      return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft">' + (t.plaid_logo ? vlogo(t.merchant || t.name, t.plaid_logo) : vlogo(null, null)) + '</div><div class="bl-vname"><span class="bl-unlinked">Not linked</span> <a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Link to a vendor">' + LINKI + '</a>' + sug + '</div></div>';
     };
     // 1.19.58: short — logo + "WF ••0489"; the full bank and account name on hover
     const BANK_ABBR = { 'wells fargo': 'WF', 'american express': 'Amex', 'bank of america': 'BofA', 'jpmorgan chase': 'Chase', 'capital one': 'CapOne', 'us bank': 'USB', 'u.s. bank': 'USB', 'citibank': 'Citi' };
