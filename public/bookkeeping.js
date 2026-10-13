@@ -64,13 +64,14 @@
     return new Promise((resolve) => {
       const el = document.createElement('div'); el.className = 'bk-modal bk-ask';
       el.innerHTML = '<div class="bk-modal-box bk-ask-box">' + (opt.title ? '<div class="bk-modal-title">' + esc(opt.title) + '</div>' : '') + '<div class="bk-ask-text">' + esc(text) + '</div>' +
-        '<div class="bk-ask-acts">' + (opt.cancel === false ? '' : '<button class="bk-btn" data-no>' + esc(opt.cancel || 'Cancel') + '</button>') + '<button class="bk-btn ' + (opt.danger ? 'bad' : 'p') + '" data-yes>' + esc(opt.ok || 'OK') + '</button></div></div>';
+        '<div class="bk-ask-acts">' + (opt.cancel === false ? '' : '<button class="bk-btn" data-no>' + esc(opt.cancel || 'Cancel') + '</button>') + (opt.alt ? '<button class="bk-btn" data-alt>' + esc(opt.alt) + '</button>' : '') + '<button class="bk-btn ' + (opt.danger ? 'bad' : 'p') + '" data-yes>' + esc(opt.ok || 'OK') + '</button></div></div>';
       document.body.appendChild(el);
       const done = (v) => { el.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
       const onKey = (e) => { if (e.key === 'Escape') done(false); if (e.key === 'Enter') done(true); };
       document.addEventListener('keydown', onKey);
       el.onclick = (e) => { if (e.target === el) done(false); };
       const nb = el.querySelector('[data-no]'); if (nb) nb.onclick = () => done(false); el.querySelector('[data-yes]').onclick = () => done(true);
+      const ab = el.querySelector('[data-alt]'); if (ab) ab.onclick = () => done('alt');   // a third choice resolves 'alt' (1.19.77)
       el.querySelector('[data-yes]').focus();
     });
   }
@@ -592,6 +593,7 @@
     const laD2 = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(ts) ? '' : 'Z')); if (isNaN(d)) return ''; const o = { timeZone: 'America/Los_Angeles' }; return esc(d.toLocaleDateString([], Object.assign({ month: 'short', day: 'numeric', year: 'numeric' }, o))) + '<div class="bk-dim">' + esc(d.toLocaleTimeString([], Object.assign({ hour: 'numeric', minute: '2-digit' }, o)).replace(' ', '').toLowerCase()) + '</div>'; };
     const SVG = (d) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
     const REFI = SVG('<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-5"/>');
+    const RULEI = SVG('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1"/>');   // 1.19.77: the Rules tab's target
     const PLUSV = SVG('<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>');
     const PEN = SVG('<path d="M4 20h4l10-10-4-4L4 16z"/><path d="M12.5 7.5l4 4"/>'), LINKI = SVG('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5"/>');
     // how it was paid (Plaid's payment_channel / check_number)
@@ -624,7 +626,8 @@
         (t.amount < 0 ? (t.refund_of ? '<div class="tx-ref" title="Matched to the charge it gives back; the category and the Stats follow that charge"><div>' + REFI + ' refund of <b>' + esc(usD(t.refund_of_date)) + ' · ' + usd(t.refund_of_amount) + '</b></div><div class="tx-ref2">' + esc(t.refund_of_merchant || t.refund_of_name || '') + ' <a href="#" class="tx-unref" data-unref="' + t.id + '" title="Unmatch">×</a></div></div>'
             : '<div class="tx-ref"><a href="#" class="tx-refl" data-ref="' + t.id + '">' + REFI + ' Refund of a charge…</a></div>') : t.refunded_by ? '<div class="tx-ref bk-dim" title="A refund was matched to this charge"><div>' + REFI + ' refunded</div><div class="tx-ref2">' + esc(usD(t.refunded_by_date)) + ' · ' + usd(-t.refunded_by_amount) + '</div></div>' : '') +
         (!t.category && (t.cat_suggest || []).length ? '<div class="tx-ai">' + t.cat_suggest.map(sg => '<span class="tx-sg" title="' + esc(sg.why === 'history' ? 'Every past line from this company went here' + (sg.n ? ' (' + sg.n + ')' : '') : sg.why === 'vendor' ? 'The company\'s usual category' : (t.ai_reason || 'AI suggestion')) + '">' + (sg.why === 'ai' ? aiIcon : sg.why === 'history' ? HISTI : VENDI) + ' <b>' + esc(sg.category) + '</b> <span class="tx-pct">' + Math.round((sg.conf || 0) * 100) + '%</span> <button type="button" class="bk-btn sm p tx-use" data-aicat="' + esc(sg.category) + '" data-src="' + esc(sg.why) + '">Use</button></span>').join('') + '</div>' :
-          !t.category && t.status === 'new' ? '<div class="tx-ai bk-dim">' + aiIcon + ' rating…</div>' : '') + '</td>' +
+          !t.category && t.status === 'new' ? '<div class="tx-ai bk-dim">' + aiIcon + ' rating…</div>' : '') +
+        (t.can_rule ? '<div class="tx-ref"><a href="#" class="tx-refl tx-mkrule" data-mkrule="' + t.id + '" title="Always file ' + esc(t.vendor_name || t.merchant || t.name) + ' as ' + esc(t.category) + '">' + RULEI + ' Create a rule</a></div>' : '') + '</td>' +
         '<td><span class="bk-tag ' + esc(t.status) + '" title="' + esc(t.category ? 'Set ' + (t.category_source === 'approved' ? 'from the AI\'s proposal' : t.category_source === 'rule' ? 'by a vendor rule' : 'by hand') : t.status === 'pending' ? 'The AI has a suggestion — pick it or choose another' : 'Just synced, not rated yet') + '">' + esc(STL[t.status] || t.status) + '</span>' + (t.category && t.category_source ? '<div class="bk-dim">' + esc(SRC_L[t.category_source] || t.category_source) + '</div>' : '') + '</td></tr>').join('') + '</tbody></table>' +
       (!(j.transactions || []).length ? '<div class="bk-muted" style="padding:14px 0">' + (st === 'new' ? 'Nothing came in from the bank in the last 24 hours.' : 'No transactions here — connect a bank under Settings, then Sync.') + '</div>' : '')) + '</div>';
     if ($('tfMore')) $('tfMore').onclick = () => { txStats = false; txnSt = 'categorized'; lastSub.bank = 'categorized'; document.querySelectorAll('#subBank button').forEach(b => b.classList.toggle('on', b.dataset.s === 'categorized')); loadTxns(); };
@@ -648,6 +651,17 @@
     v.querySelectorAll('td[data-txid]').forEach(td => { const wrap = td.querySelector('.ckp'), inp = td.querySelector('input.tx-cat'); let last = inp.value;
       wrap.addEventListener('change', async () => { if (inp.value === last || !inp.value) return; last = inp.value; const r = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/category', { category: inp.value, source: td.dataset.src || 'manual' }); td.dataset.src = ''; const tr = td.closest('tr'); tr.classList.add(r.ok ? 'saved' : 'failed'); setTimeout(() => { tr.classList.remove('saved', 'failed'); loadTxns(); overview(); }, 700); }); });
     v.querySelectorAll('[data-ref]').forEach(a => a.onclick = (e) => { e.preventDefault(); refundPicker(a, Number(a.dataset.ref), (j.transactions || []).find(x => x.id === Number(a.dataset.ref))); });
+    // 1.19.77: Create a rule from a categorized line — asks first, then the rule also files every pending line of that vendor
+    v.querySelectorAll('[data-mkrule]').forEach(a => a.onclick = async (e) => {
+      e.preventDefault(); const t = (j.transactions || []).find(x => x.id === Number(a.dataset.mkrule)); if (!t) return;
+      const who = t.vendor_name || t.merchant || t.name;
+      const ok = await ask('Always file ' + who + ' as ' + t.category + '? Every pending bank line from ' + who + ' gets this category now, and new ones as they come in. You can edit or remove the rule under Accounts → Rules.', { title: 'Create a rule', ok: 'Create rule' });
+      if (!ok) return;
+      const r = await post('/api/bookkeeping/transactions/' + t.id + '/rule', {});
+      if (!r.ok) { alert(r.error || 'Could not create the rule.'); return; }
+      a.replaceWith(Object.assign(document.createElement('span'), { className: 'bk-dim', textContent: 'Rule created' + (r.applied ? ' · ' + r.applied + ' pending line' + (r.applied === 1 ? '' : 's') + ' filed' : '') }));
+      setTimeout(() => { loadTxns(); overview(); }, 900);
+    });
     v.querySelectorAll('[data-unref]').forEach(a => a.onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/transactions/' + a.dataset.unref + '/refund', { of: null }); if (!r.ok) alert(r.error); loadTxns(); });
     v.querySelectorAll('.tx-more').forEach(b => b.onclick = () => { const m = b.nextElementSibling; m.hidden = !m.hidden; b.classList.toggle('open', !m.hidden); });
     v.querySelectorAll('.tx-use').forEach(b => b.onclick = () => { const td = b.closest('td'); td.dataset.src = b.dataset.src || ''; ckpSet(td.querySelector('.ckp'), [b.dataset.aicat]); });
@@ -1231,7 +1245,7 @@
     v.innerHTML = '<div class="bk-card">' +
       '<div class="bk-row" style="margin-bottom:10px;flex-wrap:nowrap"><select class="bk" id="rKind"><option value="vendor">Vendor is</option><option value="keyword">Description contains</option></select><input class="bk" id="rPat" placeholder="e.g. Veritiv or AMAZON" style="flex:0 0 260px;min-width:0">' + catSelect('', 'rcat', 'Category…') + '<button class="bk-btn p" id="rAdd" style="white-space:nowrap;flex:none">Add rule</button></div>' +
       '<table class="bk"><thead><tr><th>Rule</th><th>Category</th><th>From</th><th>Hits</th><th></th></tr></thead><tbody>' +
-      (j.rules || []).map(r => '<tr><td>' + (r.kind === 'vendor' ? 'Vendor is ' : 'Contains ') + '<b>' + esc(r.pattern) + '</b></td><td>' + esc(r.category) + '</td><td><span class="bk-row" style="gap:6px;align-items:center">' + esc(r.source) + (r.created_by ? ' · ' + whoHtml(r.created_by) : '') + '</span></td><td>' + r.hits + '</td><td><button class="bk-btn sm bad" data-del="' + r.id + '">Remove</button></td></tr>').join('') + '</tbody></table>' +
+      (j.rules || []).map(r => '<tr data-rule="' + r.id + '"><td>' + (r.kind === 'vendor' ? 'Vendor is ' : 'Contains ') + '<b>' + esc(r.pattern) + '</b></td><td>' + catLabel(r.category) + '</td><td><span class="bk-row" style="gap:6px;align-items:center">' + esc(r.source) + (r.created_by ? ' · ' + whoHtml(r.created_by) : '') + '</span></td><td>' + r.hits + '</td><td style="white-space:nowrap"><button class="bk-btn sm" data-edit="' + r.id + '">Edit</button> <button class="bk-btn sm bad" data-del="' + r.id + '">Remove</button></td></tr>').join('') + '</tbody></table>' +
       (!(j.rules || []).length ? '<div class="bk-muted" style="padding:14px 0">No rules yet — each approval with "remember" ticked adds one.</div>' : '') + '</div>' +
       
       '<div class="bk-card"><h2>Notes for the AI ' + qHelp('notes', 'Notes for the AI', 'How AxiomPrint books things — BookkeeperAI reads this with every proposal. The chart of accounts itself is edited under Accounts → Chart of Accounts.') + '</h2>' +
@@ -1239,6 +1253,33 @@
       '<div class="bk-row" style="margin-top:8px"><label class="bk-muted">Ask me when confidence is below <input class="bk" id="sThr" type="number" min="0.3" max="1" step="0.05" value="' + esc(ov.settings.threshold) + '" style="width:80px"></label><button class="bk-btn p" id="sSave">Save</button><span class="bk-muted" id="sMsg"></span></div></div>';
     $('rAdd').onclick = async () => { const r = await post('/api/bookkeeping/rules', { kind: $('rKind').value, pattern: $('rPat').value.trim(), category: v.querySelector('input.rcat').value }); if (!r.ok) alert(r.error); loadRules(); };
     v.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await api('/api/bookkeeping/rules/' + b.dataset.del, { method: 'DELETE' }); loadRules(); });
+    // 1.19.77: Edit turns the row into an editor; saving a new category asks whether the lines the rule already categorized follow it
+    v.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => {
+      const r = (j.rules || []).find(x => String(x.id) === b.dataset.edit); if (!r) return;
+      const tr = v.querySelector('tr[data-rule="' + r.id + '"]'), was = tr.innerHTML;
+      tr.innerHTML = '<td colspan="5"><div class="bk-row" style="flex-wrap:nowrap;align-items:center"><select class="bk re-kind"><option value="vendor"' + (r.kind === 'vendor' ? ' selected' : '') + '>Vendor is</option><option value="keyword"' + (r.kind === 'keyword' ? ' selected' : '') + '>Description contains</option></select>' +
+        '<input class="bk re-pat" value="' + esc(r.pattern) + '" style="flex:0 0 260px;min-width:0">' + catSelect(r.category, 'recat', 'Category…') +
+        '<button class="bk-btn p re-save" style="white-space:nowrap;flex:none">Save</button><button class="bk-btn re-cancel" style="flex:none">Cancel</button><span class="bk-muted re-msg"></span></div></td>';
+      tr.querySelector('.re-cancel').onclick = () => { tr.innerHTML = was; loadRules(); };
+      tr.querySelector('.re-save').onclick = async () => {
+        const kind = tr.querySelector('.re-kind').value, pattern = tr.querySelector('.re-pat').value.trim(), category = tr.querySelector('input.recat').value;
+        if (!pattern || !category) { tr.querySelector('.re-msg').textContent = 'Pattern and category are needed.'; return; }
+        let apply = false;
+        if (category !== r.category) {
+          const sc = await api('/api/bookkeeping/rules/' + r.id + '/scope');
+          if (sc.ok && sc.lines > 0) {
+            const a = await ask('This rule has already categorized ' + sc.lines + ' bank line' + (sc.lines === 1 ? '' : 's') + ' (' + usd(Math.abs(sc.total || 0)) + ') as ' + r.category + '. Change them to ' + category + ' too, or leave them and only use the new category from now on?',
+              { title: 'Re-categorize ' + sc.lines + ' line' + (sc.lines === 1 ? '' : 's') + '?', ok: 'Yes, change all ' + sc.lines, alt: 'No, only new lines' });
+            if (a === false) return;
+            apply = a === true;
+          }
+        }
+        const res = await post('/api/bookkeeping/rules/' + r.id, { kind, pattern, category, apply });
+        if (!res.ok) { tr.querySelector('.re-msg').textContent = res.error || 'Could not save.'; return; }
+        await loadRules();
+        if (res.applied) { const m = document.createElement('div'); m.className = 'bk-muted'; m.style.padding = '6px 0'; m.textContent = res.applied + ' bank line' + (res.applied === 1 ? '' : 's') + ' re-categorized as ' + category + '.'; v.querySelector('.bk-card table').after(m); }
+      };
+    });
     $('sSave').onclick = async () => { await post('/api/bookkeeping/settings', { notes: $('sNotes').value, threshold: $('sThr').value }); $('sMsg').textContent = 'Saved.'; await overview(); };
   }
 
@@ -1464,6 +1505,8 @@
     const F = (id, label, val, ph, type) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><input class="bk" id="' + id + '" type="' + (type || 'text') + '" value="' + esc(val || '') + '" placeholder="' + esc(ph || '') + '"></label>';
     el.innerHTML = '<div class="bk-modal-box" style="width:min(620px,100%)"><div class="bk-modal-title">' + (isEdit ? 'Edit ' + esc(init.name) : 'New Nova vendor') + '</div>' +
       '<div class="bk-muted" style="margin-bottom:12px">A company kept in Nova only — not in the CRM supplier / vendor lists. The chart of accounts is its map: say what you buy from them and the usual category, and the AI files their lines there.</div>' +
+      // 1.19.77: the logo — the bank's merchant logo when one was picked up, a URL, or a picture uploaded here (shrunk to 160px)
+      '<div class="nv-photo"><div class="nv-photo-box" id="nvPhotoBox">' + (init.photo ? '<img src="' + esc(init.photo) + '" alt="">' : '<span class="bk-logo ph">' + esc(String(init.name || '?').charAt(0).toUpperCase()) + '</span>') + '</div><div class="nv-photo-f"><span class="bk-muted">Logo / photo</span><div class="bk-row" style="gap:6px;flex-wrap:nowrap"><input class="bk" id="nvPhoto" value="' + esc(/^data:/.test(init.photo || '') ? '' : (init.photo || '')) + '" placeholder="https://… or upload a picture"><button type="button" class="bk-btn sm" id="nvUpload">Upload</button><button type="button" class="bk-btn sm" id="nvNoPhoto" title="Remove the picture">×</button></div><input type="file" id="nvFile" accept="image/*" hidden></div></div>' +
       '<div class="nv-grid">' + F('nvName', 'Company', init.name, 'HEVAC Inc') + F('nvWeb', 'Website', d.website || init.website, 'linkedin.com') + F('nvEmail', 'Email', init.email, 'billing@…', 'email') + F('nvPhone', 'Phone', init.phone, '') + F('nvContact', 'Contact person', init.contact, '') + F('nvAddr', 'Address', init.address, '') + '</div>' +
       '<label class="nv-f"><span class="bk-muted">What we buy from them</span><input class="bk" id="nvSpec" value="' + esc(init.specialty || '') + '" placeholder="Rent for the shop · Job ads · Cleaning twice a month"></label>' +
       '<div class="nv-f"><span class="bk-muted">Usual category (chart of accounts)</span><div id="nvCat">' + catSelect(init.default_category || '', 'nvcat', 'not set', { multi: true }) + '</div></div>' +
@@ -1473,9 +1516,24 @@
     const close = () => el.remove();
     el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
     document.body.appendChild(el); el.querySelector('#nvName').focus();
+    let photo = init.photo || '';
+    const showPhoto = () => { el.querySelector('#nvPhotoBox').innerHTML = photo ? '<img src="' + esc(photo) + '" alt="">' : '<span class="bk-logo ph">' + esc(String(el.querySelector('#nvName').value || '?').charAt(0).toUpperCase()) + '</span>'; };
+    el.querySelector('#nvPhoto').onchange = () => { const u = el.querySelector('#nvPhoto').value.trim(); if (!u || /^https?:\/\//.test(u)) { photo = u; showPhoto(); } };
+    el.querySelector('#nvNoPhoto').onclick = () => { photo = ''; el.querySelector('#nvPhoto').value = ''; showPhoto(); };
+    el.querySelector('#nvUpload').onclick = () => el.querySelector('#nvFile').click();
+    el.querySelector('#nvFile').onchange = () => {
+      const f = el.querySelector('#nvFile').files[0]; if (!f) return;
+      const img = new Image(); img.onload = () => {
+        const S = 160, c = document.createElement('canvas'); c.width = S; c.height = S; const g = c.getContext('2d');
+        const sc = Math.min(S / img.width, S / img.height), w = Math.round(img.width * sc), h = Math.round(img.height * sc);
+        g.fillStyle = '#fff'; g.fillRect(0, 0, S, S); g.drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
+        photo = c.toDataURL('image/png'); el.querySelector('#nvPhoto').value = ''; showPhoto(); URL.revokeObjectURL(img.src);
+      };
+      img.src = URL.createObjectURL(f);
+    };
     el.querySelector('#nvSave').onclick = async (ev) => {
       let force = false;
-      const body = { name: el.querySelector('#nvName').value.trim(), website: el.querySelector('#nvWeb').value.trim(), email: el.querySelector('#nvEmail').value.trim(), phone: el.querySelector('#nvPhone').value.trim(), contact: el.querySelector('#nvContact').value.trim(), address: el.querySelector('#nvAddr').value.trim(),
+      const body = { photo, name: el.querySelector('#nvName').value.trim(), website: el.querySelector('#nvWeb').value.trim(), email: el.querySelector('#nvEmail').value.trim(), phone: el.querySelector('#nvPhone').value.trim(), contact: el.querySelector('#nvContact').value.trim(), address: el.querySelector('#nvAddr').value.trim(),
         specialty: el.querySelector('#nvSpec').value.trim(), default_category: el.querySelector('#nvCat .ckp-val').value, aliases: el.querySelector('#nvAlias').value.split('|').map(x => x.trim()).filter(Boolean).join('\n'), notes: el.querySelector('#nvNotes').value.trim() };
       if (!body.name) { el.querySelector('#nvMsg').textContent = 'Give the company a name.'; return; }
       if (ev.target.dataset.force) { body.force = true; }

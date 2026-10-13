@@ -1821,6 +1821,9 @@ module.exports = function mountBookkeeping(app, deps) {
       }
       r.cat_suggest = sugCache[key].length ? sugCache[key] : (r.ai_category && isIncomeCat(r.ai_category) === moneyIn ? [{ category: r.ai_category, conf: r.ai_conf, why: 'ai' }] : []);
     }
+    // 1.19.77: a categorized line that no rule covers yet offers "Create a rule" — `can_rule` says so
+    const liveRules = await dbAll('SELECT * FROM bk_rules WHERE active = 1 ORDER BY kind DESC, id');
+    for (const r of rows) r.can_rule = !!(r.category && r.category !== 'Uncategorized' && !r.rule_id && !r.refund_of && !ruleMatch(liveRules, r) && !liveRules.some(x => x.kind === 'vendor' && r.vendor_name && normName(x.pattern) === normName(r.vendor_name)));
     if (rows.some(r => !r.orig_desc)) backfillOriginalDesc();
     const out = { ok: true, by_status, matched, transactions: rows, categorizing: catBusy };
     if ((by_status.new_status || 0) > 0 && !catBusy) { categorizeBacklog(userId(req)); out.categorizing = true; }
@@ -1886,6 +1889,33 @@ module.exports = function mountBookkeeping(app, deps) {
     await dbRun("UPDATE bk_proposals SET status = 'edited', decided_by = ?, decided_at = ? WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [userId(req), nowIso(), id]);
     await audit(userId(req), 'category.manual', id, category);
     res.json({ ok: true });
+  });
+  // 1.19.77: "Create a rule" on a categorized bank line — a vendor rule (the linked company's name, else the merchant) with the
+  // line's category; the line is tied to it, and every pending line the rule matches is categorized by it on the spot.
+  app.post('/api/bookkeeping/transactions/:id/rule', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id);
+    const t = await dbGet('SELECT t.*, v.name AS vendor_name FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id WHERE t.id = ?', [id]);
+    if (!t || !t.category) return res.json({ ok: false, error: 'Categorize the line first.' });
+    const pattern = String(t.vendor_name || t.merchant || t.name || '').trim().slice(0, 120);
+    if (!pattern) return res.json({ ok: false, error: 'No vendor name on this line.' });
+    const dup = await dbGet('SELECT id, category FROM bk_rules WHERE kind = ? AND LOWER(pattern) = LOWER(?) AND active = 1', ['vendor', pattern]);
+    if (dup) return res.json({ ok: false, error: 'There is already a rule for ' + pattern + ' → ' + dup.category + ' (Accounts → Rules).' });
+    const r = await dbRun('INSERT INTO bk_rules (kind, pattern, category, vendor, source, created_by) VALUES (?,?,?,?,?,?)', ['vendor', pattern, t.category, pattern, 'manual', userId(req)]);
+    await dbRun('UPDATE bk_transactions SET rule_id = ? WHERE id = ?', [r.lastID, id]);
+    // the vendor's bank wording is often not its name — the rule also matches by the linked vendor, so apply by vendor id or wording
+    const rule = { id: r.lastID, kind: 'vendor', pattern, category: t.category };
+    const open = await dbAll("SELECT * FROM bk_transactions WHERE status IN ('new', 'pending') AND (category IS NULL OR category = '')");
+    let applied = 0;
+    for (const o of open) {
+      if (!((t.vendor_id && o.vendor_id === t.vendor_id) || ruleMatch([rule], o))) continue;
+      if ((Number(o.amount) < 0) !== (Number(t.amount) < 0)) continue;   // never across the money-in / money-out line
+      await dbRun("UPDATE bk_transactions SET category = ?, category_source = 'rule', rule_id = ?, status = 'categorized', updated_at = datetime('now') WHERE id = ?", [t.category, rule.id, o.id]);
+      await dbRun("UPDATE bk_proposals SET status = 'edited', decided_by = ?, decided_at = ? WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [userId(req), nowIso(), o.id]);
+      applied++;
+    }
+    if (applied) await dbRun('UPDATE bk_rules SET hits = hits + ? WHERE id = ?', [applied, rule.id]);
+    await audit(userId(req), 'rule.add', rule.id, { from_txn: id, pattern, category: t.category, applied });
+    res.json({ ok: true, id: rule.id, pattern, category: t.category, applied });
   });
   app.get('/api/bookkeeping/bills', ...guard, async (req, res) => {
     const rows = await dbAll('SELECT b.*, e.from_addr, e.subject, e.received_at, p.status AS proposal_status, p.confidence AS proposal_confidence, p.reason AS proposal_reason, p.decision AS rejected_note, p.decided_by AS rejected_by, p.decided_at AS rejected_at FROM bk_bills b LEFT JOIN bk_emails e ON e.id = b.email_id LEFT JOIN bk_proposals p ON p.id = b.proposal_id ORDER BY b.id DESC LIMIT 200');
@@ -2279,6 +2309,32 @@ module.exports = function mountBookkeeping(app, deps) {
     await audit(userId(req), 'rule.add', r.lastID, b);
     res.json({ ok: true, id: r.lastID });
   });
+  // 1.19.77: edit a rule. GET …/:id/scope says what an edit would touch; POST …/:id {kind, pattern, category, apply} changes
+  // it and, with apply, re-categorizes every bank line the rule categorized (category_source 'rule') to the new category —
+  // without apply those lines keep what they have and only future lines follow the new rule.
+  app.get('/api/bookkeeping/rules/:id/scope', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id);
+    const r = await dbGet('SELECT * FROM bk_rules WHERE id = ? AND active = 1', [id]);
+    if (!r) return res.json({ ok: false, error: 'No such rule' });
+    const by = await dbGet("SELECT COUNT(*) n, COALESCE(SUM(amount), 0) total FROM bk_transactions WHERE rule_id = ? AND category_source = 'rule' AND status = 'categorized'", [id]);
+    res.json({ ok: true, rule: r, lines: by.n, total: by.total });
+  });
+  app.post('/api/bookkeeping/rules/:id', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), b = req.body || {};
+    const r = await dbGet('SELECT * FROM bk_rules WHERE id = ? AND active = 1', [id]);
+    if (!r) return res.json({ ok: false, error: 'No such rule' });
+    const kind = b.kind === 'keyword' ? 'keyword' : 'vendor', pattern = String(b.pattern || r.pattern).trim().slice(0, 120), category = String(b.category || r.category).trim().slice(0, 80);
+    if (!pattern || !category) return res.json({ ok: false, error: 'Pattern and category are needed.' });
+    if (!chartOf(await settings()).some(c => c.name === category)) return res.json({ ok: false, error: 'Not a category in the chart of accounts: ' + category });
+    await dbRun('UPDATE bk_rules SET kind = ?, pattern = ?, category = ?, vendor = ? WHERE id = ?', [kind, pattern, category, kind === 'vendor' ? pattern : null, id]);
+    let applied = 0;
+    if (b.apply && category !== r.category) {
+      const u = await dbRun("UPDATE bk_transactions SET category = ?, updated_at = datetime('now') WHERE rule_id = ? AND category_source = 'rule' AND status = 'categorized'", [category, id]);
+      applied = u.changes || 0;
+    }
+    await audit(userId(req), 'rule.edit', id, { from: { kind: r.kind, pattern: r.pattern, category: r.category }, to: { kind, pattern, category }, applied });
+    res.json({ ok: true, applied });
+  });
   app.delete('/api/bookkeeping/rules/:id', ...guard, async (req, res) => { await dbRun('UPDATE bk_rules SET active = 0 WHERE id = ?', [parseInt(req.params.id)]); await audit(userId(req), 'rule.remove', req.params.id); res.json({ ok: true }); });
   app.get('/api/bookkeeping/directory', ...guard, async (req, res) => {
     if (req.query.fresh !== '0') await syncDirectoryIfStale(userId(req), 10 * 60000);
@@ -2375,6 +2431,8 @@ module.exports = function mountBookkeeping(app, deps) {
   // 1.19.63: Nova vendors — companies kept only here (the landlord, LinkedIn, a one-off contractor…), not in the CRM lists.
   // source 'nova'; the chart of accounts is their map: `default_category` = what we buy from them, `specialty` = in words.
   const VFIELDS = ['email', 'phone', 'contact', 'address', 'specialty', 'notes'];
+  // 1.19.77: a vendor photo is an https URL or a small data: image (the form shrinks uploads to 160px) — anything else is dropped
+  const vendorPhoto = (p) => { p = String(p || '').trim(); if (/^https?:\/\/\S{4,500}$/.test(p)) return p; if (/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(p) && p.length <= 200000) return p; return null; };
   app.post('/api/bookkeeping/vendors', ...guard, async (req, res) => {
     try {
       const b = req.body || {}, name = String(b.name || '').trim().slice(0, 120);
@@ -2382,8 +2440,8 @@ module.exports = function mountBookkeeping(app, deps) {
       const dup = await dbGet('SELECT id, name, source FROM bk_vendors WHERE lower(name) = lower(?)', [name]);
       if (dup && !b.force) return res.json({ ok: false, error: '"' + dup.name + '" is already in the directory' + (dup.source === 'nova' ? ' as a Nova vendor' : ' (from the CRM)'), duplicate: dup });
       const details = JSON.stringify({ website: String(b.website || '').trim().slice(0, 200) || undefined });
-      const r = await dbRun('INSERT INTO bk_vendors (name, source, kind, approved, approved_by, approved_at, default_category, aliases, details, ' + VFIELDS.join(', ') + ') VALUES (?,?,?,?,?,?,?,?,?' + VFIELDS.map(() => ',?').join('') + ')',
-        [name, 'nova', 'nova', 1, userId(req), nowIso(), String(b.default_category || '').slice(0, 300) || null, String(b.aliases || '').slice(0, 1000) || null, details].concat(VFIELDS.map(k => String(b[k] || '').slice(0, 500) || null)));
+      const r = await dbRun('INSERT INTO bk_vendors (name, source, kind, approved, approved_by, approved_at, default_category, aliases, details, photo, ' + VFIELDS.join(', ') + ') VALUES (?,?,?,?,?,?,?,?,?,?' + VFIELDS.map(() => ',?').join('') + ')',
+        [name, 'nova', 'nova', 1, userId(req), nowIso(), String(b.default_category || '').slice(0, 300) || null, String(b.aliases || '').slice(0, 1000) || null, details, vendorPhoto(b.photo)].concat(VFIELDS.map(k => String(b[k] || '').slice(0, 500) || null)));
       dirCache.at = 0;
       await audit(userId(req), 'vendor.new', r.lastID, { name });
       res.json({ ok: true, vendor: await dbGet('SELECT * FROM bk_vendors WHERE id = ?', [r.lastID]) });
@@ -2438,6 +2496,7 @@ module.exports = function mountBookkeeping(app, deps) {
       if (b.name !== undefined && String(b.name).trim()) { sets.push('name = ?'); args.push(String(b.name).trim().slice(0, 120)); }
       VFIELDS.forEach(k => { if (b[k] !== undefined) { sets.push(k + ' = ?'); args.push(String(b[k] || '').slice(0, 500) || null); } });
       if (b.website !== undefined) { let d = {}; try { d = JSON.parse(cur.details || '{}') || {}; } catch (e) {} d.website = String(b.website || '').trim().slice(0, 200) || undefined; sets.push('details = ?'); args.push(JSON.stringify(d)); }
+      if (b.photo !== undefined) { sets.push('photo = ?'); args.push(vendorPhoto(b.photo)); }   // 1.19.77: a logo URL or a small picture uploaded from the form
     }
     if (b.default_category !== undefined) { sets.push('default_category = ?'); args.push(String(b.default_category || '').slice(0, 300) || null); }
     if (b.notes !== undefined) { sets.push('notes = ?'); args.push(String(b.notes || '').slice(0, 500) || null); }

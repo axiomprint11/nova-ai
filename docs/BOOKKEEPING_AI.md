@@ -509,3 +509,13 @@ of accounts, notes for the AI, chat_webhook, chat_space, waiting_days, notreceiv
 2. Bill capture: Nova (this) vs BILL's inbox — this build assumes Nova.
 3. Chart of accounts: the default list in Rules → "Chart of accounts" is a starting point for the CPA to confirm.
 4. QuickBooks / BILL / production consumption: later phases.
+
+## Rules from the bank feed, rule editing, vendor photos (1.19.77)
+
+- **Create a rule** — a categorized line that no rule covers yet shows the link under its Category. It asks first, then
+  makes a vendor rule (the linked company's name, else the merchant) with the line's category, ties the line to it, and
+  files every pending line of that vendor / wording on the same money side by it. A second rule for the same vendor is refused.
+- **Edit a rule** — Accounts → Rules, Edit on the row: kind, pattern and category inline. Changing the category asks
+  whether the lines the rule already categorized follow it ("Yes, change all N" / "No, only new lines" / Cancel).
+- **Vendor logo / photo** — the Nova vendor form shows the picture (the bank's logo when one was picked up) with a URL
+  box, Upload (shrunk to 160px in the browser) and × to remove.
