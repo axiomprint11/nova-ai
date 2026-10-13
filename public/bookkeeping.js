@@ -183,7 +183,7 @@
   const splitCats = (v) => String(v || '').split(/\s*[;|\n]\s*/).map(x => x.trim()).filter(Boolean);
   const catSelect = (cur, cls, blank, o) => {
     o = o || {}; const vals = splitCats(cur);
-    return '<span class="ckp ' + esc(cls || '') + (o.multi ? ' multi' : '') + '" data-blank="' + esc(blank || '') + '"><button type="button" class="ckp-btn">' + ckpFace(vals, blank, !!o.multi) + '</button><input type="hidden" class="' + esc(cls || '') + ' ckp-val" value="' + esc(vals.join('; ')) + '"></span>';
+    return '<span class="ckp ' + esc(cls || '') + (o.multi ? ' multi' : '') + '" data-blank="' + esc(blank || '') + '"' + (o.only ? ' data-only="' + esc(o.only) + '"' : '') + '"><button type="button" class="ckp-btn">' + ckpFace(vals, blank, !!o.multi) + '</button><input type="hidden" class="' + esc(cls || '') + ' ckp-val" value="' + esc(vals.join('; ')) + '"></span>';
   };
   const ckpFace = (vals, blank, multi) => {
     if (!vals.length) return '<span class="ckp-empty">' + esc(blank || 'Choose…') + '</span><span class="ckp-caret"></span>';
@@ -219,7 +219,8 @@
     const list = pop.querySelector('.ckp-list'), q = pop.querySelector('input');
     const draw = () => {
       const f = q.value.trim().toLowerCase(); let html = '';
-      const tops = chart.filter(c => !c.parent);
+      const only = wrap.dataset.only;   // 1.19.59: 'income' = money in → only the income type(s); 'expense' = everything else
+      const tops = chart.filter(c => !c.parent && (!only || (only === 'income' ? !!c.income : !c.income)));
       tops.forEach(t => {
         const subs = t.children ? chart.filter(c => c.parent === t.name) : [];
         const kidsAll = t.children ? subs.flatMap(c => [{ name: c.name, lvl: 2, kids: chart.filter(g => g.parent === c.name).map(g => g.name) }].concat(chart.filter(g => g.parent === c.name).map(g => ({ name: g.name, lvl: 3, up: c.name })))) : [{ name: t.name, lvl: 1 }];
@@ -575,7 +576,7 @@
         '<td>' + vendorCell(t) + '</td><td class="tx-desc-td">' + esc(t.merchant || t.name) + ((t.orig_desc || t.name) !== (t.merchant || t.name) ? '<div class="bk-muted tx-orig">' + esc(t.orig_desc || t.name) + '</div>' : '') +
         (prettyCat(t) ? '<div class="bk-dim">' + esc(prettyCat(t)) + (t.place ? ' · ' + esc(t.place) : '') + '</div>' : t.place ? '<div class="bk-dim">' + esc(t.place) + '</div>' : '') + '</td><td>' + bankCell(t) + '</td>' +
         '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '">' + usd(-t.amount) + '<div class="tx-when bk-dim" title="When the transaction happened' + (t.pending ? ' (still pending at the bank)' : '') + '">' + esc(txWhen(t)) + ' ' + chanLine(t) + '</div></td>' +
-        '<td data-txid="' + t.id + '">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : 'Choose…') +
+        '<td data-txid="' + t.id + '">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : (t.amount < 0 ? 'Income…' : 'Choose…'), { only: t.amount < 0 ? 'income' : 'expense' }) +
         (!t.category && t.ai_category ? '<div class="tx-ai" title="' + esc(t.ai_reason || '') + '">' + aiIcon + ' <b>' + esc(t.ai_category) + '</b>' + (t.ai_conf != null ? ' <span class="tx-pct">' + Math.round(t.ai_conf * 100) + '%</span>' : '') + ' <button type="button" class="bk-btn sm p tx-use" data-aicat="' + esc(t.ai_category) + '">Use</button></div>' :
           !t.category && t.status === 'new' ? '<div class="tx-ai bk-dim">' + aiIcon + ' rating…</div>' : '') + '</td>' +
         '<td><span class="bk-tag ' + esc(t.status) + '" title="' + esc(t.category ? 'Set ' + (t.category_source === 'approved' ? 'from the AI\'s proposal' : t.category_source === 'rule' ? 'by a vendor rule' : 'by hand') : t.status === 'pending' ? 'The AI has a suggestion — pick it or choose another' : 'Just synced, not rated yet') + '">' + esc(STL[t.status] || t.status) + '</span>' + (t.category && t.category_source ? '<div class="bk-dim">' + esc(t.category_source) + '</div>' : '') + '</td></tr>').join('') + '</tbody></table>' +
@@ -1286,6 +1287,7 @@
     ed.innerHTML = '<div class="coa-head"><button class="coa-big" id="coaIcon" title="Change icon">' + tile(t.color, t.icon, 'big', t.name.charAt(0)) + '</button><input class="name" id="coaName" value="' + esc(t.name) + '" title="Rename the type"></div>' +
       '<div class="bk-muted" style="margin-bottom:4px">Color</div><div class="coa-colors">' + PALETTE.map(c => '<span class="coa-sw' + (c === t.color ? ' on' : '') + '" data-c="' + c + '" style="background:' + c + '"></span>').join('') + '<input type="color" id="coaCustom" value="' + esc(t.color) + '" title="Any color"></div>' +
       '<label class="bk-row" style="gap:8px;align-items:center;margin:10px 0 12px;font-size:13px"><input type="checkbox" id="coaDeliv"' + (t.delivery ? ' checked' : '') + '> Expects delivery <span class="bk-muted">— the default for every sub category below (each has its own 📦 toggle); money here buys goods that must arrive; purchases get a receiving status and show under Not received</span></label>' +
+      '<label class="bk-row" style="gap:8px;align-items:center;margin:-6px 0 12px;font-size:13px"><input type="checkbox" id="coaIncome"' + (t.income ? ' checked' : '') + '> Money in (income) <span class="bk-muted">— deposits and payments received get only this type\'s categories in the Bank feed, and the AI never files money out here</span></label>' +
       '<div class="bk-muted" style="margin-bottom:4px">Sub categories' + (t.children.length ? '' : ' <span class="bk-dim">— none yet: the type itself is used on transactions until you add some</span>') + '</div>' +
       '<div id="coaKids">' + t.children.map((k, i) => '<div class="coa-k" data-k="' + i + '"><span data-kicon="' + i + '" title="Icon">' + tile(t.color, k.icon, iconKey(k.icon) ? '' : 'empty', '·') + '</span><input class="kn" value="' + esc(k.name) + '">' + delivBtn(k, t, 'kdel2', i) + '<span class="use">' + esc(useText(coaUsage[k.name])) + '</span>' +
         '<span class="coa-mv"><button data-kup="' + i + '"' + (i ? '' : ' disabled') + '>▲</button><button data-kdown="' + i + '"' + (i < t.children.length - 1 ? '' : ' disabled') + '>▼</button></span><button class="del" data-kdel="' + i + '" title="' + (inUse(k.name) ? 'In use — rename it instead' : 'Remove') + '"' + (inUse(k.name) ? ' disabled' : '') + '>×</button></div>' +
@@ -1296,6 +1298,7 @@
       '<div class="coa-foot" style="border-top:0;margin-top:6px;justify-content:flex-end"><button class="bk-btn sm bad" id="coaDelType"' + (t.children.some(k => inUse(k.name)) || inUse(t.name) ? ' disabled title="Some of it is in use"' : '') + '>Delete this type</button></div>';
     $('coaIcon').onclick = (e) => iconPicker(e.currentTarget, t.icon, (ic) => { t.icon = ic; drawChart(); saveChart(); });
     $('coaDeliv').onchange = () => { t.delivery = $('coaDeliv').checked ? 1 : 0; saveChart(); };
+    $('coaIncome').onchange = () => { t.income = $('coaIncome').checked ? 1 : 0; saveChart(); };
     ed.querySelectorAll('.coa-sw').forEach(sw => sw.onclick = () => { t.color = sw.dataset.c; drawChart(); saveChart(); });
     $('coaCustom').oninput = (e) => { t.color = e.target.value; ed.querySelectorAll('.coa-ic').forEach(el => el.style.setProperty('--c', t.color)); };
     $('coaCustom').onchange = () => { drawChart(); saveChart(); };

@@ -71,6 +71,12 @@ Plaid's institution metadata) · amount · category. Vendor matching: an exact n
 **Use**. When a person links a line, the bank's wording becomes an alias of that vendor, so every future line with the
 same wording links by itself, and other unlinked lines with that wording are linked right away. Change is always there.
 
+### Money in
+In Accounts → Chart of Accounts a type of expense can be marked **Money in (income)** — the Income type is, by default.
+A deposit or payment received in the Bank feed then offers only that type's categories in its picker (and money out never
+offers them), and the AI files money in under an income category only; if it tries anything else the line gets a
+question instead of a suggestion.
+
 ### Which accounts are in use
 Settings → Bank accounts lists every account behind a connection with a checkbox. Untick an account (a personal
 checking on the same bank login, say) and its lines disappear from the Bank feed, the counts, the AI's work, purchase

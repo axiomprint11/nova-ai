@@ -248,7 +248,9 @@ module.exports = function mountBookkeeping(app, deps) {
         kids.push({ name: n, icon: iconKey(c.icon), delivery: dl(c), children: gk }); } });
       // delivery: does money under this type buy something that has to arrive? (goods → receiving status on the purchase)
       const delivery = t.delivery === 0 || t.delivery === false ? 0 : t.delivery === 1 || t.delivery === true ? 1 : (/cost of goods|supplies|equipment|inventory|material|asset/i.test(name) ? 1 : 0);
-      out.push({ name, color, icon: iconKey(t.icon), delivery, children: kids });
+      // income: money that comes IN belongs under this type (1.19.59); a type named Income is one unless switched off
+      const income = t.income === 0 || t.income === false ? 0 : t.income === 1 || t.income === true ? 1 : (/\bincome\b|\brevenue\b|\bsales\b(?!.*marketing)/i.test(name) ? 1 : 0);
+      out.push({ name, color, icon: iconKey(t.icon), delivery, income, children: kids });
     });
     return out;
   }
@@ -259,7 +261,7 @@ module.exports = function mountBookkeeping(app, deps) {
   // Flat view: [{ name, parent, children, color, icon }] — parents first, their subs after each (file order).
   function chartOf(s) {
     const out = [];
-    chartTree(s).forEach(t => { out.push({ name: t.name, parent: null, children: t.children.length, color: t.color, icon: t.icon, delivery: t.delivery }); t.children.forEach(c => { const cd = c.delivery == null ? t.delivery : c.delivery; out.push({ name: c.name, parent: t.name, top: t.name, children: (c.children || []).length, color: t.color, icon: c.icon || t.icon, delivery: cd, delivery_own: c.delivery }); (c.children || []).forEach(g => out.push({ name: g.name, parent: c.name, top: t.name, level: 3, color: t.color, icon: g.icon || c.icon || t.icon, delivery: g.delivery == null ? cd : g.delivery, delivery_own: g.delivery })); }); }); return out; }
+    chartTree(s).forEach(t => { out.push({ name: t.name, parent: null, children: t.children.length, color: t.color, icon: t.icon, delivery: t.delivery, income: t.income ? 1 : 0 }); t.children.forEach(c => { const cd = c.delivery == null ? t.delivery : c.delivery; out.push({ name: c.name, parent: t.name, top: t.name, children: (c.children || []).length, color: t.color, icon: c.icon || t.icon, delivery: cd, delivery_own: c.delivery, income: t.income ? 1 : 0 }); (c.children || []).forEach(g => out.push({ name: g.name, parent: c.name, top: t.name, level: 3, color: t.color, icon: g.icon || c.icon || t.icon, income: t.income ? 1 : 0, delivery: g.delivery == null ? cd : g.delivery, delivery_own: g.delivery })); }); }); return out; }
   const categoriesOf = (s) => { const seen = {}; return chartOf(s).filter(c => c.parent || !c.children).map(c => c.name).filter(n => !seen[n] && (seen[n] = 1)); };
   const parentOf = (s, name) => { const c = chartOf(s).find(x => x.name === name && x.parent); return c ? c.parent : null; };
   // The chart as the AI reads it: "Cost of Goods Sold: Paper; Inks & Toner | Facilities: Rent; …"
@@ -1227,6 +1229,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const listing = batch.map(t => t.id + ' | ' + t.date + ' | ' + (t.amount >= 0 ? '-' : '+') + '$' + Math.abs(t.amount).toFixed(2) + ' | ' + t.name + (t.merchant ? ' (' + t.merchant + ')' : '') +
         (t._vendor ? ' | OUR VENDOR: ' + t._vendor.name + (t._vendor.specialty ? ' — ' + t._vendor.specialty : '') + (t._vendor.default_category ? ' → usually ' + t._vendor.default_category : '') : '') +
         (t.plaid_category ? ' | bank says: ' + t.plaid_category : '') + (t.account_name ? ' | ' + t.account_name : '')).join('\n');
+      const incomeCats = chartOf(s).filter(c => c.income && (c.parent || !c.children)).map(c => c.name);
       const prior = (await dbAll("SELECT merchant, name, category FROM bk_transactions WHERE status = 'categorized' ORDER BY updated_at DESC LIMIT 60"))
         .map(x => (x.merchant || x.name) + ' → ' + x.category).filter((v, k, a) => a.indexOf(v) === k).slice(0, 40).join('\n');
       // What the owner answered when asked before — the words matter ("Uber rides are personal", "SparkFun is parts for the cutter").
@@ -1235,7 +1238,8 @@ module.exports = function mountBookkeeping(app, deps) {
       let j = null;
       try {
         const r = await anthropic.messages.create({ model: MODEL, max_tokens: 2500, system: SYS(s) + '\n' + await dirLine(), messages: [{ role: 'user', content:
-          'Bank transactions (amount: - means money out, + means money in). Propose a category for each from the chart of accounts.\n' + listing +
+          'Bank transactions (amount: - means money out, + means money in). Propose a category for each from the chart of accounts.' +
+          (incomeCats.length ? ' Money IN (+) always gets one of the INCOME categories: ' + incomeCats.join('; ') + ' — never an expense category. Money OUT (-) never gets an income category.' : '') + '\n' + listing +
           (prior ? '\n\nHOW WE CATEGORIZED BEFORE (approved):\n' + prior : '') +
           (lessons ? '\n\nWHAT THE OWNER TOLD US WHEN WE ASKED (apply these to similar transactions instead of asking again):\n' + lessons : '') +
           '\n\nReturn ONLY JSON: {"items": [{"id": <id>, "category": "", "vendor": "<clean vendor name>", "confidence": 0.0, "reason": "<one short line>", "ask": "<a question for the owner ONLY if you cannot tell, else empty>"}]}' }] });
@@ -1244,7 +1248,8 @@ module.exports = function mountBookkeeping(app, deps) {
       for (const t of batch) {
         const it = j && Array.isArray(j.items) ? j.items.find(x => Number(x.id) === t.id) : null;
         const cats = categoriesOf(s);
-        const category = it && cats.indexOf(String(it.category)) > -1 ? String(it.category) : (it && it.category ? String(it.category).slice(0, 80) : 'Uncategorized');
+        let category = it && cats.indexOf(String(it.category)) > -1 ? String(it.category) : (it && it.category ? String(it.category).slice(0, 80) : 'Uncategorized');
+        if (incomeCats.length && it && ((t.amount < 0) !== (incomeCats.indexOf(category) > -1))) { category = 'Uncategorized'; it.confidence = 0; it.ask = it.ask || ('Money ' + (t.amount < 0 ? 'in' : 'out') + ' from ' + (t.merchant || t.name) + ' — which ' + (t.amount < 0 ? 'income' : 'expense') + ' category?'); }   // 1.19.59: income and expense never cross
         const conf = it ? Math.max(0, Math.min(1, Number(it.confidence) || 0)) : 0;
         const title = (t.amount >= 0 ? '-' : '+') + '$' + Math.abs(t.amount).toFixed(2) + ' ' + (t.merchant || t.name) + ' on ' + t.date + ' → ' + category;
         const p = await dbRun('INSERT INTO bk_proposals (type, ref_table, ref_id, title, payload, confidence, reason) VALUES (?,?,?,?,?,?,?)',
