@@ -128,7 +128,7 @@
     const on = thActive(spec, cur); let val = '';
     if (Array.isArray(spec)) { const o = spec.find(x => x.v === cur); val = o && cur ? (o.t != null ? esc(o.t) : o.l) : ''; }
     else if (spec.type === 'text') val = spec.value ? esc(spec.value) : '';
-    else if (spec.type === 'range') { const pr = (spec.presets || []).find(x => x.v === spec.period); val = spec.period && spec.period !== 'custom' && spec.period !== spec.defaultPeriod && pr ? esc(pr.l) : (spec.from || spec.to) ? esc((spec.from || '…') + ' – ' + (spec.to || '…')) : ''; }
+    else if (spec.type === 'range') { const pr = (spec.presets || []).find(x => x.v === spec.period); val = spec.period && spec.period !== 'custom' && spec.period !== spec.defaultPeriod && pr ? esc(pr.l) : (spec.from || spec.to) ? esc(spec.from && spec.to ? spec.from + ' – ' + spec.to : spec.from ? (spec.kind === 'date' ? 'from ' : '≥ ') + spec.from : (spec.kind === 'date' ? 'to ' : '≤ ') + spec.to) : ''; }
     return '<button type="button" class="thf' + (on ? ' on' : '') + '" data-thf="' + esc(key) + '" data-v="' + esc(cur || '') + '"><span class="thf-l">' + esc(label) + '</span>' + (val ? ' <b>' + val + '</b>' : '') + FUNNEL + '</button>';
   };
   function thFilterBind(root, specs, onChange) {
@@ -511,8 +511,9 @@
     const st = txnSt, q = ($('puQ') || {}).value || '';
     if (!$('nWaiting').textContent) api('/api/bookkeeping/purchases?view=list').then(j => { if (j.ok) { $('nWaiting').textContent = j.counts.waiting || 0; $('nNotReceived').textContent = j.counts.notreceived || 0; } });
     const cat = st === 'categorized';
-    let qs = '?status=' + encodeURIComponent(st) + '&q=' + encodeURIComponent(q);
-    if (cat) { const [f, t] = periodRange(TF.period); qs += '&from=' + f + '&to=' + t + ['type', 'category', 'vendor_id', 'source', 'min', 'max', 'account'].map(k => TF[k] ? '&' + k + '=' + encodeURIComponent(TF[k]) : '').join(''); }
+    // 1.19.49: the header filters work in every view (date defaults to the last 30 days); the status is a filter on the Category column.
+    let qs = '?status=' + encodeURIComponent(st) + '&q=' + encodeURIComponent(q) + '&lists=1';
+    { const [f, t] = periodRange(TF.period); qs += '&from=' + f + '&to=' + t + ['type', 'category', 'vendor_id', 'source', 'min', 'max', 'account'].map(k => TF[k] ? '&' + k + '=' + encodeURIComponent(TF[k]) : '').join(''); }
     const j = await api('/api/bookkeeping/transactions' + qs);
     const bs = j.by_status || {};
     const chip = (k, l, n) => '<button class="ib-chip' + (st === k ? ' on' : '') + '" data-st="' + k + '">' + l + (n == null ? '' : ' (' + n + ')') + '</button>';
@@ -520,15 +521,17 @@
     const T = j.totals || {}, chart = cat ? report(T) : '';
     const PERIODS = [['30', 'Last 30 days'], ['month', 'This month'], ['last', 'Last month'], ['90', 'Last 90 days'], ['year', 'This year'], ['all', 'All time']].map(([v, l]) => ({ v, l }));
     const anyF = TF.type || TF.category || TF.vendor_id || TF.source || TF.min || TF.max || TF.account || TF.period !== '30' || TF.from || TF.to;
-    const fbar = cat && anyF ? '<div class="tx-filters"><span class="bk-muted">Filtered</span><button class="bk-btn sm" id="tfClear">Clear filters</button></div>' : '';
-    const FO = cat ? {
-      type: [{ v: '', l: 'All categories' }].concat(chart_types().map(t => ({ v: 'T:' + t.name, l: tile(t.color, t.icon, 'sm', '') + ' ' + esc(t.name) })), (T.by_category || []).map(c => ({ v: 'C:' + c.category, l: catLabel(c.category), n: c.n }))),
+    const fbar = anyF ? '<div class="tx-filters"><span class="bk-muted">Filtered</span><button class="bk-btn sm" id="tfClear">Clear filters</button></div>' : '';
+    const FO = {
+      type: [{ v: 'S:pending', l: 'Pending — no category yet', t: 'Pending', n: bs.pending || 0 }, { v: 'S:new', l: 'New — synced in the last 24 hours', t: 'New', n: bs.new || 0 }, { v: 'S:categorized', l: 'Categorized', n: bs.categorized || 0 }, { v: 'S:', l: 'All statuses', t: 'All' }]
+        .concat(cat ? chart_types().map(t => ({ v: 'T:' + t.name, l: tile(t.color, t.icon, 'sm', '') + ' ' + esc(t.name) })).concat((T.by_category || []).map(c => ({ v: 'C:' + c.category, l: catLabel(c.category), n: c.n }))) : []),
       vendor: [{ v: '', l: 'All vendors' }, { v: 'none', l: 'Not linked' }].concat((j.vendors || []).map(x => ({ v: String(x.id), l: esc(x.name) }))),
       source: [{ v: '', l: 'Any' }, { v: 'approved', l: 'Approved (AI proposed)' }, { v: 'manual', l: 'Manual' }, { v: 'rule', l: 'By rule' }],
-      account: [{ v: '', l: 'All accounts' }].concat((j.accounts || []).map(a => ({ v: a, l: esc(a) }))),
+      account: [{ v: '', l: 'All accounts' }].concat((j.accounts || []).map(a => ({ v: a.account_name, l: esc(a.label) }))),
       date: { type: 'range', kind: 'date', from: TF.period === 'custom' ? TF.from : '', to: TF.period === 'custom' ? TF.to : '', period: TF.period, defaultPeriod: '30', presets: PERIODS },
       amount: { type: 'range', kind: 'number', from: TF.min, to: TF.max }
-    } : null;
+    };
+    const STL = { pending: 'Pending', new: 'New', categorized: 'Categorized', '': 'All' };
     // 1.19.47: one row = date (+ when it was synced) · vendor (logo, name, Link / Change, the machine's near match with its
     // score) · description · account ("Wells Fargo - 6595" with the bank's logo) · amount · category.
     const usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : String(d || ''); };
@@ -543,8 +546,8 @@
     };
     const bankCell = (t) => '<div class="tx-bank">' + (t.bank_logo ? '<img src="' + esc(t.bank_logo) + '" alt="">' : '<span class="tx-bank-ph" style="' + (t.bank_color ? 'background:' + esc(t.bank_color) : '') + '">' + esc(String(t.institution || t.account_name || '?').charAt(0)) + '</span>') +
       '<div><b>' + esc(t.institution || 'Bank') + (t.mask ? ' - ' + esc(t.mask) : '') + '</b>' + (t.account_name ? '<div class="bk-dim">' + esc(t.account_name) + '</div>' : '') + '</div></div>';
-    v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top"><span class="bk-muted" style="margin-right:4px">Status</span>' + chip('pending', 'Pending', bs.pending || 0) + chip('new', 'New', bs.new || 0) + chip('categorized', 'Categorized', bs.categorized || 0) + '<span class="sp"></span><button class="bk-btn ico" id="syncNow" title="Sync with Bank" aria-label="Sync with Bank">' + syncIcon + '</button></div>' + fbar + chart +
-      '<table class="bk tx-table"><thead><tr><th class="tx-date">' + (cat ? thFilter('date', 'Date', FO.date) : 'Date') + '</th><th>' + (cat ? thFilter('vendor', 'Vendor', FO.vendor, TF.vendor_id) : 'Vendor') + '</th><th>Description</th><th>' + (cat ? thFilter('account', 'Account', FO.account, TF.account) : 'Account') + '</th><th class="num">' + (cat ? thFilter('amount', 'Amount', FO.amount) : 'Amount') + '</th><th>' + (cat ? thFilter('type', 'Category', FO.type, TF.type ? 'T:' + TF.type : TF.category ? 'C:' + TF.category : '') : 'Category <span class="bk-dim">pick to set</span>') + '</th></tr></thead><tbody>' +
+    v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top"><span class="bk-muted">' + (j.matched != null ? j.matched : (j.transactions || []).length) + ' ' + (st ? (STL[st] || '').toLowerCase() + ' ' : '') + 'line' + (j.matched === 1 ? '' : 's') + (TF.period === '30' && !TF.from ? ' in the last 30 days' : '') + ((j.transactions || []).length < (j.matched || 0) ? ' · showing the first ' + j.transactions.length : '') + '</span><span class="sp"></span><button class="bk-btn ico" id="syncNow" title="Sync with Bank" aria-label="Sync with Bank">' + syncIcon + '</button></div>' + fbar + chart +
+      '<table class="bk tx-table"><thead><tr><th class="tx-date">' + thFilter('date', 'Date', FO.date) + '</th><th>' + thFilter('vendor', 'Vendor', FO.vendor, TF.vendor_id) + '</th><th>Description</th><th>' + thFilter('account', 'Account', FO.account, TF.account) + '</th><th class="num">' + thFilter('amount', 'Amount', FO.amount) + '</th><th>' + thFilter('type', 'Category', FO.type, TF.type ? 'T:' + TF.type : TF.category ? 'C:' + TF.category : 'S:' + st) + '</th></tr></thead><tbody>' +
       (j.transactions || []).map(t => '<tr><td class="tx-date">' + esc(usD(t.date)) + (t.pending ? ' <span class="bk-tag">pending</span>' : '') + '<div class="bk-dim" title="When Nova received it from the bank">' + esc(laT(t.created_at)) + '</div></td>' +
         '<td>' + vendorCell(t) + '</td><td>' + esc(t.merchant || t.name) + (t.merchant && t.merchant !== t.name ? '<div class="bk-muted">' + esc(t.name) + '</div>' : '') +
         (t.plaid_category ? '<div class="bk-dim">bank: ' + esc(t.plaid_category) + '</div>' : '') + '</td><td>' + bankCell(t) + '</td>' +
@@ -557,8 +560,8 @@
     if ($('tfFrom')) { $('tfFrom').onchange = () => { TF.from = $('tfFrom').value; saveTF(); }; $('tfTo').onchange = () => { TF.to = $('tfTo').value; saveTF(); }; }
     if ($('tfMin')) { $('tfMin').onchange = () => { TF.min = $('tfMin').value; saveTF(); }; $('tfMax').onchange = () => { TF.max = $('tfMax').value; saveTF(); }; }
     if ($('tfClear')) $('tfClear').onclick = () => { Object.assign(TF, { type: '', category: '', vendor_id: '', source: '', min: '', max: '', account: '', period: '30', from: '', to: '' }); saveTF(); };
-    if (FO) thFilterBind(v, FO, (key, val) => {
-      if (key === 'type') { TF.type = val.startsWith('T:') ? val.slice(2) : ''; TF.category = val.startsWith('C:') ? val.slice(2) : ''; }
+    thFilterBind(v, FO, (key, val) => {
+      if (key === 'type') { if (val.startsWith('S:')) { txnSt = val.slice(2); TF.type = ''; TF.category = ''; } else { TF.type = val.startsWith('T:') ? val.slice(2) : ''; TF.category = val.startsWith('C:') ? val.slice(2) : ''; if (!cat && (TF.type || TF.category)) txnSt = 'categorized'; } }
       else if (key === 'vendor') TF.vendor_id = val;
       else if (key === 'date') { TF.period = val.period || '30'; TF.from = val.from || ''; TF.to = val.to || ''; }
       else if (key === 'amount') { TF.min = val.from || ''; TF.max = val.to || ''; }

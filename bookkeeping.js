@@ -1685,7 +1685,8 @@ module.exports = function mountBookkeeping(app, deps) {
       const a = accts.find(x => x.account_id === r.account_ref); r.mask = a && a.mask ? a.mask : null; delete r.bank_accounts;
       if (!r.vendor_id && r.suggest_score == null && backfilled < 150) { backfilled++; try { await autoVendor(r); Object.assign(r, (await dbGet(VSEL, [r.id])) || {}); } catch (e) {} }
     }
-    const out = { ok: true, by_status, transactions: rows };
+    const matched = rows.length < 500 ? rows.length : (await dbGet('SELECT COUNT(*) n' + W, p)).n;   // how many the filters match (the list stops at 500)
+    const out = { ok: true, by_status, matched, transactions: rows };
     if (st === 'categorized') {
       const parentOfName = {}; chartOf(await settings()).forEach(c => { if (c.parent) parentOfName[c.name] = c.parent; });
       const tot = await dbGet('SELECT COUNT(*) n, SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) spent, SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) received' + W, p);
@@ -1694,8 +1695,12 @@ module.exports = function mountBookkeeping(app, deps) {
       const byMonth = await dbAll("SELECT substr(t.date, 1, 7) m, SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) spent, SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) received, COUNT(*) n" + W + ' GROUP BY m ORDER BY m', p);
       const byVendor = await dbAll('SELECT COALESCE(v.name, t.merchant, t.name) vendor, t.vendor_id, SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) spent, COUNT(*) n' + W + ' GROUP BY COALESCE(v.name, t.merchant, t.name), t.vendor_id ORDER BY spent DESC LIMIT 12', p);
       out.totals = { count: tot.n, spent: tot.spent || 0, received: tot.received || 0, by_type: Object.values(byType).sort((a, b) => b.spent - a.spent), by_category: byCat, by_month: byMonth, by_vendor: byVendor };
-      out.accounts = (await dbAll("SELECT DISTINCT account_name FROM bk_transactions WHERE account_name IS NOT NULL ORDER BY 1")).map(r => r.account_name);
-      out.vendors = await dbAll("SELECT DISTINCT v.id, v.name FROM bk_transactions t JOIN bk_vendors v ON v.id = t.vendor_id WHERE t.status = 'categorized' ORDER BY v.name");
+    }
+    if (st === 'categorized' || req.query.lists) {
+      // 1.19.49: the Account filter shows "Wells Fargo - 6595", the Vendor filter every vendor seen on a bank line
+      const accs = await dbAll("SELECT DISTINCT t.account_name, t.account_ref, ba.institution, ba.accounts FROM bk_transactions t LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id WHERE t.account_name IS NOT NULL ORDER BY 1");
+      out.accounts = accs.map(r => { let a = null; try { a = JSON.parse(r.accounts || '[]').find(x => x.account_id === r.account_ref); } catch (e) {} return { account_name: r.account_name, label: (r.institution || 'Bank') + (a && a.mask ? ' - ' + a.mask : '') + (r.account_name ? ' · ' + r.account_name : '') }; });
+      out.vendors = await dbAll("SELECT DISTINCT v.id, v.name FROM bk_transactions t JOIN bk_vendors v ON v.id = t.vendor_id ORDER BY v.name");
     }
     res.json(out);
   });
