@@ -22,7 +22,7 @@
   // show('inbox') opens that sub-tab directly; the last sub-tab of each is remembered per browser.
   const BILL_SUBS = { all: ['draft', 'approved', 'scheduled', 'paid', 'rejected'], pending: ['draft'], approved: ['approved'], scheduled: ['scheduled'], paid: ['paid'], rejected: ['rejected'] };
   let billSub = 'pending';
-  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, equipment: loadEquipment, loans: loadLoans, chart: loadChart, rules: loadRules, materials: loadMaterials, nova: loadNovaVendors }, first: 'vendors' },
+  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, equipment: loadEquipment, loans: loadLoans, team: loadTeam, chart: loadChart, rules: loadRules, materials: loadMaterials, nova: loadNovaVendors }, first: 'vendors' },
     purchases: { bar: 'subPurchases', subs: { list: () => loadPurchases('list'), waiting: () => loadPurchases('waiting'), notreceived: () => loadPurchases('notreceived') }, first: 'list' },
     bank: { bar: 'subBank', subs: { all: () => loadTxns(''), new: () => loadTxns('new'), pending: () => loadTxns('pending'), old: () => loadTxns('old'), categorized: () => loadTxns('categorized'), stats: () => loadTxns('stats') }, first: 'pending' },   // 1.19.54: Bank feed is a top tab
     bills: { bar: 'subBills', subs: { all: () => loadBills('all'), pending: () => loadBills('pending'), approved: () => loadBills('approved'), scheduled: () => loadBills('scheduled'), paid: () => loadBills('paid'), rejected: () => loadBills('rejected') }, first: 'pending' } };
@@ -68,6 +68,15 @@
   // A styled yes / no instead of the browser's confirm(). Resolves true on the main button, false on Cancel / Esc / backdrop.
   // 1.19.117: a vendor name short enough for a question or a button — long official names get cut with an ellipsis
   const shortName = (who, max) => { who = String(who || '').trim(); max = max || 26; return who.length > max ? who.slice(0, max - 1).trim() + '…' : who; };
+  // 1.19.119: small flags for the overseas team (18×12, drawn inline — no image requests)
+  const FLAG = {
+    AM: '<svg viewBox="0 0 18 12" aria-hidden="true"><rect width="18" height="4" fill="#d90012"/><rect y="4" width="18" height="4" fill="#0033a0"/><rect y="8" width="18" height="4" fill="#f2a800"/></svg>',
+    MX: '<svg viewBox="0 0 18 12" aria-hidden="true"><rect width="6" height="12" fill="#006847"/><rect x="6" width="6" height="12" fill="#fff"/><rect x="12" width="6" height="12" fill="#ce1126"/><circle cx="9" cy="6" r="1.6" fill="#8a6a2b"/></svg>',
+    PH: '<svg viewBox="0 0 18 12" aria-hidden="true"><rect width="18" height="6" fill="#0038a8"/><rect y="6" width="18" height="6" fill="#ce1126"/><path d="M0 0l8 6-8 6z" fill="#fff"/><circle cx="2.6" cy="6" r="1.1" fill="#fcd116"/></svg>',
+    other: '<svg viewBox="0 0 18 12" aria-hidden="true"><rect width="18" height="12" fill="#e5e7eb"/><circle cx="9" cy="6" r="4" fill="none" stroke="#94a3b8" stroke-width="1"/><path d="M5 6h8M9 2v8" stroke="#94a3b8" stroke-width="1"/></svg>'
+  };
+  const flag = (code, title) => '<span class="tm-flag" title="' + esc(title || { AM: 'Armenia', MX: 'Mexico', PH: 'Philippines' }[code] || '') + '">' + (FLAG[code] || FLAG.other) + '</span>';
+  const TEAMI = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/></svg>';
   function ask(text, opt) {
     opt = opt || {};
     return new Promise((resolve) => {
@@ -602,7 +611,7 @@
     // 1.19.83: what the Status column says — Today = synced today (LA day) and not categorized, Pending = older and not categorized, else Categorized
     const newSince = j.new_since ? new Date(String(j.new_since).replace(' ', 'T') + 'Z').getTime() : Date.now() - 86400000;   // 1.19.108: the server's 6 AM Los Angeles cut-off
     const shown = (t) => t.status === 'categorized' ? 'categorized' : (new Date(String(t.created_at || '').replace(' ', 'T') + 'Z').getTime() >= newSince ? 'new' : (Date.now() - new Date(String(t.date || '') + 'T00:00:00').getTime() > 90 * 86400000 ? 'old' : 'pending'));
-    const SRC_L = { manual: 'manually matched', approved: 'AI, approved', rule: 'by rule', refund: 'refund', transfer: 'transfer', vendor: 'company\'s usual', history: 'from history', ai: 'AI suggestion' };
+    const SRC_L = { manual: 'manually matched', approved: 'AI, approved', rule: 'by rule', refund: 'refund', transfer: 'transfer', vendor: 'company\'s usual', history: 'from history', ai: 'AI suggestion' , team: 'team member' };
     const HISTI = '<svg class="tx-ai-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
     const VENDI = '<svg class="tx-ai-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/></svg>';
     const aiIcon = '<svg class="tx-ai-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>';
@@ -634,6 +643,8 @@
     // 1.19.64: photo with the kind tag under it on the left; company name (+ Link / Change icon, match pill) on the right
     const kindPill = (t) => t.vendor_source === 'nova' ? '<span class="bk-src nova" title="Nova vendor — kept in Nova, not in the CRM">vendor' + AI_I + '</span>' : '<span class="bk-src ' + esc(t.vendor_source || '') + '">' + esc(kindTag(t)) + '</span>';
     const vendorCell = (t) => {
+      // 1.19.119: a line matched to an overseas team member — flag, department, and the person instead of a company
+      if (t.team) return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft"><a href="#" class="tx-vphoto" data-teamgo="' + t.team.id + '" title="Overseas Team">' + vlogo(t.team.name, t.vendor_photo) + '<span class="tx-vedit">' + PEN + '</span></a><span class="bk-src team" title="Overseas team · ' + esc(t.team.dept || '') + '">' + flag(t.team.country) + ' team</span></div><div class="bl-vname"><b class="tx-vn">' + esc(t.team.name) + '</b> <a href="#" class="bl-vact tx-vico" data-unteam="' + t.id + '" title="Not this person — unlink">×</a><div class="bk-dim">' + esc(t.team.dept || '') + '</div></div></div>';
       if (t.vendor_id) return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft"><a href="#" class="tx-vphoto" data-vedit="' + t.vendor_id + '" title="' + (t.vendor_source === 'nova' || t.vendor_source === 'bill' ? 'Edit this vendor' : 'Vendor details') + '">' + vlogo(t.vendor_name, t.vendor_photo || t.plaid_logo) + '<span class="tx-vedit">' + PEN + '</span></a>' + kindPill(t) + '</div><div class="bl-vname"><b class="tx-vn">' + esc(t.vendor_name) + '</b> <a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Change vendor">' + PEN + '</a>' +
         (t.vendor_by === 'auto' ? '<div class="tx-match ok">Matched ' + (t.vendor_score != null ? Math.round(t.vendor_score * 100) + '%' : 'by name') + '</div>' : t.vendor_by === 'person' ? '<div class="bk-dim">linked by a person</div>' : '') + '</div></div>';
       const sug = t.suggest_vendor_id ? '<div class="tx-sug"><span class="tx-match">Matched ' + Math.round((t.suggest_score || 0) * 100) + '%</span><button type="button" class="bk-btn sm p" data-usev="' + t.id + '" data-vid="' + t.suggest_vendor_id + '">Use</button></div><div class="tx-sug-n"><b>' + esc(t.suggest_name) + '</b></div>' : '';
@@ -649,6 +660,10 @@
         '<td>' + vendorCell(t) + '</td><td class="tx-desc-td" title="' + esc([prettyCat(t) ? 'Bank category: ' + prettyCat(t) : '', t.place].filter(Boolean).join(' · ')) + '">' + esc(t.merchant || t.name) + ((t.orig_desc || t.name) !== (t.merchant || t.name) ? '<div class="bk-muted tx-orig">' + esc(t.orig_desc || t.name) + '</div>' : '') + '</td><td>' + bankCell(t) + '</td>' +
         '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '"><div class="tx-amt">' + usd(-t.amount) + chanLine(t) + '</div><div class="tx-when bk-dim" title="When the transaction happened' + (t.pending ? ' (still pending at the bank)' : '') + '">' + esc(txWhen(t)) + '</div></td>' +
         '<td data-txid="' + t.id + '">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : (t.amount < 0 ? 'Income…' : 'Choose…'), { only: t.amount < 0 ? 'income' : 'expense' }) +
+        // 1.19.119: a Wise payout — pick the team member (the server lists the candidates by pay, or everyone), and a web-dev
+        // member's line can flip between the build (asset) category and maintenance
+        (t.team_hint && t.team_hint.members.length ? '<div class="tx-ref tx-team-hint"><span class="tx-match" title="' + esc(t.team_hint.ambiguous ? 'Two or more team members are on this pay — which one?' : 'A Wise payout — who is it for?') + '">' + TEAMI + ' Who is this?</span><select class="bk sm tx-team-sel" data-teamsel="' + t.id + '"><option value="">— team member —</option>' + t.team_hint.members.map(m => '<option value="' + m.id + '">' + esc(m.name) + (m.dept ? ' · ' + esc(m.dept) : '') + (m.pay != null ? ' · ' + usd(m.pay) : '') + '</option>').join('') + '</select></div>' : '') +
+        (t.team && t.team.category_alt && t.category ? '<div class="tx-ref tx-team-flip bk-dim">' + (t.category === t.team.category_alt ? 'maintenance · <a href="#" data-teamcat="' + t.id + '" data-cat="' + esc(t.team.category) + '">build (asset) instead</a>' : 'build (asset) · <a href="#" data-teamcat="' + t.id + '" data-cat="' + esc(t.team.category_alt) + '">maintenance instead</a>') + '</div>' : '') +
         // 1.19.99: loan payments — matched to a loan, or a one-click hint
         (t.loan_id ? '<div class="tx-ref tx-loan" title="A payment on this loan — see Accounts → Loans & Leases"><div>' + LOANI + ' loan: <b>' + esc(t.loan_name || '') + '</b> <a href="#" class="tx-unref" data-unloan="' + t.id + '" title="Unlink">×</a></div></div>'
           : t.loan_hint ? '<div class="tx-ref tx-loan-hint"><span class="tx-match" title="Same monthly amount / same lender as an active loan">' + LOANI + ' Loan payment?</span><button type="button" class="bk-btn sm p" data-loan="' + t.id + '" data-lid="' + t.loan_hint.id + '">Match</button></div><div class="tx-ref tx-ref2 bk-dim">' + esc(t.loan_hint.name) + '</div>' : '') +
@@ -690,6 +705,17 @@
         if (r.ok && who) { const sw = shortName(who); const ok = await ask('Always file **' + sw + '** as **' + inp.value + '**? A rule categorizes every future line from them on its own (and any pending ones now). Edit or remove it under Accounts → Rules. "Never" stops this question for good (eBay, where every purchase is different).', { title: 'Make it a rule?', ok: 'Yes, create the rule', cancel: 'Not now', alt: 'Never for ' + shortName(who, 18) }); if (ok) { const rr = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/rule', ok === 'alt' ? { none: true } : {}); if (!rr.ok) alert(rr.error || 'Could not create the rule.'); } }   // 1.19.112: 'alt' = No rule
         setTimeout(() => { tr.classList.remove('saved', 'failed'); loadTxns(); overview(); }, 700); }); });
     v.querySelectorAll('[data-ref]').forEach(a => a.onclick = (e) => { e.preventDefault(); refundPicker(a, Number(a.dataset.ref), (j.transactions || []).find(x => x.id === Number(a.dataset.ref))); });
+    // 1.19.119: overseas team — pick the person for a Wise payout, unlink, flip build / maintenance, jump to the tab
+    v.querySelectorAll('[data-teamsel]').forEach(sel => sel.onchange = async () => {
+      const tid = Number(sel.value); if (!tid) return; const t = (j.transactions || []).find(x => x.id === Number(sel.dataset.teamsel)); const m = t && t.team_hint.members.find(x => x.id === tid); if (!m) return;
+      let remember = false;
+      if (m.pay != null && Math.abs(Number(m.pay) - Math.abs(Number(t.amount))) >= 0.005) { const a = await ask('**' + m.name + '** is on ' + usd(m.pay) + ' per period; this payout is ' + usd(Math.abs(t.amount)) + '. Link it to them — and is ' + usd(Math.abs(t.amount)) + ' their pay from now on?', { title: 'Different amount', ok: 'Link and remember the new pay', alt: 'Link only this one' }); if (a === false) { sel.value = ''; return; } remember = a === true; }
+      else if (m.pay == null) remember = await ask('Remember ' + usd(Math.abs(t.amount)) + ' as **' + m.name + '**\'s pay per period? Future payouts of that amount link to them by themselves.', { title: 'Remember the pay?', ok: 'Yes, remember', cancel: 'Just this one' });
+      sel.disabled = true; const r = await post('/api/bookkeeping/transactions/' + t.id + '/team', { team_id: tid, remember }); if (!r.ok) alert(r.error || 'Could not link'); loadTxns(); overview();
+    });
+    v.querySelectorAll('[data-unteam]').forEach(a => a.onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/transactions/' + a.dataset.unteam + '/team', { team_id: null }); if (!r.ok) alert(r.error); loadTxns(); });
+    v.querySelectorAll('[data-teamcat]').forEach(a => a.onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/transactions/' + a.dataset.teamcat + '/category', { category: a.dataset.cat, source: 'manual' }); if (!r.ok) alert(r.error); loadTxns(); });
+    v.querySelectorAll('[data-teamgo]').forEach(a => a.onclick = (e) => { e.preventDefault(); location.href = '/bookkeeping?tab=accounts&sub=team'; });
     // 1.19.99: loan payments — match from the hint, unlink
     v.querySelectorAll('[data-loan]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/transactions/' + b.dataset.loan + '/loan', { loan_id: Number(b.dataset.lid) }); if (!r.ok) alert(r.error); loadTxns(); overview(); });
     v.querySelectorAll('[data-unloan]').forEach(a => a.onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/transactions/' + a.dataset.unloan + '/loan', { loan_id: null }); if (!r.ok) alert(r.error); loadTxns(); });
@@ -1891,6 +1917,56 @@
     v.querySelectorAll('[data-pays]').forEach(b => b.onclick = () => equipmentPayments(all.find(e => e.id === Number(b.dataset.pays))));
   }
   // 1.19.99: Accounts → Loans & Leases — every liability with its amortized balance, plus a balance-sheet strip
+  // ---------------------------------------------------------------- 1.19.119: Overseas Team (people paid through Wise)
+  async function loadTeam() {
+    const v = $('vTeam');
+    if (!ov) await overview();
+    const j = await api('/api/bookkeeping/team'); if (!j.ok) { v.innerHTML = '<div class="bk-card bk-muted">' + esc(j.error || 'Could not load') + '</div>'; return; }
+    const members = j.members || [], depts = j.depts || {}, countries = j.countries || {};
+    const dateS = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    const row = (m) => '<tr' + (m.status === 'left' ? ' class="off"' : '') + '><td><span class="tm-av">' + flag(m.country, m.country_name) + '<span class="bk-logo ph">' + esc(String(m.name || '?').charAt(0).toUpperCase()) + '</span></span></td>' +
+      '<td><b>' + esc(m.name) + '</b>' + (m.status === 'left' ? ' <span class="bk-tag">left</span>' : '') + '<div class="bk-dim">' + esc(m.country_name || '') + (m.start_date ? ' · since ' + esc(dateS(m.start_date)) : '') + (m.end_date ? ' · until ' + esc(dateS(m.end_date)) : '') + '</div></td>' +
+      '<td>' + esc(m.dept || '') + '</td>' +
+      '<td class="num">' + (m.pay != null ? '<b>' + usd(m.pay) + '</b><div class="bk-dim">' + (m.period === 'monthly' ? 'monthly' : 'twice a month') + '</div>' : '<span class="bk-dim">not set</span>') + '</td>' +
+      '<td>' + (m.category ? catShort(m.category) : '<span class="bk-dim">—</span>') + (m.category_alt ? '<div class="bk-dim" style="margin-top:3px">maintenance: ' + catShort(m.category_alt) + '</div>' : '') + '</td>' +
+      '<td>' + (m.wise_ref ? '<code>' + esc(m.wise_ref) + '</code>' : '<span class="bk-dim">by amount</span>') + '</td>' +
+      '<td class="num">' + (m.paid && m.paid.n ? '<b>' + usd(m.paid.total) + '</b><div class="bk-dim">' + m.paid.n + ' payout' + (m.paid.n === 1 ? '' : 's') + ' · last ' + esc(dateS(m.paid.last)) + (m.last_amount != null && m.pay != null && Math.abs(m.last_amount - m.pay) >= 0.005 ? ' · <span class="tm-warn">last ' + usd(m.last_amount) + '</span>' : '') + '</div>' : '<span class="bk-dim">none yet</span>') + '</td>' +
+      '<td class="pu-acts"><button class="bk-btn sm" data-tedit="' + m.id + '">Edit</button></td></tr>';
+    v.innerHTML = '<div class="bk-card"><h2>Overseas team ' + qHelp('team', 'Overseas team', 'The people paid through Wise — graphic design, web development, customer service. Wise puts no name on the bank line, so each person is recognised by their exact pay per period (or the Wise reference code when it stays the same for them). A matched payout is linked to the person and filed under their category; two people on the same pay are left for you to pick in the Bank feed. Each person is also a Nova vendor, so the feed and the history work as for a company.') + '</h2>' +
+      (j.open_wise && j.open_wise.n ? '<div class="tm-open">' + TEAMI + ' <b>' + j.open_wise.n + '</b> Wise payout' + (j.open_wise.n === 1 ? '' : 's') + ' (' + usd(j.open_wise.total) + ') still waiting for a person — <a href="/bookkeeping?tab=bank&sub=pending">open the Bank feed</a></div>' : '') +
+      '<div class="bk-filters"><span class="bk-muted" style="flex:1">' + members.length + ' team member' + (members.length === 1 ? '' : 's') + '</span><button class="bk-btn p" id="tmAdd">+ Add a person</button></div>' +
+      (members.length ? '<table class="bk bk-dir tm-table"><thead><tr><th></th><th>Person</th><th>Department</th><th class="num">Pay / period</th><th>Files under</th><th>Wise ref</th><th class="num">Paid so far</th><th></th></tr></thead><tbody>' + members.map(row).join('') + '</tbody></table>' : '<div class="bk-muted" style="padding:14px 0">Nobody yet. Add each person with their department and pay per period, and Nova starts matching the Wise payouts.</div>') +
+      '<div class="bk-muted" style="margin-top:10px;font-size:12px">Web development: set <b>Files under</b> to the capital category for building the site (Assets &amp; Capital › Website Development) and <b>Maintenance category</b> to the expense one; a payout can be flipped between the two from the Bank feed.</div></div>';
+    $('tmAdd').onclick = () => teamForm({}, j, loadTeam);
+    v.querySelectorAll('[data-tedit]').forEach(b => b.onclick = () => teamForm(members.find(x => String(x.id) === b.dataset.tedit), j, loadTeam));
+  }
+  function teamForm(m, j, done) {
+    m = m || {}; const isEdit = !!m.id, depts = j.depts || {}, countries = j.countries || {};
+    const el = document.createElement('div'); el.className = 'bk-modal';
+    const f = (k, label, type, extra, ph) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><input class="bk" name="' + k + '" type="' + (type || 'text') + '" value="' + esc(m[k] != null ? m[k] : '') + '"' + (extra || '') + (ph ? ' placeholder="' + esc(ph) + '"' : '') + '></label>';
+    const sel = (k, label, opts) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><select class="bk" name="' + k + '">' + opts.map(o => '<option value="' + esc(o[0]) + '"' + (String(m[k] == null ? '' : m[k]) === String(o[0]) ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') + '</select></label>';
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(640px,100%)"><div class="bk-modal-title" style="margin-bottom:12px">' + (isEdit ? 'Edit ' + esc(m.name) : 'Add a team member') + '</div>' +
+      '<div class="nv-grid">' + f('name', 'Name', 'text', '', 'First and last name') + sel('country', 'Country', Object.keys(countries).map(c => [c, countries[c]]).concat([['other', 'Other']])) +
+      sel('department', 'Department', Object.keys(depts).map(d => [d, depts[d]])) + sel('period', 'Paid', [['semi', 'Twice a month'], ['monthly', 'Monthly']]) +
+      f('pay', 'Pay per period ($)', 'number', ' step="0.01" min="0"', '706.59') + f('wise_ref', 'Wise reference code (if it stays the same)', 'text', '', 'XXXXX9740') +
+      '<label class="nv-f"><span class="bk-muted">Files under (category)</span>' + catSelect(m.category || '', 'tmcat', 'Category…') + '</label>' +
+      '<label class="nv-f"><span class="bk-muted">Maintenance category (web dev only, optional)</span>' + catSelect(m.category_alt || '', 'tmalt', 'Category…') + '</label>' +
+      f('start_date', 'Started', 'date') + f('end_date', 'Ended (blank = still with us)', 'date') + sel('status', 'Status', [['active', 'Active'], ['left', 'Left']]) + '</div>' +
+      '<label class="nv-f"><span class="bk-muted">Notes</span><textarea class="bk" name="notes" rows="2">' + esc(m.notes || '') + '</textarea></label>' +
+      '<div class="bk-row nv-acts"><button class="bk-btn p" id="tmSave">' + (isEdit ? 'Save' : 'Add') + '</button><button class="bk-btn bk-x">Cancel</button>' + (isEdit ? '<span class="sp"></span><button class="bk-btn sm bad" id="tmDel">Remove</button>' : '') + '<span class="bk-muted" id="tmMsg"></span></div></div>';
+    const close = () => el.remove(); el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
+    document.body.appendChild(el); el.querySelector('[name=name]').focus();
+    el.querySelector('#tmSave').onclick = async () => {
+      const body = {}; el.querySelectorAll('input[name], select[name], textarea[name]').forEach(i => { body[i.name] = i.value; });
+      body.category = el.querySelector('input.tmcat').value; body.category_alt = el.querySelector('input.tmalt').value;
+      if (!body.name.trim()) { el.querySelector('#tmMsg').textContent = 'Give the person a name.'; return; }
+      if (!body.category) { el.querySelector('#tmMsg').textContent = 'Pick the category their payouts file under.'; return; }
+      const r = await post(isEdit ? '/api/bookkeeping/team/' + m.id : '/api/bookkeeping/team', body);
+      if (!r.ok) { el.querySelector('#tmMsg').textContent = r.error || 'Could not save.'; return; }
+      close(); done(); if (r.linked) overview();
+    };
+    const del = el.querySelector('#tmDel'); if (del) del.onclick = async () => { if (!(await ask('Remove **' + m.name + '** from the team? Their bank lines are kept, just unlinked; the Nova vendor stays.', { ok: 'Remove', danger: true }))) return; await post('/api/bookkeeping/team/' + m.id + '/delete', {}); close(); done(); };
+  }
   async function loadLoans() {
     const v = $('vLoans');
     if (!ov) await overview();

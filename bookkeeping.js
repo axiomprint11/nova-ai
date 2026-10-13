@@ -105,6 +105,14 @@ module.exports = function mountBookkeeping(app, deps) {
       principal REAL, start_date TEXT, term_months INTEGER, apr REAL, monthly REAL, balloon REAL, notes TEXT, status TEXT DEFAULT 'active',
       created_by TEXT, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
     db.run('ALTER TABLE bk_transactions ADD COLUMN loan_id INTEGER', () => {});
+    // 1.19.119: the overseas team — people paid through Wise (graphic design, web development, customer service…).
+    // Each member is also a Nova vendor (vendor_id) so the feed shows the person; `pay` per period and `wise_ref` match the
+    // bank line (Wise puts no recipient name on the statement), `category` files it, `category_alt` is the web-dev
+    // maintenance category (the default `category` being the capitalized build).
+    db.run(`CREATE TABLE IF NOT EXISTS bk_team (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, country TEXT, department TEXT, pay REAL, period TEXT DEFAULT 'semi',
+      category TEXT, category_alt TEXT, wise_ref TEXT, vendor_id INTEGER, start_date TEXT, end_date TEXT, status TEXT DEFAULT 'active', notes TEXT,
+      created_by TEXT, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
+    db.run('ALTER TABLE bk_transactions ADD COLUMN team_id INTEGER', () => {});
     db.run('ALTER TABLE bk_bills ADD COLUMN merged_into INTEGER', () => {});
     // How bill lines were linked by hand: vendor + the line's wording → material / machine. The next bill from that
     // vendor with the same wording links by itself (1.19.15).
@@ -400,6 +408,7 @@ module.exports = function mountBookkeeping(app, deps) {
   async function autoVendor(t) {
     if (t.vendor_id) return;
     const text = t.merchant || t.name;
+    if (isWise(text)) return;   // 1.19.119: a Wise payout is matched to a team member by amount / reference, never by wording
     const exact = await matchVendor(text);
     if (exact) { await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = 'auto', vendor_score = 1, suggest_vendor_id = NULL, suggest_score = NULL WHERE id = ? AND vendor_id IS NULL", [exact.id, t.id]); return; }
     const near = await suggestVendors(text, null, 1);
@@ -1286,16 +1295,54 @@ module.exports = function mountBookkeeping(app, deps) {
   }
   // 1.19.94 / 1.19.98: rules sweep every unfiled line (new or already rated) with no model call — run inside categorize() and on
   // every Bank feed load (throttled), so a rule made today catches yesterday's lines without waiting for an AI pass.
+  // ---------------------------------------------------------------- 1.19.119: overseas team (Wise payouts)
+  // Wise batch payouts reach the bank as "Wise Ltd Sep 15-30 261006 XXXXX9740 AxiomPrint Inc." — no recipient name. A person is
+  // recognised by the reference code (`wise_ref`, when Wise keeps it stable per recipient) or by their exact pay; two people on
+  // the same pay are left for a human (the feed shows the team picker).
+  const isWise = (text) => /\bwise\b/i.test(String(text || ''));
+  const DEPTS = { design: 'Graphic design', web: 'Web development', csr: 'Customer service', other: 'Other' };
+  const COUNTRIES = { AM: 'Armenia', MX: 'Mexico', PH: 'Philippines' };
+  async function teamMembers() { return dbAll('SELECT * FROM bk_team ORDER BY status, name COLLATE NOCASE'); }
+  const teamActiveOn = (m, date) => m.status === 'active' && (!m.start_date || !date || m.start_date <= date) && (!m.end_date || !date || m.end_date >= date);
+  // → { member } | { ambiguous: [members] } | null — for a money-out Wise line only
+  function teamMatch(members, t) {
+    if (!(Number(t.amount) > 0) || !isWise((t.merchant || '') + ' ' + (t.name || ''))) return null;
+    const amt = Math.abs(Number(t.amount)), live = members.filter(m => teamActiveOn(m, t.date));
+    const wording = String(t.name || '') + ' ' + String(t.merchant || '');
+    const byRef = live.filter(m => m.wise_ref && String(m.wise_ref).trim() && wording.indexOf(String(m.wise_ref).trim()) > -1);
+    if (byRef.length === 1) return { member: byRef[0], how: 'ref' };
+    const byPay = live.filter(m => m.pay != null && Math.abs(Number(m.pay) - amt) < 0.005);
+    if (byPay.length === 1) return { member: byPay[0], how: 'pay' };
+    if (byPay.length > 1) return { ambiguous: byPay };
+    return null;
+  }
+  async function linkTeam(t, m, who, how) {
+    await dbRun("UPDATE bk_transactions SET team_id = ?, vendor_id = COALESCE(?, vendor_id), vendor_by = CASE WHEN ? IS NULL THEN vendor_by ELSE 'team' END, vendor_score = 1, suggest_vendor_id = NULL, suggest_score = NULL, category = COALESCE(?, category), category_source = CASE WHEN ? IS NULL THEN category_source ELSE 'team' END, status = CASE WHEN ? IS NULL THEN status ELSE 'categorized' END, updated_at = datetime('now') WHERE id = ?",
+      [m.id, m.vendor_id, m.vendor_id, m.category, m.category, m.category, t.id]);
+    if (m.category) await dbRun("UPDATE bk_proposals SET status = 'edited' WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [t.id]);
+    await audit(who || 'nova', 'txn.team', t.id, { team_id: m.id, how: how || 'auto', category: m.category });
+  }
+  // sweep every open Wise line (no team member yet) — run with the rules sweep, so new payouts file themselves
+  async function applyTeam() {
+    const members = await teamMembers(); if (!members.length) return 0;
+    let n = 0;
+    for (const t of await dbAll("SELECT * FROM bk_transactions WHERE status IN ('new', 'pending') AND team_id IS NULL AND amount > 0 AND (name LIKE '%wise%' OR merchant LIKE '%wise%') ORDER BY date DESC LIMIT 400")) {
+      const hit = teamMatch(members, t); if (!hit || !hit.member) continue;
+      await linkTeam(t, hit.member, 'nova', hit.how); n++;
+    }
+    return n;
+  }
   async function applyRules(rules) {
     rules = rules || await dbAll('SELECT * FROM bk_rules WHERE active = 1 ORDER BY kind DESC, id');
-    if (!rules.length) return 0;
     let n = 0;
+    if (!rules.length) { try { n += await applyTeam(); } catch (e) { errlog('team sweep', e.message); } return n; }
     for (const t of await dbAll("SELECT t.*, v.name AS vendor_name FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id WHERE t.status IN ('new', 'pending') AND (t.category IS NULL OR t.category = '') ORDER BY t.date DESC LIMIT 800")) {
       const r = ruleMatch(rules, t); if (!r) continue;
       await dbRun("UPDATE bk_transactions SET category = ?, category_source = 'rule', rule_id = ?, status = 'categorized', updated_at = datetime('now') WHERE id = ?", [r.category, r.id, t.id]);
       await dbRun("UPDATE bk_proposals SET status = 'edited' WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [t.id]);
       await dbRun('UPDATE bk_rules SET hits = hits + 1 WHERE id = ?', [r.id]); n++;
     }
+    try { n += await applyTeam(); } catch (e) { errlog('team sweep', e.message); }   // 1.19.119
     return n;
   }
   let rulesSweptAt = 0;
@@ -1880,7 +1927,7 @@ module.exports = function mountBookkeeping(app, deps) {
     by_status.old = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND date < date('now', '-90 days')")).n;
     by_status.pending = (by_status.new_status || 0) + (by_status.pending || 0) - by_status.new_open - by_status.old;   // the open lines older than a day, within 90 days
     const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id LEFT JOIN bk_transactions tr ON tr.id = t.transfer_of LEFT JOIN bk_accounts tra ON tra.item_id = tr.item_id LEFT JOIN bk_loans lo ON lo.id = t.loan_id LEFT JOIN bk_proposals pr ON pr.id = t.proposal_id LEFT JOIN bk_transactions ro ON ro.id = t.refund_of LEFT JOIN bk_transactions rb ON rb.refund_of = t.id WHERE ' + where.join(' AND ');
-    const rows = await dbAll('SELECT t.id, t.txn_id, t.account_name, t.account_ref, t.date, t.created_at, t.name, t.raw, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, ' +
+    const rows = await dbAll('SELECT t.id, t.txn_id, t.team_id, t.account_name, t.account_ref, t.date, t.created_at, t.name, t.raw, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, ' +
       't.refund_of, t.ar_notified_at, t.ar_notified_by, t.updated_at, t.loan_id, lo.name AS loan_name, (t.check_image IS NOT NULL) AS has_check_image, t.transfer_of, tr.date AS transfer_date, tr.amount AS transfer_amount, tr.account_name AS transfer_account, tr.name AS transfer_name, tra.institution AS transfer_institution, ro.date AS refund_of_date, ro.amount AS refund_of_amount, ro.merchant AS refund_of_merchant, ro.name AS refund_of_name, ro.category AS refund_of_category, rb.id AS refunded_by, rb.date AS refunded_by_date, rb.amount AS refunded_by_amount, ' +
       'v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo, ba.institution, ba.logo AS bank_logo, ba.color AS bank_color, ba.accounts AS bank_accounts, pr.payload AS ai_payload, pr.confidence AS ai_conf, pr.reason AS ai_reason, pr.status AS ai_status' + W + ' ORDER BY ' + (st === 'categorized' ? 'COALESCE(t.updated_at, t.created_at) DESC, t.id DESC' : 't.date DESC, t.id DESC') + ' LIMIT 500', p)   // 1.19.90: Categorized = most recent work first;
     // the account's last digits ("Wells Fargo - 6595") and the near-match vendor for rows that never got one
@@ -1939,7 +1986,7 @@ module.exports = function mountBookkeeping(app, deps) {
       // 1.19.96: `rule_exists` for every row (so Use never offers "Make it a rule?" for a company that has one); `can_rule` only on filed lines
       r.no_rule = !!noRuleFor(liveRules, r);   // 1.19.112: "No rule" set for this vendor — never ask again
       r.rule_exists = !!(r.rule_id || r.no_rule || ruleMatch(liveRules, r) || liveRules.some(x => x.kind !== 'keyword' && r.vendor_name && normName(x.pattern) === normName(r.vendor_name)));
-      r.can_rule = !!(r.category && r.category !== 'Uncategorized' && !r.refund_of && !r.transfer_of && !r.rule_exists);
+      r.can_rule = !!(r.category && r.category !== 'Uncategorized' && !r.refund_of && !r.transfer_of && !r.rule_exists && !r.team_id && !isWise((r.merchant || '') + ' ' + (r.name || '')));   // 1.19.119: never a rule on a Wise payout — the team list files those
     }
     // 1.19.92: a line that looks like the other half of a transfer between our own accounts — same amount, opposite sign, a
     // different account, within 7 days, neither side matched yet — carries `transfer_hint` (id, account, date) for a one-click match
@@ -1962,6 +2009,20 @@ module.exports = function mountBookkeeping(app, deps) {
       const amt = Number(r.amount);
       const hit = activeLoans.find(l => r.vendor_id && l.vendor_id === r.vendor_id && (!l.monthly || Math.abs(Number(l.monthly) - amt) <= Math.max(1, amt * 0.02))) || activeLoans.find(l => l.monthly && Math.abs(Number(l.monthly) - amt) < 0.005);
       if (hit) r.loan_hint = { id: hit.id, name: hit.name };
+    }
+    // 1.19.119: overseas team — a linked line carries the person (flag, department); an open Wise payout carries `team_hint`
+    // (the candidates by pay, or everyone when nobody's pay matches) so the person can be picked in the row
+    const team = await teamMembers();
+    if (team.length) {
+      const byId = {}; team.forEach(m => { byId[m.id] = m; });
+      for (const r of rows) {
+        r.is_wise = isWise((r.merchant || '') + ' ' + (r.name || ''));
+        if (r.team_id && byId[r.team_id]) { const m = byId[r.team_id]; r.team = { id: m.id, name: m.name, country: m.country, department: m.department, dept: DEPTS[m.department] || m.department, category: m.category, category_alt: m.category_alt }; continue; }
+        if (!r.is_wise || !(Number(r.amount) > 0) || r.transfer_of || r.refund_of) continue;
+        const hit = teamMatch(team, r);
+        const cands = hit && hit.ambiguous ? hit.ambiguous : team.filter(m => teamActiveOn(m, r.date));
+        r.team_hint = { ambiguous: !!(hit && hit.ambiguous), members: cands.map(m => ({ id: m.id, name: m.name, country: m.country, dept: DEPTS[m.department] || m.department, pay: m.pay })) };
+      }
     }
     if (rows.some(r => !r.orig_desc)) backfillOriginalDesc();
     const out = { ok: true, by_status, matched, transactions: rows, categorizing: catBusy, new_since: cut };   // 1.19.108: the page's Status tags use the same cut-off (midnight LA)
@@ -2645,6 +2706,71 @@ module.exports = function mountBookkeeping(app, deps) {
     if (l.vendor_id) await dbRun('UPDATE bk_transactions SET vendor_id = ?, vendor_by = COALESCE(vendor_by, ?) WHERE id = ? AND vendor_id IS NULL', [l.vendor_id, 'auto', id]);
     await audit(userId(req), 'txn.loan', id, { loan_id: lid, category: cat }); res.json({ ok: true, category: cat });
   });
+  // 1.19.119: overseas team endpoints
+  const TEAM_F = ['name', 'country', 'department', 'pay', 'period', 'category', 'category_alt', 'wise_ref', 'start_date', 'end_date', 'status', 'notes'];
+  const teamBody = (b) => { const o = {}; TEAM_F.forEach(k => { if (b[k] === undefined) return; let v = b[k]; if (k === 'pay') v = v === '' || v == null ? null : Math.round(Number(v) * 100) / 100; else v = v == null ? null : String(v).trim().slice(0, k === 'notes' ? 1000 : 120) || null; o[k] = v; }); if (o.department && !DEPTS[o.department]) o.department = 'other'; if (o.period && o.period !== 'monthly') o.period = 'semi'; if (o.status && o.status !== 'left') o.status = 'active'; return o; };
+  async function teamRows() {
+    const rows = await teamMembers();
+    for (const m of rows) {
+      m.dept = DEPTS[m.department] || m.department || ''; m.country_name = COUNTRIES[m.country] || m.country || '';
+      const p = await dbGet("SELECT COUNT(*) n, SUM(amount) total, MAX(date) last, MIN(date) first FROM bk_transactions WHERE team_id = ? AND status NOT IN ('removed', 'excluded')", [m.id]);
+      m.paid = { n: p.n || 0, total: Math.round((p.total || 0) * 100) / 100, last: p.last || null, first: p.first || null };
+      const lastLine = await dbGet("SELECT amount FROM bk_transactions WHERE team_id = ? AND status NOT IN ('removed', 'excluded') ORDER BY date DESC LIMIT 1", [m.id]);
+      m.last_amount = lastLine ? Number(lastLine.amount) : null;
+    }
+    return rows;
+  }
+  app.get('/api/bookkeeping/team', ...guard, async (req, res) => {
+    try {
+      const open = await dbGet("SELECT COUNT(*) n, SUM(amount) total FROM bk_transactions WHERE status IN ('new', 'pending') AND team_id IS NULL AND amount > 0 AND (name LIKE '%wise%' OR merchant LIKE '%wise%')");
+      res.json({ ok: true, members: await teamRows(), depts: DEPTS, countries: COUNTRIES, open_wise: { n: open.n || 0, total: Math.round((open.total || 0) * 100) / 100 } });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  async function ensureTeamVendor(m, who) {
+    if (m.vendor_id) { await dbRun('UPDATE bk_vendors SET name = ?, specialty = ?, default_category = ? WHERE id = ? AND source = ?', [m.name, (DEPTS[m.department] || 'Team') + ' · overseas team', m.category || null, m.vendor_id, 'nova']); dirCache.at = 0; return m.vendor_id; }
+    const dup = await dbGet('SELECT id FROM bk_vendors WHERE lower(name) = lower(?) AND source = ?', [m.name, 'nova']);
+    if (dup) { dirCache.at = 0; return dup.id; }
+    const r = await dbRun('INSERT INTO bk_vendors (name, source, kind, approved, approved_by, approved_at, default_category, specialty, notes) VALUES (?,?,?,?,?,?,?,?,?)', [m.name, 'nova', 'team', 1, who, nowIso(), m.category || null, (DEPTS[m.department] || 'Team') + ' · overseas team', 'Overseas team member (paid through Wise). Made by the Overseas Team tab.']);
+    dirCache.at = 0; return r.lastID;
+  }
+  app.post('/api/bookkeeping/team', ...guard, async (req, res) => {
+    try {
+      const o = teamBody(req.body || {}); if (!o.name) return res.json({ ok: false, error: 'Give the person a name.' });
+      if (o.category && !chartOf(await settings()).some(c => c.name === o.category)) return res.json({ ok: false, error: 'Not a category in the chart of accounts: ' + o.category });
+      const keys = Object.keys(o); const r = await dbRun('INSERT INTO bk_team (' + keys.join(', ') + ', created_by, updated_at) VALUES (' + keys.map(() => '?').join(', ') + ', ?, ?)', keys.map(k => o[k]).concat([userId(req), nowIso()]));
+      const vid = await ensureTeamVendor(Object.assign({ id: r.lastID }, o), userId(req)); await dbRun('UPDATE bk_team SET vendor_id = ? WHERE id = ?', [vid, r.lastID]);
+      const linked = await applyTeam();
+      await audit(userId(req), 'team.add', r.lastID, Object.assign({ linked }, o)); res.json({ ok: true, id: r.lastID, linked });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  app.post('/api/bookkeeping/team/:id', ...guard, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id), m = await dbGet('SELECT * FROM bk_team WHERE id = ?', [id]); if (!m) return res.json({ ok: false, error: 'No such team member' });
+      const o = teamBody(req.body || {}); const keys = Object.keys(o); if (!keys.length) return res.json({ ok: false, error: 'Nothing to change' });
+      if (o.category && !chartOf(await settings()).some(c => c.name === o.category)) return res.json({ ok: false, error: 'Not a category in the chart of accounts: ' + o.category });
+      await dbRun('UPDATE bk_team SET ' + keys.map(k => k + ' = ?').join(', ') + ', updated_at = ? WHERE id = ?', keys.map(k => o[k]).concat([nowIso(), id]));
+      const after = Object.assign({}, m, o); const vid = await ensureTeamVendor(after, userId(req)); if (vid !== m.vendor_id) await dbRun('UPDATE bk_team SET vendor_id = ? WHERE id = ?', [vid, id]);
+      const linked = await applyTeam();
+      await audit(userId(req), 'team.edit', id, Object.assign({ linked }, o)); res.json({ ok: true, linked });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  app.post('/api/bookkeeping/team/:id/delete', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id); await dbRun('UPDATE bk_transactions SET team_id = NULL WHERE team_id = ?', [id]); await dbRun('DELETE FROM bk_team WHERE id = ?', [id]);
+    await audit(userId(req), 'team.delete', id); res.json({ ok: true });
+  });
+  // a bank line is a payout to this person: link + file it; `remember` stores the line's amount as the person's pay from now on
+  app.post('/api/bookkeeping/transactions/:id/team', ...guard, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id), tid = req.body.team_id == null ? null : parseInt(req.body.team_id);
+      const t = await dbGet('SELECT * FROM bk_transactions WHERE id = ?', [id]); if (!t) return res.json({ ok: false, error: 'No such line' });
+      if (!tid) { await dbRun("UPDATE bk_transactions SET team_id = NULL, vendor_id = CASE WHEN vendor_by = 'team' THEN NULL ELSE vendor_id END, vendor_by = CASE WHEN vendor_by = 'team' THEN NULL ELSE vendor_by END, category = CASE WHEN category_source = 'team' THEN NULL ELSE category END, category_source = CASE WHEN category_source = 'team' THEN NULL ELSE category_source END, status = CASE WHEN category_source = 'team' THEN 'pending' ELSE status END, updated_at = datetime('now') WHERE id = ?", [id]); await audit(userId(req), 'txn.team', id, { team_id: null }); return res.json({ ok: true }); }
+      const m = await dbGet('SELECT * FROM bk_team WHERE id = ?', [tid]); if (!m) return res.json({ ok: false, error: 'No such team member' });
+      if (!m.vendor_id) { m.vendor_id = await ensureTeamVendor(m, userId(req)); await dbRun('UPDATE bk_team SET vendor_id = ? WHERE id = ?', [m.vendor_id, tid]); }
+      await linkTeam(t, m, userId(req), 'person');
+      if (req.body.remember) { await dbRun('UPDATE bk_team SET pay = ?, updated_at = ? WHERE id = ?', [Math.abs(Number(t.amount)), nowIso(), tid]); await applyTeam(); }
+      res.json({ ok: true, category: m.category });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
   app.get('/api/bookkeeping/equipment', ...guard, async (req, res) => {
     if (req.query.fresh !== '0') await syncDirectoryIfStale(userId(req), 10 * 60000);
     try { res.json({ ok: true, equipment: await equipmentRows(), vendors: await dbAll('SELECT id, name, kind, photo FROM bk_vendors ORDER BY name'), crm: !!runQuery }); } catch (e) { res.json({ ok: false, error: e.message }); }
@@ -2712,6 +2838,7 @@ module.exports = function mountBookkeeping(app, deps) {
         if (dChanged) { sets.push('details = ?'); args.push(JSON.stringify(d)); }
         if (sets.length) { await dbRun('UPDATE bk_vendors SET ' + sets.join(', ') + ' WHERE id = ?', args.concat([vid])); dirCache.at = 0; } } } catch (e) {} }
     // 1.19.47: the same bank wording elsewhere (unlinked, or linked by the machine) follows — and every future line too, through the alias.
+    if (vid && t && isWise(t.merchant || t.name)) req.body.alias = false;   // 1.19.119: every Wise payout shares the same wording — never learn it as an alias
     if (vid && t && req.body.alias !== false) { const text = t.merchant || t.name; req.body.alias = req.body.alias || text;
       await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = 'auto', vendor_score = 1, suggest_vendor_id = NULL, suggest_score = NULL WHERE id <> ? AND (vendor_id IS NULL OR vendor_by = 'auto') AND LOWER(COALESCE(merchant, name)) = LOWER(?)", [vid, id, text]); }
       // 1.19.91: and every line whose wording differs only by a per-payment code (Stripe transfer ids, check / ref numbers)

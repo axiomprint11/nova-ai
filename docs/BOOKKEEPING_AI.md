@@ -549,3 +549,9 @@ as *Loan Payment (Principal)* and the loan's "Paid (bank)" column counts it.
 
 - A rule can be limited to lines **over**, **under** or **exactly** an amount (the line's absolute amount, money in or out). Blank = any amount, so existing rules are unchanged. When a vendor has both a plain rule and an amount rule, the amount rule is tried first.
 - **No rule for vendor** (`bk_rules.kind = 'none'`): the vendor is never filed by rule and Nova stops offering "Make it a rule?" / "Create a rule" for it (eBay, where every purchase is different). Set it from Accounts → Rules, from the "Never for <vendor>" button on the Make-it-a-rule question, or the "· no rule" link beside Create a rule. Remove it under Accounts → Rules.
+
+### Overseas Team (1.19.119)
+
+Accounts → **Overseas Team** lists the people paid through Wise — name, country (Armenia / Mexico / Philippines flags), department (graphic design, web development, customer service), pay per period, the category their payouts file under, and an optional maintenance category for web development (the main one being the capitalized build). Each person is also a Nova vendor.
+
+Wise payouts reach the bank with no recipient name, so Nova recognises a person by the Wise reference code (when it stays the same for them) or by their exact pay. A matched payout is linked to the person and filed under their category on its own; when two people are on the same pay, the Bank feed shows **Who is this?** with a picker. Picking someone for a different amount can remember it as their new pay. Wise lines never get vendor aliases or rules — the team list is what files them.
