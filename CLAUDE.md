@@ -184,7 +184,7 @@ admins can switch the user filter), "+ New chat" opens ChatBot, and a row of you
 has no Agents tab and Users has no per-member agents column: ChatBot's training opens from CRM Chat ("Train ChatBot",
 `trainAgent('chatbot')`) and TalkAi's from its page (`/admin?tab=agents&agent=talk-ai`).
 
-**One left menu.** `public/nova-nav.js` (`NovaNav.mount`) draws the same grouped menu (brand **NovaAI** with the running version beside it from `GET /api/version`, 1.19.80; page titles say NovaAI) on `/admin`, `/talk-ai` and
+**One left menu.** `public/nova-nav.js` (`NovaNav.mount`) draws the same grouped menu (brand **NovaAI** with the running version beside it from `GET /api/version`, 1.19.81; page titles say NovaAI) on `/admin`, `/talk-ai` and
 `/client-bot`: CRM Chat · Client ChatBot · TalkAi (each with its unread count) / Users · Domain Knowledge · Connectors /
 Installation Pricing · Delivery Pricing and Templates (both "Soon"); at the bottom New chat and who is signed in (photo or
 initial, name, email — from `/api/me`) with **Sign out** (`NovaNav.signOut()`: clears `axiom_token` / `axiom_user` /
