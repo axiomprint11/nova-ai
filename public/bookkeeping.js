@@ -133,22 +133,26 @@
     if (Array.isArray(spec)) { const o = spec.find(x => x.v === cur); val = o && (cur || o.h != null) ? (o.h != null ? o.h : o.t != null ? esc(o.t) : o.l) : ''; }   // o.h = html shown in the header (an icon slot, kept even when nothing is picked so the header keeps its width)
     else if (spec.type === 'text') val = spec.value ? esc(spec.value) : '';
     else if (spec.type === 'range') { const pr = (spec.presets || []).find(x => x.v === spec.period); val = spec.period && spec.period !== 'custom' && spec.period !== spec.defaultPeriod && pr ? esc(pr.l) : (spec.from || spec.to) ? esc(spec.from && spec.to ? spec.from + ' – ' + spec.to : spec.from ? (spec.kind === 'date' ? 'from ' : '≥ ') + spec.from : (spec.kind === 'date' ? 'to ' : '≤ ') + spec.to) : ''; }
-    return '<button type="button" class="thf' + (on ? ' on' : '') + '" data-thf="' + esc(key) + '" data-v="' + esc(cur || '') + '"><span class="thf-l">' + esc(label) + '</span>' + (val ? ' <b>' + val + '</b>' : '') + FUNNEL + '</button>';
+    // 1.19.82: an active filter carries an × on the header that clears it without opening the popover
+    return '<button type="button" class="thf' + (on ? ' on' : '') + '" data-thf="' + esc(key) + '" data-v="' + esc(cur || '') + '"><span class="thf-l">' + esc(label) + '</span>' + (val ? ' <b>' + val + '</b>' : '') + (on ? '<i class="thf-x" title="Clear this filter">×</i>' : FUNNEL) + '</button>';
   };
   function thFilterBind(root, specs, onChange) {
+    const clearOf = (spec) => Array.isArray(spec) ? '' : spec.type === 'text' ? '' : { from: '', to: '', period: spec.defaultPeriod || '' };
     root.querySelectorAll('.thf').forEach(btn => btn.onclick = (e) => {
       e.stopPropagation(); document.querySelectorAll('.thf-pop').forEach(p => p.remove());
       const key = btn.dataset.thf, spec = specs[key] || [], cur = btn.dataset.v, label = btn.querySelector('.thf-l').textContent;
+      if (e.target.closest('.thf-x')) { onChange(key, clearOf(spec)); return; }
       const pop = document.createElement('div'); pop.className = 'thf-pop';
       const r = btn.getBoundingClientRect(), W = Array.isArray(spec) ? 260 : 300; pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) + 'px'; pop.style.top = (r.bottom + 6) + 'px'; pop.style.width = W + 'px';
       const place = () => { const h = pop.offsetHeight; if (r.bottom + 6 + h > window.innerHeight - 8 && r.top - h - 6 > 8) pop.style.top = (r.top - h - 6) + 'px'; };   // flip above when short of room
       const close = () => { pop.remove(); document.removeEventListener('click', away); };
       const away = (ev) => { if (!pop.contains(ev.target)) close(); }; setTimeout(() => document.addEventListener('click', away), 0);
       if (Array.isArray(spec)) {
-        pop.innerHTML = '<div class="thf-h">' + esc(label) + '</div>' + (spec.length > 8 ? '<div class="ckp-search"><input type="text" placeholder="Filter…"></div>' : '') + '<div class="thf-list">' + spec.map(o => '<div class="thf-i' + (o.v === cur ? ' on' : '') + '" data-v="' + esc(o.v) + '"><span class="ckp-ck"></span><span class="thf-t">' + o.l + '</span>' + (o.n != null ? '<small>' + o.n + '</small>' : '') + '</div>').join('') + '</div>';
+        pop.innerHTML = '<div class="thf-h">' + esc(label) + (cur ? '<button type="button" class="thf-clear thf-hclear">× Clear</button>' : '') + '</div>' + (spec.length > 8 ? '<div class="ckp-search"><input type="text" placeholder="Filter…"></div>' : '') + '<div class="thf-list">' + spec.map(o => '<div class="thf-i' + (o.v === cur ? ' on' : '') + '" data-v="' + esc(o.v) + '"><span class="ckp-ck"></span><span class="thf-t">' + o.l + '</span>' + (o.n != null ? '<small>' + o.n + '</small>' : '') + '</div>').join('') + '</div>';
         document.body.appendChild(pop); place();
         const q = pop.querySelector('input'); if (q) { q.focus(); q.oninput = () => { const f = q.value.toLowerCase(); pop.querySelectorAll('.thf-i').forEach(i => { i.style.display = !f || i.textContent.toLowerCase().indexOf(f) > -1 ? '' : 'none'; }); }; }
         pop.querySelectorAll('.thf-i').forEach(i => i.onclick = () => { close(); onChange(key, i.dataset.v); });
+        const hc = pop.querySelector('.thf-hclear'); if (hc) hc.onclick = () => { close(); onChange(key, ''); };
         return;
       }
       if (spec.type === 'text') {
