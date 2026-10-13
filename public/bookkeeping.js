@@ -590,7 +590,7 @@
     const STL = { pending: 'Pending', new: 'New', categorized: 'Categorized', '': 'All' };
     // 1.19.83: what the Status column says — New = synced < 24 h and not categorized, Pending = older and not categorized, else Categorized
     const shown = (t) => t.status === 'categorized' ? 'categorized' : (Date.now() - new Date(String(t.created_at || '').replace(' ', 'T') + 'Z').getTime() < 86400000 ? 'new' : 'pending');
-    const SRC_L = { manual: 'manually matched', approved: 'AI, approved', rule: 'by rule', refund: 'refund', vendor: 'company\'s usual', history: 'from history', ai: 'AI suggestion' };
+    const SRC_L = { manual: 'manually matched', approved: 'AI, approved', rule: 'by rule', refund: 'refund', transfer: 'transfer', vendor: 'company\'s usual', history: 'from history', ai: 'AI suggestion' };
     const HISTI = '<svg class="tx-ai-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
     const VENDI = '<svg class="tx-ai-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/></svg>';
     const aiIcon = '<svg class="tx-ai-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>';
@@ -602,6 +602,7 @@
     const REFI = SVG('<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-5"/>');
     const RULEI = SVG('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1"/>');   // 1.19.77: the Rules tab's target
     const MAILI = SVG('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>');
+    const XFERI = SVG('<path d="M4 8h14l-3-3"/><path d="M20 16H6l3 3"/>');
     const CHECKI = SVG('<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h6M6 14h4M15 13h3"/>');
     const isIncome = (name) => { const CH = (ov && ov.chart) || []; const c = CH.find(x => x.name === name); const top = c && c.parent ? CH.find(x => x.name === (parentOf(c.parent) || c.parent)) : c; return !!(top && top.income); };   // `chart` is the stats html here
     const PLUSV = SVG('<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>');
@@ -634,8 +635,12 @@
         '<td>' + vendorCell(t) + '</td><td class="tx-desc-td" title="' + esc([prettyCat(t) ? 'Bank category: ' + prettyCat(t) : '', t.place].filter(Boolean).join(' · ')) + '">' + esc(t.merchant || t.name) + ((t.orig_desc || t.name) !== (t.merchant || t.name) ? '<div class="bk-muted tx-orig">' + esc(t.orig_desc || t.name) + '</div>' : '') + '</td><td>' + bankCell(t) + '</td>' +
         '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '"><div class="tx-amt">' + usd(-t.amount) + chanLine(t) + '</div><div class="tx-when bk-dim" title="When the transaction happened' + (t.pending ? ' (still pending at the bank)' : '') + '">' + esc(txWhen(t)) + '</div></td>' +
         '<td data-txid="' + t.id + '">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : (t.amount < 0 ? 'Income…' : 'Choose…'), { only: t.amount < 0 ? 'income' : 'expense' }) +
+        // 1.19.92: transfers between our own accounts — matched, a one-click hint, or the picker
+        (t.transfer_of ? '<div class="tx-ref tx-xfer" title="The other half of this transfer; neither side counts as spend or income"><div>' + XFERI + ' transfer ' + (t.amount < 0 ? 'from' : 'to') + ' <b>' + esc(t.transfer_institution ? bankAbbr(t.transfer_institution) : (t.transfer_account || 'account')) + '</b></div><div class="tx-ref2">' + esc(usD(t.transfer_date)) + ' · ' + usd(-t.transfer_amount) + ' <a href="#" class="tx-unref" data-unxfer="' + t.id + '" title="Unmatch">×</a></div></div>'
+          : t.transfer_hint ? '<div class="tx-ref tx-xfer-hint"><span class="tx-match" title="Same amount the other way on another account within a week">' + XFERI + ' Transfer?</span> <button type="button" class="bk-btn sm p" data-xfer="' + t.id + '" data-with="' + t.transfer_hint.id + '">Match</button><div class="tx-ref2">' + esc((t.transfer_hint.institution ? bankAbbr(t.transfer_hint.institution) : t.transfer_hint.account_name || '') + ' · ' + usD(t.transfer_hint.date) + ' · ') + usd(-t.transfer_hint.amount) + '</div></div>'
+          : !t.refund_of && Math.abs(t.amount) >= 50 ? '<div class="tx-ref"><a href="#" class="tx-refl" data-xferpick="' + t.id + '">' + XFERI + ' Transfer between our accounts…</a></div>' : '') +
         (t.amount < 0 ? (t.refund_of ? '<div class="tx-ref" title="Matched to the charge it gives back; the category and the Stats follow that charge"><div>' + REFI + ' refund of <b>' + esc(usD(t.refund_of_date)) + ' · ' + usd(t.refund_of_amount) + '</b></div><div class="tx-ref2">' + esc(t.refund_of_merchant || t.refund_of_name || '') + ' <a href="#" class="tx-unref" data-unref="' + t.id + '" title="Unmatch">×</a></div></div>'
-            : '<div class="tx-ref"><a href="#" class="tx-refl" data-ref="' + t.id + '">' + REFI + ' Refund of a charge…</a></div>') : t.refunded_by ? '<div class="tx-ref bk-dim" title="A refund was matched to this charge"><div>' + REFI + ' refunded</div><div class="tx-ref2">' + esc(usD(t.refunded_by_date)) + ' · ' + usd(-t.refunded_by_amount) + '</div></div>' : '') +
+            : t.transfer_of ? '' : '<div class="tx-ref"><a href="#" class="tx-refl" data-ref="' + t.id + '">' + REFI + ' Refund of a charge…</a></div>') : t.refunded_by ? '<div class="tx-ref bk-dim" title="A refund was matched to this charge"><div>' + REFI + ' refunded</div><div class="tx-ref2">' + esc(usD(t.refunded_by_date)) + ' · ' + usd(-t.refunded_by_amount) + '</div></div>' : '') +
         (!t.category && (t.cat_suggest || []).length ? '<div class="tx-ai">' + t.cat_suggest.map(sg => '<span class="tx-sg" title="' + esc(sg.why === 'history' ? 'Every past line from this company went here' + (sg.n ? ' (' + sg.n + ')' : '') : sg.why === 'vendor' ? 'The company\'s usual category' : (t.ai_reason || 'AI suggestion')) + '">' + (sg.why === 'ai' ? aiIcon : sg.why === 'history' ? HISTI : VENDI) + ' <b>' + esc(sg.category) + '</b> <span class="tx-pct">' + Math.round((sg.conf || 0) * 100) + '%</span> <button type="button" class="bk-btn sm p tx-use" data-aicat="' + esc(sg.category) + '" data-src="' + esc(sg.why) + '"' + ((sg.conf || 0) >= 0.9 && !t.rule_id && !t.refund_of ? ' data-askrule="' + esc(t.vendor_name || t.merchant || t.name) + '"' : '') + '>Use</button></span>').join('') + '</div>' :
           !t.category && t.status === 'new' ? '<div class="tx-ai bk-dim">' + aiIcon + ' rating…</div>' : '') +
         (t.can_rule ? '<div class="tx-ref"><a href="#" class="tx-refl tx-mkrule" data-mkrule="' + t.id + '" title="Always file ' + esc(t.vendor_name || t.merchant || t.name) + ' as ' + esc(t.category) + '">' + RULEI + ' Create a rule</a></div>' : '') +
@@ -668,6 +673,10 @@
         if (r.ok && who) { const ok = await ask('Always file ' + who + ' as ' + inp.value + '? A rule categorizes every future line from ' + who + ' on its own (and any pending ones now). You can edit or remove it under Accounts → Rules.', { title: 'Make it a rule?', ok: 'Yes, create the rule', cancel: 'Not now' }); if (ok) { const rr = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/rule', {}); if (!rr.ok) alert(rr.error || 'Could not create the rule.'); } }
         setTimeout(() => { tr.classList.remove('saved', 'failed'); loadTxns(); overview(); }, 700); }); });
     v.querySelectorAll('[data-ref]').forEach(a => a.onclick = (e) => { e.preventDefault(); refundPicker(a, Number(a.dataset.ref), (j.transactions || []).find(x => x.id === Number(a.dataset.ref))); });
+    // 1.19.92: transfers — one-click match from the hint, the picker, unmatch
+    v.querySelectorAll('[data-xfer]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/transactions/' + b.dataset.xfer + '/transfer', { with: Number(b.dataset.with) }); if (!r.ok) alert(r.error); loadTxns(); overview(); });
+    v.querySelectorAll('[data-unxfer]').forEach(a => a.onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/transactions/' + a.dataset.unxfer + '/transfer', { with: null }); if (!r.ok) alert(r.error); loadTxns(); overview(); });
+    v.querySelectorAll('[data-xferpick]').forEach(a => a.onclick = (e) => { e.preventDefault(); transferPicker(a, Number(a.dataset.xferpick), (j.transactions || []).find(x => x.id === Number(a.dataset.xferpick))); });
     // 1.19.89: the check number opens the check's photo, or a box to attach one (paste, drop or upload)
     v.querySelectorAll('[data-check]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = (j.transactions || []).find(x => x.id === Number(a.dataset.check)); if (t) checkPop(t); });
     // 1.19.79: Notify Accounts Receivable about a customer payment
@@ -1204,6 +1213,26 @@
   }
   // Pick a directory entry for a bill: near matches first, then search the whole directory.
   // 1.19.60: match a money-in line to the charge it refunds — same amount and/or same merchant, last 120 days
+  // 1.19.92: pick the other half of a transfer between our own accounts (same amount, opposite sign, within 14 days)
+  async function transferPicker(anchor, id, t) {
+    document.querySelectorAll('.ckp-pop').forEach(p => p.remove());
+    const j = await api('/api/bookkeeping/transactions/' + id + '/transfer-candidates');
+    const cands = j.candidates || [];
+    const pop = document.createElement('div'); pop.className = 'ckp-pop single';
+    pop.addEventListener('click', (e) => e.stopPropagation());
+    pop.innerHTML = '<div class="ckp-gh" style="padding:10px 12px 4px">Which line is the other side of this ' + usd(-t.amount) + '?</div><div class="ckp-list">' +
+      (cands.length ? cands.map(c => '<div class="ckp-i vp" data-c="' + c.id + '"><span class="rf-amt same">' + usd(-c.amount) + '</span><span class="rf-txt"><b>' + esc((c.institution ? bankAbbr(c.institution) + ' · ' : '') + (c.account_name || '')) + '</b><small>' + esc(usD(c.date)) + ' · ' + esc(c.merchant || c.name) + (c.other_account ? '' : ' · same account') + '</small></span></div>').join('')
+        : '<div class="bk-muted" style="padding:10px 12px">No line with this amount the other way within 14 days. Sync the bank, or wait for the other side to post.</div>') +
+      '</div><div class="ckp-foot"><span class="bk-muted">Both sides are filed as a transfer (credit card payment / between accounts) and the Stats leave them out.</span></div>';
+    document.body.appendChild(pop);
+    const r = anchor.getBoundingClientRect(), W = Math.min(420, window.innerWidth - 16);
+    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) + 'px'; pop.style.width = W + 'px';
+    const below = window.innerHeight - r.bottom - 8; if (below >= 260) { pop.style.top = (r.bottom + 4) + 'px'; pop.style.maxHeight = Math.min(400, below) + 'px'; } else { pop.style.bottom = (window.innerHeight - r.top + 4) + 'px'; pop.style.maxHeight = Math.min(400, r.top - 8) + 'px'; }
+    const close = () => { pop.remove(); document.removeEventListener('click', away); document.removeEventListener('keydown', esc1); };
+    const away = (e) => { if (!pop.contains(e.target)) close(); }, esc1 = (e) => { if (e.key === 'Escape') close(); };
+    setTimeout(() => { document.addEventListener('click', away); document.addEventListener('keydown', esc1); }, 0);
+    pop.querySelectorAll('[data-c]').forEach(el => el.onclick = async () => { const rr = await post('/api/bookkeeping/transactions/' + id + '/transfer', { with: Number(el.dataset.c) }); close(); if (!rr.ok) alert(rr.error); loadTxns(); overview(); });
+  }
   async function refundPicker(anchor, id, t) {
     document.querySelectorAll('.ckp-pop').forEach(p => p.remove());
     const j = await api('/api/bookkeeping/transactions/' + id + '/refund-candidates');

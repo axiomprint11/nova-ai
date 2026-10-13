@@ -54,7 +54,8 @@ module.exports = function mountBookkeeping(app, deps) {
     db.run('ALTER TABLE bk_transactions ADD COLUMN refund_of INTEGER', () => {});       // 1.19.60: a money-in line that gives back this charge (id)
     db.run('ALTER TABLE bk_transactions ADD COLUMN ar_notified_at TEXT', () => {});     // 1.19.79: Accounts Receivable told about this customer payment
     db.run('ALTER TABLE bk_transactions ADD COLUMN ar_notified_by TEXT', () => {});
-    db.run('ALTER TABLE bk_transactions ADD COLUMN check_image TEXT', () => {});        // 1.19.89: a photo of the check, attached by a person (data URL)
+    db.run('ALTER TABLE bk_transactions ADD COLUMN check_image TEXT', () => {});
+    db.run('ALTER TABLE bk_transactions ADD COLUMN transfer_of INTEGER', () => {});       // 1.19.92: the other side of a transfer between our own accounts (id)        // 1.19.89: a photo of the check, attached by a person (data URL)
     ['vendor_by TEXT', 'vendor_score REAL', 'suggest_vendor_id INTEGER', 'suggest_score REAL'].forEach(c => db.run('ALTER TABLE bk_transactions ADD COLUMN ' + c, () => {}));   // 1.19.47: who linked the vendor (auto ≥ 95% / person) and the best near match
     db.run(`CREATE TABLE IF NOT EXISTS bk_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, txn_id TEXT UNIQUE, item_id TEXT, account_ref TEXT,
       account_name TEXT, date TEXT, name TEXT, merchant TEXT, amount REAL, pending INTEGER DEFAULT 0, plaid_category TEXT,
@@ -539,7 +540,7 @@ module.exports = function mountBookkeeping(app, deps) {
   }
   async function ensureTxnPurchases() {
     await dropOrphanPurchases().catch(() => {});
-    const rows = await dbAll("SELECT id, vendor_id, name, merchant, amount, date, category FROM bk_transactions WHERE purchase_id IS NULL AND category IS NOT NULL AND status NOT IN ('new', 'pending', 'removed', 'excluded') AND amount > 0 LIMIT 300");
+    const rows = await dbAll("SELECT id, vendor_id, name, merchant, amount, date, category FROM bk_transactions WHERE purchase_id IS NULL AND category IS NOT NULL AND status NOT IN ('new', 'pending', 'removed', 'excluded') AND amount > 0 AND transfer_of IS NULL LIMIT 300");
     for (const t of rows) { const v = t.vendor_id ? await dbGet('SELECT name FROM bk_vendors WHERE id = ?', [t.vendor_id]) : null; const pid = await newPurchase({ vendor_id: t.vendor_id, vendor: v ? v.name : (t.merchant || t.name), amount: t.amount, date: t.date, category: t.category, txn_ids: [t.id], no_paperwork: 1 }, 'bank');  const eq = await equipmentFor(t.vendor_id, t.amount); if (eq) { await dbRun('UPDATE bk_transactions SET equipment_id = ? WHERE id = ? AND equipment_id IS NULL', [eq, t.id]); await dbRun('UPDATE bk_purchases SET equipment_id = ? WHERE id = ?', [eq, pid]); } }
     return rows.length;
   }
@@ -1779,9 +1780,9 @@ module.exports = function mountBookkeeping(app, deps) {
     by_status.new_status = by_status.new || 0;   // lines the AI has not rated yet
     by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND created_at >= datetime('now', '-1 day')")).n;
     by_status.pending = (by_status.new_status || 0) + (by_status.pending || 0) - by_status.new;   // the open lines older than a day
-    const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id LEFT JOIN bk_proposals pr ON pr.id = t.proposal_id LEFT JOIN bk_transactions ro ON ro.id = t.refund_of LEFT JOIN bk_transactions rb ON rb.refund_of = t.id WHERE ' + where.join(' AND ');
+    const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id LEFT JOIN bk_transactions tr ON tr.id = t.transfer_of LEFT JOIN bk_accounts tra ON tra.item_id = tr.item_id LEFT JOIN bk_proposals pr ON pr.id = t.proposal_id LEFT JOIN bk_transactions ro ON ro.id = t.refund_of LEFT JOIN bk_transactions rb ON rb.refund_of = t.id WHERE ' + where.join(' AND ');
     const rows = await dbAll('SELECT t.id, t.txn_id, t.account_name, t.account_ref, t.date, t.created_at, t.name, t.raw, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, ' +
-      't.refund_of, t.ar_notified_at, t.ar_notified_by, t.updated_at, (t.check_image IS NOT NULL) AS has_check_image, ro.date AS refund_of_date, ro.amount AS refund_of_amount, ro.merchant AS refund_of_merchant, ro.name AS refund_of_name, ro.category AS refund_of_category, rb.id AS refunded_by, rb.date AS refunded_by_date, rb.amount AS refunded_by_amount, ' +
+      't.refund_of, t.ar_notified_at, t.ar_notified_by, t.updated_at, (t.check_image IS NOT NULL) AS has_check_image, t.transfer_of, tr.date AS transfer_date, tr.amount AS transfer_amount, tr.account_name AS transfer_account, tr.name AS transfer_name, tra.institution AS transfer_institution, ro.date AS refund_of_date, ro.amount AS refund_of_amount, ro.merchant AS refund_of_merchant, ro.name AS refund_of_name, ro.category AS refund_of_category, rb.id AS refunded_by, rb.date AS refunded_by_date, rb.amount AS refunded_by_amount, ' +
       'v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo, ba.institution, ba.logo AS bank_logo, ba.color AS bank_color, ba.accounts AS bank_accounts, pr.payload AS ai_payload, pr.confidence AS ai_conf, pr.reason AS ai_reason, pr.status AS ai_status' + W + ' ORDER BY ' + (st === 'categorized' ? 'COALESCE(t.updated_at, t.created_at) DESC, t.id DESC' : 't.date DESC, t.id DESC') + ' LIMIT 500', p)   // 1.19.90: Categorized = most recent work first;
     // the account's last digits ("Wells Fargo - 6595") and the near-match vendor for rows that never got one
     const VSEL = 'SELECT t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id WHERE t.id = ?';
@@ -1835,17 +1836,31 @@ module.exports = function mountBookkeeping(app, deps) {
     }
     // 1.19.77: a categorized line that no rule covers yet offers "Create a rule" — `can_rule` says so
     const liveRules = await dbAll('SELECT * FROM bk_rules WHERE active = 1 ORDER BY kind DESC, id');
-    for (const r of rows) r.can_rule = !!(r.category && r.category !== 'Uncategorized' && !r.rule_id && !r.refund_of && !ruleMatch(liveRules, r) && !liveRules.some(x => x.kind === 'vendor' && r.vendor_name && normName(x.pattern) === normName(r.vendor_name)));
+    for (const r of rows) r.can_rule = !!(r.category && r.category !== 'Uncategorized' && !r.rule_id && !r.refund_of && !r.transfer_of && !ruleMatch(liveRules, r) && !liveRules.some(x => x.kind === 'vendor' && r.vendor_name && normName(x.pattern) === normName(r.vendor_name)));
+    // 1.19.92: a line that looks like the other half of a transfer between our own accounts — same amount, opposite sign, a
+    // different account, within 7 days, neither side matched yet — carries `transfer_hint` (id, account, date) for a one-click match
+    if (rows.length) {
+      const open = rows.filter(r => !r.transfer_of && !r.refund_of && Math.abs(Number(r.amount)) >= 50);
+      if (open.length) {
+        const dates = open.map(r => r.date).sort(), lo = dates[0], hi = dates[dates.length - 1];
+        const pool = await dbAll("SELECT t.id, t.date, t.amount, t.account_ref, t.account_name, t.name, ba.institution FROM bk_transactions t LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id WHERE t.status NOT IN ('removed', 'excluded') AND t.transfer_of IS NULL AND t.refund_of IS NULL AND ABS(t.amount) >= 50 AND t.date BETWEEN date(?, '-7 days') AND date(?, '+7 days')", [lo, hi]);
+        const byAmt = {}; pool.forEach(x => { const k = Math.abs(Number(x.amount)).toFixed(2); (byAmt[k] = byAmt[k] || []).push(x); });
+        for (const r of open) {
+          const c = (byAmt[Math.abs(Number(r.amount)).toFixed(2)] || []).filter(x => x.id !== r.id && x.account_ref !== r.account_ref && (Number(x.amount) < 0) !== (Number(r.amount) < 0) && Math.abs(new Date(x.date) - new Date(r.date)) <= 7 * 86400000);
+          if (c.length) { const x = c.sort((a, b) => Math.abs(new Date(a.date) - new Date(r.date)) - Math.abs(new Date(b.date) - new Date(r.date)))[0]; r.transfer_hint = { id: x.id, date: x.date, amount: x.amount, account_name: x.account_name, institution: x.institution, name: x.name }; }
+        }
+      }
+    }
     if (rows.some(r => !r.orig_desc)) backfillOriginalDesc();
     const out = { ok: true, by_status, matched, transactions: rows, categorizing: catBusy };
     if ((by_status.new_status || 0) > 0 && !catBusy) { categorizeBacklog(userId(req)); out.categorizing = true; }
     if (st === 'categorized') {
       const parentOfName = {}; chartOf(await settings()).forEach(c => { if (c.parent) parentOfName[c.name] = c.parent; });
-      const tot = await dbGet('SELECT COUNT(*) n, SUM(CASE WHEN t.amount > 0 THEN t.amount WHEN t.refund_of IS NOT NULL THEN t.amount ELSE 0 END) spent, SUM(CASE WHEN t.amount < 0 AND t.refund_of IS NULL THEN -t.amount ELSE 0 END) received' + W, p);
-      const byCat = await dbAll('SELECT t.category, SUM(CASE WHEN t.amount > 0 THEN t.amount WHEN t.refund_of IS NOT NULL THEN t.amount ELSE 0 END) spent, SUM(CASE WHEN t.amount < 0 AND t.refund_of IS NULL THEN -t.amount ELSE 0 END) received, COUNT(*) n' + W + ' GROUP BY t.category ORDER BY spent DESC', p);
+      const tot = await dbGet('SELECT COUNT(*) n, SUM(CASE WHEN t.transfer_of IS NOT NULL THEN 0 WHEN t.amount > 0 THEN t.amount WHEN t.refund_of IS NOT NULL THEN t.amount ELSE 0 END) spent, SUM(CASE WHEN t.amount < 0 AND t.refund_of IS NULL AND t.transfer_of IS NULL THEN -t.amount ELSE 0 END) received' + W, p);
+      const byCat = await dbAll('SELECT t.category, SUM(CASE WHEN t.transfer_of IS NOT NULL THEN 0 WHEN t.amount > 0 THEN t.amount WHEN t.refund_of IS NOT NULL THEN t.amount ELSE 0 END) spent, SUM(CASE WHEN t.amount < 0 AND t.refund_of IS NULL AND t.transfer_of IS NULL THEN -t.amount ELSE 0 END) received, COUNT(*) n' + W + ' GROUP BY t.category ORDER BY spent DESC', p);
       const byType = {}; byCat.forEach(r => { const t = parentOfName[r.category] || r.category || '—'; const o = byType[t] || (byType[t] = { type: t, spent: 0, received: 0, n: 0 }); o.spent += r.spent; o.received += r.received; o.n += r.n; });
-      const byMonth = await dbAll("SELECT substr(t.date, 1, 7) m, SUM(CASE WHEN t.amount > 0 THEN t.amount WHEN t.refund_of IS NOT NULL THEN t.amount ELSE 0 END) spent, SUM(CASE WHEN t.amount < 0 AND t.refund_of IS NULL THEN -t.amount ELSE 0 END) received, COUNT(*) n" + W + ' GROUP BY m ORDER BY m', p);
-      const byVendor = await dbAll('SELECT COALESCE(v.name, t.merchant, t.name) vendor, t.vendor_id, SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) spent, COUNT(*) n' + W + ' GROUP BY COALESCE(v.name, t.merchant, t.name), t.vendor_id ORDER BY spent DESC LIMIT 12', p);
+      const byMonth = await dbAll("SELECT substr(t.date, 1, 7) m, SUM(CASE WHEN t.transfer_of IS NOT NULL THEN 0 WHEN t.amount > 0 THEN t.amount WHEN t.refund_of IS NOT NULL THEN t.amount ELSE 0 END) spent, SUM(CASE WHEN t.amount < 0 AND t.refund_of IS NULL AND t.transfer_of IS NULL THEN -t.amount ELSE 0 END) received, COUNT(*) n" + W + ' GROUP BY m ORDER BY m', p);
+      const byVendor = await dbAll('SELECT COALESCE(v.name, t.merchant, t.name) vendor, t.vendor_id, SUM(CASE WHEN t.amount > 0 AND t.transfer_of IS NULL THEN t.amount ELSE 0 END) spent, COUNT(*) n' + W + ' GROUP BY COALESCE(v.name, t.merchant, t.name), t.vendor_id ORDER BY spent DESC LIMIT 12', p);
       out.totals = { count: tot.n, spent: tot.spent || 0, received: tot.received || 0, by_type: Object.values(byType).sort((a, b) => b.spent - a.spent), by_category: byCat, by_month: byMonth, by_vendor: byVendor };
     }
     if (st === 'categorized' || req.query.lists) {
@@ -1869,6 +1884,51 @@ module.exports = function mountBookkeeping(app, deps) {
       const score = (r) => (Math.abs(Math.abs(Number(r.amount)) - amt) < 0.005 ? 2 : 0) + (normName(r.merchant || r.name) === who || (t.vendor_id && r.vendor_id === t.vendor_id) ? 1 : 0);
       const out = rows.map(r => Object.assign(r, { score: score(r) })).filter(r => r.score > 0).sort((a, b) => b.score - a.score || String(b.date).localeCompare(a.date)).slice(0, 12);
       res.json({ ok: true, candidates: out });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  // 1.19.92: transfers between our own accounts — a credit card payment is money out at the bank and money in at the card,
+  // neither an expense nor income. Both lines point at each other (transfer_of), are filed under the chart's
+  // "Credit Card Payment" / "Transfer Between Accounts" (whichever exists), and the Stats leave both out.
+  app.get('/api/bookkeeping/transactions/:id/transfer-candidates', ...guard, async (req, res) => {
+    try {
+      const t = await dbGet('SELECT * FROM bk_transactions WHERE id = ?', [parseInt(req.params.id)]);
+      if (!t) return res.json({ ok: false, error: 'No such line' });
+      const rows = await dbAll("SELECT t.id, t.date, t.name, t.merchant, t.amount, t.category, t.account_name, t.account_ref, ba.institution, ba.logo AS bank_logo FROM bk_transactions t LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id " +
+        "WHERE t.id <> ? AND t.status NOT IN ('removed', 'excluded') AND t.transfer_of IS NULL AND t.refund_of IS NULL AND ((t.amount < 0) <> (? < 0)) AND t.date BETWEEN date(?, '-14 days') AND date(?, '+14 days') ORDER BY t.date DESC LIMIT 300", [t.id, Number(t.amount), t.date, t.date]);
+      const amt = Math.abs(Number(t.amount));
+      const out = rows.map(r => Object.assign(r, { same_amount: Math.abs(Math.abs(Number(r.amount)) - amt) < 0.005, other_account: r.account_ref !== t.account_ref, days: Math.round(Math.abs(new Date(r.date) - new Date(t.date)) / 86400000) }))
+        .filter(r => r.same_amount).sort((a, b) => (b.other_account - a.other_account) || (a.days - b.days)).slice(0, 12);
+      res.json({ ok: true, candidates: out });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  app.post('/api/bookkeeping/transactions/:id/transfer', ...guard, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id), w = req.body.with == null ? null : parseInt(req.body.with);
+      const t = await dbGet('SELECT * FROM bk_transactions WHERE id = ?', [id]);
+      if (!t) return res.json({ ok: false, error: 'No such line' });
+      if (w == null) {
+        const other = t.transfer_of;
+        await dbRun("UPDATE bk_transactions SET transfer_of = NULL, category = CASE WHEN category_source = 'transfer' THEN NULL ELSE category END, category_source = CASE WHEN category_source = 'transfer' THEN NULL ELSE category_source END, status = CASE WHEN category_source = 'transfer' THEN 'pending' ELSE status END, updated_at = datetime('now') WHERE id IN (?, ?)", [id, other || -1]);
+        await audit(userId(req), 'txn.transfer', id, { with: null, was: other });
+        return res.json({ ok: true });
+      }
+      const o = await dbGet('SELECT * FROM bk_transactions WHERE id = ?', [w]);
+      if (!o || o.id === id) return res.json({ ok: false, error: 'No such line' });
+      if ((Number(t.amount) < 0) === (Number(o.amount) < 0)) return res.json({ ok: false, error: 'A transfer is money out of one account and the same money into another.' });
+      if (Math.abs(Math.abs(Number(t.amount)) - Math.abs(Number(o.amount))) > 0.005) return res.json({ ok: false, error: 'The two amounts differ.' });
+      if (t.transfer_of || o.transfer_of) return res.json({ ok: false, error: 'One of them is already matched.' });
+      // which category: a credit card on either side → Credit Card Payment, else Transfer Between Accounts (only names the chart has)
+      const names = chartOf(await settings()).map(c => c.name);
+      const isCard = async (x) => { const a = await dbGet('SELECT accounts FROM bk_accounts WHERE item_id = ?', [x.item_id]); let L = []; try { L = JSON.parse(a && a.accounts || '[]'); } catch (e) {} const acc = L.find(y => y.account_id === x.account_ref); return !!(acc && /credit/i.test(acc.type || '') || acc && /credit/i.test(acc.subtype || '')); };
+      const card = (await isCard(t)) || (await isCard(o)) || /amex|american express|card|visa|mastercard/i.test((t.account_name || '') + ' ' + (o.account_name || '') + ' ' + t.name + ' ' + o.name);
+      const want = card ? ['Credit Card Payment', 'Transfer Between Accounts'] : ['Transfer Between Accounts', 'Credit Card Payment'];
+      const cat = want.find(n => names.indexOf(n) > -1) || null;
+      for (const x of [[id, w], [w, id]]) {
+        await dbRun("UPDATE bk_transactions SET transfer_of = ?, updated_at = datetime('now')" + (cat ? ", category = ?, category_source = 'transfer', status = 'categorized'" : '') + ' WHERE id = ?', cat ? [x[1], cat, x[0]] : [x[1], x[0]]);
+        await dbRun("UPDATE bk_proposals SET status = 'edited', decided_by = ?, decided_at = ? WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [userId(req), nowIso(), x[0]]);
+      }
+      await audit(userId(req), 'txn.transfer', id, { with: w, category: cat });
+      res.json({ ok: true, category: cat });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   app.post('/api/bookkeeping/transactions/:id/refund', ...guard, async (req, res) => {

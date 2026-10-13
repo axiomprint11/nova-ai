@@ -527,3 +527,11 @@ A deposit filed under an income category shows **Notify Accounts Receivable** un
 then emails the payment's facts (amount, date, the bank's wording, account, channel / check number, linked company, category,
 who sent it, a link back) To the AR address, Cc the payments address — Settings → Alerts, defaults gary@axiomprint.com and
 paymentsupport@axiomprint.com. The row then reads "AR notified <date> · who", with "again" to resend.
+
+## Transfers between our own accounts (1.19.92)
+
+A credit card payment shows up twice: money out of Wells Fargo and money into the Amex card. Neither is an expense or
+income. When the bank feed sees the same amount the other way on another account within a week it shows **⇄ Transfer? Match**
+under the category; one click links the two lines, files both as *Credit Card Payment* (or *Transfer Between Accounts* when
+no card is involved), and the Stats leave both out. "Transfer between our accounts…" opens a picker when there is no hint;
+× on a matched line unmatches both.
