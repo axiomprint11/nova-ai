@@ -370,8 +370,21 @@
   (function bubble() {
     const btn = $('bkBub'), panel = $('bkBubPanel'); if (!btn || !panel) return;
     let open = false, loaded = false;
-    const paint = (msgs) => { const box = $('bubMsgs'); box.innerHTML = (msgs || []).map(m => '<div class="bk-msg ' + (m.direction === 'in' ? 'in' : 'out') + '"><small>' + esc(m.direction === 'in' ? m.sender : 'BookkeeperAI') + (m.channel === 'google-chat' ? ' · Google Chat' : '') + ' · ' + when(m.at) + '</small>' + esc(m.text) + '</div>').join('') || '<div class="bk-muted" style="font-size:12.5px">Ask me where a purchase belongs, what a vendor usually is, what is pending, or to set a company\'s usual category.</div>'; box.scrollTop = box.scrollHeight; };
-    const load = async () => { const j = await api('/api/bookkeeping/chat'); paint(j.messages || []); loaded = true; };
+    // 1.19.75: category names in an answer are drawn as chart chips (type colour + icon, "Type › Sub"), the rest as plain text
+    const chipFor = (name) => { const row = chart.find(c => c.name === name); if (!row) return null; const top = row.parent ? (chart.find(c => c.name === row.top) || chart.find(c => c.name === row.parent)) : row; const st = styleOf((top || row).name);
+      return '<span class="bk-cat-chip" style="--c:' + esc(st.color) + '">' + tile(st.color, row.icon || st.icon, 'xs', '') + (row.parent ? '<small>' + esc(row.top || row.parent) + ' ›</small> ' : '') + esc(name) + '</span>'; };
+    const richText = (text) => {
+      let html = esc(text); const toks = [];   // chips go in as placeholders so one chip's text is never re-matched by a shorter name
+      const names = chart.map(c => c.name).filter(Boolean).sort((a, b) => b.length - a.length);
+      names.forEach(n => { const chip = chipFor(n); if (!chip) return; const e = esc(n).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        html = html.replace(new RegExp('\\*\\*' + e + '\\*\\*|(^|[^\\w&;])' + e + '(?=$|[^\\w;])', 'g'), (m, pre) => { toks.push({ chip, name: n }); return (pre || '') + '\u0000' + (toks.length - 1) + '\u0000'; }); });
+      // "Operations → Software & Subscriptions": the sub chip already names its type, so drop the type in front of it
+      html = html.replace(/\u0000(\d+)\u0000\s*(?:→|›|&gt;|-&gt;|\/)\s*\u0000(\d+)\u0000/g, (m, a, b) => { const A = chart.find(c => c.name === toks[a].name), B = chart.find(c => c.name === toks[b].name); return A && !A.parent && B && B.parent ? '\u0000' + b + '\u0000' : m; });
+      html = html.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\u0000(\d+)\u0000/g, (m, i) => toks[i].chip);
+      return html;
+    };
+    const paint = (msgs) => { const box = $('bubMsgs'); box.innerHTML = (msgs || []).map(m => '<div class="bk-msg ' + (m.direction === 'in' ? 'in' : 'out') + '"><small>' + esc(m.direction === 'in' ? m.sender : 'BookkeeperAI') + (m.channel === 'google-chat' ? ' · Google Chat' : '') + ' · ' + when(m.at) + '</small>' + (m.direction === 'in' ? esc(m.text) : richText(m.text)) + '</div>').join('') || '<div class="bk-muted" style="font-size:12.5px">Ask me where a purchase belongs, what a vendor usually is, what is pending, or to set a company\'s usual category.</div>'; box.scrollTop = box.scrollHeight; };
+    const load = async () => { if (!ov) await overview(); const j = await api('/api/bookkeeping/chat'); paint(j.messages || []); loaded = true; };
     const toggle = (on) => { open = on == null ? !open : on; panel.hidden = !open; btn.classList.toggle('on', open); if (open) { if (!loaded) load(); setTimeout(() => $('bubIn').focus(), 50); } };
     btn.onclick = () => toggle(); $('bkBubClose').onclick = () => toggle(false);
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && open) toggle(false); });
