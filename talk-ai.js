@@ -1073,6 +1073,9 @@ module.exports = function mountTalkAi(app, deps, bot) {
       "p.title AS product, s.estimate_substage AS sub, DATE_FORMAT(e.complete_by, '%a, %b %e') AS due_day, DATE_FORMAT(e.complete_by, '%l:%i %p') AS due_time " +
       'FROM estimate e JOIN estimate_stage s ON s.estimate_id = e.id LEFT JOIN product p ON p.id = e.estimate_productid LEFT JOIN project pr ON pr.id = e.estimate_projectid ' +
       'WHERE e.estimate_clientid IN (' + ids.map(x => parseInt(x)).join(',') + ") AND s.estimate_stage IN ('prepress','processing','handling') AND s.estimate_substage IN (" + subs + ') ' +
+      // 1.19.134: a live project is a real order — invoiced (a quote or an abandoned duplicate has estimate_invoiceid 0) — that
+      // has moved in the last 60 days. E1165965 sat in Tier 1 since May with no invoice and was read out as "live" on a call.
+      'AND COALESCE(e.estimate_invoiceid, 0) > 0 AND (s.stage_in_date >= DATE_SUB(NOW(), INTERVAL 60 DAY) OR e.complete_by >= DATE_SUB(NOW(), INTERVAL 30 DAY)) ' +
       'ORDER BY e.id DESC LIMIT 80');
     const byProject = new Map();
     rows.forEach(r => {

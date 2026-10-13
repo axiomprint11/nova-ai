@@ -184,7 +184,7 @@ admins can switch the user filter), "+ New chat" opens ChatBot, and a row of you
 has no Agents tab and Users has no per-member agents column: ChatBot's training opens from CRM Chat ("Train ChatBot",
 `trainAgent('chatbot')`) and TalkAi's from its page (`/admin?tab=agents&agent=talk-ai`).
 
-**One left menu.** `public/nova-nav.js` (`NovaNav.mount`) draws the same grouped menu (brand **NovaAI** with the running version beside it from `GET /api/version`, 1.19.133; page titles say NovaAI) on `/admin`, `/talk-ai` and
+**One left menu.** `public/nova-nav.js` (`NovaNav.mount`) draws the same grouped menu (brand **NovaAI** with the running version beside it from `GET /api/version`, 1.19.134; page titles say NovaAI) on `/admin`, `/talk-ai` and
 `/client-bot`: CRM Chat · Client ChatBot · TalkAi (each with its unread count) / Users · Domain Knowledge · Connectors /
 Installation Pricing · Delivery Pricing and Templates (both "Soon"); at the bottom New chat and who is signed in (photo or
 initial, name, email — from `/api/me`) with **Sign out** (`NovaNav.signOut()`: clears `axiom_token` / `axiom_user` /
@@ -289,7 +289,7 @@ order tools. Express 5 route syntax: optional segments are `{/:name}`, not `:nam
 ElevenLabs listens and speaks, and asks Nova for every answer as a **Custom LLM** (`POST /api/talk/llm/v1/chat/completions`,
 OpenAI-style SSE, `TALKAI_LLM_KEY`). Nova answers with Claude and the client bot's own tools and rules —
 `mountClientBot` returns `{ TOOLS, runTool, loadRules, turnaroundInfo, … }` for it — plus `verify_caller`
-(order number + account email / ZIP / phone, or just email / ZIP when the number is on an account; order tools refuse until it passes), caller ID recognition before answering (`lookupCaller()`: greets by first name; a STIR/SHAKEN-verified number — Twilio `StirVerstat` Passed-A/B — skips the check, setting `talk_settings.caller_id`), `live_projects` (jobs by project in the live `estimate_stage` substages, "Mixed" when they differ), `take_message` (emails the team; `for_person` = someone asked for by name, found in the production `user` table by `team-directory.js` and sent the call summary after the call by `relayStaff()` in talk-handoff.js; once per call — a repeat only adds to the same message) and
+(order number + account email / ZIP / phone, or just email / ZIP when the number is on an account; order tools refuse until it passes), caller ID recognition before answering (`lookupCaller()`: greets by first name; a STIR/SHAKEN-verified number — Twilio `StirVerstat` Passed-A/B — skips the check, setting `talk_settings.caller_id`), `live_projects` (jobs by project in the live `estimate_stage` substages, "Mixed" when they differ; since 1.19.134 only **invoiced** estimates (`estimate_invoiceid > 0` — a quote or an abandoned duplicate never gets one) whose stage moved in the last 60 days or whose `complete_by` is within 30 days back: E1165965 sat in prepress / tier_1 since May with no invoice and was read out as a live job), `take_message` (emails the team; `for_person` = someone asked for by name, found in the production `user` table by `team-directory.js` and sent the call summary after the call by `relayStaff()` in talk-handoff.js; once per call — a repeat only adds to the same message) and
 `transfer_call` (Twilio REST redirect) and `email_quote` (the call's prices with Order now links + a link to the caller's page `/talk/c/<token>`, which shows the quotes and the conversation; prices kept in `talk_calls.quotes`). ElevenLabs system tools (end_call…) pass through as tool calls. After the call the
 ElevenLabs post-call webhook (`/api/talk/hook/elevenlabs`, HMAC `ELEVENLABS_WEBHOOK_SECRET`; server.js skips its JSON
 parser for `/api/talk/hook/`) stores the transcript, summary and MP3 (`talk-recordings/`, gitignored). SQLite `talk_settings`,
@@ -401,6 +401,7 @@ pattern for any new report over a large log table. To add a report, add an entry
   the asked quantity is below the product's smallest.
 - **Order quantity lives in `estimateoption`** (`estimate_option_name='Quantity'`), not
   `invoiceestimate.invoice_estcount`, which is often 0. Sizes are often internal numeric codes.
+- **Stale estimates in live stages**: an abandoned duplicate or quote can sit in `estimate_stage` prepress / tier_1 for months with `estimate_invoiceid = 0` while the real job (same name, next id) is complete — "is it live?" must also check the invoice and how recently the stage moved (TalkAi `liveFor()`).
 - Job number `E1169106` = `estimate.id` 1169106. Strip the `E`.
 - SQL in server.js is **string-concatenated**. Every interpolated value must go through `parseInt()` or
   `mysql.escape()` — match the surrounding code, do not introduce a raw interpolation.
