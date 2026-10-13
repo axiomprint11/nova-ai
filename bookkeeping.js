@@ -394,7 +394,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const token = dec(row.access_token);
     let cursor = row.cursor || undefined, added = 0, modified = 0, removed = 0, more = true, guardN = 0;
     while (more && guardN++ < 50) {
-      const j = await plaid('/transactions/sync', { access_token: token, cursor: cursor, count: 500 });
+      const j = await plaid('/transactions/sync', { access_token: token, cursor: cursor, count: 500, options: { include_original_description: true } });   // 1.19.56: the bank's own memo line too
       const names = {}; let accts = [];
       try { accts = JSON.parse(row.accounts || '[]'); } catch (e) {}
       accts.forEach(a => { names[a.account_id] = a.name; });
@@ -1700,7 +1700,7 @@ module.exports = function mountBookkeeping(app, deps) {
     by_status.pending = (by_status.new || 0) + (by_status.pending || 0);
     by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status <> 'removed' AND created_at >= datetime('now', '-1 day')")).n;
     const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id LEFT JOIN bk_proposals pr ON pr.id = t.proposal_id WHERE ' + where.join(' AND ');
-    const rows = await dbAll('SELECT t.id, t.txn_id, t.account_name, t.account_ref, t.date, t.created_at, t.name, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, ' +
+    const rows = await dbAll('SELECT t.id, t.txn_id, t.account_name, t.account_ref, t.date, t.created_at, t.name, t.raw, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, ' +
       'v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo, ba.institution, ba.logo AS bank_logo, ba.color AS bank_color, ba.accounts AS bank_accounts, pr.payload AS ai_payload, pr.confidence AS ai_conf, pr.reason AS ai_reason, pr.status AS ai_status' + W + ' ORDER BY t.date DESC, t.id DESC LIMIT 500', p);
     // the account's last digits ("Wells Fargo - 6595") and the near-match vendor for rows that never got one
     const VSEL = 'SELECT t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id WHERE t.id = ?';
@@ -1708,6 +1708,19 @@ module.exports = function mountBookkeeping(app, deps) {
     for (const r of rows) {
       let accts = []; try { accts = JSON.parse(r.bank_accounts || '[]'); } catch (e) {}
       const a = accts.find(x => x.account_id === r.account_ref); r.mask = a && a.mask ? a.mask : null; delete r.bank_accounts;
+      // 1.19.56: what else Plaid told us — the bank's memo line, how it was paid, when it happened, the category family
+      let raw = null; try { raw = r.raw ? JSON.parse(r.raw) : null; } catch (e) {} delete r.raw;
+      if (raw) {
+        r.orig_desc = raw.original_description || null;
+        r.channel = raw.check_number ? 'check' : raw.payment_channel === 'in store' ? 'store' : raw.payment_channel === 'online' ? 'online' : (raw.payment_channel || null);
+        r.check_no = raw.check_number || null;
+        r.tx_time = raw.authorized_datetime || raw.datetime || null;
+        r.tx_date = raw.authorized_date || raw.date || null;
+        r.plaid_primary = raw.personal_finance_category ? raw.personal_finance_category.primary : null;
+        r.plaid_logo = raw.logo_url || null;
+        r.website = raw.website || null;
+        r.place = raw.location ? [raw.location.city, raw.location.region].filter(Boolean).join(', ') + (raw.location.store_number ? ' #' + raw.location.store_number : '') : '';
+      }
       // the AI's suggestion (its proposal), shown under the picker while the line is not categorized
       let pl = null; try { pl = r.ai_payload ? JSON.parse(r.ai_payload) : null; } catch (e) {}
       r.ai_category = pl && pl.category && pl.category !== 'Uncategorized' ? pl.category : null; delete r.ai_payload;

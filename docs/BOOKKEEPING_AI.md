@@ -55,7 +55,10 @@ with a period row and a Filter… button that opens the filtered list) and a Sea
 under its Category picker; a few seconds later the AI's suggestion appears there — "✦ Paper 95% [Use]" — with its
 reason on hover. Use picks it (same as choosing it yourself), or pick another category. Nothing is categorized
 without a person. The Date column shows when the line was synced (the bank's own date, and whether it is still pending
-at the bank, on hover). The last column is **Status**: New (synced, not rated yet), Pending (the AI has a suggestion,
+at the bank, on hover). Description: the merchant, the bank's original memo line, and the category family in words with
+the city / store number when the bank gives them. Under the amount: when the transaction happened and how it was paid —
+Store, Online or Check #n. An unlinked vendor shows the merchant's logo from the bank; Link / Change are the icons beside
+the name. The last column is **Status**: New (synced, not rated yet), Pending (the AI has a suggestion,
 waiting for a person) or Categorized (with how it was set: approved / manual / rule). **Date** opens quick ranges (Last 30 days is the default, This month,
 Last month, Last 90 days, This year, All time) or a From / To; **Vendor** lists every vendor seen on a bank line (and
 "Not linked"); **Account** lists each bank account ("Wells Fargo - 6595"); **Amount** is a from / to range; and
