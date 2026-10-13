@@ -1223,18 +1223,26 @@ module.exports = function mountBookkeeping(app, deps) {
     const st = stableV(t.merchant || t.name);
     return rules.find(r => r.kind === 'vendor' ? (normName(r.pattern) === name || (vn && normName(r.pattern) === vn) || (st.length >= 6 && stableV(r.pattern) === st)) : full.indexOf(normName(r.pattern)) > -1) || null;
   }
+  // 1.19.94 / 1.19.98: rules sweep every unfiled line (new or already rated) with no model call — run inside categorize() and on
+  // every Bank feed load (throttled), so a rule made today catches yesterday's lines without waiting for an AI pass.
+  async function applyRules(rules) {
+    rules = rules || await dbAll('SELECT * FROM bk_rules WHERE active = 1 ORDER BY kind DESC, id');
+    if (!rules.length) return 0;
+    let n = 0;
+    for (const t of await dbAll("SELECT t.*, v.name AS vendor_name FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id WHERE t.status IN ('new', 'pending') AND (t.category IS NULL OR t.category = '') ORDER BY t.date DESC LIMIT 800")) {
+      const r = ruleMatch(rules, t); if (!r) continue;
+      await dbRun("UPDATE bk_transactions SET category = ?, category_source = 'rule', rule_id = ?, status = 'categorized', updated_at = datetime('now') WHERE id = ?", [r.category, r.id, t.id]);
+      await dbRun("UPDATE bk_proposals SET status = 'edited' WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [t.id]);
+      await dbRun('UPDATE bk_rules SET hits = hits + 1 WHERE id = ?', [r.id]); n++;
+    }
+    return n;
+  }
+  let rulesSweptAt = 0;
   async function categorize(who) {
     const s = await settings();
     const rules = await dbAll('SELECT * FROM bk_rules WHERE active = 1 ORDER BY kind DESC, id');
     const txns = await dbAll("SELECT * FROM bk_transactions WHERE status = 'new' ORDER BY date DESC LIMIT 80");   // 1.19.51: lines still pending at the bank get a suggestion too
-    let byRule = 0, proposed = 0, asked = 0;
-    // 1.19.94: rules also sweep lines the AI already rated but nobody filed — a rule made today should catch yesterday's lines
-    for (const t of await dbAll("SELECT t.*, v.name AS vendor_name FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id WHERE t.status = 'pending' AND (t.category IS NULL OR t.category = '') ORDER BY t.date DESC LIMIT 600")) {
-      const r = ruleMatch(rules, t); if (!r) continue;
-      await dbRun("UPDATE bk_transactions SET category = ?, category_source = 'rule', rule_id = ?, status = 'categorized', updated_at = datetime('now') WHERE id = ?", [r.category, r.id, t.id]);
-      await dbRun("UPDATE bk_proposals SET status = 'edited' WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [t.id]);
-      await dbRun('UPDATE bk_rules SET hits = hits + 1 WHERE id = ?', [r.id]); byRule++;
-    }
+    let byRule = await applyRules(rules), proposed = 0, asked = 0;
     const open = [];
     for (const t of txns) {
       const dv = t.vendor_id ? ((await directory()).find(v => v.id === t.vendor_id) || null) : await matchVendor(t.merchant || t.name);
@@ -1769,6 +1777,7 @@ module.exports = function mountBookkeeping(app, deps) {
     // Filters: status, q, from/to (dates), category (sub category name), type (type of expense → all its sub categories),
     // vendor_id, source (manual / approved / rule), min / max (absolute amount). Categorized views also get totals.
     const st = String(req.query.status || ''), q = String(req.query.q || '').trim(), g = (k) => String(req.query[k] || '').trim();
+    if (Date.now() - rulesSweptAt > 20000) { rulesSweptAt = Date.now(); try { await applyRules(); } catch (e) { errlog('rules sweep', e.message); } }
     const where = ["t.status NOT IN ('removed', 'excluded')"], p = [];
     // 1.19.83: New = not categorized and synced in the last 24 hours; Pending = not categorized, 24 hours and older;
     // Categorized = done (by rule, the AI approved, or by hand). The three never overlap.
@@ -2441,8 +2450,9 @@ module.exports = function mountBookkeeping(app, deps) {
     const b = req.body || {};
     if (!b.pattern || !b.category) return res.json({ ok: false, error: 'Pattern and category are needed.' });
     const r = await dbRun('INSERT INTO bk_rules (kind, pattern, category, vendor, note, source, created_by) VALUES (?,?,?,?,?,?,?)', [b.kind === 'keyword' ? 'keyword' : 'vendor', String(b.pattern).slice(0, 120), String(b.category).slice(0, 80), b.kind === 'keyword' ? null : String(b.pattern).slice(0, 120), String(b.note || '').slice(0, 300), 'manual', userId(req)]);
-    await audit(userId(req), 'rule.add', r.lastID, b);
-    res.json({ ok: true, id: r.lastID });
+    const applied = await applyRules();
+    await audit(userId(req), 'rule.add', r.lastID, Object.assign({ applied }, b));
+    res.json({ ok: true, id: r.lastID, applied });
   });
   // 1.19.77: edit a rule. GET …/:id/scope says what an edit would touch; POST …/:id {kind, pattern, category, apply} changes
   // it and, with apply, re-categorizes every bank line the rule categorized (category_source 'rule') to the new category —
@@ -2467,6 +2477,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const u = await dbRun("UPDATE bk_transactions SET category = ?, updated_at = datetime('now') WHERE rule_id = ? AND category_source = 'rule' AND status = 'categorized'", [category, id]);
       applied = u.changes || 0;
     }
+    applied += await applyRules();
     await audit(userId(req), 'rule.edit', id, { from: { kind: r.kind, pattern: r.pattern, category: r.category }, to: { kind, pattern, category }, applied });
     res.json({ ok: true, applied });
   });
