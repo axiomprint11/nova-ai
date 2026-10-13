@@ -364,6 +364,7 @@
 
   // ---------------------------------------------------------------- Transactions
   let txnSt = 'pending';   // Pending every time the tab opens (not remembered)
+  let txnPoll = null;
   // Categorized view filters (period defaults to the last 30 days); kept per browser.
   let TF = { period: '30', from: '', to: '', type: '', category: '', vendor_id: '', source: '', min: '', max: '', account: '' };
   try { TF = Object.assign(TF, JSON.parse(localStorage.getItem('bk_txn_filters') || '{}')); } catch (e) {}
@@ -523,8 +524,8 @@
     const anyF = TF.type || TF.category || TF.vendor_id || TF.source || TF.min || TF.max || TF.account || TF.period !== '30' || TF.from || TF.to;
     const fbar = anyF ? '<div class="tx-filters"><span class="bk-muted">Filtered</span><button class="bk-btn sm" id="tfClear">Clear filters</button></div>' : '';
     const FO = {
-      type: [{ v: 'S:pending', l: 'Pending — no category yet', t: 'Pending', n: bs.pending || 0 }, { v: 'S:new', l: 'New — synced in the last 24 hours', t: 'New', n: bs.new || 0 }, { v: 'S:categorized', l: 'Categorized', n: bs.categorized || 0 }, { v: 'S:', l: 'All statuses', t: 'All' }]
-        .concat(cat ? chart_types().map(t => ({ v: 'T:' + t.name, l: tile(t.color, t.icon, 'sm', '') + ' ' + esc(t.name) })).concat((T.by_category || []).map(c => ({ v: 'C:' + c.category, l: catLabel(c.category), n: c.n }))) : []),
+      status: [{ v: 'pending', l: 'Pending — no category yet', t: 'Pending', n: bs.pending || 0 }, { v: 'new', l: 'New — synced in the last 24 hours', t: 'New', n: bs.new || 0 }, { v: 'categorized', l: 'Categorized', n: bs.categorized || 0 }, { v: '', l: 'All statuses' }],
+      type: [{ v: '', l: 'All categories' }].concat(chart_types().map(t => ({ v: 'T:' + t.name, l: tile(t.color, t.icon, 'sm', '') + ' ' + esc(t.name) })), cat ? (T.by_category || []).map(c => ({ v: 'C:' + c.category, l: catLabel(c.category), n: c.n })) : []),
       vendor: [{ v: '', l: 'All vendors' }, { v: 'none', l: 'Not linked' }].concat((j.vendors || []).map(x => ({ v: String(x.id), l: esc(x.name) }))),
       source: [{ v: '', l: 'Any' }, { v: 'approved', l: 'Approved (AI proposed)' }, { v: 'manual', l: 'Manual' }, { v: 'rule', l: 'By rule' }],
       account: [{ v: '', l: 'All accounts' }].concat((j.accounts || []).map(a => ({ v: a.account_name, l: esc(a.label) }))),
@@ -532,6 +533,7 @@
       amount: { type: 'range', kind: 'number', from: TF.min, to: TF.max }
     };
     const STL = { pending: 'Pending', new: 'New', categorized: 'Categorized', '': 'All' };
+    const aiIcon = '<svg class="tx-ai-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>';
     // 1.19.47: one row = date (+ when it was synced) · vendor (logo, name, Link / Change, the machine's near match with its
     // score) · description · account ("Wells Fargo - 6595" with the bank's logo) · amount · category.
     const usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : String(d || ''); };
@@ -547,12 +549,15 @@
     const bankCell = (t) => '<div class="tx-bank">' + (t.bank_logo ? '<img src="' + esc(t.bank_logo) + '" alt="">' : '<span class="tx-bank-ph" style="' + (t.bank_color ? 'background:' + esc(t.bank_color) : '') + '">' + esc(String(t.institution || t.account_name || '?').charAt(0)) + '</span>') +
       '<div><b>' + esc(t.institution || 'Bank') + (t.mask ? ' - ' + esc(t.mask) : '') + '</b>' + (t.account_name ? '<div class="bk-dim">' + esc(t.account_name) + '</div>' : '') + '</div></div>';
     v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top"><span class="bk-muted">' + (j.matched != null ? j.matched : (j.transactions || []).length) + ' ' + (st ? (STL[st] || '').toLowerCase() + ' ' : '') + 'line' + (j.matched === 1 ? '' : 's') + (TF.period === '30' && !TF.from ? ' in the last 30 days' : '') + ((j.transactions || []).length < (j.matched || 0) ? ' · showing the first ' + j.transactions.length : '') + '</span><span class="sp"></span><button class="bk-btn ico" id="syncNow" title="Sync with Bank" aria-label="Sync with Bank">' + syncIcon + '</button></div>' + fbar + chart +
-      '<table class="bk tx-table"><thead><tr><th class="tx-date">' + thFilter('date', 'Date', FO.date) + '</th><th>' + thFilter('vendor', 'Vendor', FO.vendor, TF.vendor_id) + '</th><th>Description</th><th>' + thFilter('account', 'Account', FO.account, TF.account) + '</th><th class="num">' + thFilter('amount', 'Amount', FO.amount) + '</th><th>' + thFilter('type', 'Category', FO.type, TF.type ? 'T:' + TF.type : TF.category ? 'C:' + TF.category : 'S:' + st) + '</th></tr></thead><tbody>' +
-      (j.transactions || []).map(t => '<tr><td class="tx-date">' + esc(usD(t.date)) + (t.pending ? ' <span class="bk-tag">pending</span>' : '') + '<div class="bk-dim" title="When Nova received it from the bank">' + esc(laT(t.created_at)) + '</div></td>' +
+      '<table class="bk tx-table"><thead><tr><th class="tx-date">' + thFilter('date', 'Date', FO.date) + '</th><th>' + thFilter('vendor', 'Vendor', FO.vendor, TF.vendor_id) + '</th><th>Description</th><th>' + thFilter('account', 'Account', FO.account, TF.account) + '</th><th class="num">' + thFilter('amount', 'Amount', FO.amount) + '</th><th>' + thFilter('type', 'Category', FO.type, TF.type ? 'T:' + TF.type : TF.category ? 'C:' + TF.category : '') + '</th><th>' + thFilter('status', 'Status', FO.status, st) + '</th></tr></thead><tbody>' +
+      (j.transactions || []).map(t => '<tr><td class="tx-date" title="Synced from the bank · bank date ' + esc(usD(t.date)) + (t.pending ? ' (still pending at the bank)' : '') + '">' + esc(laT(t.created_at)) + '</td>' +
         '<td>' + vendorCell(t) + '</td><td>' + esc(t.merchant || t.name) + (t.merchant && t.merchant !== t.name ? '<div class="bk-muted">' + esc(t.name) + '</div>' : '') +
         (t.plaid_category ? '<div class="bk-dim">bank: ' + esc(t.plaid_category) + '</div>' : '') + '</td><td>' + bankCell(t) + '</td>' +
         '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '">' + usd(-t.amount) + '</td>' +
-        '<td data-txid="' + t.id + '"><div class="bk-row" style="gap:8px;flex-wrap:nowrap">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : 'Choose…') + (t.category ? '<span class="bk-tag ' + esc(t.category_source || '') + '" title="How it was set">' + esc(t.category_source || '') + '</span>' : '<span class="bk-tag ' + esc(t.status) + '">' + esc(t.status) + '</span>') + '</div></td></tr>').join('') + '</tbody></table>' +
+        '<td data-txid="' + t.id + '">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : 'Choose…') +
+        (!t.category && t.ai_category ? '<div class="tx-ai" title="' + esc(t.ai_reason || '') + '">' + aiIcon + ' <b>' + esc(t.ai_category) + '</b>' + (t.ai_conf != null ? ' <span class="tx-pct">' + Math.round(t.ai_conf * 100) + '%</span>' : '') + ' <button type="button" class="bk-btn sm p tx-use" data-aicat="' + esc(t.ai_category) + '">Use</button></div>' :
+          !t.category && t.status === 'new' ? '<div class="tx-ai bk-dim">' + aiIcon + ' rating…</div>' : '') + '</td>' +
+        '<td><span class="bk-tag ' + esc(t.status) + '" title="' + esc(t.category ? 'Set ' + (t.category_source === 'approved' ? 'from the AI\'s proposal' : t.category_source === 'rule' ? 'by a vendor rule' : 'by hand') : t.status === 'pending' ? 'The AI has a suggestion — pick it or choose another' : 'Just synced, not rated yet') + '">' + esc(STL[t.status] || t.status) + '</span>' + (t.category && t.category_source ? '<div class="bk-dim">' + esc(t.category_source) + '</div>' : '') + '</td></tr>').join('') + '</tbody></table>' +
       (!(j.transactions || []).length ? '<div class="bk-muted" style="padding:14px 0">' + (st === 'new' ? 'Nothing came in from the bank in the last 24 hours.' : 'No transactions here — connect a bank under Settings, then Sync.') + '</div>' : '') + '</div>';
     v.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { txnSt = b.dataset.st; loadTxns(); });
     const saveTF = () => { try { localStorage.setItem('bk_txn_filters', JSON.stringify(TF)); } catch (e) {} loadTxns(); };
@@ -561,7 +566,8 @@
     if ($('tfMin')) { $('tfMin').onchange = () => { TF.min = $('tfMin').value; saveTF(); }; $('tfMax').onchange = () => { TF.max = $('tfMax').value; saveTF(); }; }
     if ($('tfClear')) $('tfClear').onclick = () => { Object.assign(TF, { type: '', category: '', vendor_id: '', source: '', min: '', max: '', account: '', period: '30', from: '', to: '' }); saveTF(); };
     thFilterBind(v, FO, (key, val) => {
-      if (key === 'type') { if (val.startsWith('S:')) { txnSt = val.slice(2); TF.type = ''; TF.category = ''; } else { TF.type = val.startsWith('T:') ? val.slice(2) : ''; TF.category = val.startsWith('C:') ? val.slice(2) : ''; if (!cat && (TF.type || TF.category)) txnSt = 'categorized'; } }
+      if (key === 'status') { txnSt = val; TF.type = ''; TF.category = ''; }
+      else if (key === 'type') { TF.type = val.startsWith('T:') ? val.slice(2) : ''; TF.category = val.startsWith('C:') ? val.slice(2) : ''; if (!cat && (TF.type || TF.category)) txnSt = 'categorized'; }
       else if (key === 'vendor') TF.vendor_id = val;
       else if (key === 'date') { TF.period = val.period || '30'; TF.from = val.from || ''; TF.to = val.to || ''; }
       else if (key === 'amount') { TF.min = val.from || ''; TF.max = val.to || ''; }
@@ -572,6 +578,8 @@
     // Picking a category sets it on the spot (no Set button); the row flashes green.
     v.querySelectorAll('td[data-txid]').forEach(td => { const wrap = td.querySelector('.ckp'), inp = td.querySelector('input.tx-cat'); let last = inp.value;
       wrap.addEventListener('change', async () => { if (inp.value === last || !inp.value) return; last = inp.value; const r = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/category', { category: inp.value }); const tr = td.closest('tr'); tr.classList.add(r.ok ? 'saved' : 'failed'); setTimeout(() => { tr.classList.remove('saved', 'failed'); loadTxns(); overview(); }, 700); }); });
+    v.querySelectorAll('.tx-use').forEach(b => b.onclick = () => { const td = b.closest('td'); ckpSet(td.querySelector('.ckp'), [b.dataset.aicat]); });
+    clearTimeout(txnPoll); if (j.categorizing) txnPoll = setTimeout(() => { const on = document.querySelector('.bk-view.on'); if (on && on.dataset.v === 'purchases' && lastSub.purchases === 'bank') loadTxns(); }, 8000);   // the AI is rating new lines — refresh to show its suggestions
     const setV = async (id, vid) => { const r = await post('/api/bookkeeping/transactions/' + id + '/vendor', { vendor_id: vid }); if (!r.ok) alert(r.error || 'Could not link'); loadTxns(); };
     v.querySelectorAll('[data-setv]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = (j.transactions || []).find(x => String(x.id) === a.dataset.setv); vendorPicker(a, { vendor: t ? (t.merchant || t.name) : '', suggestions: t && t.suggest_vendor_id ? [{ id: t.suggest_vendor_id, name: t.suggest_name, photo: t.suggest_photo, score: t.suggest_score || 0 }] : [] }, (vid) => setV(a.dataset.setv, vid)); });
     v.querySelectorAll('[data-usev]').forEach(b => b.onclick = () => setV(b.dataset.usev, Number(b.dataset.vid)));

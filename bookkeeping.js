@@ -405,7 +405,15 @@ module.exports = function mountBookkeeping(app, deps) {
           const ins = await dbRun('INSERT INTO bk_transactions (txn_id, item_id, account_ref, account_name, date, name, merchant, amount, pending, plaid_category, raw) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
             [t.transaction_id, row.item_id, t.account_id, names[t.account_id] || null, t.date, t.name, t.merchant_name || null, Number(t.amount), t.pending ? 1 : 0, cat, JSON.stringify(t).slice(0, 20000)]);
           added++;
-          try { await autoVendor({ id: ins.lastID, name: t.name, merchant: t.merchant_name || null }); } catch (e) { errlog('auto vendor', e.message); }
+          // 1.19.51: a posted line replaces its pending one — keep the category, vendor and the AI's suggestion the pending line had
+          const prev = t.pending_transaction_id ? await dbGet('SELECT * FROM bk_transactions WHERE txn_id = ?', [t.pending_transaction_id]) : null;
+          if (prev && (prev.category || prev.vendor_id || prev.proposal_id)) {
+            await dbRun('UPDATE bk_transactions SET category = ?, category_source = ?, rule_id = ?, proposal_id = ?, status = ?, vendor_id = ?, vendor_by = ?, vendor_score = ?, purchase_id = ? WHERE id = ?',
+              [prev.category, prev.category_source, prev.rule_id, prev.proposal_id, prev.status === 'removed' ? 'new' : prev.status, prev.vendor_id, prev.vendor_by, prev.vendor_score, prev.purchase_id, ins.lastID]);
+            if (prev.proposal_id) await dbRun('UPDATE bk_proposals SET ref_id = ? WHERE id = ? AND ref_table = ?', [ins.lastID, prev.proposal_id, 'bk_transactions']);
+            if (prev.purchase_id) { const pu = await dbGet('SELECT txn_ids FROM bk_purchases WHERE id = ?', [prev.purchase_id]); if (pu) { let ids = []; try { ids = JSON.parse(pu.txn_ids || '[]'); } catch (e) {} ids = ids.filter(x => x !== prev.id); ids.push(ins.lastID); await dbRun('UPDATE bk_purchases SET txn_ids = ? WHERE id = ?', [JSON.stringify(ids), prev.purchase_id]); } }
+          }
+          if (!prev || !prev.vendor_id) { try { await autoVendor({ id: ins.lastID, name: t.name, merchant: t.merchant_name || null }); } catch (e) { errlog('auto vendor', e.message); } }
         } else {
           await dbRun("UPDATE bk_transactions SET date = ?, name = ?, merchant = ?, amount = ?, pending = ?, plaid_category = ?, raw = ?, updated_at = datetime('now') WHERE txn_id = ?",
             [t.date, t.name, t.merchant_name || null, Number(t.amount), t.pending ? 1 : 0, cat, JSON.stringify(t).slice(0, 20000), t.transaction_id]);
@@ -1197,7 +1205,7 @@ module.exports = function mountBookkeeping(app, deps) {
   async function categorize(who) {
     const s = await settings();
     const rules = await dbAll('SELECT * FROM bk_rules WHERE active = 1 ORDER BY kind DESC, id');
-    const txns = await dbAll("SELECT * FROM bk_transactions WHERE status = 'new' AND pending = 0 ORDER BY date LIMIT 80");
+    const txns = await dbAll("SELECT * FROM bk_transactions WHERE status = 'new' ORDER BY date DESC LIMIT 80");   // 1.19.51: lines still pending at the bank get a suggestion too
     let byRule = 0, proposed = 0, asked = 0;
     const open = [];
     for (const t of txns) {
@@ -1247,6 +1255,22 @@ module.exports = function mountBookkeeping(app, deps) {
     }
     await audit(who, 'categorize', null, { by_rule: byRule, proposed, asked });
     return { by_rule: byRule, proposed, asked };
+  }
+
+  // 1.19.51: the AI rates every new bank line in the background (80 a call) so the Bank feed can show its suggestion
+  // under the Category picker. Triggered by the list; never two at once; at most `rounds` batches per trigger.
+  let catBusy = false;
+  function categorizeBacklog(who, rounds) {
+    if (catBusy) return;
+    catBusy = true;
+    (async () => {
+      for (let i = 0; i < (rounds || 6); i++) {
+        const left = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status = 'new'")).n;
+        if (!left) break;
+        const r = await categorize(who);
+        if (!r.by_rule && !r.proposed) break;
+      }
+    })().catch(e => errlog('categorize backlog', e.message)).finally(() => { catBusy = false; });
   }
 
   // ---------------------------------------------------------------- the executor (approvals)
@@ -1672,21 +1696,26 @@ module.exports = function mountBookkeeping(app, deps) {
     if (g('max')) { where.push('ABS(t.amount) <= ?'); p.push(Number(g('max')) || 0); }
     if (g('account')) { where.push('t.account_name = ?'); p.push(g('account')); }
     const by_status = Object.fromEntries((await dbAll("SELECT status, COUNT(*) n FROM bk_transactions WHERE status <> 'removed' GROUP BY status")).map(r => [r.status, r.n]));
+    by_status.new_status = by_status.new || 0;   // lines the AI has not rated yet
     by_status.pending = (by_status.new || 0) + (by_status.pending || 0);
     by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status <> 'removed' AND created_at >= datetime('now', '-1 day')")).n;
-    const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id WHERE ' + where.join(' AND ');
+    const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id LEFT JOIN bk_proposals pr ON pr.id = t.proposal_id WHERE ' + where.join(' AND ');
     const rows = await dbAll('SELECT t.id, t.txn_id, t.account_name, t.account_ref, t.date, t.created_at, t.name, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, ' +
-      'v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo, ba.institution, ba.logo AS bank_logo, ba.color AS bank_color, ba.accounts AS bank_accounts' + W + ' ORDER BY t.date DESC, t.id DESC LIMIT 500', p);
+      'v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo, ba.institution, ba.logo AS bank_logo, ba.color AS bank_color, ba.accounts AS bank_accounts, pr.payload AS ai_payload, pr.confidence AS ai_conf, pr.reason AS ai_reason, pr.status AS ai_status' + W + ' ORDER BY t.date DESC, t.id DESC LIMIT 500', p);
     // the account's last digits ("Wells Fargo - 6595") and the near-match vendor for rows that never got one
     const VSEL = 'SELECT t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id WHERE t.id = ?';
     let backfilled = 0;
     for (const r of rows) {
       let accts = []; try { accts = JSON.parse(r.bank_accounts || '[]'); } catch (e) {}
       const a = accts.find(x => x.account_id === r.account_ref); r.mask = a && a.mask ? a.mask : null; delete r.bank_accounts;
+      // the AI's suggestion (its proposal), shown under the picker while the line is not categorized
+      let pl = null; try { pl = r.ai_payload ? JSON.parse(r.ai_payload) : null; } catch (e) {}
+      r.ai_category = pl && pl.category && pl.category !== 'Uncategorized' ? pl.category : null; delete r.ai_payload;
       if (!r.vendor_id && r.suggest_score == null && backfilled < 150) { backfilled++; try { await autoVendor(r); Object.assign(r, (await dbGet(VSEL, [r.id])) || {}); } catch (e) {} }
     }
     const matched = rows.length < 500 ? rows.length : (await dbGet('SELECT COUNT(*) n' + W, p)).n;   // how many the filters match (the list stops at 500)
-    const out = { ok: true, by_status, matched, transactions: rows };
+    const out = { ok: true, by_status, matched, transactions: rows, categorizing: catBusy };
+    if ((by_status.new_status || 0) > 0 && !catBusy) { categorizeBacklog(userId(req)); out.categorizing = true; }
     if (st === 'categorized') {
       const parentOfName = {}; chartOf(await settings()).forEach(c => { if (c.parent) parentOfName[c.name] = c.parent; });
       const tot = await dbGet('SELECT COUNT(*) n, SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) spent, SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) received' + W, p);

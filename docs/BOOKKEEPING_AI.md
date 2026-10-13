@@ -48,12 +48,17 @@ The clock is inside Nova (pm2), no Inngest / Trigger.dev: one process, one SQLit
    sandbox connections, every transaction that came from them, the proposals / questions about those lines and the
    purchases that held only those lines. Bills and inbox emails are real and stay.
 
-### Bank feed (1.19.49)
-No status chips: every column header is a filter. **Date** opens quick ranges (Last 30 days is the default, This month,
+### Bank feed (1.19.51)
+No status chips: every column header is a filter, and the AI rates every line. A freshly synced line shows "rating…"
+under its Category picker; a few seconds later the AI's suggestion appears there — "✦ Paper 95% [Use]" — with its
+reason on hover. Use picks it (same as choosing it yourself), or pick another category. Nothing is categorized
+without a person. The Date column shows when the line was synced (the bank's own date, and whether it is still pending
+at the bank, on hover). The last column is **Status**: New (synced, not rated yet), Pending (the AI has a suggestion,
+waiting for a person) or Categorized (with how it was set: approved / manual / rule); its filter picks the view. **Date** opens quick ranges (Last 30 days is the default, This month,
 Last month, Last 90 days, This year, All time) or a From / To; **Vendor** lists every vendor seen on a bank line (and
 "Not linked"); **Account** lists each bank account ("Wells Fargo - 6595"); **Amount** is a from / to range; and
-**Category** starts with the status — **Pending** (no category yet — the default), **New** (synced in the last 24
-hours), **Categorized** (the report), All — followed, in the Categorized view, by the types of expense and categories.
+**Category** lists the types of expense (and, in the Categorized view, the categories in use); **Status** — **Pending**
+(no category yet — the default), **New** (synced in the last 24 hours), **Categorized** (the report), All.
 The line above the table says what is shown ("12 pending lines in the last 30 days"; the list stops at 500). Each row: the date with the time Nova received it under it · the **vendor** (logo, name, SUPPLIER / VENDOR tag,
 **Link** or **Change**) · the bank's description · the **account** as "Wells Fargo - 6595" with the bank's logo (from
 Plaid's institution metadata) · amount · category. Vendor matching: an exact name / alias match or a near match of
