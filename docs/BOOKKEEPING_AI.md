@@ -535,3 +535,12 @@ income. When the bank feed sees the same amount the other way on another account
 under the category; one click links the two lines, files both as *Credit Card Payment* (or *Transfer Between Accounts* when
 no card is involved), and the Stats leave both out. "Transfer between our accounts…" opens a picker when there is no hint;
 × on a matched line unmatches both.
+
+## Loans & Leases (1.19.99)
+
+Accounts → **Loans & Leases** is the one place for everything the company owes: loans you add here (SBA, line of credit,
+vehicle, owner loan — date borrowed, amount, term, APR, monthly payment) and the machines financed under Equipment, which
+appear automatically. The balance is amortized (the interest share of each payment shrinks over time); a lease is the
+remaining payments. The strip on top is the balance-sheet view — equipment book value today against what is still owed.
+In the Bank feed a payment that matches a loan's lender or monthly amount shows **Loan payment? Match**; matching files it
+as *Loan Payment (Principal)* and the loan's "Paid (bank)" column counts it.

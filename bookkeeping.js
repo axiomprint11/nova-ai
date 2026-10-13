@@ -96,6 +96,12 @@ module.exports = function mountBookkeeping(app, deps) {
       vendor_id INTEGER, mode TEXT, purchase_price REAL, purchase_date TEXT, down_payment REAL, loan_amount REAL, loan_term INTEGER, loan_rate REAL, loan_start TEXT, monthly_payment REAL,
       lease_term INTEGER, lease_start TEXT, lease_monthly REAL, life_years REAL, salvage REAL, notes TEXT, updated_by TEXT, updated_at TEXT, synced_at TEXT)`);
     ['bk_bills', 'bk_transactions', 'bk_purchases'].forEach(t => db.run('ALTER TABLE ' + t + ' ADD COLUMN equipment_id INTEGER', () => {}));
+    // 1.19.99: loans and leases that are not a machine's financing (SBA loan, line of credit, vehicle, owner loan) — or that
+    // finance a machine when `equipment_id` is set; bank lines link to one with loan_id
+    db.run(`CREATE TABLE IF NOT EXISTS bk_loans (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, kind TEXT DEFAULT 'loan', lender TEXT, vendor_id INTEGER, equipment_id INTEGER,
+      principal REAL, start_date TEXT, term_months INTEGER, apr REAL, monthly REAL, balloon REAL, notes TEXT, status TEXT DEFAULT 'active',
+      created_by TEXT, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
+    db.run('ALTER TABLE bk_transactions ADD COLUMN loan_id INTEGER', () => {});
     db.run('ALTER TABLE bk_bills ADD COLUMN merged_into INTEGER', () => {});
     // How bill lines were linked by hand: vendor + the line's wording → material / machine. The next bill from that
     // vendor with the same wording links by itself (1.19.15).
@@ -999,6 +1005,38 @@ module.exports = function mountBookkeeping(app, deps) {
       return out;
     });
   }
+  // 1.19.99: loan arithmetic. Standard amortization: balance after n payments of M on principal P at monthly rate i is
+  // P(1+i)^n − M((1+i)^n − 1)/i; the interest part of payment k is the balance before it × i. A lease / 0% loan is straight-line.
+  const amort = (P, apr, term, monthly, n) => {
+    P = Number(P) || 0; const i = (Number(apr) || 0) / 100 / 12; term = Number(term) || 0; n = Math.max(0, Math.min(term || n, n));
+    let M = Number(monthly) || 0; if (!M && term) M = i ? P * i / (1 - Math.pow(1 + i, -term)) : P / term;
+    let bal = P, interest = 0, principal = 0;
+    for (let k = 0; k < n; k++) { const int = i ? bal * i : 0; const pr = Math.min(bal, M - int); interest += int; principal += pr; bal = Math.max(0, bal - pr); if (bal <= 0.005) { bal = 0; break; } }
+    return { monthly: Math.round(M * 100) / 100, balance: Math.round(bal * 100) / 100, interest_paid: Math.round(interest * 100) / 100, principal_paid: Math.round(principal * 100) / 100,
+      total_interest: term ? Math.round((M * term - P) * 100) / 100 : null };
+  };
+  async function loanRows() {
+    const own = await dbAll('SELECT l.*, v.name AS vendor_name, v.photo AS vendor_photo, e.name AS equipment_name, e.photo AS equipment_photo FROM bk_loans l LEFT JOIN bk_vendors v ON v.id = l.vendor_id LEFT JOIN bk_equipment e ON e.id = l.equipment_id ORDER BY l.status, l.start_date DESC, l.id DESC');
+    const paid = {}; (await dbAll('SELECT loan_id, COUNT(*) AS n, SUM(ABS(amount)) AS total, MAX(date) AS last FROM bk_transactions WHERE loan_id IS NOT NULL GROUP BY loan_id')).forEach(r => { paid[r.loan_id] = r; });
+    const out = own.map(l => {
+      const done = Math.min(Number(l.term_months) || 9999, monthsSince(l.start_date)), left = Math.max(0, (Number(l.term_months) || 0) - done);
+      const a = l.kind === 'lease' ? { monthly: Number(l.monthly) || 0, balance: Math.round(left * (Number(l.monthly) || 0) * 100) / 100, interest_paid: 0, principal_paid: Math.round(done * (Number(l.monthly) || 0) * 100) / 100, total_interest: null } : amort(l.principal, l.apr, l.term_months, l.monthly, done);
+      const p = paid[l.id] || { n: 0, total: 0, last: null };
+      return Object.assign({}, l, { source: 'loan', schedule: { start: l.start_date, end: l.term_months ? addMonths(l.start_date, Number(l.term_months)) : null, months_done: done, months_left: left, monthly: a.monthly, next: l.status === 'active' && left ? addMonths(l.start_date, done + 1) : null },
+        balance: a.balance, interest_paid: a.interest_paid, principal_paid: a.principal_paid, total_interest: a.total_interest, payments: { n: p.n, total: Math.round((p.total || 0) * 100) / 100, last: p.last } });
+    });
+    // machines financed through the Equipment tab appear here too, read-only (edit them under Equipment)
+    const linked = new Set(own.map(l => l.equipment_id).filter(Boolean));
+    for (const e of (await equipmentRows()).filter(e => (e.mode === 'loan' || e.mode === 'lease') && !linked.has(e.id))) {
+      const isLoan = e.mode === 'loan', P = isLoan ? (Number(e.loan_amount) || Math.max(0, (Number(e.purchase_price) || 0) - (Number(e.down_payment) || 0))) : 0;
+      const sch = e.schedule || { months_done: 0, months_left: 0, monthly: 0 };
+      const a = isLoan ? amort(P, e.loan_rate, e.loan_term, e.monthly_payment, sch.months_done) : { monthly: sch.monthly, balance: sch.remaining || 0, interest_paid: 0, principal_paid: Math.round(sch.months_done * sch.monthly * 100) / 100, total_interest: null };
+      out.push({ id: 'e' + e.id, source: 'equipment', equipment_id: e.id, equipment_name: e.name, equipment_photo: e.photo, name: e.name, kind: e.mode, lender: e.vendor_name || null, vendor_id: e.vendor_id, vendor_name: e.vendor_name, vendor_photo: e.vendor_photo,
+        principal: P || null, start_date: sch.start, term_months: isLoan ? e.loan_term : e.lease_term, apr: isLoan ? e.loan_rate : null, monthly: a.monthly, status: sch.months_left || !sch.start ? 'active' : 'paid', notes: e.notes,
+        schedule: Object.assign({}, sch, { next: sch.months_left ? addMonths(sch.start, sch.months_done + 1) : null }), balance: a.balance, interest_paid: a.interest_paid, principal_paid: a.principal_paid, total_interest: a.total_interest, payments: e.payments, book: e.book || null });
+    }
+    return out;
+  }
   // A payment to a vendor that finances a machine belongs to that machine: same monthly amount to the cent, or the
   // vendor's only financed machine. Used for bank lines (and the purchase made from them) and for bills.
   async function equipmentFor(vendorId, amount) {
@@ -1799,9 +1837,9 @@ module.exports = function mountBookkeeping(app, deps) {
     by_status.new_status = by_status.new || 0;   // lines the AI has not rated yet
     by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND created_at >= datetime('now', '-1 day')")).n;
     by_status.pending = (by_status.new_status || 0) + (by_status.pending || 0) - by_status.new;   // the open lines older than a day
-    const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id LEFT JOIN bk_transactions tr ON tr.id = t.transfer_of LEFT JOIN bk_accounts tra ON tra.item_id = tr.item_id LEFT JOIN bk_proposals pr ON pr.id = t.proposal_id LEFT JOIN bk_transactions ro ON ro.id = t.refund_of LEFT JOIN bk_transactions rb ON rb.refund_of = t.id WHERE ' + where.join(' AND ');
+    const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id LEFT JOIN bk_transactions tr ON tr.id = t.transfer_of LEFT JOIN bk_accounts tra ON tra.item_id = tr.item_id LEFT JOIN bk_loans lo ON lo.id = t.loan_id LEFT JOIN bk_proposals pr ON pr.id = t.proposal_id LEFT JOIN bk_transactions ro ON ro.id = t.refund_of LEFT JOIN bk_transactions rb ON rb.refund_of = t.id WHERE ' + where.join(' AND ');
     const rows = await dbAll('SELECT t.id, t.txn_id, t.account_name, t.account_ref, t.date, t.created_at, t.name, t.raw, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, ' +
-      't.refund_of, t.ar_notified_at, t.ar_notified_by, t.updated_at, (t.check_image IS NOT NULL) AS has_check_image, t.transfer_of, tr.date AS transfer_date, tr.amount AS transfer_amount, tr.account_name AS transfer_account, tr.name AS transfer_name, tra.institution AS transfer_institution, ro.date AS refund_of_date, ro.amount AS refund_of_amount, ro.merchant AS refund_of_merchant, ro.name AS refund_of_name, ro.category AS refund_of_category, rb.id AS refunded_by, rb.date AS refunded_by_date, rb.amount AS refunded_by_amount, ' +
+      't.refund_of, t.ar_notified_at, t.ar_notified_by, t.updated_at, t.loan_id, lo.name AS loan_name, (t.check_image IS NOT NULL) AS has_check_image, t.transfer_of, tr.date AS transfer_date, tr.amount AS transfer_amount, tr.account_name AS transfer_account, tr.name AS transfer_name, tra.institution AS transfer_institution, ro.date AS refund_of_date, ro.amount AS refund_of_amount, ro.merchant AS refund_of_merchant, ro.name AS refund_of_name, ro.category AS refund_of_category, rb.id AS refunded_by, rb.date AS refunded_by_date, rb.amount AS refunded_by_amount, ' +
       'v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo, ba.institution, ba.logo AS bank_logo, ba.color AS bank_color, ba.accounts AS bank_accounts, pr.payload AS ai_payload, pr.confidence AS ai_conf, pr.reason AS ai_reason, pr.status AS ai_status' + W + ' ORDER BY ' + (st === 'categorized' ? 'COALESCE(t.updated_at, t.created_at) DESC, t.id DESC' : 't.date DESC, t.id DESC') + ' LIMIT 500', p)   // 1.19.90: Categorized = most recent work first;
     // the account's last digits ("Wells Fargo - 6595") and the near-match vendor for rows that never got one
     const VSEL = 'SELECT t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id WHERE t.id = ?';
@@ -1873,6 +1911,14 @@ module.exports = function mountBookkeeping(app, deps) {
           if (c.length) { const x = c.sort((a, b) => Math.abs(new Date(a.date) - new Date(r.date)) - Math.abs(new Date(b.date) - new Date(r.date)))[0]; r.transfer_hint = { id: x.id, date: x.date, amount: x.amount, account_name: x.account_name, institution: x.institution, name: x.name }; }
         }
       }
+    }
+    // 1.19.99: a money-out line that looks like a loan payment — the lender's company, or the exact monthly amount of an active loan
+    const activeLoans = (await dbAll("SELECT id, name, vendor_id, monthly, principal, apr, term_months, kind FROM bk_loans WHERE status = 'active'")).map(l => Object.assign(l, { monthly: Number(l.monthly) || (l.kind !== 'lease' && l.term_months ? amort(l.principal, l.apr, l.term_months, null, 0).monthly : 0) }));
+    if (activeLoans.length) for (const r of rows) {
+      if (r.loan_id || r.transfer_of || r.refund_of || !(Number(r.amount) > 0)) continue;
+      const amt = Number(r.amount);
+      const hit = activeLoans.find(l => r.vendor_id && l.vendor_id === r.vendor_id && (!l.monthly || Math.abs(Number(l.monthly) - amt) <= Math.max(1, amt * 0.02))) || activeLoans.find(l => l.monthly && Math.abs(Number(l.monthly) - amt) < 0.005);
+      if (hit) r.loan_hint = { id: hit.id, name: hit.name };
     }
     if (rows.some(r => !r.orig_desc)) backfillOriginalDesc();
     const out = { ok: true, by_status, matched, transactions: rows, categorizing: catBusy };
@@ -2500,6 +2546,45 @@ module.exports = function mountBookkeeping(app, deps) {
     res.json({ ok: true, materials: rows, geo, unlinked, synced_at: last ? last.at : null, sync_error: dirSync.error, crm: !!runQuery });
   });
   // Equipment: the machine list with its financing. The CRM part syncs with the directory; the money part is edited here.
+  // 1.19.99: Loans & leases — every liability in one list (standalone loans + machines financed under Equipment) with the
+  // amortized balance, and a small balance-sheet view: equipment book value against what is still owed.
+  app.get('/api/bookkeeping/loans', ...guard, async (req, res) => {
+    try {
+      const loans = await loanRows();
+      const eq = await equipmentRows();
+      const assets = eq.filter(e => e.book && e.book.now != null).reduce((n, e) => n + e.book.now, 0);
+      const active = loans.filter(l => l.status === 'active');
+      const owed = active.reduce((n, l) => n + (l.balance || 0), 0), monthly = active.reduce((n, l) => n + (l.schedule.monthly || 0), 0);
+      res.json({ ok: true, loans, vendors: await dbAll('SELECT id, name, photo FROM bk_vendors ORDER BY name COLLATE NOCASE'), equipment: eq.map(e => ({ id: e.id, name: e.name, photo: e.photo, mode: e.mode })),
+        sheet: { equipment_value: Math.round(assets * 100) / 100, owed: Math.round(owed * 100) / 100, monthly: Math.round(monthly * 100) / 100, net: Math.round((assets - owed) * 100) / 100, loans: active.length } });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  const LOAN_F = ['name', 'kind', 'lender', 'vendor_id', 'equipment_id', 'principal', 'start_date', 'term_months', 'apr', 'monthly', 'balloon', 'notes', 'status'];
+  const loanBody = (b) => { const o = {}; LOAN_F.forEach(k => { if (b[k] === undefined) return; let v = b[k]; if (['vendor_id', 'equipment_id', 'term_months'].indexOf(k) > -1) v = v === '' || v == null ? null : parseInt(v); else if (['principal', 'apr', 'monthly', 'balloon'].indexOf(k) > -1) v = v === '' || v == null ? null : Number(v); else v = v == null ? null : String(v).trim().slice(0, 500); o[k] = v; }); if (o.kind && ['loan', 'lease', 'credit_line'].indexOf(o.kind) < 0) o.kind = 'loan'; if (o.status && ['active', 'paid'].indexOf(o.status) < 0) o.status = 'active'; return o; };
+  app.post('/api/bookkeeping/loans', ...guard, async (req, res) => {
+    const o = loanBody(req.body || {}); if (!o.name) return res.json({ ok: false, error: 'Give the loan a name.' });
+    const keys = Object.keys(o); const r = await dbRun('INSERT INTO bk_loans (' + keys.join(', ') + ', created_by, updated_at) VALUES (' + keys.map(() => '?').join(', ') + ', ?, ?)', keys.map(k => o[k]).concat([userId(req), nowIso()]));
+    await audit(userId(req), 'loan.add', r.lastID, o); res.json({ ok: true, id: r.lastID });
+  });
+  app.post('/api/bookkeeping/loans/:id', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), o = loanBody(req.body || {}); const keys = Object.keys(o); if (!keys.length) return res.json({ ok: false, error: 'Nothing to change' });
+    await dbRun('UPDATE bk_loans SET ' + keys.map(k => k + ' = ?').join(', ') + ', updated_at = ? WHERE id = ?', keys.map(k => o[k]).concat([nowIso(), id]));
+    await audit(userId(req), 'loan.edit', id, o); res.json({ ok: true });
+  });
+  app.post('/api/bookkeeping/loans/:id/delete', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id); await dbRun('UPDATE bk_transactions SET loan_id = NULL WHERE loan_id = ?', [id]); await dbRun('DELETE FROM bk_loans WHERE id = ?', [id]);
+    await audit(userId(req), 'loan.delete', id); res.json({ ok: true });
+  });
+  // a bank line is a payment on a loan: link it and file it under the chart's Loan Payment (Principal) when that exists
+  app.post('/api/bookkeeping/transactions/:id/loan', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), lid = req.body.loan_id == null ? null : parseInt(req.body.loan_id);
+    if (!lid) { await dbRun('UPDATE bk_transactions SET loan_id = NULL WHERE id = ?', [id]); await audit(userId(req), 'txn.loan', id, { loan_id: null }); return res.json({ ok: true }); }
+    const l = await dbGet('SELECT * FROM bk_loans WHERE id = ?', [lid]); if (!l) return res.json({ ok: false, error: 'No such loan' });
+    const names = chartOf(await settings()).map(c => c.name), cat = ['Loan Payment (Principal)', 'Loan Payment'].find(n => names.indexOf(n) > -1) || null;
+    await dbRun("UPDATE bk_transactions SET loan_id = ?, updated_at = datetime('now')" + (cat ? ", category = ?, category_source = 'manual', status = 'categorized'" : '') + ' WHERE id = ?', cat ? [lid, cat, id] : [lid, id]);
+    if (l.vendor_id) await dbRun('UPDATE bk_transactions SET vendor_id = ?, vendor_by = COALESCE(vendor_by, ?) WHERE id = ? AND vendor_id IS NULL', [l.vendor_id, 'auto', id]);
+    await audit(userId(req), 'txn.loan', id, { loan_id: lid, category: cat }); res.json({ ok: true, category: cat });
+  });
   app.get('/api/bookkeeping/equipment', ...guard, async (req, res) => {
     if (req.query.fresh !== '0') await syncDirectoryIfStale(userId(req), 10 * 60000);
     try { res.json({ ok: true, equipment: await equipmentRows(), vendors: await dbAll('SELECT id, name, kind, photo FROM bk_vendors ORDER BY name'), crm: !!runQuery }); } catch (e) { res.json({ ok: false, error: e.message }); }

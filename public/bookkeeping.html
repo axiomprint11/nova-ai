@@ -39,6 +39,10 @@
   .thf-list { overflow: auto; padding: 4px 0; } .thf-i { display: flex; align-items: center; gap: 8px; padding: 7px 12px; font-size: 13px; cursor: pointer; } .thf-i:hover { background: #f3f3fa; } .thf-i.on { color: var(--indigo-dark); font-weight: 600; }
   .thf-i .ckp-ck { border-radius: 50%; } .thf-i.on .ckp-ck { background: var(--indigo); border-color: var(--indigo); } .thf-i.on .ckp-ck::after { left: 3px; top: 3px; width: 6px; height: 6px; border: 0; border-radius: 50%; background: #fff; transform: none; }
   .tx-xfer { color: #0f766e; } .tx-ref.tx-xfer-hint { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 6px; white-space: nowrap; max-width: none; } .tx-xfer-hint .tx-match { background: #ccfbf1; color: #0f766e; }
+  .ln-sheet { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 14px; } .ln-tile { border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; } .ln-tile .k { font-size: 12px; color: var(--muted); } .ln-tile .v { font-size: 20px; font-weight: 700; margin-top: 2px; } .ln-tile.owe .v { color: #b91c1c; } .ln-tile.net .v { color: #166534; }
+  .ln-kind { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: #eef2ff; color: #3730a3; text-transform: uppercase; letter-spacing: .03em; } .ln-kind.lease { background: #fef3c7; color: #92400e; } .ln-kind.credit_line { background: #ccfbf1; color: #0f766e; }
+  .ln-bar { height: 6px; border-radius: 3px; background: #eef0f6; overflow: hidden; margin-top: 4px; max-width: 160px; } .ln-bar i { display: block; height: 100%; background: var(--indigo); }
+  .tx-loan { color: #3730a3; } .tx-loan-hint { display: flex; flex-direction: row !important; flex-wrap: nowrap; align-items: center; gap: 6px; white-space: nowrap; max-width: none !important; } .tx-loan-hint .tx-match { background: #eef2ff; color: #3730a3; }
   .tx-check { font-size: 12px; color: var(--indigo-dark); text-decoration: none; display: inline-flex; align-items: center; gap: 3px; margin-top: 2px; } .tx-check svg { width: 14px; height: 14px; } .tx-check:hover { text-decoration: underline; } .tx-check.has { color: #166534; }
   .ck-img { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #fafafa; text-align: center; } .ck-img img { max-width: 100%; max-height: 70vh; display: block; margin: 0 auto; }
   .ck-drop { border: 2px dashed var(--line); border-radius: 12px; padding: 26px 20px; text-align: center; outline: none; } .ck-drop.over, .ck-drop:focus { border-color: var(--indigo); background: #f5f5ff; }
@@ -434,12 +438,14 @@
     <div class="bk-sub" id="subAccounts">
       <button data-s="vendors">Vendors &amp; suppliers</button>
       <button data-s="equipment">Equipment</button>
+      <button data-s="loans">Loans &amp; Leases</button>
       <button data-s="chart">Chart of Accounts</button>
       <button data-s="rules">Rules</button>
       <button data-s="materials">Materials &amp; GEO types</button>
       <button data-s="nova">Nova Vendors</button>
     </div>
     <div class="bk-subview" data-s="nova" id="vNova"></div>
+    <div class="bk-subview" data-s="loans" id="vLoans"></div>
     <div class="bk-subview" data-s="vendors" id="vVendors"></div>
     <div class="bk-subview" data-s="equipment" id="vEquipment"></div>
     <div class="bk-subview" data-s="chart" id="vChart"></div>

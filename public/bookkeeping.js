@@ -22,7 +22,7 @@
   // show('inbox') opens that sub-tab directly; the last sub-tab of each is remembered per browser.
   const BILL_SUBS = { all: ['draft', 'approved', 'scheduled', 'paid', 'rejected'], pending: ['draft'], approved: ['approved'], scheduled: ['scheduled'], paid: ['paid'], rejected: ['rejected'] };
   let billSub = 'pending';
-  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, equipment: loadEquipment, chart: loadChart, rules: loadRules, materials: loadMaterials, nova: loadNovaVendors }, first: 'vendors' },
+  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, equipment: loadEquipment, loans: loadLoans, chart: loadChart, rules: loadRules, materials: loadMaterials, nova: loadNovaVendors }, first: 'vendors' },
     purchases: { bar: 'subPurchases', subs: { list: () => loadPurchases('list'), waiting: () => loadPurchases('waiting'), notreceived: () => loadPurchases('notreceived') }, first: 'list' },
     bank: { bar: 'subBank', subs: { all: () => loadTxns(''), new: () => loadTxns('new'), pending: () => loadTxns('pending'), categorized: () => loadTxns('categorized'), stats: () => loadTxns('stats') }, first: 'pending' },   // 1.19.54: Bank feed is a top tab
     bills: { bar: 'subBills', subs: { all: () => loadBills('all'), pending: () => loadBills('pending'), approved: () => loadBills('approved'), scheduled: () => loadBills('scheduled'), paid: () => loadBills('paid'), rejected: () => loadBills('rejected') }, first: 'pending' } };
@@ -608,6 +608,7 @@
     const REFI = SVG('<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-5"/>');
     const RULEI = SVG('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1"/>');   // 1.19.77: the Rules tab's target
     const MAILI = SVG('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>');
+    const LOANI = SVG('<path d="M3 21h18"/><path d="M5 21V9l7-5 7 5v12"/><path d="M9 21v-6h6v6"/>');
     const XFERI = SVG('<path d="M4 8h14l-3-3"/><path d="M20 16H6l3 3"/>');
     const CHECKI = SVG('<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h6M6 14h4M15 13h3"/>');
     const isIncome = (name) => { const CH = (ov && ov.chart) || []; const c = CH.find(x => x.name === name); const top = c && c.parent ? CH.find(x => x.name === (parentOf(c.parent) || c.parent)) : c; return !!(top && top.income); };   // `chart` is the stats html here
@@ -641,6 +642,9 @@
         '<td>' + vendorCell(t) + '</td><td class="tx-desc-td" title="' + esc([prettyCat(t) ? 'Bank category: ' + prettyCat(t) : '', t.place].filter(Boolean).join(' · ')) + '">' + esc(t.merchant || t.name) + ((t.orig_desc || t.name) !== (t.merchant || t.name) ? '<div class="bk-muted tx-orig">' + esc(t.orig_desc || t.name) + '</div>' : '') + '</td><td>' + bankCell(t) + '</td>' +
         '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '"><div class="tx-amt">' + usd(-t.amount) + chanLine(t) + '</div><div class="tx-when bk-dim" title="When the transaction happened' + (t.pending ? ' (still pending at the bank)' : '') + '">' + esc(txWhen(t)) + '</div></td>' +
         '<td data-txid="' + t.id + '">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : (t.amount < 0 ? 'Income…' : 'Choose…'), { only: t.amount < 0 ? 'income' : 'expense' }) +
+        // 1.19.99: loan payments — matched to a loan, or a one-click hint
+        (t.loan_id ? '<div class="tx-ref tx-loan" title="A payment on this loan — see Accounts → Loans & Leases"><div>' + LOANI + ' loan: <b>' + esc(t.loan_name || '') + '</b> <a href="#" class="tx-unref" data-unloan="' + t.id + '" title="Unlink">×</a></div></div>'
+          : t.loan_hint ? '<div class="tx-ref tx-loan-hint"><span class="tx-match" title="Same monthly amount / same lender as an active loan">' + LOANI + ' Loan payment?</span><button type="button" class="bk-btn sm p" data-loan="' + t.id + '" data-lid="' + t.loan_hint.id + '">Match</button></div><div class="tx-ref tx-ref2 bk-dim">' + esc(t.loan_hint.name) + '</div>' : '') +
         // 1.19.92: transfers between our own accounts — matched, a one-click hint, or the picker
         (t.transfer_of ? '<div class="tx-ref tx-xfer" title="The other half of this transfer; neither side counts as spend or income"><div>' + XFERI + ' transfer ' + (t.amount < 0 ? 'from' : 'to') + ' <b>' + esc(t.transfer_institution ? bankAbbr(t.transfer_institution) : (t.transfer_account || 'account')) + '</b></div><div class="tx-ref2">' + esc(usD(t.transfer_date)) + ' · ' + usd(-t.transfer_amount) + ' <a href="#" class="tx-unref" data-unxfer="' + t.id + '" title="Unmatch">×</a></div></div>'
           : t.transfer_hint ? '<div class="tx-ref tx-xfer-hint"><span class="tx-match" title="Same amount the other way on another account within a week">' + XFERI + ' Transfer?</span> <button type="button" class="bk-btn sm p" data-xfer="' + t.id + '" data-with="' + t.transfer_hint.id + '">Match</button></div><div class="tx-ref tx-ref2 bk-dim">' + esc((t.transfer_hint.institution ? bankAbbr(t.transfer_hint.institution) : t.transfer_hint.account_name || '') + ' · ' + usD(t.transfer_hint.date) + ' · ') + usd(-t.transfer_hint.amount) + '</div>'
@@ -679,6 +683,9 @@
         if (r.ok && who) { const ok = await ask('Always file ' + who + ' as ' + inp.value + '? A rule categorizes every future line from ' + who + ' on its own (and any pending ones now). You can edit or remove it under Accounts → Rules.', { title: 'Make it a rule?', ok: 'Yes, create the rule', cancel: 'Not now' }); if (ok) { const rr = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/rule', {}); if (!rr.ok) alert(rr.error || 'Could not create the rule.'); } }
         setTimeout(() => { tr.classList.remove('saved', 'failed'); loadTxns(); overview(); }, 700); }); });
     v.querySelectorAll('[data-ref]').forEach(a => a.onclick = (e) => { e.preventDefault(); refundPicker(a, Number(a.dataset.ref), (j.transactions || []).find(x => x.id === Number(a.dataset.ref))); });
+    // 1.19.99: loan payments — match from the hint, unlink
+    v.querySelectorAll('[data-loan]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/transactions/' + b.dataset.loan + '/loan', { loan_id: Number(b.dataset.lid) }); if (!r.ok) alert(r.error); loadTxns(); overview(); });
+    v.querySelectorAll('[data-unloan]').forEach(a => a.onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/transactions/' + a.dataset.unloan + '/loan', { loan_id: null }); if (!r.ok) alert(r.error); loadTxns(); });
     // 1.19.92: transfers — one-click match from the hint, the picker, unmatch
     v.querySelectorAll('[data-xfer]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/transactions/' + b.dataset.xfer + '/transfer', { with: Number(b.dataset.with) }); if (!r.ok) alert(r.error); loadTxns(); overview(); });
     v.querySelectorAll('[data-unxfer]').forEach(a => a.onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/transactions/' + a.dataset.unxfer + '/transfer', { with: null }); if (!r.ok) alert(r.error); loadTxns(); overview(); });
@@ -1855,6 +1862,58 @@
     v.querySelectorAll('[data-vgo]').forEach(a => a.onclick = (e) => { e.preventDefault(); show('vendors'); setTimeout(() => { const tr = document.querySelector('tr[data-vid="' + a.dataset.vgo + '"]'); if (tr) { tr.scrollIntoView({ block: 'center' }); tr.style.background = '#eef2ff'; } }, 400); });
     v.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => equipmentEditor(all.find(e => e.id === Number(b.dataset.edit)), vendors, loadEquipment));
     v.querySelectorAll('[data-pays]').forEach(b => b.onclick = () => equipmentPayments(all.find(e => e.id === Number(b.dataset.pays))));
+  }
+  // 1.19.99: Accounts → Loans & Leases — every liability with its amortized balance, plus a balance-sheet strip
+  async function loadLoans() {
+    const v = $('vLoans');
+    if (!ov) await overview();
+    const j = await api('/api/bookkeeping/loans'); if (!j.ok) { v.innerHTML = '<div class="bk-card bk-muted">' + esc(j.error || 'Could not load') + '</div>'; return; }
+    const loans = j.loans || [], sheet = j.sheet || {};
+    const KIND = { loan: 'Loan', lease: 'Lease', credit_line: 'Credit line' };
+    const dateS = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    const pic = (l) => l.equipment_photo ? '<img class="bk-logo bk-eq" src="' + esc(l.equipment_photo) + '" alt="">' : l.vendor_photo ? '<img class="bk-logo" src="' + esc(l.vendor_photo) + '" alt="">' : '<span class="bk-logo ph">' + esc(String(l.name || '?').charAt(0).toUpperCase()) + '</span>';
+    const row = (l) => { const sch = l.schedule || {}, total = (sch.months_done || 0) + (sch.months_left || 0), pct = total ? Math.round(100 * (sch.months_done || 0) / total) : 0;
+      return '<tr' + (l.status === 'paid' ? ' class="off"' : '') + '><td>' + pic(l) + '</td>' +
+        '<td><b>' + esc(l.name) + '</b> <span class="ln-kind ' + esc(l.kind) + '">' + esc(KIND[l.kind] || l.kind) + '</span>' + (l.source === 'equipment' ? '<div class="bk-dim">financing from the Equipment tab</div>' : l.equipment_name ? '<div class="bk-dim">for ' + esc(l.equipment_name) + '</div>' : '') + (l.status === 'paid' ? '<div class="bk-dim">paid off</div>' : '') + '</td>' +
+        '<td>' + esc(l.vendor_name || l.lender || '—') + '</td>' +
+        '<td>' + (l.principal != null ? '<b>' + usd(l.principal) + '</b>' : '<span class="bk-dim">—</span>') + '<div class="bk-dim">' + esc(dateS(l.start_date)) + (l.term_months ? ' · ' + l.term_months + ' mo' : '') + (l.apr != null && l.apr !== '' ? ' · ' + l.apr + '% APR' : '') + '</div></td>' +
+        '<td class="num">' + (sch.monthly ? '<b>' + usd(sch.monthly) + '</b>' : '—') + (sch.next ? '<div class="bk-dim">next ' + esc(dateS(sch.next)) + '</div>' : '') + '</td>' +
+        '<td>' + (total ? '<div>' + sch.months_done + ' of ' + total + ' paid</div><div class="ln-bar"><i style="width:' + pct + '%"></i></div>' : '<span class="bk-dim">open-ended</span>') + (sch.end ? '<div class="bk-dim">ends ' + esc(dateS(sch.end)) + '</div>' : '') + '</td>' +
+        '<td class="num"><b>' + usd(l.balance || 0) + '</b>' + (l.interest_paid ? '<div class="bk-dim">' + usd(l.interest_paid) + ' interest so far</div>' : '') + (l.total_interest != null && l.total_interest > 0 ? '<div class="bk-dim">' + usd(l.total_interest) + ' over the term</div>' : '') + '</td>' +
+        '<td class="num">' + (l.payments && (l.payments.n || l.payments.bills) ? '<b>' + usd(l.payments.total) + '</b><div class="bk-dim">' + (l.payments.n || 0) + ' bank line' + (l.payments.n === 1 ? '' : 's') + (l.payments.last ? ' · last ' + esc(dateS(l.payments.last)) : '') + '</div>' : '<span class="bk-dim">none linked</span>') + '</td>' +
+        '<td class="pu-acts">' + (l.source === 'equipment' ? '<button class="bk-btn sm" data-eqgo="' + l.equipment_id + '">Edit under Equipment</button>' : '<button class="bk-btn sm" data-ledit="' + l.id + '">Edit</button>') + '</td></tr>'; };
+    v.innerHTML = '<div class="bk-card"><h2>Loans &amp; leases ' + qHelp('loans', 'Loans & leases', 'Every amount the company owes: standalone loans you add here (SBA, line of credit, vehicle, owner loan) and the machines financed under Equipment. The balance is amortized from the principal, APR, term and monthly payment — the interest part of each payment shrinks over time. Link bank lines to a loan from the Bank feed ("Loan payment? Match") to see what was actually paid. The strip on top is the balance-sheet view: what the equipment is worth today (straight-line book value) against what is still owed.') + '</h2>' +
+      '<div class="ln-sheet"><div class="ln-tile"><div class="k">Equipment, book value today</div><div class="v">' + usd(sheet.equipment_value || 0) + '</div></div><div class="ln-tile owe"><div class="k">Still owed on ' + (sheet.loans || 0) + ' loan' + (sheet.loans === 1 ? '' : 's') + ' / lease' + (sheet.loans === 1 ? '' : 's') + '</div><div class="v">' + usd(sheet.owed || 0) + '</div></div><div class="ln-tile"><div class="k">Monthly payments</div><div class="v">' + usd(sheet.monthly || 0) + '</div></div><div class="ln-tile net"><div class="k">Equipment net of loans</div><div class="v">' + usd(sheet.net || 0) + '</div></div></div>' +
+      '<div class="bk-filters"><span class="bk-muted" style="flex:1">' + loans.length + ' loan' + (loans.length === 1 ? '' : 's') + ' and lease' + (loans.length === 1 ? '' : 's') + '</span><button class="bk-btn p" id="lnAdd">+ New loan / lease</button></div>' +
+      (loans.length ? '<table class="bk bk-dir"><thead><tr><th></th><th>Loan</th><th>Lender</th><th>Borrowed</th><th class="num">Monthly</th><th>Progress</th><th class="num">Balance</th><th class="num">Paid (bank)</th><th></th></tr></thead><tbody>' + loans.map(row).join('') + '</tbody></table>' : '<div class="bk-muted" style="padding:14px 0">No loans yet. Add one, or set a machine to "On a loan" / "Lease" under Equipment and it shows up here.</div>') + '</div>';
+    $('lnAdd').onclick = () => loanForm({}, j, loadLoans);
+    v.querySelectorAll('[data-ledit]').forEach(b => b.onclick = () => loanForm(loans.find(x => String(x.id) === b.dataset.ledit), j, loadLoans));
+    v.querySelectorAll('[data-eqgo]').forEach(b => b.onclick = () => show('equipment'));
+  }
+  function loanForm(l, j, done) {
+    l = l || {}; const isEdit = !!l.id;
+    const el = document.createElement('div'); el.className = 'bk-modal';
+    const f = (k, label, type, extra, ph) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><input class="bk" name="' + k + '" type="' + (type || 'text') + '" value="' + esc(l[k] != null ? l[k] : '') + '"' + (extra || '') + (ph ? ' placeholder="' + esc(ph) + '"' : '') + '></label>';
+    const sel = (k, label, opts) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><select class="bk" name="' + k + '">' + opts.map(o => '<option value="' + esc(o[0]) + '"' + (String(l[k] == null ? '' : l[k]) === String(o[0]) ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') + '</select></label>';
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(640px,100%)"><div class="bk-modal-title" style="margin-bottom:12px">' + (isEdit ? 'Edit ' + esc(l.name) : 'New loan / lease') + '</div>' +
+      '<div class="nv-grid">' + f('name', 'Name', 'text', '', 'SBA EIDL · Line of credit · Van loan') + sel('kind', 'Kind', [['loan', 'Loan (amortized)'], ['lease', 'Lease (fixed payments)'], ['credit_line', 'Line of credit (open-ended)']]) +
+      sel('vendor_id', 'Lender (company in the directory)', [['', '— pick a company —']].concat((j.vendors || []).map(x => [x.id, x.name]))) + f('lender', 'Lender, if not in the directory', 'text', '', 'Bank of America') +
+      f('principal', 'Amount borrowed', 'number', ' step="0.01" min="0"') + f('start_date', 'Date borrowed / first payment', 'date') +
+      f('term_months', 'Term (months)', 'number', ' step="1" min="0"', '60') + f('apr', 'Interest rate (APR %)', 'number', ' step="0.01" min="0"', '7.5') +
+      f('monthly', 'Monthly payment (blank = computed)', 'number', ' step="0.01" min="0"') + f('balloon', 'Balloon at the end, if any', 'number', ' step="0.01" min="0"') +
+      sel('equipment_id', 'Finances a machine (optional)', [['', '— none —']].concat((j.equipment || []).map(x => [x.id, x.name]))) + sel('status', 'Status', [['active', 'Active'], ['paid', 'Paid off']]) + '</div>' +
+      '<label class="nv-f"><span class="bk-muted">Notes</span><textarea class="bk" name="notes" rows="2">' + esc(l.notes || '') + '</textarea></label>' +
+      '<div class="bk-row" style="margin-top:12px"><button class="bk-btn p" id="lnSave">' + (isEdit ? 'Save' : 'Add loan') + '</button><button class="bk-btn bk-x">Cancel</button>' + (isEdit ? '<span class="sp"></span><button class="bk-btn sm bad" id="lnDel">Delete</button>' : '') + '<span class="bk-muted" id="lnMsg"></span></div></div>';
+    const close = () => el.remove(); el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
+    document.body.appendChild(el); el.querySelector('[name=name]').focus();
+    el.querySelector('#lnSave').onclick = async () => {
+      const body = {}; el.querySelectorAll('[name]').forEach(i => { body[i.name] = i.value; });
+      if (!body.name.trim()) { el.querySelector('#lnMsg').textContent = 'Give the loan a name.'; return; }
+      const r = await post(isEdit ? '/api/bookkeeping/loans/' + l.id : '/api/bookkeeping/loans', body);
+      if (!r.ok) { el.querySelector('#lnMsg').textContent = r.error || 'Could not save.'; return; }
+      close(); done();
+    };
+    const del = el.querySelector('#lnDel'); if (del) del.onclick = async () => { if (!(await ask('Delete "' + l.name + '"? Linked bank lines are kept, just unlinked.', { ok: 'Delete', danger: true }))) return; await post('/api/bookkeeping/loans/' + l.id + '/delete', {}); close(); done(); };
   }
   function equipmentEditor(e, vendors, done) {
     let mode = e.mode || 'owned';
