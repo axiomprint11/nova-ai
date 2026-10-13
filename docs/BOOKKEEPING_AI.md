@@ -44,6 +44,18 @@ The clock is inside Nova (pm2), no Inngest / Trigger.dev: one process, one SQLit
    in the browser). Access tokens are stored AES-256-GCM encrypted (key derived from `JWT_SECRET`); the first 90 days
    sync at once. Each connection remembers the Plaid environment it was made in (`bk_accounts.env`); after the switch
    to production the old sandbox connections show **sandbox — reconnect**: Disconnect them and connect the real banks.
+5. **Remove test data** (Settings → Bank accounts, shown while a sandbox connection exists under production): removes the
+   sandbox connections, every transaction that came from them, the proposals / questions about those lines and the
+   purchases that held only those lines. Bills and inbox emails are real and stay.
+
+### Bank feed (1.19.47)
+Status row: **Pending** (no category yet — the default), **New** (synced in the last 24 hours), **Categorized** (the
+report). Each row: the date with the time Nova received it under it · the **vendor** (logo, name, SUPPLIER / VENDOR tag,
+**Link** or **Change**) · the bank's description · the **account** as "Wells Fargo - 6595" with the bank's logo (from
+Plaid's institution metadata) · amount · category. Vendor matching: an exact name / alias match or a near match of
+95% or better links the line by itself ("matched 100%"); a weaker near match shows as "Looks like GPA Paper · 72%" with
+**Use**. When a person links a line, the bank's wording becomes an alias of that vendor, so every future line with the
+same wording links by itself, and other unlinked lines with that wording are linked right away. Change is always there.
 
 ### 2. accounting@axiomprint.com
 Read with the service account in `/opt/axiom-ai/gmail-key.json`, impersonating `BOOKKEEPER_INBOX` (default

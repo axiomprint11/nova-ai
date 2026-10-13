@@ -529,14 +529,28 @@
       date: { type: 'range', kind: 'date', from: TF.period === 'custom' ? TF.from : '', to: TF.period === 'custom' ? TF.to : '', period: TF.period, defaultPeriod: '30', presets: PERIODS },
       amount: { type: 'range', kind: 'number', from: TF.min, to: TF.max }
     } : null;
-    v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top">' + chip('', 'All') + chip('pending', 'Pending', bs.pending || 0) + chip('new', 'New', bs.new || 0) + chip('categorized', 'Categorized') + '<span class="sp"></span><button class="bk-btn ico" id="syncNow" title="Sync with Bank" aria-label="Sync with Bank">' + syncIcon + '</button></div>' + fbar + chart +
-      '<table class="bk tx-table"><thead><tr><th>' + (cat ? thFilter('date', 'Date', FO.date) : 'Date') + '</th><th>Description' + (cat ? ' · ' + thFilter('vendor', 'Vendor', FO.vendor, TF.vendor_id) : '') + '</th><th>' + (cat ? thFilter('account', 'Account', FO.account, TF.account) : 'Account') + '</th><th class="num">' + (cat ? thFilter('amount', 'Amount', FO.amount) : 'Amount') + '</th><th>' + (cat ? thFilter('type', 'Category', FO.type, TF.type ? 'T:' + TF.type : TF.category ? 'C:' + TF.category : '') + ' · ' + thFilter('source', 'Set by', FO.source, TF.source) : 'Category <span class="bk-dim" style="font-weight:500">pick to set</span>') + '</th></tr></thead><tbody>' +
-      (j.transactions || []).map(t => '<tr><td>' + esc(t.date) + (t.pending ? ' <span class="bk-tag">pending</span>' : '') + '</td><td>' + esc(t.merchant || t.name) + (t.merchant && t.merchant !== t.name ? '<div class="bk-muted">' + esc(t.name) + '</div>' : '') +
-        (t.vendor_name ? '<div><span class="bk-src ' + esc(t.vendor_source || '') + '">' + (t.vendor_source === 'suppliers' ? 'supplier' : t.vendor_source === 'vendors' ? 'vendor' : 'from a bill') + '</span> ' + esc(t.vendor_name) + ' <a href="#" class="bk-muted" data-setv="' + t.id + '" title="Link to another supplier / vendor">change</a></div>' : '<div><a href="#" class="bk-muted" data-setv="' + t.id + '">link to a supplier / vendor</a></div>') +
-        (t.plaid_category ? '<div class="bk-muted">bank: ' + esc(t.plaid_category) + '</div>' : '') + '</td><td>' + esc(t.account_name || '') + '</td>' +
+    // 1.19.47: one row = date (+ when it was synced) · vendor (logo, name, Link / Change, the machine's near match with its
+    // score) · description · account ("Wells Fargo - 6595" with the bank's logo) · amount · category.
+    const usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : String(d || ''); };
+    const laT = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(ts) ? '' : 'Z')); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }); };
+    const vlogo = (name, photo) => photo ? '<img class="bk-logo bk-vl" src="' + esc(photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;bk-logo bk-vl ph&quot;>' + esc(String(name || '?').charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo bk-vl ph' + (name ? '' : ' none') + '">' + esc(name ? String(name).charAt(0).toUpperCase() : '?') + '</span>';
+    const kindTag = (t) => t.vendor_source === 'suppliers' ? 'supplier' : t.vendor_source === 'vendors' ? 'vendor' : (t.vendor_kind || 'from a bill');
+    const vendorCell = (t) => {
+      if (t.vendor_id) return '<div class="bl-vendor pu-vendor">' + vlogo(t.vendor_name, t.vendor_photo) + '<div class="bl-vname"><b class="tx-vn">' + esc(t.vendor_name) + '</b> <a href="#" class="bl-vact" data-setv="' + t.id + '">Change</a>' +
+        '<div class="bk-dim"><span class="bk-src ' + esc(t.vendor_source || '') + '">' + esc(kindTag(t)) + '</span>' + (t.vendor_by === 'auto' ? ' · matched ' + (t.vendor_score != null ? Math.round(t.vendor_score * 100) + '%' : 'by name') : t.vendor_by === 'person' ? ' · linked by a person' : '') + '</div></div></div>';
+      const sug = t.suggest_vendor_id ? '<div class="tx-sug">Looks like <b>' + esc(t.suggest_name) + '</b> <span class="tx-pct">' + Math.round((t.suggest_score || 0) * 100) + '%</span> <button type="button" class="bk-btn sm p" data-usev="' + t.id + '" data-vid="' + t.suggest_vendor_id + '">Use</button></div>' : '';
+      return '<div class="bl-vendor pu-vendor">' + vlogo(null, null) + '<div class="bl-vname"><span class="bl-unlinked">Not linked</span> <a href="#" class="bl-vact" data-setv="' + t.id + '">Link</a>' + sug + '</div></div>';
+    };
+    const bankCell = (t) => '<div class="tx-bank">' + (t.bank_logo ? '<img src="' + esc(t.bank_logo) + '" alt="">' : '<span class="tx-bank-ph" style="' + (t.bank_color ? 'background:' + esc(t.bank_color) : '') + '">' + esc(String(t.institution || t.account_name || '?').charAt(0)) + '</span>') +
+      '<div><b>' + esc(t.institution || 'Bank') + (t.mask ? ' - ' + esc(t.mask) : '') + '</b>' + (t.account_name ? '<div class="bk-dim">' + esc(t.account_name) + '</div>' : '') + '</div></div>';
+    v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top"><span class="bk-muted" style="margin-right:4px">Status</span>' + chip('pending', 'Pending', bs.pending || 0) + chip('new', 'New', bs.new || 0) + chip('categorized', 'Categorized', bs.categorized || 0) + '<span class="sp"></span><button class="bk-btn ico" id="syncNow" title="Sync with Bank" aria-label="Sync with Bank">' + syncIcon + '</button></div>' + fbar + chart +
+      '<table class="bk tx-table"><thead><tr><th class="tx-date">' + (cat ? thFilter('date', 'Date', FO.date) : 'Date') + '</th><th>' + (cat ? thFilter('vendor', 'Vendor', FO.vendor, TF.vendor_id) : 'Vendor') + '</th><th>Description</th><th>' + (cat ? thFilter('account', 'Account', FO.account, TF.account) : 'Account') + '</th><th class="num">' + (cat ? thFilter('amount', 'Amount', FO.amount) : 'Amount') + '</th><th>' + (cat ? thFilter('type', 'Category', FO.type, TF.type ? 'T:' + TF.type : TF.category ? 'C:' + TF.category : '') : 'Category <span class="bk-dim">pick to set</span>') + '</th></tr></thead><tbody>' +
+      (j.transactions || []).map(t => '<tr><td class="tx-date">' + esc(usD(t.date)) + (t.pending ? ' <span class="bk-tag">pending</span>' : '') + '<div class="bk-dim" title="When Nova received it from the bank">' + esc(laT(t.created_at)) + '</div></td>' +
+        '<td>' + vendorCell(t) + '</td><td>' + esc(t.merchant || t.name) + (t.merchant && t.merchant !== t.name ? '<div class="bk-muted">' + esc(t.name) + '</div>' : '') +
+        (t.plaid_category ? '<div class="bk-dim">bank: ' + esc(t.plaid_category) + '</div>' : '') + '</td><td>' + bankCell(t) + '</td>' +
         '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '">' + usd(-t.amount) + '</td>' +
         '<td data-txid="' + t.id + '"><div class="bk-row" style="gap:8px;flex-wrap:nowrap">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : 'Choose…') + (t.category ? '<span class="bk-tag ' + esc(t.category_source || '') + '" title="How it was set">' + esc(t.category_source || '') + '</span>' : '<span class="bk-tag ' + esc(t.status) + '">' + esc(t.status) + '</span>') + '</div></td></tr>').join('') + '</tbody></table>' +
-      (!(j.transactions || []).length ? '<div class="bk-muted" style="padding:14px 0">No transactions yet — connect a bank under Connections, then Sync.</div>' : '') + '</div>';
+      (!(j.transactions || []).length ? '<div class="bk-muted" style="padding:14px 0">' + (st === 'new' ? 'Nothing came in from the bank in the last 24 hours.' : 'No transactions here — connect a bank under Settings, then Sync.') + '</div>' : '') + '</div>';
     v.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { txnSt = b.dataset.st; loadTxns(); });
     const saveTF = () => { try { localStorage.setItem('bk_txn_filters', JSON.stringify(TF)); } catch (e) {} loadTxns(); };
     v.querySelectorAll('[data-period]').forEach(b => b.onclick = () => { TF.period = b.dataset.period; saveTF(); });
@@ -555,17 +569,9 @@
     // Picking a category sets it on the spot (no Set button); the row flashes green.
     v.querySelectorAll('td[data-txid]').forEach(td => { const wrap = td.querySelector('.ckp'), inp = td.querySelector('input.tx-cat'); let last = inp.value;
       wrap.addEventListener('change', async () => { if (inp.value === last || !inp.value) return; last = inp.value; const r = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/category', { category: inp.value }); const tr = td.closest('tr'); tr.classList.add(r.ok ? 'saved' : 'failed'); setTimeout(() => { tr.classList.remove('saved', 'failed'); loadTxns(); overview(); }, 700); }); });
-    v.querySelectorAll('[data-setv]').forEach(a => a.onclick = async (e) => {
-      e.preventDefault();
-      const d = await api('/api/bookkeeping/directory');
-      const t = (j.transactions || []).find(x => String(x.id) === a.dataset.setv);
-      const names = d.vendors.map((x, i) => (i + 1) + '. ' + x.name).join('\n');
-      const pick = prompt('Which supplier / vendor is "' + (t.merchant || t.name) + '"? Type the number (0 = none):\n' + names);
-      if (pick === null) return;
-      const vx = d.vendors[parseInt(pick) - 1];
-      await post('/api/bookkeeping/transactions/' + t.id + '/vendor', { vendor_id: vx ? vx.id : null, alias: vx ? (t.merchant || t.name) : undefined });
-      loadTxns();
-    });
+    const setV = async (id, vid) => { const r = await post('/api/bookkeeping/transactions/' + id + '/vendor', { vendor_id: vid }); if (!r.ok) alert(r.error || 'Could not link'); loadTxns(); };
+    v.querySelectorAll('[data-setv]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = (j.transactions || []).find(x => String(x.id) === a.dataset.setv); vendorPicker(a, { vendor: t ? (t.merchant || t.name) : '', suggestions: t && t.suggest_vendor_id ? [{ id: t.suggest_vendor_id, name: t.suggest_name, photo: t.suggest_photo, score: t.suggest_score || 0 }] : [] }, (vid) => setV(a.dataset.setv, vid)); });
+    v.querySelectorAll('[data-usev]').forEach(b => b.onclick = () => setV(b.dataset.usev, Number(b.dataset.vid)));
   }
 
   // ---------------------------------------------------------------- Bills
@@ -1504,7 +1510,7 @@
       '<button class="bk-btn sm" id="alertNow" title="Send the list now, whatever the time">Send now</button></div>' +
       '<div class="bk-muted" style="margin-top:8px">Goods or service is decided by the type of expense in the Chart of Accounts ("expects delivery"), and can be flipped on any purchase.</div></div>' +
       // Plaid
-      '<div class="bk-card"><h2>Bank accounts ' + pill(c.plaid.configured, 'Plaid keys set (' + esc(c.plaid.env) + ')', 'Plaid keys not in .env') + '<span class="sp"></span><button class="bk-btn p" id="plaidLink"' + (c.plaid.configured ? '' : ' disabled') + '>Connect a bank</button></h2>' +
+      '<div class="bk-card"><h2>Bank accounts ' + pill(c.plaid.configured, 'Plaid keys set (' + esc(c.plaid.env) + ')', 'Plaid keys not in .env') + '<span class="sp"></span>' + (c.plaid.items.some(it => it.env && it.env !== c.plaid.env) ? '<button class="bk-btn bad" id="plaidPurge" title="Remove the sandbox connections and every test transaction, proposal and purchase that came from them. Bills and emails stay.">Remove test data</button>' : '') + '<button class="bk-btn p" id="plaidLink"' + (c.plaid.configured ? '' : ' disabled') + '>Connect a bank</button></h2>' +
       (c.plaid.items.length ? '<table class="bk"><thead><tr><th>Bank</th><th>Accounts</th><th>Last sync</th><th>Status</th><th></th></tr></thead><tbody>' + c.plaid.items.map(it => '<tr><td>' + esc(it.institution) + '</td><td>' + it.accounts.map(a => esc(a.name) + (a.mask ? ' ••' + esc(a.mask) : '')).join('<br>') + '</td><td>' + when(it.last_sync_at) + '</td><td>' + (it.env && it.env !== c.plaid.env ? '<span class="bk-pill err" title="Connected under Plaid ' + esc(it.env) + '; Nova now runs ' + esc(c.plaid.env) + ' — disconnect it and connect the real bank">' + esc(it.env) + ' — reconnect</span>' : it.status === 'ok' ? '<span class="bk-pill on">ok</span>' : '<span class="bk-pill err">' + esc(it.error || it.status) + '</span>') + '</td><td><button class="bk-btn sm bad" data-unlink="' + it.id + '">Disconnect</button></td></tr>').join('') + '</tbody></table>'
         : '<div class="bk-muted">No bank connected yet.</div>') +
       '<ol class="bk-steps"><li>Create a Plaid account at dashboard.plaid.com (the Transactions product; Sandbox to try, then request Production / Limited Production).</li><li>Put <code>PLAID_CLIENT_ID</code>, <code>PLAID_SECRET</code> and <code>PLAID_ENV=sandbox|production</code> in <code>.env</code> and restart Nova.</li><li>Nothing to set in the dashboard\u2019s Webhooks page (that page is only for Transfer / Wallet / Income events): the Transactions webhook <code>' + esc(c.chat.plaid_webhook_url) + '</code> is attached to every bank connection Nova creates. Under Team Settings \u2192 API \u2192 <b>Allowed redirect URIs</b> add <code>https://nova.axiomprint.com/bookkeeping/plaid-oauth</code> \u2014 banks that sign you in on their own page (Chase, Bank of America, Wells Fargo, Capital One\u2026) send you back there.</li><li>Press <b>Connect a bank</b> and sign in to each bank (2 accounts). Transactions sync straight away; the webhook keeps them current, the daily run syncs again.</li></ol></div>' +
@@ -1549,6 +1555,11 @@
         onSuccess: async (public_token, metadata) => { try { localStorage.removeItem('bk_plaid_link_token'); } catch (e) {} const x = await post('/api/bookkeeping/plaid/exchange', { public_token, metadata }); $('connMsg').textContent = x.ok ? 'Connected ' + x.institution + (x.first_sync && x.first_sync.added != null ? ' — ' + x.first_sync.added + ' transactions pulled.' : '.') : x.error; $('plaidLink').disabled = false; loadConn(); },
         onExit: () => { $('plaidLink').disabled = false; try { localStorage.removeItem('bk_plaid_link_token'); } catch (e) {} } }, receivedRedirectUri ? { receivedRedirectUri: receivedRedirectUri } : {}));
       h.open();
+    };
+    if ($('plaidPurge')) $('plaidPurge').onclick = async () => {
+      if (!await ask('This removes the sandbox bank connections and every transaction, proposal and purchase that came only from them. Bills and inbox emails stay. It cannot be undone.', { title: 'Remove the test data?', ok: 'Remove test data', danger: true })) return;
+      $('plaidPurge').disabled = true; const r = await post('/api/bookkeeping/plaid/purge-sandbox', {});
+      $('connMsg').textContent = r.ok ? 'Removed ' + r.connections + ' test connection(s), ' + r.transactions + ' transactions and ' + r.purchases + ' purchases.' : r.error; ov = null; loadConn();
     };
     $('plaidLink').onclick = async () => {
       $('plaidLink').disabled = true;
