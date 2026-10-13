@@ -2047,18 +2047,18 @@
     // 1.19.135: money fields are text with thousands separators ("395,000.00"); parsed on save
     const fmtMoney = (v) => { const n = Number(String(v == null ? '' : v).replace(/[$,\s]/g, '')); return v === '' || v == null || !isFinite(n) ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
     const money = (k, label, ph) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><input class="bk ln-money" name="' + k + '" type="text" inputmode="decimal" value="' + esc(fmtMoney(l[k])) + '"' + (ph ? ' placeholder="' + esc(ph) + '"' : '') + '></label>';
-    el.innerHTML = '<div class="bk-modal-box" style="width:min(640px,100%)"><div class="bk-modal-title" style="margin-bottom:12px">' + (isEdit ? 'Edit ' + esc(l.name) : 'New loan / lease') + '</div>' +
-      '<div class="nv-grid">' + f('name', 'Name', 'text', '', 'SBA EIDL · Line of credit · Van loan') + sel('kind', 'Kind', [['loan', 'Loan (amortized)'], ['lease', 'Lease (fixed payments)'], ['credit_line', 'Line of credit (open-ended)']]) +
-      sel('vendor_id', 'Lender (company in the directory)', [['', '— pick a company —']].concat((j.vendors || []).map(x => [x.id, x.name]))) + f('lender', 'Lender, if not in the directory', 'text', '', 'Bank of America') +
-      money('principal', 'Amount borrowed (price financed)', '395,000.00') + money('down_payment', 'Down payment / advance, if any', '39,500.00') +
-      f('start_date', 'Date borrowed / first payment', 'date') + f('deferred_months', 'Months with no payment first (optional)', 'number', ' step="1" min="0"', '0') +
-      f('term_months', 'Number of monthly payments', 'number', ' step="1" min="0"', '72') + money('monthly', 'Monthly payment (blank = computed)', '5,808.00') +
-      f('apr', 'APR % (blank = computed)', 'number', ' step="0.001" min="0"', '7.5') + money('total_payback', 'Total to be paid back (optional)', '457,676.00') +
-      money('balloon', 'Balloon at the end, if any') + money('sales_tax', 'Sales tax on the deal', '34,000.00') +
-      sel('tax_in', 'Where the tax is', [['1', 'Financed with the product (inside the amount above)'], ['0', 'Paid separately (usually a lease)']]) +
-      money('property_tax_monthly', 'Property tax the lender adds per month', '0.00') +
-      sel('equipment_id', 'Finances a machine (optional)', [['', '— none —']].concat((j.equipment || []).map(x => [x.id, x.name]))) + sel('status', 'Status', [['active', 'Active'], ['paid', 'Paid off']]) + '</div>' +
-      '<div class="bk-dim" id="lnCalc" style="margin:8px 0 10px"></div>' +
+    // 1.19.137: a compact six-column grid — `c` = how many columns a field takes
+    const w = (html, c) => html.replace('<label class="nv-f">', '<label class="nv-f" style="grid-column:span ' + c + '">');
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(760px,100%)"><div class="bk-modal-title" style="margin-bottom:12px">' + (isEdit ? 'Edit ' + esc(l.name) : 'New loan / lease') + '</div>' +
+      '<div class="nv-grid ln-grid">' +
+      w(f('name', 'Name', 'text', '', 'SBA EIDL · Line of credit · Van loan'), 3) + w(sel('kind', 'Kind', [['loan', 'Loan (amortized)'], ['lease', 'Lease (fixed payments)'], ['credit_line', 'Line of credit (open-ended)']]), 2) + w(sel('status', 'Status', [['active', 'Active'], ['paid', 'Paid off']]), 1) +
+      w(sel('vendor_id', 'Lender', [['', '— company —']].concat((j.vendors || []).map(x => [x.id, x.name]))), 2) + w(f('lender', 'Lender name (if not listed)', 'text', '', 'Screen GP Americas'), 2) + w(sel('equipment_id', 'Finances a machine', [['', '— none —']].concat((j.equipment || []).map(x => [x.id, x.name]))), 2) +
+      w(money('principal', 'Financed price', '395,000.00'), 2) + w(money('down_payment', 'Down payment', '39,500.00'), 2) + w(sel('down_to', 'Down payment to', [['finance', 'Financial company'], ['manufacturer', 'Manufacturer']]), 2) +
+      w(f('start_date', 'Date borrowed', 'date'), 2) + w(f('deferred_months', 'No pay (months)', 'number', ' step="1" min="0"', '0'), 1) + w(f('term_months', 'Loan term', 'number', ' step="1" min="0"', '72'), 1) + w(money('monthly', 'Monthly payment', '5,808.00'), 2) +
+      w(f('apr', 'Interest %', 'number', ' step="0.001" min="0"', 'computed'), 1) + w(money('total_payback', 'Total pay back', '457,676.00'), 2) + w(money('balloon', 'Balloon at the end', '0.00'), 2) + w(money('property_tax_monthly', 'Monthly property tax', '0.00'), 1) +
+      w(money('sales_tax', 'Sales tax', '34,000.00'), 2) + w(sel('tax_in', 'Sales tax is', [['1', 'Included in the financed price'], ['0', 'Excluded (paid separately)']]), 2) +
+      '</div>' +
+      '<div class="bk-dim" id="lnCalc" style="margin:4px 0 10px"></div>' +
       '<label class="nv-f"><span class="bk-muted">Notes</span><textarea class="bk" name="notes" rows="2">' + esc(l.notes || '') + '</textarea></label>' +
       '<div class="ln-docs"><div class="bk-muted" style="margin-bottom:6px">Documents — the signed agreement, terms, payment schedule</div>' +
       (isEdit ? '<div class="ln-drop" id="lnDrop" tabindex="0">' + iconSvg('upload') + '<div><b>Drop files here</b> or click to choose · PDF, pictures, Word, Excel · up to 25 MB each</div><input type="file" id="lnFile" multiple accept=".pdf,.png,.jpg,.jpeg,.docx,.xlsx,application/pdf,image/png,image/jpeg" hidden></div><div id="lnFiles" class="ln-files"></div>' : '<div class="bk-dim">Add the loan first, then its documents.</div>') + '</div>' +

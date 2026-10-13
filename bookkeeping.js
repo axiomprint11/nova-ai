@@ -111,7 +111,7 @@ module.exports = function mountBookkeeping(app, deps) {
     // 1.19.136: documents behind a loan — the signed agreement, terms, schedules (PDF / image / Word / Excel) in FILES/loans
     db.run(`CREATE TABLE IF NOT EXISTS bk_files (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, ref_id INTEGER NOT NULL, name TEXT, mime TEXT, size INTEGER, file TEXT NOT NULL, label TEXT, uploaded_by TEXT, created_at TEXT NOT NULL)`);
     db.run('CREATE INDEX IF NOT EXISTS idx_bk_files_ref ON bk_files(kind, ref_id)', () => {});
-    ['down_payment REAL', 'deferred_months INTEGER', 'total_payback REAL', 'sales_tax REAL', 'tax_in INTEGER', 'property_tax_monthly REAL'].forEach(c => db.run('ALTER TABLE bk_loans ADD COLUMN ' + c, () => {}));
+    ['down_payment REAL', 'deferred_months INTEGER', 'total_payback REAL', 'sales_tax REAL', 'tax_in INTEGER', 'property_tax_monthly REAL', 'down_to TEXT'].forEach(c => db.run('ALTER TABLE bk_loans ADD COLUMN ' + c, () => {}));
     // 1.19.119: the overseas team — people paid through Wise (graphic design, web development, customer service…).
     // Each member is also a Nova vendor (vendor_id) so the feed shows the person; `pay` per period and `wise_ref` match the
     // bank line (Wise puts no recipient name on the statement), `category` files it, `category_alt` is the web-dev
@@ -2777,7 +2777,7 @@ module.exports = function mountBookkeeping(app, deps) {
         sheet: { equipment_value: Math.round(assets * 100) / 100, owed: Math.round(owed * 100) / 100, monthly: Math.round(monthly * 100) / 100, net: Math.round((assets - owed) * 100) / 100, loans: active.length } });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
-  const LOAN_F = ['name', 'kind', 'lender', 'vendor_id', 'equipment_id', 'principal', 'down_payment', 'deferred_months', 'start_date', 'term_months', 'apr', 'monthly', 'balloon', 'total_payback', 'sales_tax', 'tax_in', 'property_tax_monthly', 'notes', 'status'];
+  const LOAN_F = ['name', 'kind', 'lender', 'vendor_id', 'equipment_id', 'principal', 'down_payment', 'deferred_months', 'start_date', 'term_months', 'apr', 'monthly', 'balloon', 'total_payback', 'sales_tax', 'tax_in', 'property_tax_monthly', 'down_to', 'notes', 'status'];   // down_to: who got the down payment — finance (the lender) or manufacturer (1.19.137)
   const loanBody = (b) => { const o = {}; LOAN_F.forEach(k => { if (b[k] === undefined) return; let v = b[k]; if (['vendor_id', 'equipment_id', 'term_months', 'deferred_months', 'tax_in'].indexOf(k) > -1) v = v === '' || v == null ? null : parseInt(String(v).replace(/[^0-9-]/g, '')); else if (['principal', 'apr', 'monthly', 'balloon', 'down_payment', 'total_payback', 'sales_tax', 'property_tax_monthly'].indexOf(k) > -1) { v = v === '' || v == null ? null : Number(String(v).replace(/[$,\s]/g, '')); if (v != null && !isFinite(v)) v = null; } else v = v == null ? null : String(v).trim().slice(0, 500); o[k] = v; }); if (o.kind && ['loan', 'lease', 'credit_line'].indexOf(o.kind) < 0) o.kind = 'loan'; if (o.status && ['active', 'paid'].indexOf(o.status) < 0) o.status = 'active'; return o; };
   app.post('/api/bookkeeping/loans', ...guard, async (req, res) => {
     const o = loanBody(req.body || {}); if (!o.name) return res.json({ ok: false, error: 'Give the loan a name.' });
