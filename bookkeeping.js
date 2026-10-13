@@ -506,7 +506,21 @@ module.exports = function mountBookkeeping(app, deps) {
     return 'closed';
   }
   // Bank lines that were categorized without any paperwork are purchases too (no_paperwork), so the list is complete.
+  // 1.19.48: purchases whose bank lines are gone (test data removed, lines removed by the bank) and that hold no bill
+  // or email are leftovers — drop them; a purchase that still has paperwork just loses the dead references.
+  async function dropOrphanPurchases() {
+    let dropped = 0;
+    for (const pu of await dbAll("SELECT id, txn_ids, bill_id, confirm_email_id, arrival_email_ids FROM bk_purchases WHERE txn_ids <> '[]'")) {
+      const tx = jarr(pu.txn_ids).map(Number).filter(Boolean); if (!tx.length) continue;
+      const alive = (await dbAll('SELECT id FROM bk_transactions WHERE id IN (' + tx.map(() => '?').join(',') + ')', tx)).map(r => r.id);
+      if (alive.length === tx.length) continue;
+      if (!alive.length && !pu.bill_id && !pu.confirm_email_id && !jarr(pu.arrival_email_ids).length) { await dbRun('DELETE FROM bk_purchase_items WHERE purchase_id = ?', [pu.id]); await dbRun('DELETE FROM bk_purchases WHERE id = ?', [pu.id]); dropped++; }
+      else await dbRun('UPDATE bk_purchases SET txn_ids = ? WHERE id = ?', [JSON.stringify(alive), pu.id]);
+    }
+    return dropped;
+  }
   async function ensureTxnPurchases() {
+    await dropOrphanPurchases().catch(() => {});
     const rows = await dbAll("SELECT id, vendor_id, name, merchant, amount, date, category FROM bk_transactions WHERE purchase_id IS NULL AND category IS NOT NULL AND status NOT IN ('new', 'pending') AND amount > 0 LIMIT 300");
     for (const t of rows) { const v = t.vendor_id ? await dbGet('SELECT name FROM bk_vendors WHERE id = ?', [t.vendor_id]) : null; const pid = await newPurchase({ vendor_id: t.vendor_id, vendor: v ? v.name : (t.merchant || t.name), amount: t.amount, date: t.date, category: t.category, txn_ids: [t.id], no_paperwork: 1 }, 'bank');  const eq = await equipmentFor(t.vendor_id, t.amount); if (eq) { await dbRun('UPDATE bk_transactions SET equipment_id = ? WHERE id = ? AND equipment_id IS NULL', [eq, t.id]); await dbRun('UPDATE bk_purchases SET equipment_id = ? WHERE id = ?', [eq, pid]); } }
     return rows.length;
@@ -1612,7 +1626,7 @@ module.exports = function mountBookkeeping(app, deps) {
     } catch (e) {}
     res.json({ ok: true, me: userId(req), people, settings: Object.assign({}, s, { chat_webhook: s.chat_webhook ? '(set)' : '' }), baskets: basketDefs(s), basket_defaults: BASKET_DEFAULTS, chart: chartOf(s), counts, brief, last_run: lastRun, running: !!running,
       connections: {
-        plaid: { configured: plaidReady(), env: PLAID_ENV, items },
+        plaid: { configured: plaidReady(), env: PLAID_ENV, items, leftovers: items.some(i => i.env && i.env !== PLAID_ENV) || !!(await dbGet("SELECT 1 FROM bk_purchases p WHERE p.txn_ids <> '[]' AND p.bill_id IS NULL AND p.confirm_email_id IS NULL AND NOT EXISTS (SELECT 1 FROM bk_transactions t WHERE p.txn_ids LIKE '%' || t.id || '%') LIMIT 1").catch(() => null)) },
         gmail: { inbox: INBOX, key: fs.existsSync(keyPath), last_scan: (await dbGet("SELECT at FROM bk_audit WHERE action = 'gmail.scan' ORDER BY id DESC LIMIT 1") || {}).at || null,
           push: !!env('BOOKKEEPER_PUSH_TOKEN'), topic: !!env('BOOKKEEPER_PUBSUB_TOPIC'), watch_expires: s.gmail_watch_expires || null, poll_min: s.poll_min },
         chat: { app_audience: !!env('BOOKKEEPER_CHAT_AUDIENCE'), space: s.chat_space || null, webhook: !!s.chat_webhook, events_url: NOVA_URL + '/api/bookkeeping/chat/events',
@@ -2284,6 +2298,8 @@ module.exports = function mountBookkeeping(app, deps) {
         }
         await dbRun('DELETE FROM bk_accounts WHERE id = ?', [it.id]);
       }
+      purchases += await dropOrphanPurchases();
+      await dbRun("DELETE FROM bk_proposals WHERE ref_table = 'bk_transactions' AND ref_id NOT IN (SELECT id FROM bk_transactions)").catch(() => {});
       await audit(userId(req), 'plaid.purge_sandbox', null, { connections: items.map(i => i.institution), transactions: txns, purchases });
       res.json({ ok: true, connections: items.length, transactions: txns, purchases });
     } catch (e) { res.json({ ok: false, error: e.message }); }
