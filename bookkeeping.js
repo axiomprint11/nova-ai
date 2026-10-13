@@ -1733,6 +1733,7 @@ module.exports = function mountBookkeeping(app, deps) {
         r.website = raw.website || null;
         r.place = raw.location ? [raw.location.city, raw.location.region].filter(Boolean).join(', ') + (raw.location.store_number ? ' #' + raw.location.store_number : '') : '';
       }
+      if (r.vendor_id && !r.vendor_photo && r.plaid_logo && (r.vendor_source === 'nova' || r.vendor_source === 'bill')) { await dbRun('UPDATE bk_vendors SET photo = ? WHERE id = ? AND photo IS NULL', [r.plaid_logo, r.vendor_id]).catch(() => {}); r.vendor_photo = r.plaid_logo; dirCache.at = 0; }   // backfill: lines linked before 1.19.65
       // the AI's suggestion (its proposal), shown under the picker while the line is not categorized
       let pl = null; try { pl = r.ai_payload ? JSON.parse(r.ai_payload) : null; } catch (e) {}
       r.ai_category = pl && pl.category && pl.category !== 'Uncategorized' ? pl.category : null; delete r.ai_payload;
@@ -2267,8 +2268,14 @@ module.exports = function mountBookkeeping(app, deps) {
   app.post('/api/bookkeeping/directory/sync', ...guard, async (req, res) => { try { dirCache.at = 0; res.json(Object.assign({ ok: true }, await syncDirectory(userId(req)))); } catch (e) { res.json({ ok: false, error: e.message }); } });
   app.post('/api/bookkeeping/transactions/:id/vendor', ...guard, async (req, res) => {
     const vid = parseInt(req.body.vendor_id) || null, id = parseInt(req.params.id);
-    const t = await dbGet('SELECT id, name, merchant FROM bk_transactions WHERE id = ?', [id]);
+    const t = await dbGet('SELECT id, name, merchant, raw FROM bk_transactions WHERE id = ?', [id]);
     await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = ?, vendor_score = ?, suggest_vendor_id = NULL, suggest_score = NULL WHERE id = ?", [vid, vid ? 'person' : null, vid ? 1 : null, id]);
+    // 1.19.65: a Nova / bill vendor without a photo takes the merchant logo and website the bank knows for this line
+    if (vid && t) { try { const raw = JSON.parse(t.raw || '{}'), v = await dbGet('SELECT id, source, photo, details FROM bk_vendors WHERE id = ?', [vid]);
+      if (v && (v.source === 'nova' || v.source === 'bill')) { const sets = [], args = []; let d = {}; try { d = JSON.parse(v.details || '{}') || {}; } catch (e) {}
+        if (!v.photo && raw.logo_url) { sets.push('photo = ?'); args.push(raw.logo_url); }
+        if (!d.website && raw.website) { d.website = raw.website; sets.push('details = ?'); args.push(JSON.stringify(d)); }
+        if (sets.length) { await dbRun('UPDATE bk_vendors SET ' + sets.join(', ') + ' WHERE id = ?', args.concat([vid])); dirCache.at = 0; } } } catch (e) {} }
     // 1.19.47: the same bank wording elsewhere (unlinked, or linked by the machine) follows — and every future line too, through the alias.
     if (vid && t && req.body.alias !== false) { const text = t.merchant || t.name; req.body.alias = req.body.alias || text;
       await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = 'auto', vendor_score = 1, suggest_vendor_id = NULL, suggest_score = NULL WHERE id <> ? AND (vendor_id IS NULL OR vendor_by = 'auto') AND LOWER(COALESCE(merchant, name)) = LOWER(?)", [vid, id, text]); }

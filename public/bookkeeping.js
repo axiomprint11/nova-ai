@@ -551,6 +551,7 @@
     const laD2 = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(ts) ? '' : 'Z')); if (isNaN(d)) return ''; const o = { timeZone: 'America/Los_Angeles' }; return esc(d.toLocaleDateString([], Object.assign({ month: 'short', day: 'numeric', year: 'numeric' }, o))) + '<div class="bk-dim">' + esc(d.toLocaleTimeString([], Object.assign({ hour: 'numeric', minute: '2-digit' }, o)).replace(' ', '').toLowerCase()) + '</div>'; };
     const SVG = (d) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
     const REFI = SVG('<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-5"/>');
+    const PLUSV = SVG('<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>');
     const PEN = SVG('<path d="M4 20h4l10-10-4-4L4 16z"/><path d="M12.5 7.5l4 4"/>'), LINKI = SVG('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5"/>');
     // how it was paid (Plaid's payment_channel / check_number)
     const CHAN = { store: ['Store', SVG('<path d="M3 9l1.5-5h15L21 9"/><path d="M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/><path d="M5 12v9h14v-9"/><path d="M10 21v-6h4v6"/>')], online: ['Online', SVG('<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>')], check: ['Check', SVG('<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h6M7 14h3"/><path d="M15 14l1.5 1.5L19 12"/>')], other: ['Other', SVG('<path d="M4 12h16"/><path d="M14 6l6 6-6 6"/>')] };
@@ -564,10 +565,10 @@
     // 1.19.64: photo with the kind tag under it on the left; company name (+ Link / Change icon, match pill) on the right
     const kindPill = (t) => t.vendor_source === 'nova' ? '<span class="bk-src nova" title="Nova vendor — kept in Nova, not in the CRM">vendor' + AI_I + '</span>' : '<span class="bk-src ' + esc(t.vendor_source || '') + '">' + esc(kindTag(t)) + '</span>';
     const vendorCell = (t) => {
-      if (t.vendor_id) return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft">' + vlogo(t.vendor_name, t.vendor_photo) + kindPill(t) + '</div><div class="bl-vname"><b class="tx-vn">' + esc(t.vendor_name) + '</b> <a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Change vendor">' + PEN + '</a>' +
+      if (t.vendor_id) return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft">' + vlogo(t.vendor_name, t.vendor_photo || t.plaid_logo) + kindPill(t) + '</div><div class="bl-vname"><b class="tx-vn">' + esc(t.vendor_name) + '</b> <a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Change vendor">' + PEN + '</a>' +
         (t.vendor_by === 'auto' ? '<div class="tx-match ok">Matched ' + (t.vendor_score != null ? Math.round(t.vendor_score * 100) + '%' : 'by name') + '</div>' : t.vendor_by === 'person' ? '<div class="bk-dim">linked by a person</div>' : '') + '</div></div>';
       const sug = t.suggest_vendor_id ? '<div class="tx-sug"><span class="tx-match">Matched ' + Math.round((t.suggest_score || 0) * 100) + '%</span><button type="button" class="bk-btn sm p" data-usev="' + t.id + '" data-vid="' + t.suggest_vendor_id + '">Use</button></div><div class="tx-sug-n"><b>' + esc(t.suggest_name) + '</b></div>' : '';
-      return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft">' + (t.plaid_logo ? vlogo(t.merchant || t.name, t.plaid_logo) : vlogo(null, null)) + '</div><div class="bl-vname"><span class="bl-unlinked">Not linked</span> <a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Link to a vendor">' + LINKI + '</a>' + sug + '</div></div>';
+      return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft">' + (t.plaid_logo ? vlogo(t.merchant || t.name, t.plaid_logo) : vlogo(null, null)) + '</div><div class="bl-vname"><span class="bl-unlinked">Not linked</span> <a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Link to a vendor">' + LINKI + '</a><a href="#" class="bl-vact tx-vico" data-newv="' + t.id + '" title="Create a Nova vendor from this line">' + PLUSV + '</a>' + sug + '</div></div>';
     };
     // 1.19.58: short — logo + "WF ••0489"; the full bank and account name on hover
     const BANK_ABBR = { 'wells fargo': 'WF', 'american express': 'Amex', 'bank of america': 'BofA', 'jpmorgan chase': 'Chase', 'capital one': 'CapOne', 'us bank': 'USB', 'u.s. bank': 'USB', 'citibank': 'Citi' };
@@ -616,6 +617,7 @@
     const setV = async (id, vid) => { const r = await post('/api/bookkeeping/transactions/' + id + '/vendor', { vendor_id: vid }); if (!r.ok) alert(r.error || 'Could not link'); loadTxns(); };
     v.querySelectorAll('[data-setv]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = (j.transactions || []).find(x => String(x.id) === a.dataset.setv); vendorPicker(a, { vendor: t ? (t.merchant || t.name) : '', suggestions: t && t.suggest_vendor_id ? [{ id: t.suggest_vendor_id, name: t.suggest_name, photo: t.suggest_photo, score: t.suggest_score || 0 }] : [] }, (vid) => setV(a.dataset.setv, vid)); });
     v.querySelectorAll('[data-usev]').forEach(b => b.onclick = () => setV(b.dataset.usev, Number(b.dataset.vid)));
+    v.querySelectorAll('[data-newv]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = (j.transactions || []).find(x => String(x.id) === a.dataset.newv); novaVendorForm({ name: t ? (t.merchant || t.name) : '', aliases: t ? [t.merchant, t.name].filter((x, i, arr) => x && arr.indexOf(x) === i).join('\n') : '', website: t && t.website ? t.website : '' }, (nv) => setV(a.dataset.newv, nv.id)); });
   }
 
   // ---------------------------------------------------------------- Bills
@@ -1146,7 +1148,9 @@
     const all = (j.vendors || []).filter(x => x.kind !== 'bill');
     const pop = document.createElement('div'); pop.className = 'ckp-pop single';
     pop.addEventListener('click', (e) => e.stopPropagation());
-    pop.innerHTML = '<div class="ckp-search"><input type="text" placeholder="Search suppliers and vendors…"></div><div class="ckp-list"></div><div class="ckp-foot"><a href="#" class="ckp-new vp-new">+ New Nova vendor…</a><span class="sp"></span><span class="bk-muted">Linking “' + esc(bill.vendor) + '” remembers the name.</span></div>';
+    let vtab = 'axiom';   // 1.19.65: Axiom (CRM) vendors | Nova vendors; the search box always looks through both
+    const isNova = (x) => x.source === 'nova' || x.source === 'bill';
+    pop.innerHTML = '<div class="ckp-search"><input type="text" placeholder="Search all vendors…"></div><div class="vp-tabs"><button type="button" class="ib-chip sm on" data-vt="axiom">Axiom vendors <small>' + all.filter(x => !isNova(x)).length + '</small></button><button type="button" class="ib-chip sm" data-vt="nova">Nova vendors ' + AI_I + ' <small>' + all.filter(isNova).length + '</small></button></div><div class="ckp-list"></div><div class="ckp-foot"><a href="#" class="ckp-new vp-new">+ New Nova vendor…</a><span class="sp"></span><span class="bk-muted">Linking “' + esc(bill.vendor) + '” remembers the name.</span></div>';
     document.body.appendChild(pop);
     const r = anchor.getBoundingClientRect(), W = Math.min(380, window.innerWidth - 16);
     pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) + 'px'; pop.style.width = W + 'px';
@@ -1156,10 +1160,19 @@
     const draw = () => {
       const f = q.value.trim().toLowerCase(); let html = '';
       if (!f && bill.suggestions.length) html += '<div class="ckp-g"><div class="ckp-gh">Near matches</div>' + bill.suggestions.map(sg => row(sg, '<span class="bk-dim">' + Math.round(sg.score * 100) + '%</span>')).join('') + '</div>';
-      const rest = all.filter(x => !f || (x.name + ' ' + (x.specialty || '') + ' ' + (x.aliases || '')).toLowerCase().indexOf(f) > -1).slice(0, 60);
-      html += '<div class="ckp-g"><div class="ckp-gh">' + (f ? 'Matches' : 'All suppliers and vendors') + '<small>' + rest.length + '</small></div>' + rest.map(x => row(x)).join('') + '</div>';
+      const hit = (x) => (x.name + ' ' + (x.specialty || '') + ' ' + (x.aliases || '')).toLowerCase().indexOf(f) > -1;
+      if (f) {   // a search looks through both lists
+        const ax = all.filter(x => !isNova(x) && hit(x)).slice(0, 60), nv = all.filter(x => isNova(x) && hit(x)).slice(0, 60);
+        if (ax.length) html += '<div class="ckp-g"><div class="ckp-gh">Axiom vendors<small>' + ax.length + '</small></div>' + ax.map(x => row(x)).join('') + '</div>';
+        if (nv.length) html += '<div class="ckp-g"><div class="ckp-gh">Nova vendors<small>' + nv.length + '</small></div>' + nv.map(x => row(x)).join('') + '</div>';
+        if (!ax.length && !nv.length) html += '<div class="bk-muted" style="padding:10px 12px">No match — add it as a Nova vendor below.</div>';
+      } else {
+        const rest = all.filter(x => vtab === 'nova' ? isNova(x) : !isNova(x)).slice(0, 80);
+        html += '<div class="ckp-g"><div class="ckp-gh">' + (vtab === 'nova' ? 'Nova vendors' : 'All suppliers and vendors') + '<small>' + rest.length + '</small></div>' + (rest.length ? rest.map(x => row(x)).join('') : '<div class="bk-muted" style="padding:8px 12px">None yet.</div>') + '</div>';
+      }
       list.innerHTML = html;
     };
+    pop.querySelectorAll('[data-vt]').forEach(b => b.onclick = () => { vtab = b.dataset.vt; pop.querySelectorAll('[data-vt]').forEach(x => x.classList.toggle('on', x === b)); draw(); });
     draw(); setTimeout(() => q.focus(), 0); q.oninput = draw;
     list.onclick = (e) => { const it = e.target.closest('.ckp-i'); if (!it) return; onPick(Number(it.dataset.v)); close(); };
     pop.querySelector('.vp-new').onclick = (e) => { e.preventDefault(); close(); novaVendorForm({ name: bill.vendor || '', aliases: bill.vendor || '' }, (nv) => onPick(nv.id)); };   // 1.19.63
