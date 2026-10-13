@@ -1911,6 +1911,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
       fs.writeFileSync(path.join(AUDIO_DIR, rel), buf);
       const upd = await dbRun('UPDATE talk_calls SET audio_path = ? WHERE id = ? AND audio_path IS NULL', [rel, c.id]);
       if (!upd.changes) { try { fs.unlinkSync(path.join(AUDIO_DIR, rel)); } catch (e) {} }       // the webhook won the race
+      else if (typeof handoff !== 'undefined' && handoff.recordingArrived) handoff.recordingArrived(c.id).catch(() => {});   // 1.19.138: tell the CRM
       hit('recording', true, 'Call ' + c.id + ': recording saved from ElevenLabs (' + why + ', ' + Math.round(buf.length / 1024) + ' KB)');
       return { ok: true };
     } catch (e) {

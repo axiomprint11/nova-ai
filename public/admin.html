@@ -258,7 +258,7 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
         </div>
         <div id="msg" class="feedback"></div>
         <table>
-          <thead><tr><th></th><th>Name</th><th>Username</th><th>Email</th><th>Last login</th><th>History</th><th>Knowledge</th><th>Admin</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th></th><th>Name</th><th>Username</th><th>Email</th><th>Last login</th><th>History</th><th>Knowledge</th><th>Roles</th><th>Status</th><th></th></tr></thead>
           <tbody id="usersBody"></tbody>
         </table>
       </div>
@@ -801,7 +801,9 @@ async function loadUsers() {
         '<option value="all"' + (kacc==='all'?' selected':'') + '>See all</option>' +
         '</select></td>';
       const adminCell = '<td><label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#555;">' +
-        '<input type="checkbox" ' + (m.is_admin ? 'checked' : '') + ' onchange="setMemberAdmin(' + m.id + ', this.checked)" style="width:15px;height:15px;cursor:pointer;"> Admin</label></td>';
+        '<input type="checkbox" ' + (m.is_admin ? 'checked' : '') + ' onchange="setMemberAdmin(' + m.id + ', this.checked)" style="width:15px;height:15px;cursor:pointer;"> Admin</label>' +
+        '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#555;margin-left:10px;" title="Opens Bookkeeping AI (bank feed, bills, purchases, loans) to this person">' +
+        '<input type="checkbox" ' + (m.is_bookkeeper ? 'checked' : '') + ' onchange="setMemberBookkeeper(' + m.id + ', this.checked)" style="width:15px;height:15px;cursor:pointer;"> Bookkeeper</label></td>';
       tr.innerHTML =
         '<td>' + avatar + '</td>' +
         '<td>' + esc(m.display_name || '-') + '</td>' +
@@ -851,6 +853,12 @@ async function setKnowledgeAccess(id, level) {
   });
 }
 
+async function setMemberBookkeeper(id, on) {   // 1.19.138
+  await fetch('/api/admin/members/set-bookkeeper', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify({ id, is_bookkeeper: on })
+  });
+}
 async function setMemberAdmin(id, makeAdmin) {
   await fetch('/api/admin/members/set-admin', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },

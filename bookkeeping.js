@@ -351,11 +351,23 @@ module.exports = function mountBookkeeping(app, deps) {
     try { await dbRun('INSERT INTO bk_audit (who, action, ref, detail) VALUES (?,?,?,?)', [who || 'system', action, ref == null ? null : String(ref), detail == null ? null : (typeof detail === 'string' ? detail : JSON.stringify(detail)).slice(0, 4000)]); } catch (e) {}
   }
   const userId = (req) => String((req.user && (req.user.key || req.user.username)) || '').replace(/^(member|user):/, '').toLowerCase();
+  // 1.19.138: members ticked "Bookkeeper" in Admin → Users (members.is_bookkeeper) join the .env list; cached, refreshed
+  // on every change and every 60 s so a just-granted member gets in without a restart.
+  let dbUsers = new Set(), dbUsersAt = 0;
+  function refreshAccess() {
+    dbUsersAt = Date.now();
+    db.all("SELECT email, username FROM members WHERE is_bookkeeper = 1 AND enabled = 1", [], (err, rows) => {
+      if (err) return;
+      dbUsers = new Set((rows || []).flatMap(r => [r.email, r.username]).filter(Boolean).map(x => String(x).toLowerCase()));
+    });
+  }
+  refreshAccess();
   function isBookkeeper(req) {
+    if (Date.now() - dbUsersAt > 60000) refreshAccess();
     const key = String((req.user && req.user.key) || '').toLowerCase();
     const email = key.replace(/^(member|user):/, '');
     const uname = String((req.user && req.user.username) || '').toLowerCase();
-    return USERS.indexOf(email) > -1 || USERS.indexOf(uname) > -1;
+    return USERS.indexOf(email) > -1 || USERS.indexOf(uname) > -1 || dbUsers.has(email) || dbUsers.has(uname);
   }
   function bookkeeperOnly(req, res, next) {
     if (!isBookkeeper(req)) return res.status(403).json({ ok: false, error: 'Bookkeeping AI is not open to this account.' });
@@ -3271,5 +3283,5 @@ module.exports = function mountBookkeeping(app, deps) {
     res.json({ ok: true });
   });
 
-  return { isBookkeeper, runDaily, converse, settings, runChatTool };
+  return { isBookkeeper, refreshAccess, runDaily, converse, settings, runChatTool };
 };

@@ -213,7 +213,17 @@ Prices are numbers in US dollars. Show them as `$1,678.54`.
    `POST /api/admin/talk/calls/:id/handoff {"webhook": true}` (staff sign-in).
    **What it sends** beside the URL field shows the latest real call's payload.
 
+## `call.updated` (since 1.19.138)
+
+The same body, with `event: "call.updated"` and `X-Nova-Event: call.updated`, goes out when:
+
+- the recording lands after the first delivery (`recording.ready` is then `true`; the URL is unchanged);
+- an admin rewrites the summary and resends (`POST /api/admin/talk/calls/:id/handoff {"summary": true, "webhook": true}`);
+- an admin resends a call the CRM already accepted (`{"webhook": true}` on a call whose last delivery succeeded).
+
+Same signature, same retry rules, same idempotent upsert on `call.id`. A first delivery that never succeeded is always
+`call.answered_by_ai`.
+
 ## Later (not built yet)
 
-- `call.updated`, when the recording arrives after the first delivery, or an admin rewrites the summary.
 - The CRM telling Nova a CSR followed up (to stop the CSR email for that call).

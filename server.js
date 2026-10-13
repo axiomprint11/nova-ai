@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.19.137';
-const NOVA_BUILT = '10-13-2026 2:40pm';
+const NOVA_VERSION = '1.19.138';
+const NOVA_BUILT = '10-13-2026 3:30pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -476,6 +476,7 @@ db.serialize(() => {
   db.run("ALTER TABLE members ADD COLUMN knowledge_access TEXT DEFAULT 'none'", () => {});
   // Promote a member to full admin (sees Users, all history, agent training).
   db.run('ALTER TABLE members ADD COLUMN is_admin INTEGER DEFAULT 0', () => {});
+  db.run('ALTER TABLE members ADD COLUMN is_bookkeeper INTEGER DEFAULT 0', () => {});   // 1.19.138: Bookkeeping AI access from Admin → Users
   // Candidates the admin chose to ignore (so they stop appearing)
   db.run(`CREATE TABLE IF NOT EXISTS dismissed_candidates (
     message_id INTEGER PRIMARY KEY,
@@ -5444,6 +5445,17 @@ app.post('/api/admin/members/set-admin', auth, adminOnly, (req, res) => {
   db.run('UPDATE members SET is_admin = ? WHERE id = ?', [makeAdmin, id], function (err) {
     if (err) return res.json({ success: false, error: err.message });
     res.json({ success: true, is_admin: makeAdmin });
+  });
+});
+
+// 1.19.138: Bookkeeping AI access per member (on top of BOOKKEEPER_USERS in .env). Admins are not bookkeepers by default.
+app.post('/api/admin/members/set-bookkeeper', auth, adminOnly, (req, res) => {
+  const id = parseInt(req.body.id), on = req.body.is_bookkeeper ? 1 : 0;
+  if (!id) return res.json({ success: false, error: 'No member id' });
+  db.run('UPDATE members SET is_bookkeeper = ? WHERE id = ?', [on, id], function (err) {
+    if (err) return res.json({ success: false, error: err.message });
+    if (bookkeeping && bookkeeping.refreshAccess) bookkeeping.refreshAccess();
+    res.json({ success: true, is_bookkeeper: on });
   });
 });
 

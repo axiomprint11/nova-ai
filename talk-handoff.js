@@ -293,12 +293,12 @@ module.exports = function talkHandoff(o) {
   }
 
   // ---------------------------------------------------------------- the CRM webhook
-  function payload(f, s) {
+  function payload(f, s, event) {   // event: 'call.answered_by_ai' (first delivery) or 'call.updated' (recording arrived later, summary rewritten) — 1.19.138
     const c = f.c, rec = recordingUrl(c.id), via = VIA[c.hours_mode] || VIA.regular;
     const startedAt = iso(c.created_at);
     const endedAt = startedAt && c.duration_sec != null ? new Date(Date.parse(startedAt) + c.duration_sec * 1000).toISOString() : null;
     return {
-      event: 'call.answered_by_ai', version: 1, sent_at: new Date().toISOString(),
+      event: event || 'call.answered_by_ai', version: 1, sent_at: new Date().toISOString(),
       call: {
         id: c.id, status: 'answered_by_ai', answered_by: 'NovaAI', direction: 'inbound',
         started_at: startedAt, ended_at: endedAt, duration_sec: c.duration_sec != null ? Number(c.duration_sec) : null,
@@ -333,7 +333,7 @@ module.exports = function talkHandoff(o) {
     };
   }
   const RETRY_MIN = [1, 5, 30, 120];
-  async function sendHook(callId, attempt) {
+  async function sendHook(callId, attempt, event) {
     attempt = attempt || 1;
     const s = await settings();
     const url = String(s.webhook_url || '').trim(), secret = env('TALKAI_WEBHOOK_SECRET');
@@ -341,25 +341,33 @@ module.exports = function talkHandoff(o) {
     if (!secret) return { sent: false, error: 'TALKAI_WEBHOOK_SECRET is not in .env.' };
     const f = await ensureSummary(callId);
     if (!f) return { sent: false, error: 'No such call.' };
-    const body = JSON.stringify(payload(f, s));
+    if (!event) event = f.c.hook_status === 'delivered' ? 'call.updated' : 'call.answered_by_ai';   // a call the CRM already has is an update
+    const body = JSON.stringify(payload(f, s, event));
     const t = Math.floor(Date.now() / 1000);
     const sig = crypto.createHmac('sha256', secret).update(t + '.' + body).digest('hex');
     let status = 0, err = null;
     try {
       const r = await fetch(url, { method: 'POST', body: body, signal: AbortSignal.timeout(15000), headers: {
-        'Content-Type': 'application/json', 'User-Agent': 'NovaAI-TalkAi/1', 'X-Nova-Event': 'call.answered_by_ai',
+        'Content-Type': 'application/json', 'User-Agent': 'NovaAI-TalkAi/1', 'X-Nova-Event': event,
         'X-Nova-Delivery': 'talkai-call-' + callId, 'X-Nova-Attempt': String(attempt), 'X-Nova-Signature': 't=' + t + ',v1=' + sig } });
       status = r.status;
       if (!r.ok) err = 'HTTP ' + r.status + ' ' + (await r.text().catch(() => '')).slice(0, 120);
     } catch (e) { err = e.message; }
     await dbRun("UPDATE talk_calls SET hook_status = ?, hook_tries = ?, hook_sent_at = datetime('now') WHERE id = ?", [err ? 'failed: ' + err.slice(0, 160) : 'delivered', attempt, callId]).catch(() => {});
-    hit('crm-webhook', !err, 'Call ' + callId + ' attempt ' + attempt + (err ? ': ' + err : ' → ' + status));
+    hit('crm-webhook', !err, 'Call ' + callId + ' ' + event + ' attempt ' + attempt + (err ? ': ' + err : ' → ' + status));
     if (err && attempt < RETRY_MIN.length + 1 && status !== 400 && status !== 401 && status !== 403 && status !== 410) {
-      setTimeout(() => sendHook(callId, attempt + 1).catch(() => {}), RETRY_MIN[attempt - 1] * 60000).unref();
+      setTimeout(() => sendHook(callId, attempt + 1, event).catch(() => {}), RETRY_MIN[attempt - 1] * 60000).unref();
     }
     return { sent: !err, status: status, error: err };
   }
 
+  // 1.19.138: the recording landed after the CRM already got the call → call.updated with recording.ready = true
+  async function recordingArrived(callId) {
+    const c = await dbGet('SELECT id, hook_status FROM talk_calls WHERE id = ?', [callId]).catch(() => null);
+    if (!c || c.hook_status !== 'delivered') return;
+    const s = await settings();
+    if (s.webhook_url && env('TALKAI_WEBHOOK_SECRET')) sendHook(callId, 1, 'call.updated').catch(() => {});
+  }
   // ---------------------------------------------------------------- after every call NovaAI answered
   async function afterCall(callId) {
     const c = await dbGet('SELECT id, source, owner, answered_by FROM talk_calls WHERE id = ?', [callId]).catch(() => null);
@@ -386,9 +394,9 @@ module.exports = function talkHandoff(o) {
     if (b.summary) { const f = await ensureSummary(id, true); out.summary = f && f.c.ai_summary; out.callback = f && Number(f.c.callback) === 1; }
     if (b.csr) out.csr = await sendCsr(id, true);
     if (b.relay) out.relay = await relayStaff(id, { force: true });
-    if (b.webhook) out.webhook = await sendHook(id, 1);
+    if (b.webhook) out.webhook = await sendHook(id, 1, b.summary ? 'call.updated' : undefined);   // a rewritten summary goes out as call.updated
     res.json(out);
   });
 
-  return { afterCall, sendCsr, relayStaff, sendHook, ensureSummary, payload, facts };
+  return { afterCall, sendCsr, relayStaff, sendHook, recordingArrived, ensureSummary, payload, facts };
 };
