@@ -366,6 +366,28 @@
     loadBrief();
   }
 
+  // ---------------------------------------------------------------- the BookkeeperAI bubble (1.19.73): bottom-right on every tab
+  (function bubble() {
+    const btn = $('bkBub'), panel = $('bkBubPanel'); if (!btn || !panel) return;
+    let open = false, loaded = false;
+    const paint = (msgs) => { const box = $('bubMsgs'); box.innerHTML = (msgs || []).map(m => '<div class="bk-msg ' + (m.direction === 'in' ? 'in' : 'out') + '"><small>' + esc(m.direction === 'in' ? m.sender : 'BookkeeperAI') + (m.channel === 'google-chat' ? ' · Google Chat' : '') + ' · ' + when(m.at) + '</small>' + esc(m.text) + '</div>').join('') || '<div class="bk-muted" style="font-size:12.5px">Ask me where a purchase belongs, what a vendor usually is, what is pending, or to set a company\'s usual category.</div>'; box.scrollTop = box.scrollHeight; };
+    const load = async () => { const j = await api('/api/bookkeeping/chat'); paint(j.messages || []); loaded = true; };
+    const toggle = (on) => { open = on == null ? !open : on; panel.hidden = !open; btn.classList.toggle('on', open); if (open) { if (!loaded) load(); setTimeout(() => $('bubIn').focus(), 50); } };
+    btn.onclick = () => toggle(); $('bkBubClose').onclick = () => toggle(false);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && open) toggle(false); });
+    const send = async (text) => {
+      text = String(text || '').trim(); if (!text) return;
+      const box = $('bubMsgs'); box.insertAdjacentHTML('beforeend', '<div class="bk-msg in">' + esc(text) + '</div><div class="bk-msg out bk-muted" id="bubWait">…</div>'); box.scrollTop = box.scrollHeight;
+      $('bubIn').value = ''; $('bubSend').disabled = true;
+      const r = await post('/api/bookkeeping/chat', { text });
+      $('bubSend').disabled = false;
+      if (!r.ok) { const w = $('bubWait'); if (w) w.textContent = r.error || 'No answer'; return; }
+      await load(); if ($('msgs')) loadChat();   // the Daily Brief tab shows the same thread
+    };
+    $('bubForm').onsubmit = (e) => { e.preventDefault(); send($('bubIn').value); };
+    $('bubHint').querySelectorAll('[data-ask]').forEach(a => a.onclick = (e) => { e.preventDefault(); send(a.dataset.ask); });
+  })();
+
   // ---------------------------------------------------------------- Transactions
   let txnSt = 'pending';   // Pending every time the tab opens (not remembered)
   let txnPoll = null;

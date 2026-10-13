@@ -71,6 +71,13 @@ Plaid's institution metadata) · amount · category. Vendor matching: an exact n
 **Use**. When a person links a line, the bank's wording becomes an alias of that vendor, so every future line with the
 same wording links by itself, and other unlinked lines with that wording are linked right away. Change is always there.
 
+### Ask BookkeeperAI (the bubble)
+The ✦ button at the bottom right of every Bookkeeping tab opens a small chat with BookkeeperAI — the same
+conversation as the Daily Brief tab and Google Chat. It knows the chart of accounts, the vendor directory and
+what is pending, so "Where should Figma go?" gets one sub category from *your* chart and a line of reasoning, and
+"make that Figma's usual category" sets it on the vendor (creating a Nova vendor if Figma is not in the directory yet)
+so its bank lines file themselves from then on. Approve / reject / answer questions work here too.
+
 ### Category suggestions
 Every uncategorized line gets a suggestion under its Category picker, best source first:
 - **From history** (clock icon) — every past line from this company went to one category: 100% (≥3 lines; 90% when

@@ -1472,6 +1472,10 @@ module.exports = function mountBookkeeping(app, deps) {
     { name: 'balances', description: 'Current bank balances.', input_schema: { type: 'object', properties: {} } },
     { name: 'add_category', description: 'Add a category to the chart of accounts: a sub category under a type of expense (the type is created if new).',
       input_schema: { type: 'object', properties: { name: { type: 'string', description: 'The sub category' }, parent: { type: 'string', description: 'The type of expense it belongs to' } }, required: ['name'] } },
+    { name: 'find_vendor', description: 'Look up a company in the vendor directory (CRM suppliers / vendors and Nova vendors): its kind, usual category, what we buy from them, and how many bank lines / bills are linked. Read-only.',
+      input_schema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } },
+    { name: 'set_vendor_category', description: 'Set a company\'s usual category (from the chart of accounts) so its bank lines get that suggestion. Creates it as a Nova vendor if it is not in the directory yet.',
+      input_schema: { type: 'object', properties: { name: { type: 'string' }, category: { type: 'string', description: 'A sub category name exactly as in the chart' }, what_we_buy: { type: 'string', description: 'One line on what we buy from them (new Nova vendors)' } }, required: ['name', 'category'] } },
     { name: 'materials', description: 'Look up the CRM materials catalog (GEO types): what a supplier supplies, or which materials / suppliers match a name or GEO type. Read-only.',
       input_schema: { type: 'object', properties: { supplier: { type: 'string', description: 'Supplier / vendor name' }, query: { type: 'string', description: 'Material name, GEO type, sub type, material kind or manufacturer' } }, required: [] } }
   ];
@@ -1509,6 +1513,28 @@ module.exports = function mountBookkeeping(app, deps) {
       await addCategory(nm, parent, who); await audit(who, 'category.add', null, { name: nm, parent, via: 'chat' });
       return { ok: true, chart: chartText(await settings()) };
     }
+    if (name === 'find_vendor') {
+      const n = normName(input.name); const list = await directory();
+      const hits = list.filter(v => normName(v.name).indexOf(n) > -1 || (v.aliases && normName(v.aliases).indexOf(n) > -1)).slice(0, 5);
+      const out = [];
+      for (const v of hits) { const c = await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE vendor_id = ? AND status NOT IN ('removed','excluded')", [v.id]); const b = await dbGet("SELECT COUNT(*) n FROM bk_bills WHERE vendor_id = ?", [v.id]);
+        out.push({ id: v.id, name: v.name, kind: kindOf(v.source), usual_category: v.default_category || null, what_we_buy: v.specialty || null, bank_lines: c.n, bills: b.n }); }
+      return { vendors: out, note: out.length ? undefined : 'Not in the directory — set_vendor_category can add it as a Nova vendor.' };
+    }
+    if (name === 'set_vendor_category') {
+      const s2 = await settings(), cats = categoriesOf(s2), cat = String(input.category || '').trim();
+      if (cats.indexOf(cat) < 0) return { error: 'Not a sub category in the chart: ' + cat, chart: chartText(s2) };
+      const n = normName(input.name); const list = await directory();
+      let v = list.find(x => normName(x.name) === n) || list.find(x => normName(x.name).indexOf(n) > -1);
+      if (!v) {
+        const r = await dbRun('INSERT INTO bk_vendors (name, source, kind, approved, approved_by, approved_at, default_category, specialty, details) VALUES (?,?,?,?,?,?,?,?,?)', [String(input.name).trim().slice(0, 120), 'nova', 'nova', 1, who, nowIso(), cat, String(input.what_we_buy || '').slice(0, 500) || null, '{}']);
+        dirCache.at = 0; await audit(who, 'vendor.new', r.lastID, { name: input.name, by: 'chat' });
+        return { created: true, vendor: input.name, usual_category: cat };
+      }
+      await dbRun('UPDATE bk_vendors SET default_category = ? WHERE id = ?', [cat, v.id]); dirCache.at = 0;
+      await audit(who, 'vendor.update', v.id, { default_category: cat, by: 'chat' });
+      return { updated: true, vendor: v.name, usual_category: cat };
+    }
     if (name === 'materials') {
       const q = String(input.query || '').trim().toLowerCase(), supN = String(input.supplier || '').trim();
       let where = [], args = [];
@@ -1539,6 +1565,7 @@ module.exports = function mountBookkeeping(app, deps) {
     messages.forEach(m => { const last = merged[merged.length - 1]; if (last && last.role === m.role) last.content += '\n' + m.content; else merged.push(Object.assign({}, m)); });
     if (merged[0] && merged[0].role !== 'user') merged.shift();
     const system = SYS(s) + '\n' + await dirLine() + '\nYou are talking with ' + (meta && meta.name || who) + ' in ' + (channel === 'nova' ? 'the Nova Bookkeeping tab' : 'Google Chat') + '. Short, plain answers (no markdown headings; a short list is fine). Use the materials tool for questions about what we buy, from whom, or GEO types. ' +
+      'When asked where a company or a purchase belongs ("where do I put Figma?"), answer with ONE sub category exactly as written in the chart of accounts and one line why, name the runner-up only if it is a real contender, and offer to set it as the company\'s usual category (set_vendor_category) so its bank lines file themselves. Rule of thumb: categories say WHAT was bought, never WHO was paid; marketing tools (Mailchimp, Canva) are marketing, not software; a refund is not income. ' +
       'Use the tools for anything that changes state; never claim you approved or saved something without calling the tool. Proposal ids are "#12"; questions are "Q3". ' +
       'When they answer a question, record it with answer_question (with the category when it is one). "Approve all" = approve with all: true. Money never moves through you: payments are approved in BILL by a person.\n' +
       (brief ? 'TODAY\u2019S BRIEF:\n' + brief.text.slice(0, 6000) : 'No brief yet today.');
