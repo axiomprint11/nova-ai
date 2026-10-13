@@ -1192,9 +1192,29 @@
     piggy: '<path d="M4 11a7 7 0 0 1 7-6h3a6 6 0 0 1 6 6v2a4 4 0 0 1-2 3.5V20h-3v-2h-5v2H7v-3.5A5 5 0 0 1 4 13z"/><path d="M2 11h2M16 11h.01"/>',
     bus: '<rect x="4" y="3" width="16" height="15" rx="3"/><path d="M4 10h16M8 18v3M16 18v3"/><path d="M8 14h.01M16 14h.01"/>',
     heart: '<path d="M12 21s-8-5.3-8-11a4.5 4.5 0 0 1 8-2.7A4.5 4.5 0 0 1 20 10c0 5.7-8 11-8 11z"/>',
-    leaf: '<path d="M4 20c0-9 6-15 16-16 0 10-6 16-16 16z"/><path d="M4 20c4-4 7-7 10-10"/>'
+    leaf: '<path d="M4 20c0-9 6-15 16-16 0 10-6 16-16 16z"/><path d="M4 20c4-4 7-7 10-10"/>',
+    // 1.19.50
+    roll: '<circle cx="7" cy="12" r="4"/><circle cx="7" cy="12" r="1"/><path d="M7 8h9a4 4 0 0 1 0 8h-1"/><path d="M11 16h10v3H11z"/>',
+    sheets: '<path d="M9 3h11v12H9z"/><path d="M6.5 6.5v12h11"/><path d="M4 10v11h11"/>',
+    carton: '<path d="M3 8l9-4 9 4-9 4z"/><path d="M3 8v9l9 4 9-4V8"/><path d="M12 12v9"/><path d="M7.5 6l9 4"/>',
+    smallcar: '<path d="M5 14l1.5-4a2 2 0 0 1 1.9-1.3h7.2a2 2 0 0 1 1.9 1.3L19 14"/><rect x="3" y="14" width="18" height="4" rx="1.5"/><circle cx="7.5" cy="19" r="1.5"/><circle cx="16.5" cy="19" r="1.5"/>',
+    tape: '<circle cx="10" cy="12" r="7"/><circle cx="10" cy="12" r="2.5"/><path d="M17 12v4h5"/>',
+    broom: '<path d="M19 3l-8 8"/><path d="M11 11l-4 4 2 2 4-4z"/><path d="M7 15l-4 6h6l2-3"/><path d="M5 18l3 3"/>',
+    spray: '<path d="M8 10h7l1 11H7z"/><path d="M9 10V7h5v3"/><path d="M11.5 7V4h4"/><path d="M18 4l3-1M18 6l3 1"/>',
+    shieldcheck: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+    usershield: '<circle cx="9" cy="8" r="3.5"/><path d="M3 20a6 6 0 0 1 9-5"/><path d="M17 12l4 1.5v3c0 2.5-1.8 4.3-4 5-2.2-.7-4-2.5-4-5v-3z"/>',
+    carshield: '<path d="M3 14l1.5-4.5A2 2 0 0 1 6.4 8H13"/><path d="M2 14h10v4H4"/><circle cx="6" cy="18" r="1.5"/><path d="M17 10l4 1.5v3c0 2.5-1.8 4.3-4 5-2.2-.7-4-2.5-4-5v-3z"/>',
+    carwrench: '<path d="M3 14l1.5-4.5A2 2 0 0 1 6.4 8H12"/><path d="M2 14h9v4H4"/><circle cx="6" cy="18" r="1.5"/><path d="M21 8a3.5 3.5 0 0 1-4.6 3.3L13 14.7l-1.7-1.7 3.4-3.4A3.5 3.5 0 0 1 18 5l-1.5 1.5 1 1z"/>',
+    pin: '<path d="M12 21s-6-5.5-6-11a6 6 0 0 1 12 0c0 5.5-6 11-6 11z"/><circle cx="12" cy="10" r="2"/>',
+    store: '<path d="M3 9l1.5-5h15L21 9"/><path d="M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/><path d="M5 12v9h14v-9"/><path d="M10 21v-6h4v6"/>',
+    ticket: '<path d="M4 7h16v3a2 2 0 0 0 0 4v3H4v-3a2 2 0 0 0 0-4z"/><path d="M13 7v10" stroke-dasharray="2 2"/>',
+    tent: '<path d="M3 20L12 4l9 16"/><path d="M12 4v16"/><path d="M8 20l4-7 4 7"/>',
+    bricks: '<rect x="3" y="5" width="18" height="14"/><path d="M3 10h18M3 15h18"/><path d="M9 5v5M15 5v5M6 10v5M12 10v5M18 10v5M9 15v4M15 15v4"/>',
+    crane: '<path d="M4 21h16"/><path d="M8 21V7l12-4"/><path d="M8 7H4"/><path d="M15 5.5V11"/><path d="M13 11h4"/><path d="M8 11l5 10"/>'
   };
   const ICONS = Object.keys(ICON_PATH);
+  // words the picker's search box also matches (the key itself always matches)
+  const ICON_WORDS = { heart: 'employee benefits health', roll: 'rolls paper roll vinyl media', sheets: 'materials paper sheets stock', carton: 'box boxes packaging shipping', package: 'box boxes parcel', box: 'storage chest', smallcar: 'uber lyft rideshare taxi ride', car: 'van vehicle', truck: 'delivery freight', tape: 'supplies tape', paperclip: 'supplies office', broom: 'janitorial cleaning clean', spray: 'janitorial cleaning clean', shield: 'insurance', shieldcheck: 'business insurance liability', usershield: 'workers comp insurance people employees', carshield: 'car auto vehicle insurance', wrench: 'repairs maintenance', carwrench: 'vehicle repairs auto car maintenance', pin: 'local marketing location map', store: 'local marketing shop storefront retail', megaphone: 'marketing ads advertising', ticket: 'events expo trade show', tent: 'events expo booth trade show', bricks: 'leasehold improvements construction building wall', crane: 'leasehold improvements construction building', hammer: 'construction repairs', hardhat: 'construction safety', banknote: 'cash money', dollar: 'money income', users: 'people team staff', cap: 'education training', utensils: 'meals food', coffee: 'meals food', plane: 'travel', fuel: 'gas', parking: 'parking', zap: 'electricity utilities power', droplet: 'water ink utilities', bulb: 'ideas utilities', phone: 'telephone', globe: 'web internet', laptop: 'computer software', monitor: 'computer software', calendar: 'date subscriptions', receipt: 'bills', card: 'credit card fees', landmark: 'bank taxes government', scale: 'legal', gift: 'gifts donations', percent: 'discount interest', piggy: 'savings', bus: 'transit', leaf: 'green', cart: 'purchases shopping', key: 'rent keys', home: 'rent office', building: 'rent office' };
   const LEGACY_ICON = { '🖨️': 'printer', '📄': 'file', '🎨': 'droplet', '🧰': 'briefcase', '🏭': 'factory', '📦': 'package', '🚚': 'truck', '🚐': 'car', '⛽': 'fuel', '🅿️': 'parking', '🏠': 'home', '🏢': 'building', '⚡': 'zap', '💡': 'bulb', '🛠️': 'wrench', '🧹': 'sparkles', '👥': 'users', '👷': 'hardhat', '💰': 'banknote', '🏛️': 'landmark', '🎁': 'gift', '🛡️': 'shield', '💻': 'laptop', '📎': 'paperclip', '📞': 'phone', '🌐': 'globe', '📣': 'megaphone', '🎯': 'target', '✈️': 'plane', '🍽️': 'utensils', '☕': 'coffee', '⚖️': 'scale', '🏦': 'landmark', '💳': 'card', '🧾': 'receipt', '🏗️': 'hammer', '🖥️': 'monitor', '↔️': 'arrows', '↩️': 'undo', '💵': 'dollar', '📈': 'trendup', '📉': 'trenddown', '🧮': 'calculator', '🔧': 'wrench', '🏷️': 'tag', '📬': 'mail', '🗂️': 'folder', '📚': 'book', '🎓': 'cap', '🚗': 'car', '🛒': 'cart', '🔌': 'plug', '🔑': 'key', '⭐': 'star', '❓': 'help' };
   const iconKey = (ic) => ICON_PATH[ic] ? ic : (LEGACY_ICON[ic] || '');
   const iconSvg = (ic) => { const k = iconKey(ic); return k ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICON_PATH[k] + '</svg>' : ''; };
@@ -1291,8 +1311,15 @@
   function iconPicker(anchor, cur, onPick) {
     document.querySelectorAll('.ico-pop').forEach(p => p.remove());
     const pop = document.createElement('div'); pop.className = 'ico-pop';
-    pop.innerHTML = '<div class="ico-grid">' + ICONS.map(i => '<button type="button" data-i="' + i + '" title="' + i + '"' + (i === iconKey(cur) ? ' class="on"' : '') + '>' + iconSvg(i) + '</button>').join('') + '</div><button type="button" class="none">No icon</button>';
+    pop.innerHTML = '<input type="text" class="bk ico-q" placeholder="Search icons…"><div class="ico-grid">' + ICONS.map(i => '<button type="button" data-i="' + i + '" title="' + i + (ICON_WORDS[i] ? ' — ' + ICON_WORDS[i] : '') + '"' + (i === iconKey(cur) ? ' class="on"' : '') + '>' + iconSvg(i) + '</button>').join('') + '</div><div class="ico-none bk-muted" hidden>Nothing matches</div><button type="button" class="none">No icon</button>';
     document.body.appendChild(pop);
+    const q = pop.querySelector('.ico-q'); q.focus();
+    q.oninput = () => {
+      const f = q.value.trim().toLowerCase(); let n = 0;
+      pop.querySelectorAll('[data-i]').forEach(b => { const k = b.dataset.i, hit = !f || (k + ' ' + (ICON_WORDS[k] || '')).indexOf(f) > -1; b.style.display = hit ? '' : 'none'; if (hit) n++; });
+      pop.querySelector('.ico-none').hidden = n > 0;
+    };
+    q.onkeydown = (e) => { if (e.key === 'Enter') { const b = Array.from(pop.querySelectorAll('[data-i]')).find(x => x.style.display !== 'none'); if (b) b.click(); } if (e.key === 'Escape') close(); };
     const r = anchor.getBoundingClientRect(); pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 376)) + 'px'; pop.style.top = (r.bottom + 6 + 330 > window.innerHeight ? r.top - 6 - pop.offsetHeight : r.bottom + 6) + 'px';
     const close = () => { pop.remove(); document.removeEventListener('click', away, true); };
     const away = (e) => { if (!pop.contains(e.target) && e.target !== anchor) close(); };
