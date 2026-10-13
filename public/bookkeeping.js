@@ -59,6 +59,12 @@
     return '<span class="bk-who" title="' + esc(name) + (m && m.email && m.email !== name ? ' · ' + esc(m.email) : '') + '">' + (m && m.photo ? '<img src="' + esc(m.photo) + '" alt="" onerror="this.replaceWith(document.createTextNode(\'' + init + '\'))">' : init) + '</span>';
   }
   const noteHtml = (n) => esc(n || '').replace(/((?:marked read|moved to \S+|set aside|do later|approved|rejected|answered) by )(\S+)/g, (_, pre, w) => pre + whoHtml(w));
+  // 1.19.93: a modal closes on a backdrop click only when the press started on the backdrop too. Dragging to select text in a
+  // field and letting go outside the box used to count as a backdrop click (the click lands on the common ancestor) and
+  // threw the form away mid-edit.
+  let downAt = null;
+  document.addEventListener('mousedown', (e) => { downAt = e.target; }, true);
+  document.addEventListener('click', (e) => { if (e.target.classList && e.target.classList.contains('bk-modal') && downAt !== e.target) { e.stopPropagation(); e.preventDefault(); } }, true);
   // A styled yes / no instead of the browser's confirm(). Resolves true on the main button, false on Cancel / Esc / backdrop.
   function ask(text, opt) {
     opt = opt || {};
