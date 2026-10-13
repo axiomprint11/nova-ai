@@ -1614,7 +1614,7 @@
       '<div class="nv-f"><span class="bk-muted">Usual category (chart of accounts)</span><div id="nvCat">' + catSelect(init.default_category || '', 'nvcat', 'not set', { multi: true }) + '</div></div>' +
       F('nvAlias', 'On the bank statement as', String(init.aliases || '').split('\n').join(' | '), 'HEVAC INC | HEVAC*RENT — separate with |') +
       '<label class="nv-f"><span class="bk-muted">Notes</span><textarea class="bk" id="nvNotes" rows="2">' + esc(init.notes || '') + '</textarea></label>' +
-      '<div class="bk-row" style="margin-top:12px"><button class="bk-btn p" id="nvSave">' + (isEdit ? 'Save' : 'Add vendor') + '</button><button class="bk-btn bk-x">Cancel</button><span class="bk-muted" id="nvMsg"></span></div></div>';
+      '<div class="bk-row nv-acts"><button class="bk-btn p" id="nvSave">' + (isEdit ? 'Save' : 'Add vendor') + '</button><button class="bk-btn bk-x">Cancel</button><span class="bk-muted" id="nvMsg"></span></div></div>';
     const close = () => el.remove();
     el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
     document.body.appendChild(el); el.querySelector('#nvName').focus();
@@ -1903,7 +1903,7 @@
       f('monthly', 'Monthly payment (blank = computed)', 'number', ' step="0.01" min="0"') + f('balloon', 'Balloon at the end, if any', 'number', ' step="0.01" min="0"') +
       sel('equipment_id', 'Finances a machine (optional)', [['', '— none —']].concat((j.equipment || []).map(x => [x.id, x.name]))) + sel('status', 'Status', [['active', 'Active'], ['paid', 'Paid off']]) + '</div>' +
       '<label class="nv-f"><span class="bk-muted">Notes</span><textarea class="bk" name="notes" rows="2">' + esc(l.notes || '') + '</textarea></label>' +
-      '<div class="bk-row" style="margin-top:12px"><button class="bk-btn p" id="lnSave">' + (isEdit ? 'Save' : 'Add loan') + '</button><button class="bk-btn bk-x">Cancel</button>' + (isEdit ? '<span class="sp"></span><button class="bk-btn sm bad" id="lnDel">Delete</button>' : '') + '<span class="bk-muted" id="lnMsg"></span></div></div>';
+      '<div class="bk-row nv-acts"><button class="bk-btn p" id="lnSave">' + (isEdit ? 'Save' : 'Add loan') + '</button><button class="bk-btn bk-x">Cancel</button>' + (isEdit ? '<span class="sp"></span><button class="bk-btn sm bad" id="lnDel">Delete</button>' : '') + '<span class="bk-muted" id="lnMsg"></span></div></div>';
     const close = () => el.remove(); el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
     document.body.appendChild(el); el.querySelector('[name=name]').focus();
     el.querySelector('#lnSave').onclick = async () => {
