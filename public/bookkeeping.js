@@ -566,7 +566,7 @@
     { const [f, t] = periodRange(TF.period); qs += '&from=' + f + '&to=' + t + ['type', 'category', 'vendor_id', 'vkind', 'source', 'min', 'max', 'account'].map(k => TF[k] ? '&' + k + '=' + encodeURIComponent(TF[k]) : '').join(''); }
     const j = await api('/api/bookkeeping/transactions' + qs);
     const bs = j.by_status || {};
-    $('nTxAll').textContent = (bs.new || 0) + (bs.pending || 0) + (bs.categorized || 0);   // 1.19.84: the three buckets are disjoint, All is their sum $('nTxNew').textContent = bs.new || 0; $('nTxPending').textContent = bs.pending || 0; $('nTxCategorized').textContent = bs.categorized || 0;
+    $('nTxAll').textContent = (bs.new || 0) + (bs.pending || 0) + (bs.categorized || 0); $('nTxNew').textContent = bs.new || 0; $('nTxPending').textContent = bs.pending || 0; $('nTxCategorized').textContent = bs.categorized || 0;   // 1.19.84: the three buckets are disjoint, All is their sum
     document.querySelectorAll('#subBank button').forEach(b => b.classList.toggle('on', b.dataset.s === (txStats ? 'stats' : st || 'all')));
     const chip = (k, l, n) => '<button class="ib-chip' + (st === k ? ' on' : '') + '" data-st="' + k + '">' + l + (n == null ? '' : ' (' + n + ')') + '</button>';
     const syncIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/></svg>';
