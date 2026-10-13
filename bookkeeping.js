@@ -832,7 +832,7 @@ module.exports = function mountBookkeeping(app, deps) {
   // The CRM lists that make up the directory. Each table is a type (suppliers → Supplier, vendors → Vendor); a new
   // list in the CRM is added with BOOKKEEPER_CRM_LISTS=suppliers,vendors,contractors — same columns expected.
   const CRM_LISTS = String(env('BOOKKEEPER_CRM_LISTS') || 'suppliers,vendors').split(',').map(x => x.trim().toLowerCase().replace(/[^a-z0-9_]/g, '')).filter(Boolean);
-  const kindOf = (t) => t === 'suppliers' ? 'supplier' : t === 'vendors' ? 'vendor' : t === 'bill' ? 'bill' : String(t || '').replace(/s$/, '') || 'other';
+  const kindOf = (t) => t === 'suppliers' ? 'supplier' : t === 'vendors' ? 'vendor' : t === 'bill' ? 'bill' : t === 'nova' ? 'nova' : String(t || '').replace(/s$/, '') || 'other';
   let dirSync = { at: 0, running: null, error: null };
   async function syncDirectory(who) {
     if (!runQuery) return { error: 'No CRM connection' };
@@ -1701,6 +1701,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (g('category')) { where.push('t.category = ?'); p.push(g('category')); }
     if (g('type')) { const subs = chartOf(await settings()).filter(c => c.parent === g('type')).map(c => c.name); if (subs.length) { where.push('t.category IN (' + subs.map(() => '?').join(',') + ')'); p.push(...subs); } else { where.push('t.category = ?'); p.push(g('type')); } }
     if (g('vendor_id')) { if (g('vendor_id') === 'none') where.push('t.vendor_id IS NULL'); else { where.push('t.vendor_id = ?'); p.push(parseInt(g('vendor_id')) || 0); } }
+    if (g('vkind')) { const src = { supplier: 'suppliers', vendor: 'vendors', nova: 'nova', bill: 'bill' }[g('vkind')]; if (g('vkind') === 'none') where.push('t.vendor_id IS NULL'); else if (src) { where.push('v.source = ?'); p.push(src); } }   // 1.19.63
     if (g('source')) { where.push('t.category_source = ?'); p.push(g('source')); }
     if (g('min')) { where.push('ABS(t.amount) >= ?'); p.push(Number(g('min')) || 0); }
     if (g('max')) { where.push('ABS(t.amount) <= ?'); p.push(Number(g('max')) || 0); }
@@ -2196,7 +2197,7 @@ module.exports = function mountBookkeeping(app, deps) {
   app.delete('/api/bookkeeping/rules/:id', ...guard, async (req, res) => { await dbRun('UPDATE bk_rules SET active = 0 WHERE id = ?', [parseInt(req.params.id)]); await audit(userId(req), 'rule.remove', req.params.id); res.json({ ok: true }); });
   app.get('/api/bookkeeping/directory', ...guard, async (req, res) => {
     if (req.query.fresh !== '0') await syncDirectoryIfStale(userId(req), 10 * 60000);
-    const rows = await dbAll("SELECT v.*, CASE v.source WHEN 'suppliers' THEN 'supplier' WHEN 'vendors' THEN 'vendor' WHEN 'bill' THEN 'bill' ELSE COALESCE(v.kind, 'other') END AS kind, (SELECT COUNT(*) FROM bk_transactions t WHERE t.vendor_id = v.id) AS txns, (SELECT COUNT(*) FROM bk_bills b WHERE b.vendor_id = v.id AND b.status <> ?) AS bills FROM bk_vendors v ORDER BY v.name", ['rejected']);
+    const rows = await dbAll("SELECT v.*, CASE v.source WHEN 'suppliers' THEN 'supplier' WHEN 'vendors' THEN 'vendor' WHEN 'bill' THEN 'bill' WHEN 'nova' THEN 'nova' ELSE COALESCE(v.kind, 'other') END AS kind, (SELECT COUNT(*) FROM bk_transactions t WHERE t.vendor_id = v.id) AS txns, (SELECT COUNT(*) FROM bk_bills b WHERE b.vendor_id = v.id AND b.status <> ?) AS bills FROM bk_vendors v ORDER BY v.name", ['rejected']);
     const last = await dbGet("SELECT at FROM bk_audit WHERE action = 'directory.sync' ORDER BY id DESC LIMIT 1");
     const sup = await suppliesByVendor();
     rows.forEach(v => { const s = sup[v.id]; v.materials = s ? s.n : 0; v.geo_types = s ? topKeys(s.geo, 4) : []; });
@@ -2276,9 +2277,44 @@ module.exports = function mountBookkeeping(app, deps) {
     await audit(userId(req), 'transaction.vendor', req.params.id, { vendor_id: vid, alias: req.body.alias });
     res.json({ ok: true });
   });
+  // 1.19.63: Nova vendors — companies kept only here (the landlord, LinkedIn, a one-off contractor…), not in the CRM lists.
+  // source 'nova'; the chart of accounts is their map: `default_category` = what we buy from them, `specialty` = in words.
+  const VFIELDS = ['email', 'phone', 'contact', 'address', 'specialty', 'notes'];
+  app.post('/api/bookkeeping/vendors', ...guard, async (req, res) => {
+    try {
+      const b = req.body || {}, name = String(b.name || '').trim().slice(0, 120);
+      if (!name) return res.json({ ok: false, error: 'Give the company a name' });
+      const dup = await dbGet('SELECT id, name, source FROM bk_vendors WHERE lower(name) = lower(?)', [name]);
+      if (dup && !b.force) return res.json({ ok: false, error: '"' + dup.name + '" is already in the directory' + (dup.source === 'nova' ? ' as a Nova vendor' : ' (from the CRM)'), duplicate: dup });
+      const details = JSON.stringify({ website: String(b.website || '').trim().slice(0, 200) || undefined });
+      const r = await dbRun('INSERT INTO bk_vendors (name, source, kind, approved, approved_by, approved_at, default_category, aliases, details, ' + VFIELDS.join(', ') + ') VALUES (?,?,?,?,?,?,?,?,?' + VFIELDS.map(() => ',?').join('') + ')',
+        [name, 'nova', 'nova', 1, userId(req), nowIso(), String(b.default_category || '').slice(0, 300) || null, String(b.aliases || '').slice(0, 1000) || null, details].concat(VFIELDS.map(k => String(b[k] || '').slice(0, 500) || null)));
+      dirCache.at = 0;
+      await audit(userId(req), 'vendor.new', r.lastID, { name });
+      res.json({ ok: true, vendor: await dbGet('SELECT * FROM bk_vendors WHERE id = ?', [r.lastID]) });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  app.post('/api/bookkeeping/vendors/:id/delete', ...guard, async (req, res) => {
+    try {
+      const v = await dbGet('SELECT * FROM bk_vendors WHERE id = ?', [parseInt(req.params.id)]);
+      if (!v) return res.json({ ok: false, error: 'No such vendor' });
+      if (v.source !== 'nova' && v.source !== 'bill') return res.json({ ok: false, error: 'CRM companies are removed in the CRM' });
+      const used = (await dbGet('SELECT (SELECT COUNT(*) FROM bk_transactions WHERE vendor_id = ?) + (SELECT COUNT(*) FROM bk_bills WHERE vendor_id = ?) + (SELECT COUNT(*) FROM bk_purchases WHERE vendor_id = ?) n', [v.id, v.id, v.id])).n;
+      if (used) return res.json({ ok: false, error: 'Still linked to ' + used + ' line' + (used === 1 ? '' : 's') + ' — unlink those first' });
+      await dbRun('DELETE FROM bk_vendors WHERE id = ?', [v.id]); dirCache.at = 0;
+      await audit(userId(req), 'vendor.delete', v.id, { name: v.name });
+      res.json({ ok: true });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
   app.post('/api/bookkeeping/vendors/:id', ...guard, async (req, res) => {
     // Partial update: only the fields sent change (the tab autosaves one field at a time).
     const b = req.body || {}, sets = [], args = [];
+    const cur = await dbGet('SELECT source, details FROM bk_vendors WHERE id = ?', [parseInt(req.params.id)]);
+    if (cur && (cur.source === 'nova' || cur.source === 'bill')) {   // the CRM owns these fields for its own companies
+      if (b.name !== undefined && String(b.name).trim()) { sets.push('name = ?'); args.push(String(b.name).trim().slice(0, 120)); }
+      VFIELDS.forEach(k => { if (b[k] !== undefined) { sets.push(k + ' = ?'); args.push(String(b[k] || '').slice(0, 500) || null); } });
+      if (b.website !== undefined) { let d = {}; try { d = JSON.parse(cur.details || '{}') || {}; } catch (e) {} d.website = String(b.website || '').trim().slice(0, 200) || undefined; sets.push('details = ?'); args.push(JSON.stringify(d)); }
+    }
     if (b.default_category !== undefined) { sets.push('default_category = ?'); args.push(String(b.default_category || '').slice(0, 300) || null); }
     if (b.notes !== undefined) { sets.push('notes = ?'); args.push(String(b.notes || '').slice(0, 500) || null); }
     if (b.aliases !== undefined) { sets.push('aliases = ?'); args.push(String(b.aliases || '').slice(0, 1000) || null); }

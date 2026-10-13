@@ -77,6 +77,15 @@ A deposit or payment received in the Bank feed then offers only that type's cate
 offers them), and the AI files money in under an income category only; if it tries anything else the line gets a
 question instead of a suggestion.
 
+### Nova vendors
+Not every company you pay belongs in the CRM's supplier / vendor lists — the landlord, LinkedIn, a one-off contractor.
+Accounts → **Nova Vendors** keeps those in Nova only: company, website, email, phone, contact, address, **what we buy
+from them** and the **usual category** from the chart of accounts (that is the map the AI uses when their lines come in),
+how they appear on the bank statement, notes. "+ New vendor" there, or **+ New Nova vendor…** at the bottom of the
+vendor picker on any bank line (prefilled with the bank's wording; the line is linked at once). They show everywhere a
+CRM company does, tagged **Nova vendor**; the Bank feed's Vendor header filters by kind (Supplier / Vendor / Nova vendor /
+from a bill / not linked) and by Company.
+
 ### Refunds
 Money that comes back — a cancelled Uber ride, a returned order — is not income. Under the Category of any money-in
 line there is **↩ Refund of a charge…**: it lists the charges of the last 120 days with the same amount and/or the

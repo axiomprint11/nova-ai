@@ -21,12 +21,12 @@
   // show('inbox') opens that sub-tab directly; the last sub-tab of each is remembered per browser.
   const BILL_SUBS = { all: ['draft', 'approved', 'scheduled', 'paid', 'rejected'], pending: ['draft'], approved: ['approved'], scheduled: ['scheduled'], paid: ['paid'], rejected: ['rejected'] };
   let billSub = 'pending';
-  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, equipment: loadEquipment, chart: loadChart, rules: loadRules, materials: loadMaterials }, first: 'vendors' },
+  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, equipment: loadEquipment, chart: loadChart, rules: loadRules, materials: loadMaterials, nova: loadNovaVendors }, first: 'vendors' },
     purchases: { bar: 'subPurchases', subs: { list: () => loadPurchases('list'), waiting: () => loadPurchases('waiting'), notreceived: () => loadPurchases('notreceived') }, first: 'list' },
     bank: { bar: 'subBank', subs: { all: () => loadTxns(''), new: () => loadTxns('new'), pending: () => loadTxns('pending'), categorized: () => loadTxns('categorized'), stats: () => loadTxns('stats') }, first: 'pending' },   // 1.19.54: Bank feed is a top tab
     bills: { bar: 'subBills', subs: { all: () => loadBills('all'), pending: () => loadBills('pending'), approved: () => loadBills('approved'), scheduled: () => loadBills('scheduled'), paid: () => loadBills('paid'), rejected: () => loadBills('rejected') }, first: 'pending' } };
   // sub tabs as chips with an icon each (same look as the Inbox baskets)
-  const SUB_ICON = { all: 'landmark', new: 'sparkles', categorized: 'check', stats: 'trendup', pending: 'clock', approved: 'check', scheduled: 'calendar', paid: 'dollar', rejected: 'x', list: 'cart', bank: 'landmark', waiting: 'clock', notreceived: 'package', vendors: 'users', equipment: 'printer', chart: 'layers', rules: 'target', materials: 'box' };
+  const SUB_ICON = { nova: 'sparkles', all: 'landmark', new: 'sparkles', categorized: 'check', stats: 'trendup', pending: 'clock', approved: 'check', scheduled: 'calendar', paid: 'dollar', rejected: 'x', list: 'cart', bank: 'landmark', waiting: 'clock', notreceived: 'package', vendors: 'users', equipment: 'printer', chart: 'layers', rules: 'target', materials: 'box' };
   document.querySelectorAll('.bk-sub button').forEach(b => { b.onclick = () => show(b.closest('.bk-view').dataset.v, b.dataset.s); });
   $('puQ').onkeydown = (e) => { if (e.key === 'Enter') loadPurchases(lastSub.purchases); };   // 1.19.29: one search for every Purchases view
   $('txQ').onkeydown = (e) => { if (e.key === 'Enter') loadTxns(); };
@@ -370,7 +370,7 @@
   let txnSt = 'pending';   // Pending every time the tab opens (not remembered)
   let txnPoll = null;
   // Categorized view filters (period defaults to the last 30 days); kept per browser.
-  let TF = { period: '30', from: '', to: '', type: '', category: '', vendor_id: '', source: '', min: '', max: '', account: '' };
+  let TF = { period: '30', from: '', to: '', type: '', category: '', vendor_id: '', vkind: '', source: '', min: '', max: '', account: '' };
   try { TF = Object.assign(TF, JSON.parse(localStorage.getItem('bk_txn_filters') || '{}')); } catch (e) {}
   const periodRange = (pr) => { const d = new Date(), iso = (x) => x.toISOString().slice(0, 10); if (pr === '30') return [iso(new Date(Date.now() - 30 * 864e5)), '']; if (pr === '90') return [iso(new Date(Date.now() - 90 * 864e5)), '']; if (pr === 'month') return [iso(new Date(d.getFullYear(), d.getMonth(), 1)), '']; if (pr === 'last') return [iso(new Date(d.getFullYear(), d.getMonth() - 1, 1)), iso(new Date(d.getFullYear(), d.getMonth(), 0))]; if (pr === 'year') return [d.getFullYear() + '-01-01', '']; if (pr === 'custom') return [TF.from, TF.to]; return ['', '']; };
   const chart_types = () => chart.filter(c => !c.parent);
@@ -520,7 +520,7 @@
     const cat = st === 'categorized';
     // 1.19.49: the header filters work in every view (date defaults to the last 30 days); the status is a filter on the Category column.
     let qs = '?status=' + encodeURIComponent(st) + '&q=' + encodeURIComponent(q) + '&lists=1';
-    { const [f, t] = periodRange(TF.period); qs += '&from=' + f + '&to=' + t + ['type', 'category', 'vendor_id', 'source', 'min', 'max', 'account'].map(k => TF[k] ? '&' + k + '=' + encodeURIComponent(TF[k]) : '').join(''); }
+    { const [f, t] = periodRange(TF.period); qs += '&from=' + f + '&to=' + t + ['type', 'category', 'vendor_id', 'vkind', 'source', 'min', 'max', 'account'].map(k => TF[k] ? '&' + k + '=' + encodeURIComponent(TF[k]) : '').join(''); }
     const j = await api('/api/bookkeeping/transactions' + qs);
     const bs = j.by_status || {};
     $('nTxAll').textContent = (bs.pending || 0) + (bs.categorized || 0); $('nTxNew').textContent = bs.new || 0; $('nTxPending').textContent = bs.pending || 0; $('nTxCategorized').textContent = bs.categorized || 0;
@@ -529,12 +529,13 @@
     const syncIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/></svg>';
     const T = j.totals || {}, chart = cat && txStats ? report(T) : '';   // 1.19.55: the charts live under Stats
     const PERIODS = [['30', 'Last 30 days'], ['month', 'This month'], ['last', 'Last month'], ['90', 'Last 90 days'], ['year', 'This year'], ['all', 'All time']].map(([v, l]) => ({ v, l }));
-    const anyF = TF.type || TF.category || TF.vendor_id || TF.source || TF.min || TF.max || TF.account || TF.period !== '30' || TF.from || TF.to;
+    const anyF = TF.type || TF.category || TF.vendor_id || TF.vkind || TF.source || TF.min || TF.max || TF.account || TF.period !== '30' || TF.from || TF.to;
     const fbar = anyF ? '<div class="tx-filters"><span class="bk-muted">Filtered</span><button class="bk-btn sm" id="tfClear">Clear filters</button></div>' : '';
     const FO = {
       status: [{ v: 'pending', l: 'Pending — no category yet', t: 'Pending', n: bs.pending || 0 }, { v: 'new', l: 'New — synced in the last 24 hours', t: 'New', n: bs.new || 0 }, { v: 'categorized', l: 'Categorized', n: bs.categorized || 0 }, { v: '', l: 'All statuses' }],
       type: [{ v: '', l: 'All categories' }].concat(chart_types().map(t => ({ v: 'T:' + t.name, l: tile(t.color, t.icon, 'sm', '') + ' ' + esc(t.name) })), cat ? (T.by_category || []).map(c => ({ v: 'C:' + c.category, l: catLabel(c.category), n: c.n })) : []),
-      vendor: [{ v: '', l: 'All vendors' }, { v: 'none', l: 'Not linked' }].concat((j.vendors || []).map(x => ({ v: String(x.id), l: esc(x.name) }))),
+      vkind: [{ v: '', l: 'All' }, { v: 'supplier', l: '<span class="bk-src supplier">supplier</span>', t: 'Supplier' }, { v: 'vendor', l: '<span class="bk-src vendor">vendor</span>', t: 'Vendor' }, { v: 'nova', l: '<span class="bk-src nova">Nova vendor</span>', t: 'Nova vendor' }, { v: 'bill', l: '<span class="bk-src bill">from a bill</span>', t: 'From a bill' }, { v: 'none', l: 'Not linked' }],
+      vendor: [{ v: '', l: 'All companies' }].concat((j.vendors || []).map(x => ({ v: String(x.id), l: esc(x.name) }))),
       source: [{ v: '', l: 'Any' }, { v: 'approved', l: 'Approved (AI proposed)' }, { v: 'manual', l: 'Manual' }, { v: 'rule', l: 'By rule' }],
       account: [{ v: '', l: 'All accounts' }].concat((j.accounts || []).map(a => ({ v: a.account_name, l: esc(a.label), t: a.short || a.label }))),
       date: { type: 'range', kind: 'date', from: TF.period === 'custom' ? TF.from : '', to: TF.period === 'custom' ? TF.to : '', period: TF.period, defaultPeriod: '30', presets: PERIODS },
@@ -558,7 +559,7 @@
     const CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
     const laT = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(ts) ? '' : 'Z')); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }); };
     const vlogo = (name, photo) => photo ? '<img class="bk-logo bk-vl" src="' + esc(photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;bk-logo bk-vl ph&quot;>' + esc(String(name || '?').charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo bk-vl ph' + (name ? '' : ' none') + '">' + esc(name ? String(name).charAt(0).toUpperCase() : '?') + '</span>';
-    const kindTag = (t) => t.vendor_source === 'suppliers' ? 'supplier' : t.vendor_source === 'vendors' ? 'vendor' : (t.vendor_kind || 'from a bill');
+    const kindTag = (t) => t.vendor_source === 'suppliers' ? 'supplier' : t.vendor_source === 'vendors' ? 'vendor' : t.vendor_source === 'nova' ? 'Nova vendor' : (t.vendor_kind || 'from a bill');
     const vendorCell = (t) => {
       if (t.vendor_id) return '<div class="bl-vendor pu-vendor">' + vlogo(t.vendor_name, t.vendor_photo) + '<div class="bl-vname"><b class="tx-vn">' + esc(t.vendor_name) + '</b> <a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Change vendor">' + PEN + '</a>' +
         '<div class="bk-dim"><span class="bk-src ' + esc(t.vendor_source || '') + '">' + esc(kindTag(t)) + '</span></div>' + (t.vendor_by === 'auto' ? '<div class="tx-match ok">Matched ' + (t.vendor_score != null ? Math.round(t.vendor_score * 100) + '%' : 'by name') + '</div>' : t.vendor_by === 'person' ? '<div class="bk-dim">linked by a person</div>' : '') + '</div></div>';
@@ -573,7 +574,7 @@
       '<b>' + esc(t.institution ? bankAbbr(t.institution) : 'Bank') + (t.mask ? ' <span class="tx-mask">••' + esc(t.mask) + '</span>' : '') + '</b></div>';
     const statsBar = txStats ? '<div class="bk-filters tx-stats-bar"><span class="bk-muted">Period</span>' + PERIODS.map(pp => '<button class="ib-chip sm' + (TF.period === pp.v && !TF.from ? ' on' : '') + '" data-period="' + pp.v + '">' + esc(pp.l) + '</button>').join('') + '<span class="sp"></span><button class="bk-btn sm" id="tfMore" title="Vendor, account, amount and category filters">' + (anyF && TF.period === '30' ? 'Filtered' : 'Filter…') + '</button></div>' : '';
     v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top"><span class="bk-muted">' + (j.matched != null ? j.matched : (j.transactions || []).length) + ' ' + (st ? (STL[st] || '').toLowerCase() + ' ' : '') + 'line' + (j.matched === 1 ? '' : 's') + (TF.period === '30' && !TF.from ? ' in the last 30 days' : '') + ((j.transactions || []).length < (j.matched || 0) ? ' · showing the first ' + j.transactions.length : '') + '</span><span class="sp"></span><button class="bk-btn ico" id="syncNow" title="Sync with Bank" aria-label="Sync with Bank">' + syncIcon + '</button></div>' + fbar + statsBar + chart +
-      (txStats ? '' : '<table class="bk tx-table"><thead><tr><th class="tx-date">' + thFilter('date', 'Date', FO.date) + '</th><th>' + thFilter('vendor', 'Vendor', FO.vendor, TF.vendor_id) + '</th><th>Description</th><th>' + thFilter('account', 'Account', FO.account, TF.account) + '</th><th class="num">' + thFilter('amount', 'Amount', FO.amount) + '</th><th>' + thFilter('type', 'Category', FO.type, TF.type ? 'T:' + TF.type : TF.category ? 'C:' + TF.category : '') + '</th><th>Status</th></tr></thead><tbody>' +
+      (txStats ? '' : '<table class="bk tx-table"><thead><tr><th class="tx-date">' + thFilter('date', 'Date', FO.date) + '</th><th class="tx-vth">' + thFilter('vkind', 'Vendor', FO.vkind, TF.vkind) + thFilter('vendor', 'Company', FO.vendor, TF.vendor_id) + '</th><th>Description</th><th>' + thFilter('account', 'Account', FO.account, TF.account) + '</th><th class="num">' + thFilter('amount', 'Amount', FO.amount) + '</th><th>' + thFilter('type', 'Category', FO.type, TF.type ? 'T:' + TF.type : TF.category ? 'C:' + TF.category : '') + '</th><th>Status</th></tr></thead><tbody>' +
       (j.transactions || []).map(t => '<tr><td class="tx-date" title="Synced from the bank · bank date ' + esc(usD(t.date)) + (t.pending ? ' (still pending at the bank)' : '') + '">' + laD2(t.created_at) + '</td>' +
         '<td>' + vendorCell(t) + '</td><td class="tx-desc-td">' + esc(t.merchant || t.name) + ((t.orig_desc || t.name) !== (t.merchant || t.name) ? '<div class="bk-muted tx-orig">' + esc(t.orig_desc || t.name) + '</div>' : '') +
         (prettyCat(t) ? '<div class="bk-dim">' + esc(prettyCat(t)) + (t.place ? ' · ' + esc(t.place) : '') + '</div>' : t.place ? '<div class="bk-dim">' + esc(t.place) + '</div>' : '') + '</td><td>' + bankCell(t) + '</td>' +
@@ -591,10 +592,11 @@
     v.querySelectorAll('[data-period]').forEach(b => b.onclick = () => { TF.period = b.dataset.period; saveTF(); });
     if ($('tfFrom')) { $('tfFrom').onchange = () => { TF.from = $('tfFrom').value; saveTF(); }; $('tfTo').onchange = () => { TF.to = $('tfTo').value; saveTF(); }; }
     if ($('tfMin')) { $('tfMin').onchange = () => { TF.min = $('tfMin').value; saveTF(); }; $('tfMax').onchange = () => { TF.max = $('tfMax').value; saveTF(); }; }
-    if ($('tfClear')) $('tfClear').onclick = () => { Object.assign(TF, { type: '', category: '', vendor_id: '', source: '', min: '', max: '', account: '', period: '30', from: '', to: '' }); saveTF(); };
+    if ($('tfClear')) $('tfClear').onclick = () => { Object.assign(TF, { type: '', category: '', vendor_id: '', vkind: '', source: '', min: '', max: '', account: '', period: '30', from: '', to: '' }); saveTF(); };
     thFilterBind(v, FO, (key, val) => {
       if (key === 'type') { TF.type = val.startsWith('T:') ? val.slice(2) : ''; TF.category = val.startsWith('C:') ? val.slice(2) : ''; if (!cat && (TF.type || TF.category)) { txnSt = 'categorized'; lastSub.bank = 'categorized'; } }
       else if (key === 'vendor') TF.vendor_id = val;
+      else if (key === 'vkind') TF.vkind = val;
       else if (key === 'date') { TF.period = val.period || '30'; TF.from = val.from || ''; TF.to = val.to || ''; }
       else if (key === 'amount') { TF.min = val.from || ''; TF.max = val.to || ''; }
       else TF[key] = val; saveTF(); });
@@ -1142,7 +1144,7 @@
     const all = (j.vendors || []).filter(x => x.kind !== 'bill');
     const pop = document.createElement('div'); pop.className = 'ckp-pop single';
     pop.addEventListener('click', (e) => e.stopPropagation());
-    pop.innerHTML = '<div class="ckp-search"><input type="text" placeholder="Search suppliers and vendors…"></div><div class="ckp-list"></div><div class="ckp-foot"><span class="bk-muted">Linking “' + esc(bill.vendor) + '” remembers the name for next time.</span></div>';
+    pop.innerHTML = '<div class="ckp-search"><input type="text" placeholder="Search suppliers and vendors…"></div><div class="ckp-list"></div><div class="ckp-foot"><a href="#" class="ckp-new vp-new">+ New Nova vendor…</a><span class="sp"></span><span class="bk-muted">Linking “' + esc(bill.vendor) + '” remembers the name.</span></div>';
     document.body.appendChild(pop);
     const r = anchor.getBoundingClientRect(), W = Math.min(380, window.innerWidth - 16);
     pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) + 'px'; pop.style.width = W + 'px';
@@ -1158,6 +1160,7 @@
     };
     draw(); setTimeout(() => q.focus(), 0); q.oninput = draw;
     list.onclick = (e) => { const it = e.target.closest('.ckp-i'); if (!it) return; onPick(Number(it.dataset.v)); close(); };
+    pop.querySelector('.vp-new').onclick = (e) => { e.preventDefault(); close(); novaVendorForm({ name: bill.vendor || '', aliases: bill.vendor || '' }, (nv) => onPick(nv.id)); };   // 1.19.63
     const close = () => { pop.remove(); document.removeEventListener('click', away); document.removeEventListener('keydown', esc1); };
     const away = (e) => { if (!pop.contains(e.target)) close(); }, esc1 = (e) => { if (e.key === 'Escape') close(); };
     setTimeout(() => { document.addEventListener('click', away); document.addEventListener('keydown', esc1); }, 0);
@@ -1397,12 +1400,61 @@
   }
 
   // ---------------------------------------------------------------- Suppliers & vendors (the CRM directory + vendors seen on bills)
+  // ---------------------------------------------------------------- Nova vendors (1.19.63): companies kept only in Nova
+  function novaVendorForm(init, onSaved) {
+    init = init || {}; const isEdit = !!init.id; let d = {}; try { d = init.details ? JSON.parse(init.details) : {}; } catch (e) {}
+    const el = document.createElement('div'); el.className = 'bk-modal';
+    const F = (id, label, val, ph, type) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><input class="bk" id="' + id + '" type="' + (type || 'text') + '" value="' + esc(val || '') + '" placeholder="' + esc(ph || '') + '"></label>';
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(620px,100%)"><div class="bk-modal-title">' + (isEdit ? 'Edit ' + esc(init.name) : 'New Nova vendor') + '</div>' +
+      '<div class="bk-muted" style="margin-bottom:12px">A company kept in Nova only — not in the CRM supplier / vendor lists. The chart of accounts is its map: say what you buy from them and the usual category, and the AI files their lines there.</div>' +
+      '<div class="nv-grid">' + F('nvName', 'Company', init.name, 'HEVAC Inc') + F('nvWeb', 'Website', d.website || init.website, 'linkedin.com') + F('nvEmail', 'Email', init.email, 'billing@…', 'email') + F('nvPhone', 'Phone', init.phone, '') + F('nvContact', 'Contact person', init.contact, '') + F('nvAddr', 'Address', init.address, '') + '</div>' +
+      '<label class="nv-f"><span class="bk-muted">What we buy from them</span><input class="bk" id="nvSpec" value="' + esc(init.specialty || '') + '" placeholder="Rent for the shop · Job ads · Cleaning twice a month"></label>' +
+      '<div class="nv-f"><span class="bk-muted">Usual category (chart of accounts)</span><div id="nvCat">' + catSelect(init.default_category || '', 'nvcat', 'not set', { multi: true }) + '</div></div>' +
+      F('nvAlias', 'On the bank statement as', String(init.aliases || '').split('\n').join(' | '), 'HEVAC INC | HEVAC*RENT — separate with |') +
+      '<label class="nv-f"><span class="bk-muted">Notes</span><textarea class="bk" id="nvNotes" rows="2">' + esc(init.notes || '') + '</textarea></label>' +
+      '<div class="bk-row" style="margin-top:12px"><button class="bk-btn p" id="nvSave">' + (isEdit ? 'Save' : 'Add vendor') + '</button><button class="bk-btn bk-x">Cancel</button><span class="bk-muted" id="nvMsg"></span></div></div>';
+    const close = () => el.remove();
+    el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
+    document.body.appendChild(el); el.querySelector('#nvName').focus();
+    el.querySelector('#nvSave').onclick = async (ev) => {
+      let force = false;
+      const body = { name: el.querySelector('#nvName').value.trim(), website: el.querySelector('#nvWeb').value.trim(), email: el.querySelector('#nvEmail').value.trim(), phone: el.querySelector('#nvPhone').value.trim(), contact: el.querySelector('#nvContact').value.trim(), address: el.querySelector('#nvAddr').value.trim(),
+        specialty: el.querySelector('#nvSpec').value.trim(), default_category: el.querySelector('#nvCat .ckp-val').value, aliases: el.querySelector('#nvAlias').value.split('|').map(x => x.trim()).filter(Boolean).join('\n'), notes: el.querySelector('#nvNotes').value.trim() };
+      if (!body.name) { el.querySelector('#nvMsg').textContent = 'Give the company a name.'; return; }
+      if (ev.target.dataset.force) { body.force = true; }
+      const r = await post(isEdit ? '/api/bookkeeping/vendors/' + init.id : '/api/bookkeeping/vendors', body);
+      if (!r.ok) { el.querySelector('#nvMsg').textContent = r.error + (r.duplicate ? ' — click again to add anyway.' : ''); if (r.duplicate) ev.target.dataset.force = '1'; return; }
+      close(); if (onSaved) onSaved(r.vendor || Object.assign({}, init, body));
+    };
+  }
+  async function loadNovaVendors() {
+    const v = $('vNova');
+    if (!ov) await overview();
+    const j = await api('/api/bookkeeping/directory?fresh=0');
+    const rows = (j.vendors || []).filter(x => x.source === 'nova').sort((a, b) => String(a.name).localeCompare(b.name));
+    const web = (x) => { let d = {}; try { d = JSON.parse(x.details || '{}') || {}; } catch (e) {} return d.website || ''; };
+    const q = (v.dataset.q || '').toLowerCase();
+    const shown = rows.filter(x => !q || (x.name + ' ' + (x.specialty || '') + ' ' + (x.default_category || '') + ' ' + (x.contact || '') + ' ' + (x.email || '')).toLowerCase().indexOf(q) > -1);
+    v.innerHTML = '<div class="bk-card"><h2>Nova vendors ' + qHelp('nova_vendors', 'Nova vendors', 'Companies you pay that are not in the CRM supplier / vendor lists — the landlord, LinkedIn, a one-off contractor. They live only in Nova, carry what you buy from them and their usual category from the chart of accounts, and can be linked to bank lines and bills like any CRM company.') +
+      '<span class="sp"></span><input class="bk" id="nvQ" placeholder="Search" value="' + esc(v.dataset.q || '') + '" style="width:220px"><button class="bk-btn p" id="nvAdd">+ New vendor</button></h2>' +
+      (shown.length ? '<table class="bk"><thead><tr><th></th><th>Company</th><th>What we buy</th><th>Usual category</th><th>Contact</th><th>On the statement as</th><th class="num">Linked</th><th></th></tr></thead><tbody>' +
+        shown.map(x => '<tr><td><span class="bk-logo ph">' + esc(String(x.name).charAt(0).toUpperCase()) + '</span></td><td><b>' + esc(x.name) + '</b>' + (web(x) ? '<div class="bk-dim"><a href="' + esc(/^https?:/.test(web(x)) ? web(x) : 'https://' + web(x)) + '" target="_blank" rel="noopener">' + esc(web(x)) + '</a></div>' : '') + '</td>' +
+          '<td>' + esc(x.specialty || '') + '</td><td>' + (x.default_category ? splitCats(x.default_category).map(c => catLabel(c)).join('<br>') : '<span class="bk-dim">not set</span>') + '</td>' +
+          '<td class="bk-muted">' + esc(x.contact || '') + (x.email ? '<br>' + esc(x.email) : '') + (x.phone ? '<br>' + esc(x.phone) : '') + '</td><td class="bk-muted">' + esc(String(x.aliases || '').split('\n').filter(Boolean).join(' · ')) + '</td>' +
+          '<td class="num bk-muted">' + (x.txns || 0) + ' txn' + (x.txns == 1 ? '' : 's') + '<br>' + (x.bills || 0) + ' bill' + (x.bills == 1 ? '' : 's') + '</td>' +
+          '<td class="pu-acts"><button class="bk-btn sm" data-nvedit="' + x.id + '">Edit</button>' + (!x.txns && !x.bills ? '<button class="bk-btn sm bad" data-nvdel="' + x.id + '">Remove</button>' : '') + '</td></tr>').join('') + '</tbody></table>'
+        : '<div class="bk-muted" style="padding:14px 0">' + (rows.length ? 'No match.' : 'No Nova vendors yet — add the landlord, LinkedIn, anyone you pay who is not in the CRM.') + '</div>') + '</div>';
+    $('nvAdd').onclick = () => novaVendorForm({}, () => loadNovaVendors());
+    $('nvQ').oninput = () => { v.dataset.q = $('nvQ').value; clearTimeout(v._t); v._t = setTimeout(() => { const pos = $('nvQ').selectionStart; loadNovaVendors().then(() => { const i = $('nvQ'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } }); }, 250); };
+    v.querySelectorAll('[data-nvedit]').forEach(b => b.onclick = () => novaVendorForm(rows.find(x => x.id === Number(b.dataset.nvedit)), () => loadNovaVendors()));
+    v.querySelectorAll('[data-nvdel]').forEach(b => b.onclick = async () => { const x = rows.find(r => r.id === Number(b.dataset.nvdel)); if (!await ask('Remove ' + x.name + ' from Nova?', { title: 'Remove vendor', ok: 'Remove' })) return; const r = await post('/api/bookkeeping/vendors/' + x.id + '/delete', {}); if (!r.ok) alert(r.error); loadNovaVendors(); });
+  }
   async function loadVendors() {
     const v = $('vVendors');
     if (!ov) await overview();
     const j = await api('/api/bookkeeping/directory');
     const all = j.vendors || [];
-    const KIND_LABEL = { supplier: 'Supplier', vendor: 'Vendor', bill: 'From a bill', other: 'Other' };
+    const KIND_LABEL = { supplier: 'Supplier', vendor: 'Vendor', nova: 'Nova vendor', bill: 'From a bill', other: 'Other' };
     const label = (k) => KIND_LABEL[k] || (String(k || 'other').charAt(0).toUpperCase() + String(k || 'other').slice(1));
     // The types are the CRM lists (read-only here — a row's type is the list it is in), then "from a bill".
     const kinds = (j.lists || ['supplier', 'vendor']).slice(); all.forEach(x => { if (x.kind && kinds.indexOf(x.kind) < 0) kinds.push(x.kind); }); if (kinds.indexOf('bill') < 0) kinds.push('bill');
