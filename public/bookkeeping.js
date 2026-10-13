@@ -1506,7 +1506,7 @@
     el.innerHTML = '<div class="bk-modal-box" style="width:min(620px,100%)"><div class="bk-modal-title">' + (isEdit ? 'Edit ' + esc(init.name) : 'New Nova vendor') + '</div>' +
       '<div class="bk-muted" style="margin-bottom:12px">A company kept in Nova only — not in the CRM supplier / vendor lists. The chart of accounts is its map: say what you buy from them and the usual category, and the AI files their lines there.</div>' +
       // 1.19.77: the logo — the bank's merchant logo when one was picked up, a URL, or a picture uploaded here (shrunk to 160px)
-      '<div class="nv-photo"><div class="nv-photo-box" id="nvPhotoBox">' + (init.photo ? '<img src="' + esc(init.photo) + '" alt="">' : '<span class="bk-logo ph">' + esc(String(init.name || '?').charAt(0).toUpperCase()) + '</span>') + '</div><div class="nv-photo-f"><span class="bk-muted">Logo / photo</span><div class="bk-row" style="gap:6px;flex-wrap:nowrap"><input class="bk" id="nvPhoto" value="' + esc(/^data:/.test(init.photo || '') ? '' : (init.photo || '')) + '" placeholder="https://… or upload a picture"><button type="button" class="bk-btn sm" id="nvUpload">Upload</button><button type="button" class="bk-btn sm" id="nvNoPhoto" title="Remove the picture">×</button></div><input type="file" id="nvFile" accept="image/*" hidden></div></div>' +
+      '<div class="nv-photo"><div class="nv-photo-box" id="nvPhotoBox">' + (init.photo ? '<img src="' + esc(init.photo) + '" alt="">' : '<span class="bk-logo ph">' + esc(String(init.name || '?').charAt(0).toUpperCase()) + '</span>') + '</div><div class="nv-photo-f"><span class="bk-muted">Logo / photo</span><div class="bk-row" style="gap:6px;flex-wrap:nowrap"><input class="bk" id="nvPhoto" value="' + esc(/^data:/.test(init.photo || '') ? '' : (init.photo || '')) + '" placeholder="https://… — or paste (Ctrl+V), drop or upload a picture"><button type="button" class="bk-btn sm" id="nvUpload">Upload</button><button type="button" class="bk-btn sm" id="nvNoPhoto" title="Remove the picture">×</button></div><input type="file" id="nvFile" accept="image/*" hidden></div></div>' +
       '<div class="nv-grid">' + F('nvName', 'Company', init.name, 'HEVAC Inc') + F('nvWeb', 'Website', d.website || init.website, 'linkedin.com') + F('nvEmail', 'Email', init.email, 'billing@…', 'email') + F('nvPhone', 'Phone', init.phone, '') + F('nvContact', 'Contact person', init.contact, '') + F('nvAddr', 'Address', init.address, '') + '</div>' +
       '<label class="nv-f"><span class="bk-muted">What we buy from them</span><input class="bk" id="nvSpec" value="' + esc(init.specialty || '') + '" placeholder="Rent for the shop · Job ads · Cleaning twice a month"></label>' +
       '<div class="nv-f"><span class="bk-muted">Usual category (chart of accounts)</span><div id="nvCat">' + catSelect(init.default_category || '', 'nvcat', 'not set', { multi: true }) + '</div></div>' +
@@ -1521,16 +1521,26 @@
     el.querySelector('#nvPhoto').onchange = () => { const u = el.querySelector('#nvPhoto').value.trim(); if (!u || /^https?:\/\//.test(u)) { photo = u; showPhoto(); } };
     el.querySelector('#nvNoPhoto').onclick = () => { photo = ''; el.querySelector('#nvPhoto').value = ''; showPhoto(); };
     el.querySelector('#nvUpload').onclick = () => el.querySelector('#nvFile').click();
-    el.querySelector('#nvFile').onchange = () => {
-      const f = el.querySelector('#nvFile').files[0]; if (!f) return;
+    // a picked, pasted (Ctrl+V anywhere in the form) or dropped picture: cropped to a centred square, shrunk to 160px
+    const takeImage = (f) => {
+      if (!f || !/^image\//.test(f.type)) return;
       const img = new Image(); img.onload = () => {
         const S = 160, c = document.createElement('canvas'); c.width = S; c.height = S; const g = c.getContext('2d');
-        const sc = Math.min(S / img.width, S / img.height), w = Math.round(img.width * sc), h = Math.round(img.height * sc);
-        g.fillStyle = '#fff'; g.fillRect(0, 0, S, S); g.drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
+        const side = Math.min(img.width, img.height), sx = Math.round((img.width - side) / 2), sy = Math.round((img.height - side) / 2);
+        g.fillStyle = '#fff'; g.fillRect(0, 0, S, S); g.drawImage(img, sx, sy, side, side, 0, 0, S, S);
         photo = c.toDataURL('image/png'); el.querySelector('#nvPhoto').value = ''; showPhoto(); URL.revokeObjectURL(img.src);
+        el.querySelector('#nvMsg').textContent = '';
       };
       img.src = URL.createObjectURL(f);
     };
+    el.querySelector('#nvFile').onchange = () => takeImage(el.querySelector('#nvFile').files[0]);
+    el.addEventListener('paste', (ev) => {
+      const it = Array.from((ev.clipboardData || {}).items || []).find(x => /^image\//.test(x.type));
+      if (it) { ev.preventDefault(); takeImage(it.getAsFile()); }
+    });
+    const box = el.querySelector('#nvPhotoBox');
+    box.ondragover = (ev) => { ev.preventDefault(); box.classList.add('over'); }; box.ondragleave = () => box.classList.remove('over');
+    box.ondrop = (ev) => { ev.preventDefault(); box.classList.remove('over'); takeImage(ev.dataTransfer.files && ev.dataTransfer.files[0]); };
     el.querySelector('#nvSave').onclick = async (ev) => {
       let force = false;
       const body = { photo, name: el.querySelector('#nvName').value.trim(), website: el.querySelector('#nvWeb').value.trim(), email: el.querySelector('#nvEmail').value.trim(), phone: el.querySelector('#nvPhone').value.trim(), contact: el.querySelector('#nvContact').value.trim(), address: el.querySelector('#nvAddr').value.trim(),

@@ -518,4 +518,5 @@ of accounts, notes for the AI, chat_webhook, chat_space, waiting_days, notreceiv
 - **Edit a rule** — Accounts → Rules, Edit on the row: kind, pattern and category inline. Changing the category asks
   whether the lines the rule already categorized follow it ("Yes, change all N" / "No, only new lines" / Cancel).
 - **Vendor logo / photo** — the Nova vendor form shows the picture (the bank's logo when one was picked up) with a URL
-  box, Upload (shrunk to 160px in the browser) and × to remove.
+  box, Upload — or paste a copied image (Ctrl+V) anywhere in the form, or drop one on the box — cropped to a centred
+  square and shrunk to 160px in the browser, and × to remove.
