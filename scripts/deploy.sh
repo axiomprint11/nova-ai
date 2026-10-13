@@ -15,7 +15,18 @@ if [ ${#FILES[@]} -eq 0 ]; then
   FILES=(server.js ecosystem.config.js client-bot.js quote-pdf.js visitor-info.js public/admin.html speech-to-text.js public/axiom-voice.js public/axiom-cards.js public/client-embed.js public/client-chat.html public/client-chat.js
          public/client-bot-admin.js public/client-bot.html public/axiom-shared.css docs/CLIENT_BOT.md CLAUDE.md
          talk-ai.js public/talk-ai.html public/talk-ai.js docs/TALK_AI.md
-         usage-stats.js public/nova-stats.js public/index.html public/chatbot.html public/chatbot.js public/nova-nav.js closed-days.js talk-handoff.js docs/TALKAI_CRM_WEBHOOK.md artwork-specs.js team-directory.js office-hours.js bookkeeping.js public/bookkeeping.html public/bookkeeping.js docs/BOOKKEEPING_AI.md)
+         usage-stats.js public/nova-stats.js public/index.html public/chatbot.html public/chatbot.js public/nova-nav.js closed-days.js talk-handoff.js docs/TALKAI_CRM_WEBHOOK.md artwork-specs.js team-directory.js office-hours.js bookkeeping.js public/bookkeeping.html public/bookkeeping.js docs/BOOKKEEPING_AI.md
+         shipping.js public/nova-date.js)
+  # 1.19.143: any tracked code / page file that does not exist in the live copy yet is new — take it along, so a new
+  # module (shipping.js, nova-date.js) never leaves server.js unable to start.
+  if git -C "$SRC" rev-parse >/dev/null 2>&1; then
+    while IFS= read -r nf; do
+      case "$nf" in scripts/*|node_modules/*|*.md) continue ;; esac
+      [ -f "$LIVE/$nf" ] && continue
+      skip=0; for f in "${FILES[@]}"; do [ "$f" = "$nf" ] && skip=1 && break; done
+      [ $skip -eq 1 ] || FILES+=("$nf")
+    done < <(git -C "$SRC" ls-files | grep -E '^(public/)?[^/]+\.(js|html|css)$')
+  fi
 fi
 B="bk-$(date +%Y-%m-%d-%H%M)"
 cd "$LIVE" || { echo "!!! $LIVE not found"; exit 1; }
