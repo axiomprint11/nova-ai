@@ -145,19 +145,19 @@
   // in one click), or { type: 'text', value } (contains), or { type: 'range', kind: 'number' | 'date', from, to,
   // presets: [{v, l}], period } (From / To with Clear / Apply; date ranges can also offer period presets).
   const FUNNEL = '<svg class="thf-f" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18l-7 8v5l-4 2v-7z"/></svg>';
-  const thActive = (spec, cur) => Array.isArray(spec) ? !!cur : spec.type === 'text' ? !!spec.value : !!(spec.from || spec.to || (spec.period && spec.period !== spec.defaultPeriod));
+  const thActive = (spec, cur) => Array.isArray(spec) ? !!cur : spec.type === 'text' ? !!spec.value : !!(spec.from || spec.to || (spec.period && spec.period !== spec.defaultPeriod) || (spec.groups || []).some(g => g.value));   // 1.19.124: chip groups (Received / Paid, how paid) count as active
   const thFilter = (key, label, spec, cur) => {
     const on = thActive(spec, cur); let val = '';
     if (Array.isArray(spec)) { const o = spec.find(x => x.v === cur); val = o && (cur || o.h != null) ? (o.h != null ? o.h : o.t != null ? esc(o.t) : o.l) : ''; }   // o.h = html shown in the header (an icon slot, kept even when nothing is picked so the header keeps its width)
     else if (spec.type === 'text') val = spec.value ? esc(spec.value) : '';
-    else if (spec.type === 'range') { const pr = (spec.presets || []).find(x => x.v === spec.period); val = spec.period && spec.period !== 'custom' && spec.period !== spec.defaultPeriod && pr ? esc(pr.l) : (spec.from || spec.to) ? esc(spec.from && spec.to ? spec.from + ' – ' + spec.to : spec.from ? (spec.kind === 'date' ? 'from ' : '≥ ') + spec.from : (spec.kind === 'date' ? 'to ' : '≤ ') + spec.to) : ''; }
+    else if (spec.type === 'range') { const pr = (spec.presets || []).find(x => x.v === spec.period); val = spec.period && spec.period !== 'custom' && spec.period !== spec.defaultPeriod && pr ? esc(pr.l) : (spec.from || spec.to) ? esc(spec.from && spec.to ? spec.from + ' – ' + spec.to : spec.from ? (spec.kind === 'date' ? 'from ' : '≥ ') + spec.from : (spec.kind === 'date' ? 'to ' : '≤ ') + spec.to) : '';  const gl = (spec.groups || []).filter(g => g.value).map(g => { const o = g.opts.find(x => x[0] === g.value); return o ? o[1] : g.value; }); if (gl.length) val = (val ? val + ' · ' : '') + esc(gl.join(' · ')); }
     // 1.19.83: the header never shows the picked value (it wrapped the row) — an active filter is the label + a red × that clears it;
     // what is picked is in the tooltip and ticked in the popover
     const tip = val ? String(val).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : '';
     return '<button type="button" class="thf' + (on ? ' on' : '') + '" data-thf="' + esc(key) + '" data-v="' + esc(cur || '') + '"' + (tip ? ' title="' + esc(label + ': ' + tip) + '"' : '') + '><span class="thf-l">' + esc(label) + '</span>' + (on ? '<i class="thf-x" title="Clear this filter">×</i>' : FUNNEL) + '</button>';
   };
   function thFilterBind(root, specs, onChange) {
-    const clearOf = (spec) => Array.isArray(spec) ? '' : spec.type === 'text' ? '' : { from: '', to: '', period: spec.defaultPeriod || '' };
+    const clearOf = (spec) => Array.isArray(spec) ? '' : spec.type === 'text' ? '' : Object.assign({ from: '', to: '', period: spec.defaultPeriod || '' }, Object.fromEntries((spec.groups || []).map(g => [g.key, ''])));
     root.querySelectorAll('.thf').forEach(btn => btn.onclick = (e) => {
       e.stopPropagation(); document.querySelectorAll('.thf-pop').forEach(p => p.remove());
       const key = btn.dataset.thf, spec = specs[key] || [], cur = btn.dataset.v, label = btn.querySelector('.thf-l').textContent;
@@ -186,16 +186,21 @@
       }
       // range
       const dt = spec.kind === 'date', it = dt ? 'date' : 'number';
-      pop.innerHTML = '<div class="thf-h">' + esc(label) + '</div><div class="thf-body">' +
+      const gvals = {}; (spec.groups || []).forEach(g => { gvals[g.key] = g.value || ''; });
+      pop.innerHTML = '<div class="thf-h">' + esc(label) + (thActive(spec, cur) ? '<button type="button" class="thf-clear thf-hclear">× Clear</button>' : '') + '</div><div class="thf-body">' +
         (spec.presets ? '<div class="thf-presets">' + spec.presets.map(p => '<button type="button" class="ib-chip sm' + (spec.period === p.v && !(spec.from || spec.to) ? ' on' : '') + '" data-p="' + esc(p.v) + '">' + esc(p.l) + '</button>').join('') + '</div>' : '') +
+        (spec.groups || []).map(g => '<div class="thf-lab">' + esc(g.label) + '</div><div class="thf-presets thf-group" data-g="' + esc(g.key) + '">' + g.opts.map(o => '<button type="button" class="ib-chip sm' + ((g.value || '') === o[0] ? ' on' : '') + '" data-gv="' + esc(o[0]) + '">' + esc(o[1]) + '</button>').join('') + '</div>').join('') +
         '<div class="thf-range"><label><span class="thf-lab">From</span><input type="' + it + '" class="bk thf-from" ' + (dt ? '' : 'min="0" step="0.01" ') + 'value="' + esc(spec.from || '') + '"></label><label><span class="thf-lab">To</span><input type="' + it + '" class="bk thf-to" ' + (dt ? '' : 'min="0" step="0.01" ') + 'value="' + esc(spec.to || '') + '"></label></div></div>' +
         '<div class="thf-acts"><button type="button" class="thf-clear">Clear</button><span class="sp"></span><button type="button" class="thf-apply">Apply</button></div>';
       document.body.appendChild(pop); place();
       const from = pop.querySelector('.thf-from'), to = pop.querySelector('.thf-to'); from.focus();
-      const apply = () => { close(); onChange(key, { from: from.value, to: to.value, period: (from.value || to.value) ? 'custom' : (spec.period || '') }); };
+      const apply = () => { close(); onChange(key, Object.assign({ from: from.value, to: to.value, period: (from.value || to.value) ? 'custom' : (spec.period || '') }, gvals)); };
       [from, to].forEach(x => x.onkeydown = (ev) => { if (ev.key === 'Enter') apply(); if (ev.key === 'Escape') close(); });
-      pop.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { close(); onChange(key, { from: '', to: '', period: b.dataset.p }); });
-      pop.querySelector('.thf-apply').onclick = apply; pop.querySelector('.thf-clear').onclick = () => { close(); onChange(key, { from: '', to: '', period: spec.defaultPeriod || '' }); };
+      pop.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { close(); onChange(key, Object.assign({ from: '', to: '', period: b.dataset.p }, gvals)); });
+      // 1.19.124: a chip in a group applies on the spot (with whatever From / To say)
+      pop.querySelectorAll('.thf-group [data-gv]').forEach(b => b.onclick = () => { gvals[b.closest('.thf-group').dataset.g] = b.dataset.gv; close(); onChange(key, Object.assign({ from: from.value, to: to.value, period: (from.value || to.value) ? 'custom' : (spec.period || '') }, gvals)); });
+      const clearAll = () => { close(); onChange(key, clearOf(spec)); };
+      pop.querySelector('.thf-apply').onclick = apply; pop.querySelector('.thf-clear').onclick = clearAll; const hc2 = pop.querySelector('.thf-hclear'); if (hc2) hc2.onclick = clearAll;
     });
   }
 
@@ -449,7 +454,7 @@
   let txnSt = 'pending';   // Pending every time the tab opens (not remembered)
   let txnPoll = null;
   // Categorized view filters (period defaults to the last 30 days); kept per browser.
-  let TF = { period: '30', from: '', to: '', type: '', category: '', vendor_id: '', vkind: '', source: '', min: '', max: '', account: '' };
+  let TF = { period: '30', from: '', to: '', type: '', category: '', vendor_id: '', vkind: '', source: '', min: '', max: '', account: '', side: '', how: '' };
   try { TF = Object.assign(TF, JSON.parse(localStorage.getItem('bk_txn_filters') || '{}')); } catch (e) {}
   const periodRange = (pr) => { const d = new Date(), iso = (x) => x.toISOString().slice(0, 10); if (pr === '30') return [iso(new Date(Date.now() - 30 * 864e5)), '']; if (pr === '90') return [iso(new Date(Date.now() - 90 * 864e5)), '']; if (pr === 'month') return [iso(new Date(d.getFullYear(), d.getMonth(), 1)), '']; if (pr === 'last') return [iso(new Date(d.getFullYear(), d.getMonth() - 1, 1)), iso(new Date(d.getFullYear(), d.getMonth(), 0))]; if (pr === 'year') return [d.getFullYear() + '-01-01', '']; if (pr === 'custom') return [TF.from, TF.to]; return ['', '']; };
   const chart_types = () => chart.filter(c => !c.parent);
@@ -599,7 +604,7 @@
     const cat = st === 'categorized';
     // 1.19.49: the header filters work in every view (date defaults to the last 30 days); the status is a filter on the Category column.
     let qs = '?status=' + encodeURIComponent(st) + '&q=' + encodeURIComponent(q) + '&lists=1';
-    { const [f, t] = st === 'old' && TF.period !== 'custom' ? ['', ''] : periodRange(TF.period); qs += '&from=' + f + '&to=' + t + ['type', 'category', 'vendor_id', 'vkind', 'source', 'min', 'max', 'account'].map(k => TF[k] ? '&' + k + '=' + encodeURIComponent(TF[k]) : '').join(''); }
+    { const [f, t] = st === 'old' && TF.period !== 'custom' ? ['', ''] : periodRange(TF.period); qs += '&from=' + f + '&to=' + t + ['type', 'category', 'vendor_id', 'vkind', 'source', 'min', 'max', 'account', 'side', 'how'].map(k => TF[k] ? '&' + k + '=' + encodeURIComponent(TF[k]) : '').join(''); }
     const j = await api('/api/bookkeeping/transactions' + qs);
     const bs = j.by_status || {};
     $('nTxAll').textContent = (bs.new_open != null ? bs.new_open : bs.new || 0) + (bs.pending || 0) + (bs.old || 0) + (bs.categorized || 0); /* 1.19.113: Today also holds filed lines, so All counts only its open ones */ $('nTxNew').textContent = bs.new || 0; $('nTxPending').textContent = bs.pending || 0; $('nTxOld').textContent = bs.old || 0; $('nTxCategorized').textContent = bs.categorized || 0;   // 1.19.84: the three buckets are disjoint, All is their sum
@@ -608,7 +613,7 @@
     const syncIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/></svg>';
     const T = j.totals || {}, chart = cat && txStats ? report(T) : '';   // 1.19.55: the charts live under Stats
     const PERIODS = [['30', 'Last 30 days'], ['month', 'This month'], ['last', 'Last month'], ['90', 'Last 90 days'], ['year', 'This year'], ['all', 'All time']].map(([v, l]) => ({ v, l }));
-    const anyF = TF.type || TF.category || TF.vendor_id || TF.vkind || TF.source || TF.min || TF.max || TF.account || TF.period !== '30' || TF.from || TF.to;
+    const anyF = TF.type || TF.category || TF.vendor_id || TF.vkind || TF.source || TF.min || TF.max || TF.account || TF.side || TF.how || TF.period !== '30' || TF.from || TF.to;
     const fbar = '';   // 1.19.88: "Clear filters" sits beside the Sync button on the top line instead of its own row
     // 1.19.58: short — logo + "WF ••0489"; the full bank and account name on hover
     const BANK_ABBR = { 'wells fargo': 'WF', 'american express': 'Amex', 'bank of america': 'BofA', 'jpmorgan chase': 'Chase', 'capital one': 'CapOne', 'us bank': 'USB', 'u.s. bank': 'USB', 'citibank': 'Citi' };
@@ -621,7 +626,9 @@
       source: [{ v: '', l: 'Any' }, { v: 'approved', l: 'Approved (AI proposed)' }, { v: 'manual', l: 'Manual' }, { v: 'rule', l: 'By rule' }],
       account: [{ v: '', l: 'All accounts', h: '<span class="tx-acc-h empty"></span>' }].concat((j.accounts || []).map(a => { const ico = a.logo ? '<img class="tx-acc-i" src="' + esc(a.logo) + '" alt="">' : '<span class="tx-acc-i ph" style="' + (a.color ? 'background:' + esc(a.color) : '') + '">' + esc(String(a.institution || a.account_name || '?').charAt(0)) + '</span>'; return { v: a.account_name, l: ico + ' ' + esc(bankAbbr(a.institution || 'Bank')) + (a.mask ? ' <span class="tx-mask">••' + esc(a.mask) + '</span>' : ''), h: '<span class="tx-acc-h" title="' + esc(a.label) + '">' + ico + '</span>' }; })),
       date: { type: 'range', kind: 'date', from: TF.period === 'custom' ? TF.from : '', to: TF.period === 'custom' ? TF.to : '', period: TF.period, defaultPeriod: '30', presets: PERIODS },
-      amount: { type: 'range', kind: 'number', from: TF.min, to: TF.max }
+      amount: { type: 'range', kind: 'number', from: TF.min, to: TF.max, groups: [   // 1.19.124: money in / out and how it was paid
+        { key: 'side', label: 'Money', value: TF.side, opts: [['', 'Any'], ['in', 'Received'], ['out', 'Paid']] },
+        { key: 'how', label: 'How', value: TF.how, opts: [['', 'Any'], ['online', 'Online'], ['store', 'Store'], ['check', 'Check'], ['other', 'Other']] }] }
     };
     const STL = { pending: 'Pending', new: 'Today', old: '90+', categorized: 'Categorized', '': 'All' };
     // 1.19.83: what the Status column says — Today = synced today (LA day) and not categorized, Pending = older and not categorized, else Categorized
@@ -702,13 +709,13 @@
     v.querySelectorAll('[data-period]').forEach(b => b.onclick = () => { TF.period = b.dataset.period; saveTF(); });
     if ($('tfFrom')) { $('tfFrom').onchange = () => { TF.from = $('tfFrom').value; saveTF(); }; $('tfTo').onchange = () => { TF.to = $('tfTo').value; saveTF(); }; }
     if ($('tfMin')) { $('tfMin').onchange = () => { TF.min = $('tfMin').value; saveTF(); }; $('tfMax').onchange = () => { TF.max = $('tfMax').value; saveTF(); }; }
-    if ($('tfClear')) $('tfClear').onclick = () => { Object.assign(TF, { type: '', category: '', vendor_id: '', vkind: '', source: '', min: '', max: '', account: '', period: '30', from: '', to: '' }); saveTF(); };
+    if ($('tfClear')) $('tfClear').onclick = () => { Object.assign(TF, { type: '', category: '', vendor_id: '', vkind: '', source: '', min: '', max: '', account: '', side: '', how: '', period: '30', from: '', to: '' }); saveTF(); };
     thFilterBind(v, FO, (key, val) => {
       if (key === 'type') { TF.type = val.startsWith('T:') ? val.slice(2) : ''; TF.category = val.startsWith('C:') ? val.slice(2) : ''; if (!cat && (TF.type || TF.category)) { txnSt = 'categorized'; lastSub.bank = 'categorized'; } }
       else if (key === 'vendor') TF.vendor_id = val;
       else if (key === 'vkind') TF.vkind = val;
       else if (key === 'date') { TF.period = val.period || '30'; TF.from = val.from || ''; TF.to = val.to || ''; }
-      else if (key === 'amount') { TF.min = val.from || ''; TF.max = val.to || ''; }
+      else if (key === 'amount') { TF.min = val.from || ''; TF.max = val.to || ''; TF.side = val.side || ''; TF.how = val.how || ''; }
       else TF[key] = val; saveTF(); });
     v.querySelectorAll('[data-rtype]').forEach(el => el.onclick = () => { TF.type = el.dataset.rtype; TF.category = ''; saveTF(); });
     v.querySelectorAll('[data-rvendor]').forEach(el => el.onclick = () => { TF.vendor_id = el.dataset.rvendor; saveTF(); });

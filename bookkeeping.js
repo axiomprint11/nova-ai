@@ -1919,6 +1919,13 @@ module.exports = function mountBookkeeping(app, deps) {
     if (g('source')) { where.push('t.category_source = ?'); p.push(g('source')); }
     if (g('min')) { where.push('ABS(t.amount) >= ?'); p.push(Number(g('min')) || 0); }
     if (g('max')) { where.push('ABS(t.amount) <= ?'); p.push(Number(g('max')) || 0); }
+    // 1.19.124: money in / out and how it was paid (Plaid payment_channel: online / in store / other; a check carries check_number)
+    if (g('side') === 'in') where.push('t.amount < 0'); else if (g('side') === 'out') where.push('t.amount > 0');
+    const how = g('how');
+    if (how === 'online') where.push("json_extract(t.raw, '$.payment_channel') = 'online'");
+    else if (how === 'store') where.push("json_extract(t.raw, '$.payment_channel') = 'in store'");
+    else if (how === 'check') where.push("json_extract(t.raw, '$.check_number') IS NOT NULL AND json_extract(t.raw, '$.check_number') <> ''");
+    else if (how === 'other') where.push("COALESCE(json_extract(t.raw, '$.payment_channel'), 'other') NOT IN ('online', 'in store') AND (json_extract(t.raw, '$.check_number') IS NULL OR json_extract(t.raw, '$.check_number') = '')");
     if (g('account')) { where.push('t.account_name = ?'); p.push(g('account')); }
     const by_status = Object.fromEntries((await dbAll("SELECT status, COUNT(*) n FROM bk_transactions WHERE status NOT IN ('removed', 'excluded') GROUP BY status")).map(r => [r.status, r.n]));
     by_status.new_status = by_status.new || 0;   // lines the AI has not rated yet
