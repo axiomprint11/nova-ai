@@ -1328,7 +1328,12 @@
       pop.querySelector('.ico-none').hidden = n > 0;
     };
     q.onkeydown = (e) => { if (e.key === 'Enter') { const b = Array.from(pop.querySelectorAll('[data-i]')).find(x => x.style.display !== 'none'); if (b) b.click(); } if (e.key === 'Escape') close(); };
-    const r = anchor.getBoundingClientRect(); pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 376)) + 'px'; pop.style.top = (r.bottom + 6 + 330 > window.innerHeight ? r.top - 6 - pop.offsetHeight : r.bottom + 6) + 'px';
+    // 1.19.52: under the icon, left-aligned with it; the grid shrinks to the room there is (or opens above when that is roomier)
+    const r = anchor.getBoundingClientRect(), grid = pop.querySelector('.ico-grid');
+    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)) + 'px';
+    const below = window.innerHeight - r.bottom - 14, above = r.top - 14, other = pop.offsetHeight - grid.offsetHeight;
+    if (below >= 240 || below >= above) { grid.style.maxHeight = Math.max(120, Math.min(300, below - other)) + 'px'; pop.style.top = (r.bottom + 6) + 'px'; }
+    else { grid.style.maxHeight = Math.max(120, Math.min(300, above - other)) + 'px'; pop.style.top = Math.max(8, r.top - 6 - pop.offsetHeight) + 'px'; }
     const close = () => { pop.remove(); document.removeEventListener('click', away, true); };
     const away = (e) => { if (!pop.contains(e.target) && e.target !== anchor) close(); };
     setTimeout(() => document.addEventListener('click', away, true), 0);
