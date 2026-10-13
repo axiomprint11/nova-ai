@@ -50,7 +50,8 @@ The clock is inside Nova (pm2), no Inngest / Trigger.dev: one process, one SQLit
 
 ### Bank feed (1.19.54)
 Its own top tab (Purchases · Bank feed · Bills · Inbox) with **All · New · Pending · Categorized** sub-tabs in the Bills
-style, each with its count, and a Search box; it opens on Pending. Every column header is a filter, and the AI rates every line. A freshly synced line shows "rating…"
+style, each with its count, **Stats** at the right (the charts: totals, spend by month, by type of expense, top vendors,
+with a period row and a Filter… button that opens the filtered list) and a Search box; it opens on Pending. Every column header is a filter, and the AI rates every line. A freshly synced line shows "rating…"
 under its Category picker; a few seconds later the AI's suggestion appears there — "✦ Paper 95% [Use]" — with its
 reason on hover. Use picks it (same as choosing it yourself), or pick another category. Nothing is categorized
 without a person. The Date column shows when the line was synced (the bank's own date, and whether it is still pending

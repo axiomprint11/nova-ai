@@ -23,10 +23,10 @@
   let billSub = 'pending';
   const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, equipment: loadEquipment, chart: loadChart, rules: loadRules, materials: loadMaterials }, first: 'vendors' },
     purchases: { bar: 'subPurchases', subs: { list: () => loadPurchases('list'), waiting: () => loadPurchases('waiting'), notreceived: () => loadPurchases('notreceived') }, first: 'list' },
-    bank: { bar: 'subBank', subs: { all: () => loadTxns(''), new: () => loadTxns('new'), pending: () => loadTxns('pending'), categorized: () => loadTxns('categorized') }, first: 'pending' },   // 1.19.54: Bank feed is a top tab
+    bank: { bar: 'subBank', subs: { all: () => loadTxns(''), new: () => loadTxns('new'), pending: () => loadTxns('pending'), categorized: () => loadTxns('categorized'), stats: () => loadTxns('stats') }, first: 'pending' },   // 1.19.54: Bank feed is a top tab
     bills: { bar: 'subBills', subs: { all: () => loadBills('all'), pending: () => loadBills('pending'), approved: () => loadBills('approved'), scheduled: () => loadBills('scheduled'), paid: () => loadBills('paid'), rejected: () => loadBills('rejected') }, first: 'pending' } };
   // sub tabs as chips with an icon each (same look as the Inbox baskets)
-  const SUB_ICON = { all: 'folder', new: 'sparkles', categorized: 'check', pending: 'clock', approved: 'check', scheduled: 'calendar', paid: 'dollar', rejected: 'x', list: 'cart', bank: 'landmark', waiting: 'clock', notreceived: 'package', vendors: 'users', equipment: 'printer', chart: 'layers', rules: 'target', materials: 'box' };
+  const SUB_ICON = { all: 'landmark', new: 'sparkles', categorized: 'check', stats: 'trendup', pending: 'clock', approved: 'check', scheduled: 'calendar', paid: 'dollar', rejected: 'x', list: 'cart', bank: 'landmark', waiting: 'clock', notreceived: 'package', vendors: 'users', equipment: 'printer', chart: 'layers', rules: 'target', materials: 'box' };
   document.querySelectorAll('.bk-sub button').forEach(b => { b.onclick = () => show(b.closest('.bk-view').dataset.v, b.dataset.s); });
   $('puQ').onkeydown = (e) => { if (e.key === 'Enter') loadPurchases(lastSub.purchases); };   // 1.19.29: one search for every Purchases view
   $('txQ').onkeydown = (e) => { if (e.key === 'Enter') loadTxns(); };
@@ -509,8 +509,9 @@
       el.querySelector('[data-no]').onclick = () => done(null); el.querySelector('[data-yes]').onclick = submit; el.onclick = (e) => { if (e.target === el) done(null); };
     });
   }
+  let txStats = false;
   async function loadTxns(sub) {
-    if (typeof sub === 'string') txnSt = sub;   // '' = All
+    if (typeof sub === 'string') { txStats = sub === 'stats'; txnSt = txStats ? 'categorized' : sub; }   // '' = All; Stats = the charts over the categorized lines
     const v = $('vTxns');
     if (!ov) await overview();
     const st = txnSt, q = ($('txQ') || {}).value || '';
@@ -522,10 +523,10 @@
     const j = await api('/api/bookkeeping/transactions' + qs);
     const bs = j.by_status || {};
     $('nTxAll').textContent = (bs.pending || 0) + (bs.categorized || 0); $('nTxNew').textContent = bs.new || 0; $('nTxPending').textContent = bs.pending || 0; $('nTxCategorized').textContent = bs.categorized || 0;
-    document.querySelectorAll('#subBank button').forEach(b => b.classList.toggle('on', b.dataset.s === (st || 'all')));
+    document.querySelectorAll('#subBank button').forEach(b => b.classList.toggle('on', b.dataset.s === (txStats ? 'stats' : st || 'all')));
     const chip = (k, l, n) => '<button class="ib-chip' + (st === k ? ' on' : '') + '" data-st="' + k + '">' + l + (n == null ? '' : ' (' + n + ')') + '</button>';
     const syncIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/></svg>';
-    const T = j.totals || {}, chart = cat ? report(T) : '';
+    const T = j.totals || {}, chart = cat && txStats ? report(T) : '';   // 1.19.55: the charts live under Stats
     const PERIODS = [['30', 'Last 30 days'], ['month', 'This month'], ['last', 'Last month'], ['90', 'Last 90 days'], ['year', 'This year'], ['all', 'All time']].map(([v, l]) => ({ v, l }));
     const anyF = TF.type || TF.category || TF.vendor_id || TF.source || TF.min || TF.max || TF.account || TF.period !== '30' || TF.from || TF.to;
     const fbar = anyF ? '<div class="tx-filters"><span class="bk-muted">Filtered</span><button class="bk-btn sm" id="tfClear">Clear filters</button></div>' : '';
@@ -543,6 +544,9 @@
     // 1.19.47: one row = date (+ when it was synced) · vendor (logo, name, Link / Change, the machine's near match with its
     // score) · description · account ("Wells Fargo - 6595" with the bank's logo) · amount · category.
     const usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : String(d || ''); };
+    // 1.19.55: the Date column is two lines — "Oct 12, 2026" over "5:17pm"
+    const laD2 = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(ts) ? '' : 'Z')); if (isNaN(d)) return ''; const o = { timeZone: 'America/Los_Angeles' }; return esc(d.toLocaleDateString([], Object.assign({ month: 'short', day: 'numeric', year: 'numeric' }, o))) + '<div class="bk-dim">' + esc(d.toLocaleTimeString([], Object.assign({ hour: 'numeric', minute: '2-digit' }, o)).replace(' ', '').toLowerCase()) + '</div>'; };
+    const CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
     const laT = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(ts) ? '' : 'Z')); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }); };
     const vlogo = (name, photo) => photo ? '<img class="bk-logo bk-vl" src="' + esc(photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;bk-logo bk-vl ph&quot;>' + esc(String(name || '?').charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo bk-vl ph' + (name ? '' : ' none') + '">' + esc(name ? String(name).charAt(0).toUpperCase() : '?') + '</span>';
     const kindTag = (t) => t.vendor_source === 'suppliers' ? 'supplier' : t.vendor_source === 'vendors' ? 'vendor' : (t.vendor_kind || 'from a bill');
@@ -554,17 +558,19 @@
     };
     const bankCell = (t) => '<div class="tx-bank">' + (t.bank_logo ? '<img src="' + esc(t.bank_logo) + '" alt="">' : '<span class="tx-bank-ph" style="' + (t.bank_color ? 'background:' + esc(t.bank_color) : '') + '">' + esc(String(t.institution || t.account_name || '?').charAt(0)) + '</span>') +
       '<div><b>' + esc(t.institution || 'Bank') + (t.mask ? ' - ' + esc(t.mask) : '') + '</b>' + (t.account_name ? '<div class="bk-dim">' + esc(t.account_name) + '</div>' : '') + '</div></div>';
-    v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top"><span class="bk-muted">' + (j.matched != null ? j.matched : (j.transactions || []).length) + ' ' + (st ? (STL[st] || '').toLowerCase() + ' ' : '') + 'line' + (j.matched === 1 ? '' : 's') + (TF.period === '30' && !TF.from ? ' in the last 30 days' : '') + ((j.transactions || []).length < (j.matched || 0) ? ' · showing the first ' + j.transactions.length : '') + '</span><span class="sp"></span><button class="bk-btn ico" id="syncNow" title="Sync with Bank" aria-label="Sync with Bank">' + syncIcon + '</button></div>' + fbar + chart +
-      '<table class="bk tx-table"><thead><tr><th class="tx-date">' + thFilter('date', 'Date', FO.date) + '</th><th>' + thFilter('vendor', 'Vendor', FO.vendor, TF.vendor_id) + '</th><th>Description</th><th>' + thFilter('account', 'Account', FO.account, TF.account) + '</th><th class="num">' + thFilter('amount', 'Amount', FO.amount) + '</th><th>' + thFilter('type', 'Category', FO.type, TF.type ? 'T:' + TF.type : TF.category ? 'C:' + TF.category : '') + '</th><th>Status</th></tr></thead><tbody>' +
-      (j.transactions || []).map(t => '<tr><td class="tx-date" title="Synced from the bank · bank date ' + esc(usD(t.date)) + (t.pending ? ' (still pending at the bank)' : '') + '">' + esc(laT(t.created_at)) + '</td>' +
-        '<td>' + vendorCell(t) + '</td><td>' + esc(t.merchant || t.name) + (t.merchant && t.merchant !== t.name ? '<div class="bk-muted">' + esc(t.name) + '</div>' : '') +
-        (t.plaid_category ? '<div class="bk-dim">bank: ' + esc(t.plaid_category) + '</div>' : '') + '</td><td>' + bankCell(t) + '</td>' +
+    const statsBar = txStats ? '<div class="bk-filters tx-stats-bar"><span class="bk-muted">Period</span>' + PERIODS.map(pp => '<button class="ib-chip sm' + (TF.period === pp.v && !TF.from ? ' on' : '') + '" data-period="' + pp.v + '">' + esc(pp.l) + '</button>').join('') + '<span class="sp"></span><button class="bk-btn sm" id="tfMore" title="Vendor, account, amount and category filters">' + (anyF && TF.period === '30' ? 'Filtered' : 'Filter…') + '</button></div>' : '';
+    v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top"><span class="bk-muted">' + (j.matched != null ? j.matched : (j.transactions || []).length) + ' ' + (st ? (STL[st] || '').toLowerCase() + ' ' : '') + 'line' + (j.matched === 1 ? '' : 's') + (TF.period === '30' && !TF.from ? ' in the last 30 days' : '') + ((j.transactions || []).length < (j.matched || 0) ? ' · showing the first ' + j.transactions.length : '') + '</span><span class="sp"></span><button class="bk-btn ico" id="syncNow" title="Sync with Bank" aria-label="Sync with Bank">' + syncIcon + '</button></div>' + fbar + statsBar + chart +
+      (txStats ? '' : '<table class="bk tx-table"><thead><tr><th class="tx-date">' + thFilter('date', 'Date', FO.date) + '</th><th>' + thFilter('vendor', 'Vendor', FO.vendor, TF.vendor_id) + '</th><th>Description</th><th>' + thFilter('account', 'Account', FO.account, TF.account) + '</th><th class="num">' + thFilter('amount', 'Amount', FO.amount) + '</th><th>' + thFilter('type', 'Category', FO.type, TF.type ? 'T:' + TF.type : TF.category ? 'C:' + TF.category : '') + '</th><th>Status</th></tr></thead><tbody>' +
+      (j.transactions || []).map(t => '<tr><td class="tx-date" title="Synced from the bank · bank date ' + esc(usD(t.date)) + (t.pending ? ' (still pending at the bank)' : '') + '">' + laD2(t.created_at) + '</td>' +
+        '<td>' + vendorCell(t) + '</td><td class="tx-desc-td"><div class="tx-desc"><span class="tx-desc-n">' + esc(t.merchant || t.name) + '</span>' +
+        ((t.merchant && t.merchant !== t.name) || t.plaid_category ? '<button type="button" class="tx-more" title="More">' + CHEV + '</button><div class="tx-desc-more" hidden>' + (t.merchant && t.merchant !== t.name ? '<div class="bk-muted">' + esc(t.name) + '</div>' : '') + (t.plaid_category ? '<div class="bk-dim">bank: ' + esc(t.plaid_category) + '</div>' : '') + '</div>' : '') + '</div></td><td>' + bankCell(t) + '</td>' +
         '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '">' + usd(-t.amount) + '</td>' +
         '<td data-txid="' + t.id + '">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : 'Choose…') +
         (!t.category && t.ai_category ? '<div class="tx-ai" title="' + esc(t.ai_reason || '') + '">' + aiIcon + ' <b>' + esc(t.ai_category) + '</b>' + (t.ai_conf != null ? ' <span class="tx-pct">' + Math.round(t.ai_conf * 100) + '%</span>' : '') + ' <button type="button" class="bk-btn sm p tx-use" data-aicat="' + esc(t.ai_category) + '">Use</button></div>' :
           !t.category && t.status === 'new' ? '<div class="tx-ai bk-dim">' + aiIcon + ' rating…</div>' : '') + '</td>' +
         '<td><span class="bk-tag ' + esc(t.status) + '" title="' + esc(t.category ? 'Set ' + (t.category_source === 'approved' ? 'from the AI\'s proposal' : t.category_source === 'rule' ? 'by a vendor rule' : 'by hand') : t.status === 'pending' ? 'The AI has a suggestion — pick it or choose another' : 'Just synced, not rated yet') + '">' + esc(STL[t.status] || t.status) + '</span>' + (t.category && t.category_source ? '<div class="bk-dim">' + esc(t.category_source) + '</div>' : '') + '</td></tr>').join('') + '</tbody></table>' +
-      (!(j.transactions || []).length ? '<div class="bk-muted" style="padding:14px 0">' + (st === 'new' ? 'Nothing came in from the bank in the last 24 hours.' : 'No transactions here — connect a bank under Settings, then Sync.') + '</div>' : '') + '</div>';
+      (!(j.transactions || []).length ? '<div class="bk-muted" style="padding:14px 0">' + (st === 'new' ? 'Nothing came in from the bank in the last 24 hours.' : 'No transactions here — connect a bank under Settings, then Sync.') + '</div>' : '')) + '</div>';
+    if ($('tfMore')) $('tfMore').onclick = () => { txStats = false; txnSt = 'categorized'; lastSub.bank = 'categorized'; document.querySelectorAll('#subBank button').forEach(b => b.classList.toggle('on', b.dataset.s === 'categorized')); loadTxns(); };
     v.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { txnSt = b.dataset.st; loadTxns(); });
     const saveTF = () => { try { localStorage.setItem('bk_txn_filters', JSON.stringify(TF)); } catch (e) {} loadTxns(); };
     v.querySelectorAll('[data-period]').forEach(b => b.onclick = () => { TF.period = b.dataset.period; saveTF(); });
@@ -583,6 +589,7 @@
     // Picking a category sets it on the spot (no Set button); the row flashes green.
     v.querySelectorAll('td[data-txid]').forEach(td => { const wrap = td.querySelector('.ckp'), inp = td.querySelector('input.tx-cat'); let last = inp.value;
       wrap.addEventListener('change', async () => { if (inp.value === last || !inp.value) return; last = inp.value; const r = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/category', { category: inp.value }); const tr = td.closest('tr'); tr.classList.add(r.ok ? 'saved' : 'failed'); setTimeout(() => { tr.classList.remove('saved', 'failed'); loadTxns(); overview(); }, 700); }); });
+    v.querySelectorAll('.tx-more').forEach(b => b.onclick = () => { const m = b.nextElementSibling; m.hidden = !m.hidden; b.classList.toggle('open', !m.hidden); });
     v.querySelectorAll('.tx-use').forEach(b => b.onclick = () => { const td = b.closest('td'); ckpSet(td.querySelector('.ckp'), [b.dataset.aicat]); });
     clearTimeout(txnPoll); if (j.categorizing) txnPoll = setTimeout(() => { const on = document.querySelector('.bk-view.on'); if (on && on.dataset.v === 'bank') loadTxns(); }, 8000);   // the AI is rating new lines — refresh to show its suggestions
     const setV = async (id, vid) => { const r = await post('/api/bookkeeping/transactions/' + id + '/vendor', { vendor_id: vid }); if (!r.ok) alert(r.error || 'Could not link'); loadTxns(); };

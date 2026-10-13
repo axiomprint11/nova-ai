@@ -1650,7 +1650,7 @@ module.exports = function mountBookkeeping(app, deps) {
     } catch (e) {}
     res.json({ ok: true, me: userId(req), people, settings: Object.assign({}, s, { chat_webhook: s.chat_webhook ? '(set)' : '' }), baskets: basketDefs(s), basket_defaults: BASKET_DEFAULTS, chart: chartOf(s), counts, brief, last_run: lastRun, running: !!running,
       connections: {
-        plaid: { configured: plaidReady(), env: PLAID_ENV, items, leftovers: items.some(i => i.env && i.env !== PLAID_ENV) || !!(await dbGet("SELECT 1 FROM bk_purchases p WHERE p.txn_ids <> '[]' AND p.bill_id IS NULL AND p.confirm_email_id IS NULL AND NOT EXISTS (SELECT 1 FROM bk_transactions t WHERE p.txn_ids LIKE '%' || t.id || '%') LIMIT 1").catch(() => null)) },
+        plaid: { configured: plaidReady(), env: PLAID_ENV, items, leftovers: items.some(i => i.env && i.env !== PLAID_ENV) || !!(await dbGet("SELECT 1 FROM bk_transactions t WHERE t.status <> 'removed' AND (t.item_id NOT IN (SELECT item_id FROM bk_accounts) OR t.account_name LIKE 'Plaid %')")) || !!(await dbGet("SELECT 1 FROM bk_purchases p WHERE p.txn_ids <> '[]' AND p.bill_id IS NULL AND p.confirm_email_id IS NULL AND NOT EXISTS (SELECT 1 FROM bk_transactions t WHERE p.txn_ids LIKE '%' || t.id || '%') LIMIT 1").catch(() => null)) },
         gmail: { inbox: INBOX, key: fs.existsSync(keyPath), last_scan: (await dbGet("SELECT at FROM bk_audit WHERE action = 'gmail.scan' ORDER BY id DESC LIMIT 1") || {}).at || null,
           push: !!env('BOOKKEEPER_PUSH_TOKEN'), topic: !!env('BOOKKEEPER_PUBSUB_TOPIC'), watch_expires: s.gmail_watch_expires || null, poll_min: s.poll_min },
         chat: { app_audience: !!env('BOOKKEEPER_CHAT_AUDIENCE'), space: s.chat_space || null, webhook: !!s.chat_webhook, events_url: NOVA_URL + '/api/bookkeeping/chat/events',
@@ -2315,8 +2315,13 @@ module.exports = function mountBookkeeping(app, deps) {
     try {
       const items = await dbAll("SELECT id, item_id, institution FROM bk_accounts WHERE env = 'sandbox' OR env IS NULL");
       let txns = 0, purchases = 0;
-      for (const it of items) {
-        const ids = (await dbAll('SELECT id FROM bk_transactions WHERE item_id = ?', [it.item_id])).map(r => r.id);
+      // 1.19.55: test lines also survive as orphans — their connection already removed, or Plaid's sandbox account
+      // names ("Plaid Checking", "Plaid CD") — so sweep those too, not only the connections still listed
+      const groups = items.map(it => ({ it, where: 't.item_id = ?', args: [it.item_id] }));
+      groups.push({ it: null, where: "(t.item_id NOT IN (SELECT item_id FROM bk_accounts) OR t.account_name LIKE 'Plaid %')", args: [] });
+      for (const g of groups) {
+        const it = g.it;
+        const ids = (await dbAll('SELECT t.id FROM bk_transactions t WHERE ' + g.where, g.args)).map(r => r.id);
         if (ids.length) {
           const inList = '(' + ids.map(() => '?').join(',') + ')';
           await dbRun("DELETE FROM bk_proposals WHERE ref_table = 'bk_transactions' AND ref_id IN " + inList, ids).catch(() => {});
@@ -2330,7 +2335,7 @@ module.exports = function mountBookkeeping(app, deps) {
           }
           await dbRun('DELETE FROM bk_transactions WHERE id IN ' + inList, ids); txns += ids.length;
         }
-        await dbRun('DELETE FROM bk_accounts WHERE id = ?', [it.id]);
+        if (it) await dbRun('DELETE FROM bk_accounts WHERE id = ?', [it.id]);
       }
       purchases += await dropOrphanPurchases();
       await dbRun("DELETE FROM bk_proposals WHERE ref_table = 'bk_transactions' AND ref_id NOT IN (SELECT id FROM bk_transactions)").catch(() => {});
