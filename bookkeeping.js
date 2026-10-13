@@ -1860,7 +1860,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const cut = newCutoff();
     if (st === 'pending') { where.push("t.status IN ('new', 'pending') AND t.created_at < ? AND t.date >= date('now', '-90 days')"); p.push(cut); }
     else if (st === 'old') where.push("t.status IN ('new', 'pending') AND t.date < date('now', '-90 days')");
-    else if (st === 'new') { where.push("t.created_at >= ?"); p.push(cut); }   // 1.19.113: Today = everything synced today, filed by rule or not
+    else if (st === 'new') { where.push("t.status IN ('new', 'pending') AND t.created_at >= ?"); p.push(cut); }   // 1.19.115: Today = synced today and still open; a categorized line moves to Categorized
     else if (st) { where.push('t.status = ?'); p.push(st); }
     if (q) { where.push('(t.name LIKE ? OR t.merchant LIKE ? OR t.category LIKE ? OR v.name LIKE ?)'); p.push('%' + q + '%', '%' + q + '%', '%' + q + '%', '%' + q + '%'); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(g('from'))) { where.push('t.date >= ?'); p.push(g('from')); }
@@ -1875,8 +1875,8 @@ module.exports = function mountBookkeeping(app, deps) {
     if (g('account')) { where.push('t.account_name = ?'); p.push(g('account')); }
     const by_status = Object.fromEntries((await dbAll("SELECT status, COUNT(*) n FROM bk_transactions WHERE status NOT IN ('removed', 'excluded') GROUP BY status")).map(r => [r.status, r.n]));
     by_status.new_status = by_status.new || 0;   // lines the AI has not rated yet
-    by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status NOT IN ('removed', 'excluded') AND created_at >= ?", [cut])).n;   // 1.19.113: any state
-    by_status.new_open = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND created_at >= ?", [cut])).n;
+    by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND created_at >= ?", [cut])).n;
+    by_status.new_open = by_status.new;
     by_status.old = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND date < date('now', '-90 days')")).n;
     by_status.pending = (by_status.new_status || 0) + (by_status.pending || 0) - by_status.new_open - by_status.old;   // the open lines older than a day, within 90 days
     const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id LEFT JOIN bk_transactions tr ON tr.id = t.transfer_of LEFT JOIN bk_accounts tra ON tra.item_id = tr.item_id LEFT JOIN bk_loans lo ON lo.id = t.loan_id LEFT JOIN bk_proposals pr ON pr.id = t.proposal_id LEFT JOIN bk_transactions ro ON ro.id = t.refund_of LEFT JOIN bk_transactions rb ON rb.refund_of = t.id WHERE ' + where.join(' AND ');
