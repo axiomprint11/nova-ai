@@ -129,7 +129,7 @@
   const thActive = (spec, cur) => Array.isArray(spec) ? !!cur : spec.type === 'text' ? !!spec.value : !!(spec.from || spec.to || (spec.period && spec.period !== spec.defaultPeriod));
   const thFilter = (key, label, spec, cur) => {
     const on = thActive(spec, cur); let val = '';
-    if (Array.isArray(spec)) { const o = spec.find(x => x.v === cur); val = o && cur ? (o.t != null ? esc(o.t) : o.l) : ''; }
+    if (Array.isArray(spec)) { const o = spec.find(x => x.v === cur); val = o && (cur || o.h != null) ? (o.h != null ? o.h : o.t != null ? esc(o.t) : o.l) : ''; }   // o.h = html shown in the header (an icon slot, kept even when nothing is picked so the header keeps its width)
     else if (spec.type === 'text') val = spec.value ? esc(spec.value) : '';
     else if (spec.type === 'range') { const pr = (spec.presets || []).find(x => x.v === spec.period); val = spec.period && spec.period !== 'custom' && spec.period !== spec.defaultPeriod && pr ? esc(pr.l) : (spec.from || spec.to) ? esc(spec.from && spec.to ? spec.from + ' – ' + spec.to : spec.from ? (spec.kind === 'date' ? 'from ' : '≥ ') + spec.from : (spec.kind === 'date' ? 'to ' : '≤ ') + spec.to) : ''; }
     return '<button type="button" class="thf' + (on ? ' on' : '') + '" data-thf="' + esc(key) + '" data-v="' + esc(cur || '') + '"><span class="thf-l">' + esc(label) + '</span>' + (val ? ' <b>' + val + '</b>' : '') + FUNNEL + '</button>';
@@ -532,13 +532,16 @@
     const PERIODS = [['30', 'Last 30 days'], ['month', 'This month'], ['last', 'Last month'], ['90', 'Last 90 days'], ['year', 'This year'], ['all', 'All time']].map(([v, l]) => ({ v, l }));
     const anyF = TF.type || TF.category || TF.vendor_id || TF.vkind || TF.source || TF.min || TF.max || TF.account || TF.period !== '30' || TF.from || TF.to;
     const fbar = anyF ? '<div class="tx-filters"><span class="bk-muted">Filtered</span><button class="bk-btn sm" id="tfClear">Clear filters</button></div>' : '';
+    // 1.19.58: short — logo + "WF ••0489"; the full bank and account name on hover
+    const BANK_ABBR = { 'wells fargo': 'WF', 'american express': 'Amex', 'bank of america': 'BofA', 'jpmorgan chase': 'Chase', 'capital one': 'CapOne', 'us bank': 'USB', 'u.s. bank': 'USB', 'citibank': 'Citi' };
+    const bankAbbr = (n) => { const k = String(n || '').toLowerCase().replace(/[®™]/g, '').trim(); if (BANK_ABBR[k]) return BANK_ABBR[k]; const w = k.split(/\s+/).filter(Boolean); return w.length === 1 ? n.slice(0, 6) : w.map(x => x.charAt(0).toUpperCase()).join('').slice(0, 4); };
     const FO = {
       status: [{ v: 'pending', l: 'Pending — no category yet', t: 'Pending', n: bs.pending || 0 }, { v: 'new', l: 'New — synced in the last 24 hours', t: 'New', n: bs.new || 0 }, { v: 'categorized', l: 'Categorized', n: bs.categorized || 0 }, { v: '', l: 'All statuses' }],
       type: [{ v: '', l: 'All categories' }].concat(chart_types().map(t => ({ v: 'T:' + t.name, l: tile(t.color, t.icon, 'sm', '') + ' ' + esc(t.name) })), cat ? (T.by_category || []).map(c => ({ v: 'C:' + c.category, l: catLabel(c.category), n: c.n })) : []),
       vkind: [{ v: '', l: 'All' }, { v: 'supplier', l: '<span class="bk-src supplier">supplier</span>', t: 'Supplier' }, { v: 'vendor', l: '<span class="bk-src vendor">vendor</span>', t: 'Vendor' }, { v: 'nova', l: '<span class="bk-src nova">vendor' + AI_I + '</span>', t: 'Vendor ✦' }, { v: 'bill', l: '<span class="bk-src bill">from a bill</span>', t: 'From a bill' }, { v: 'none', l: 'Not linked' }],
       vendor: [{ v: '', l: 'All companies' }, { v: 'none', l: 'Not linked' }].concat((j.vendors || []).map(x => ({ v: String(x.id), l: esc(x.name) })), TF.vendor_id && TF.vendor_id !== 'none' && !(j.vendors || []).some(x => String(x.id) === TF.vendor_id) ? [{ v: TF.vendor_id, l: esc(TF.vendor_name || 'Company') }] : []),
       source: [{ v: '', l: 'Any' }, { v: 'approved', l: 'Approved (AI proposed)' }, { v: 'manual', l: 'Manual' }, { v: 'rule', l: 'By rule' }],
-      account: [{ v: '', l: 'All accounts' }].concat((j.accounts || []).map(a => ({ v: a.account_name, l: esc(a.label), t: a.short || a.label }))),
+      account: [{ v: '', l: 'All accounts', h: '<span class="tx-acc-h empty"></span>' }].concat((j.accounts || []).map(a => { const ico = a.logo ? '<img class="tx-acc-i" src="' + esc(a.logo) + '" alt="">' : '<span class="tx-acc-i ph" style="' + (a.color ? 'background:' + esc(a.color) : '') + '">' + esc(String(a.institution || a.account_name || '?').charAt(0)) + '</span>'; return { v: a.account_name, l: ico + ' ' + esc(bankAbbr(a.institution || 'Bank')) + (a.mask ? ' <span class="tx-mask">••' + esc(a.mask) + '</span>' : ''), h: '<span class="tx-acc-h" title="' + esc(a.label) + '">' + ico + '</span>' }; })),
       date: { type: 'range', kind: 'date', from: TF.period === 'custom' ? TF.from : '', to: TF.period === 'custom' ? TF.to : '', period: TF.period, defaultPeriod: '30', presets: PERIODS },
       amount: { type: 'range', kind: 'number', from: TF.min, to: TF.max }
     };
@@ -571,9 +574,6 @@
       // 1.19.67: no vendor yet — the Link / Create icons sit under the photo where the kind pill would be
       return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft">' + (t.plaid_logo ? vlogo(t.merchant || t.name, t.plaid_logo) : vlogo(null, null)) + '<div class="tx-vacts"><a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Link to a vendor">' + LINKI + '</a><a href="#" class="bl-vact tx-vico" data-newv="' + t.id + '" title="Create a Nova vendor from this line">' + PLUSV + '</a></div></div><div class="bl-vname"><span class="bl-unlinked">Not linked</span>' + sug + '</div></div>';
     };
-    // 1.19.58: short — logo + "WF ••0489"; the full bank and account name on hover
-    const BANK_ABBR = { 'wells fargo': 'WF', 'american express': 'Amex', 'bank of america': 'BofA', 'jpmorgan chase': 'Chase', 'capital one': 'CapOne', 'us bank': 'USB', 'u.s. bank': 'USB', 'citibank': 'Citi' };
-    const bankAbbr = (n) => { const k = String(n || '').toLowerCase().replace(/[®™]/g, '').trim(); if (BANK_ABBR[k]) return BANK_ABBR[k]; const w = k.split(/\s+/).filter(Boolean); return w.length === 1 ? n.slice(0, 6) : w.map(x => x.charAt(0).toUpperCase()).join('').slice(0, 4); };
     const bankCell = (t) => '<div class="tx-bank" title="' + esc((t.institution || 'Bank') + (t.mask ? ' - ' + t.mask : '') + (t.account_name ? ' · ' + t.account_name : '')) + '">' + (t.bank_logo ? '<img src="' + esc(t.bank_logo) + '" alt="">' : '<span class="tx-bank-ph" style="' + (t.bank_color ? 'background:' + esc(t.bank_color) : '') + '">' + esc(String(t.institution || t.account_name || '?').charAt(0)) + '</span>') +
       '<b>' + esc(t.institution ? bankAbbr(t.institution) : 'Bank') + (t.mask ? ' <span class="tx-mask">••' + esc(t.mask) + '</span>' : '') + '</b></div>';
     const statsBar = txStats ? '<div class="bk-filters tx-stats-bar"><span class="bk-muted">Period</span>' + PERIODS.map(pp => '<button class="ib-chip sm' + (TF.period === pp.v && !TF.from ? ' on' : '') + '" data-period="' + pp.v + '">' + esc(pp.l) + '</button>').join('') + '<span class="sp"></span><button class="bk-btn sm" id="tfMore" title="Vendor, account, amount and category filters">' + (anyF && TF.period === '30' ? 'Filtered' : 'Filter…') + '</button></div>' : '';

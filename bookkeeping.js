@@ -1753,9 +1753,9 @@ module.exports = function mountBookkeeping(app, deps) {
     }
     if (st === 'categorized' || req.query.lists) {
       // 1.19.49: the Account filter shows "Wells Fargo - 6595", the Vendor filter every vendor seen on a bank line
-      const accs = await dbAll("SELECT DISTINCT t.account_name, t.account_ref, ba.institution, ba.accounts, ba.excluded FROM bk_transactions t JOIN bk_accounts ba ON ba.item_id = t.item_id WHERE t.account_name IS NOT NULL ORDER BY 1");
+      const accs = await dbAll("SELECT DISTINCT t.account_name, t.account_ref, ba.institution, ba.accounts, ba.excluded, ba.logo, ba.color FROM bk_transactions t JOIN bk_accounts ba ON ba.item_id = t.item_id WHERE t.account_name IS NOT NULL ORDER BY 1");
       out.accounts = accs.filter(r => { let x = []; try { x = JSON.parse(r.excluded || '[]'); } catch (e) {} return x.indexOf(r.account_ref) < 0; })
-        .map(r => { let a = null; try { a = JSON.parse(r.accounts || '[]').find(x => x.account_id === r.account_ref); } catch (e) {} const short = (r.institution || 'Bank') + (a && a.mask ? ' - ' + a.mask : ''); return { account_name: r.account_name, short, label: short + (r.account_name ? ' · ' + r.account_name : '') }; });
+        .map(r => { let a = null; try { a = JSON.parse(r.accounts || '[]').find(x => x.account_id === r.account_ref); } catch (e) {} const short = (r.institution || 'Bank') + (a && a.mask ? ' - ' + a.mask : ''); return { account_name: r.account_name, short, label: short + (r.account_name ? ' · ' + r.account_name : ''), institution: r.institution, mask: a && a.mask ? a.mask : '', logo: r.logo, color: r.color }; });
       out.vendors = await dbAll("SELECT DISTINCT v.id, v.name FROM bk_transactions t JOIN bk_vendors v ON v.id = t.vendor_id ORDER BY v.name");
     }
     res.json(out);
