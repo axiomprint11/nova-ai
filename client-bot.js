@@ -648,6 +648,18 @@ module.exports = function mountClientBot(app, deps) {
       size: { type: 'string', description: 'The size they asked for, e.g. "9ft", "24 x 36". Optional.' }
     }, required: ['product_id'] }
   }, {
+    name: 'shipping_rates',
+    description: 'UPS and FedEx shipping prices AND transit days from our Glendale, CA shop to the customer\'s US ZIP code — live carrier rates, with UPS\'s own transit-time table. Call it when the customer asks what shipping costs, how long shipping / UPS Ground takes, or when an order would arrive somewhere. Pass the product and options from the quote on screen so the weight and boxes are real; with just a ZIP it gives transit days for a typical parcel. Not for local delivery by our own driver (estimate_delivery).',
+    input_schema: { type: 'object', properties: {
+      zip: { type: 'string', description: 'Destination ZIP code, 5 digits. Required.' },
+      city: { type: 'string' }, state: { type: 'string', description: 'Two letters, if said.' },
+      address: { type: 'string', description: 'Street address if the customer gave one.' },
+      product_id: { type: 'integer', description: 'The product quoted, if any.' },
+      quantity: { type: 'integer' },
+      options: { type: 'object', additionalProperties: { type: 'string' }, description: 'Same option name -> choice map as price_product.' },
+      width: { type: 'number' }, height: { type: 'number' }
+    }, required: ['zip'] }
+  }, {
     name: 'estimate_installation',
     description: 'Estimate ON-SITE INSTALLATION at the customer\'s location (signs, panels, decals, window film, wall graphics, banners). AxiomPrint does installations. Uses the same rates as our team; distance is measured from our Glendale shop. Pass only what the customer said.',
     input_schema: { type: 'object', properties: {
@@ -1602,6 +1614,14 @@ module.exports = function mountClientBot(app, deps) {
       return { templates: shown.map(t => ({ size: t.size, option: t.option, applies_when: t.applies_when, file: t.file_name })),
         shown: 'The customer sees a Download button for each template. Do not paste links. Mention file prep basics only if asked.' };
     }
+    if (name === 'shipping_rates') {   // 1.19.142
+      if (!deps.Shipping) return { error: 'Shipping rates are not available right now.' };
+      let specs = null, qty = parseInt(input.quantity) || 0, width = input.width, height = input.height;
+      if (parseInt(input.product_id)) { try { const q = await deps.quoteProduct(parseInt(input.product_id), { options: input.options || {}, quantity: qty, width: input.width, height: input.height }); if (q && q.specs) { specs = q.specs; qty = q.quantity || qty; width = q.width || width; height = q.height || height; } } catch (e) {} }
+      const r = await deps.Shipping.rates({ product_id: parseInt(input.product_id) || 0, quantity: qty, specs, width, height, to: { zip: input.zip, city: input.city, state: input.state, address: input.address } });
+      return { ok: r.ok, ship_from: r.ship_from, ship_to: r.ship_to, weight_lb: r.weight_lb, ground: r.ground, services: (r.services || []).map(x => ({ carrier: x.carrier, service: x.service, price: x.price, business_days: x.business_days, delivery_date: x.delivery_date })), errors: r.errors, error: r.error,
+        how_to_answer: 'Lead with Ground: carrier, price and business days ("UPS Ground $14.86, 3 business days"). Business days start the day after the job is ready, and checkout re-rates shipping for the exact order, so call these estimates. Mention faster options only if they ask. Never make up a rate or a day count.' };
+    }
     if (name === 'estimate_installation' || name === 'estimate_delivery') {
       const isInstall = name === 'estimate_installation';
       const cfg = getInstallPricing();
@@ -1923,6 +1943,7 @@ module.exports = function mountClientBot(app, deps) {
       '19. GRAPHIC DESIGN AND FILE CHANGES: when the customer asks you to design, create, draw, edit, fix or change artwork or a file, say plainly that NovaAI cannot design or edit files yet, and that AxiomPrint offers in-house graphic design at $' + usd2(Number(rules.design_min || DEFAULT_DESIGN_MIN)).replace(/\.00$/, '') + '\u2013$' + usd2(Number(rules.design_max || DEFAULT_DESIGN_MAX)).replace(/\.00$/, '') + ' per hour depending on the project. ' +
         'Turn their request into pieces and hours with the DESIGN SERVICES guide below and call estimate_design; give its estimate and hours in one or two lines (never your own arithmetic). Then offer to price the printing too (price first, as usual). ' +
         'To go ahead with design, point them to ' + (rules.contact || DEFAULT_CONTACT) + '. Never claim you designed, edited or checked a file.',
+      '22. SHIPPING: when a customer asks what shipping costs, how long UPS / FedEx Ground takes, or when something would arrive at a ZIP or city, call shipping_rates with the ZIP and the product on the quote card (same product_id, quantity, options). The transit days come from UPS\'s own transit table for Glendale → that ZIP — quote them as data ("UPS Ground takes 3 business days to 10001"), never from memory. Business days start the day after the job is ready; checkout re-rates the exact order, so call the prices estimates. With no product, give the transit days and say the price depends on the job. For local delivery by our driver use estimate_delivery instead.',
       '21. PRINT / SAVE / EMAIL A QUOTE: every quote card has a **Download PDF** button (next to Edit) that saves the quote as a PDF with the options, prices, ready date and Order now links, and a **Send to me** button that emails it. When the customer asks to print, save, download, keep or email a quote or the prices, say exactly that in one sentence (e.g. "Press Download PDF on the quote card to print or save it, or Send to me to get it by email") — never suggest the browser\'s print function, never say you cannot. If they give you an email address, or they are signed in and ask you to email it, call email_quotes.',
       '',
       signIn,

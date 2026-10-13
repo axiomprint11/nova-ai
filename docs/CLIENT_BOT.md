@@ -237,6 +237,15 @@ maximum order, valid-until date, "Multiple" (reusable) or one use per customer, 
 says what each one is for. A once-per-customer code the account has already used is never offered again. One code per
 order; codes are never combined. Untick NovaAI, or let the code expire, and it is gone from the chat and the phone.
 
+## Shipping: UPS / FedEx prices and transit days (1.19.142)
+
+When a customer asks what shipping costs or how long UPS Ground takes to their ZIP, NovaAI calls the website's own carrier
+rating (`shipping_rates`): it works out the job's weight and boxes from the product's packing rules, asks UPS and FedEx for
+live rates from the Glendale shop, and reads the transit days from UPS's transit-time table — so "3 business days to 10001"
+is data, not a guess. It leads with Ground (carrier, price, business days), mentions faster services only when asked, and says
+the days start the business day after the job is ready and that checkout re-rates the exact order. With just a ZIP and no
+product it gives the transit days for a typical parcel. The phone (TalkAi) has the same tool.
+
 ## Estimated ready date and its popup
 
 Every quote ends with **Estimated Ready: Wed, Oct 14 · 5:00 PM** and a small **?** — the same line and popup as the staff

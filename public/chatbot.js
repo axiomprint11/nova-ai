@@ -1233,7 +1233,7 @@ function renderShelf() {
               '<button type="button" class="sa-view" data-view="' + i + '">View</button>' +
               '<button type="button" data-edit="' + i + '">Re-price</button>' +
               (q.quote_id
-                ? '<span class="sa-sent">\u2713 E' + q.quote_id + '</span>'
+                ? '<span class="sa-sent" title="' + (q.draft_id ? 'Draft D' + q.draft_id + ' with ' + (q.estimate_ids || []).length + ' quotes: ' + (q.estimate_ids || []).map(x => 'E' + x).join(', ') : 'Quote E' + q.quote_id) + '">\u2713 ' + (q.draft_id ? 'D' + q.draft_id : 'E' + q.quote_id) + '</span>'
                 : '<button type="button" class="sa-crm" data-crm="' + i + '">Send to CRM</button>') +
               '<button type="button" data-rm="' + i + '">Remove</button>' +
             '</div>' +
@@ -1374,11 +1374,12 @@ async function sendShelfItem(i, btn) {
         summary: 'Qty ' + Number(first.quantity || 0).toLocaleString(),
         specs: q.specs || [],
         ladder: q.rows,
+        client_id: chatClientId || undefined,
         client_hint: chatClientName || ''
       })
     });
     const j = await r.json();
-    if (j.ok) { q.quote_id = j.quote_id; }
+    if (j.ok) { q.quote_id = j.quote_id; q.draft_id = j.draft_id || null; q.estimate_ids = j.estimate_ids || null; }
     else if (btn) { btn.disabled = false; btn.textContent = 'Send to CRM'; btn.title = j.error || ''; }
   } catch (e) {
     if (btn) { btn.disabled = false; btn.textContent = 'Send to CRM'; }
@@ -1417,6 +1418,7 @@ async function sendQuoteToCrm(btn) {
                  (d.size ? ', ' + d.size : ''),
         specs: (d.specs || []).filter(sp => !sp.isVersionRow),
         ladder: ladder,
+        client_id: chatClientId || undefined,
         client_hint: chatClientName || ''
       })
     });
@@ -1431,7 +1433,7 @@ async function sendQuoteToCrm(btn) {
       return;
     }
     btn.className = 'pa-quote done';
-    btn.textContent = j.e_number ? 'Quote ' + j.e_number + ' created' : 'Quote created';
+    btn.textContent = j.d_number ? 'Draft ' + j.d_number + ' created (' + (j.estimate_ids || []).length + ' quotes)' : j.e_number ? 'Quote ' + j.e_number + ' created' : 'Quote created';
   } catch (e) {
     btn.disabled = false;
     btn.textContent = 'Send to CRM as a quote';

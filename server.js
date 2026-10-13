@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.19.141';
-const NOVA_BUILT = '10-13-2026 5:15pm';
+const NOVA_VERSION = '1.19.142';
+const NOVA_BUILT = '10-13-2026 6:05pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -697,6 +697,8 @@ const mountMcp = require('./mcp');
 // Reports (client follow-up, top clients, unpaid invoices, product sales) —
 // read-only queries drawn by public/nova-report.js. One connection per run.
 const Reports = require('./reports')({ openConn: () => mysql.createConnection(dbConfig) });
+// 1.19.142: UPS / FedEx rates and ground transit days from the Axiom API (shipping.js); used by the staff chat and the website chat
+const Shipping = require('./shipping')({ runQuery, mysql });
 
 // ---- Gmail (read-only, impersonating the shared order@ inbox) ----
 const GMAIL_USER = 'order@axiomprint.com';
@@ -3326,6 +3328,7 @@ function readyFromTurnaround(turnaround, given) {
 // is asking.
 const QUOTE_API_URL = process.env.AXIOM_QUOTE_API_URL ||
   'https://laravelapi.axiomprint.com/api/v1/nova-ai-bot/quotes';
+const DRAFT_API_URL = process.env.AXIOM_DRAFT_API_URL || QUOTE_API_URL.replace(/\/quotes\/?$/, '/drafts');   // 1.19.142: one draft, one quote per run size
 
 app.post('/api/chatbot/quote-to-crm', auth, async (req, res) => {
   const b = req.body || {};
@@ -3345,11 +3348,42 @@ app.post('/api/chatbot/quote-to-crm', auth, async (req, res) => {
       order: i + 1
     }));
 
-  // A price ladder is ONE quote, not three — the alternatives go in the
-  // description so a manager sees them without three estimates to reconcile.
-  const ladder = Array.isArray(b.ladder) && b.ladder.length > 1
-    ? b.ladder.map(r => Number(r.quantity).toLocaleString() + ': $' + usd2(Number(r.price))).join('  |  ')
-    : '';
+  // 1.19.142: a price ladder (500 / 1000 / 2500) becomes ONE DRAFT with one quote per run size
+  // (POST nova-ai-bot/drafts) — the CSR gets D{id} with a "Product Quote" PDF, one row per tier, and assigns the tier
+  // the customer picks. A single quantity still goes through nova-ai-bot/quotes as one quote E{id}.
+  const tiers = Array.isArray(b.ladder) ? b.ladder.map(r => ({ quantity: parseInt(r.quantity) || 0, price: Number(r.price) })).filter(r => r.quantity > 0 && isFinite(r.price) && r.price >= 0) : [];
+  const uniq = []; tiers.sort((x, y) => x.quantity - y.quantity).forEach(t => { if (!uniq.some(u => u.quantity === t.quantity)) uniq.push(t); });
+  if (uniq.length > 1) {
+    const who = (req.user && (req.user.username || req.user.email)) || 'an AM';
+    const qtySpec = (b.specs || []).find(sp => sp && /^quantity$/i.test(String(sp.field || '').trim()));
+    const qtyVarId = qtySpec && qtySpec.variable_id ? parseInt(qtySpec.variable_id) : null;
+    let qtyItems = [];
+    if (qtyVarId) { try { qtyItems = await runQuery('SELECT id, title FROM product_variable_item WHERE variable_id = ' + qtyVarId); } catch (e) {} }
+    const itemFor = (q) => { const hit = (qtyItems || []).find(it => parseInt(String(it.title).replace(/[^0-9]/g, ''), 10) === q); return hit ? hit.id : undefined; };
+    const estimates = uniq.map(t => ({
+      estimate_price: Number(t.price.toFixed(2)),
+      estimate_name: (String(b.name || b.product || 'Quote') + ' ' + t.quantity.toLocaleString()).slice(0, 255),
+      estimate_description: String(b.summary ? String(b.summary).replace(/Qty [\d,]+/, 'Qty ' + t.quantity.toLocaleString()) : 'Qty ' + t.quantity.toLocaleString()).slice(0, 2000),
+      estimateoption: options.length ? options.map(o => (qtySpec && o.optionname === String(qtySpec.field).replace(/_/g, ' ')) || /^quantity$/i.test(o.optionname) ? Object.assign({}, o, { selected: String(t.quantity), variabletype: 'quantity', optionVariableItemId: itemFor(t.quantity) }) : o) : [{ optionname: 'Quantity', selected: String(t.quantity), variabletype: 'quantity', optionVariableId: qtyVarId || undefined, optionVariableItemId: itemFor(t.quantity), order: 1 }],
+      design_details: b.design_type ? { design_type: b.design_type, notes: String(b.notes || '') } : undefined
+    }));
+    const draft = {
+      name: (String(b.name || b.product || 'Quote') + ', ' + uniq.length + ' tiers').slice(0, 255),
+      estimate_productid: productId,
+      estimate_clientid: parseInt(b.client_id) || undefined,
+      estimates,
+      ai_bot_note: ('Draft quoted in Nova by ' + who + ' on ' + shopToday() + '. Tiers: ' + uniq.map(t => t.quantity.toLocaleString() + ' = $' + usd2(t.price)).join(' | ') + '.' + (b.client_hint ? ' Client mentioned: ' + b.client_hint : '') + (b.shipping_note ? ' Shipping quoted: ' + b.shipping_note : '') + (parseInt(b.client_id) ? '' : ' No customer assigned yet.')).slice(0, 5000)
+    };
+    try {
+      const r = await fetch(DRAFT_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(draft) });
+      const text = await r.text(); console.log('DRAFT_CRM status=' + r.status + ' product=' + productId + ' tiers=' + uniq.length + ' body=' + text.slice(0, 400));
+      let out = {}; try { out = JSON.parse(text); } catch (e) {}
+      if (!r.ok || out.success === false) { const detail = out.errors ? Object.keys(out.errors).map(k => k + ': ' + [].concat(out.errors[k]).join(', ')).join('; ') : (out.error || out.message || ('HTTP ' + r.status)); return res.json({ ok: false, error: detail }); }
+      const d = out.data || {}; const ids = Array.isArray(d.estimate_ids) ? d.estimate_ids : [];
+      return res.json({ ok: true, draft_id: d.draft_id || (d.draft && d.draft.id) || null, d_number: d.draft_id ? 'D' + d.draft_id : null, estimate_ids: ids, quote_id: ids[0] || null, e_number: ids[0] ? 'E' + ids[0] : null, tiers: uniq.map((t, i) => ({ quantity: t.quantity, price: t.price, estimate_id: ids[i] || null })) });
+    } catch (e) { return res.json({ ok: false, error: 'Could not reach the draft API: ' + e.message }); }
+  }
+  const ladder = '';
 
   const payload = {
     estimate: {
@@ -6667,6 +6701,23 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
       }
     }
   }, {
+    name: 'quote_shipping',
+    description: 'UPS and FedEx rates AND transit days for shipping a job from the Glendale shop to a US address — the live carrier rates the website uses, with UPS\'s own transit-time table (so "how many days does Ground take to 10001?" is answered from data, never guessed). Call it whenever someone asks what shipping costs, how long shipping / UPS Ground / FedEx takes, or when it will arrive at a ZIP or city. Pass the product and options you already priced (same product_id / quantity / options as calculate_price) so the packing weight and boxes are real; with no product it rates a typical small parcel and gives transit days only. Not for local delivery by our driver (quote_delivery).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        zip: { type: 'string', description: 'Destination ZIP code (5 digits). Required.' },
+        address: { type: 'string', description: 'Street address if known (better rates for residential / commercial).' },
+        city: { type: 'string' }, state: { type: 'string', description: 'Two letters.' },
+        product_id: { type: 'integer', description: 'The product priced, when there is one.' },
+        quantity: { type: 'integer' },
+        options: { type: 'object', additionalProperties: { type: 'string' }, description: 'Same field -> option map as calculate_price.' },
+        width: { type: 'number' }, height: { type: 'number' },
+        carrier: { type: 'string', enum: ['ups', 'fedex', 'both'], description: 'Default both.' }
+      },
+      required: ['zip']
+    }
+  }, {
     name: 'run_report',
     description: 'Run one of Nova\'s ready-made reports and show it as an interactive table beside the chat (with a full-screen view, filters, sorting, Copy emails and CSV). ' +
       'USE THIS instead of query_database whenever the question matches one of these:\n' +
@@ -7162,6 +7213,12 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     '\n\n=== REPORTS ===\n' +
     'For client follow-up lists, top clients, unpaid invoices or product sales, call run_report — it draws a ' +
     'full interactive table beside the chat. Use query_database only for questions none of the reports answers.\n' +
+    '\n=== SHIPPING (UPS / FedEx) ===\n' +
+    'For shipping cost or how long shipping takes to a ZIP / city, call quote_shipping with the product already priced ' +
+    '(same product_id, quantity and options) and the ZIP. UPS Ground transit days come from UPS\'s own transit table for ' +
+    'Glendale → that ZIP, so quote them as data ("UPS Ground is 3 business days to 10001"), never from memory. Business days ' +
+    'start the day after the job is ready; the website re-rates shipping at checkout. Without a product, the tool still gives ' +
+    'transit days for a typical parcel — say the price depends on the actual job.\n' +
     '\n=== INSTALLATION & LOCAL DELIVERY QUOTES ===\n' +
     'AxiomPrint installs graphics on site (decals, window film, wall graphics, panels, letters, banners) and ' +
     'delivers locally with its own driver. Whenever someone asks about installing, mounting or delivering — ' +
@@ -9142,6 +9199,16 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
         } catch (e) {
           toolResult = 'The report could not run: ' + e.message + '. Say so plainly; do not guess the numbers.';
         }
+      } else if (toolUse.name === 'quote_shipping') {   // 1.19.142
+        send({ type: 'query', description: 'Asking UPS and FedEx' });
+        try {
+          const inp = toolUse.input || {}; let specs = null, width = inp.width, height = inp.height, qty = parseInt(inp.quantity) || 0;
+          if (parseInt(inp.product_id)) { try { const q = await quoteProduct(parseInt(inp.product_id), { options: inp.options || {}, quantity: qty, width: inp.width, height: inp.height }); if (q && q.specs) { specs = q.specs; qty = q.quantity || qty; width = q.width || width; height = q.height || height; } } catch (e) {} }
+          const carriers = inp.carrier === 'ups' ? ['ups'] : inp.carrier === 'fedex' ? ['fedex'] : ['ups', 'fedex'];
+          const r = await Shipping.rates({ product_id: parseInt(inp.product_id) || 0, quantity: qty, specs, width, height, carriers, to: { zip: inp.zip, address: inp.address, city: inp.city, state: inp.state } });
+          toolResult = JSON.stringify(Object.assign({}, r, { services: (r.services || []).map(x => ({ carrier: x.carrier, service: x.service, code: x.code, price: x.price, business_days: x.business_days, delivery_date: x.delivery_date })),
+            how_to_answer: 'Give the Ground options first with their business days (UPS Ground X business days, FedEx Ground Y), then faster services if asked. Prices are what the customer would pay. Say transit starts the business day after the job is ready and that the website re-rates at checkout. Never add a rate of your own.' }));
+        } catch (e) { toolResult = 'Shipping could not be rated: ' + e.message + '. Say so; offer pick-up or to check again.'; }
       } else if (toolUse.name === 'quote_installation' || toolUse.name === 'quote_delivery') {
         const isInstall = toolUse.name === 'quote_installation';
         send({ type: 'query', description: isInstall ? 'Pricing the installation' : 'Pricing the delivery' });
@@ -9244,7 +9311,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
 mountMcp(app, { runQuery, dataDictionary: DATA_DICTIONARY });
 
 // The customer-facing bot — separate tables, rules, tools and tokens (client-bot.js).
-const clientBot = require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly,
+const clientBot = require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly, Shipping,
   quoteProduct, buildOrderLink, stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming,
   InstallPricing, getInstallPricing: () => installPricing, routeLookup, toTime24, driveFileBytes,
   extractAttachmentText, relatedRules, sendMail, closedDays, officeHours, loadClientTraining, dataDir: __dirname });
