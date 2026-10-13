@@ -235,10 +235,11 @@
       foot = '<div class="tk-foot"><span class="tk-foot-csr">' + csrCtl + '</span>' +
         (c.hook_status ? '<span class="tk-foot-st">CRM webhook: ' + esc(c.hook_status) + '</span>' : '<span class="tk-foot-st"></span>') +
         '<button type="button" class="tk-link" data-ho="summary">Write it again</button>' +
-        '<button type="button" class="tk-link" data-ho="data">Webhook data</button></div>';
+        '<button type="button" class="tk-link" data-ho="data">Webhook data</button>' +
+        '<button type="button" class="tk-link" data-ho="hook" title="POST this call to the CRM webhook now (call.updated when the CRM already has it)">' + (c.hook_status === 'delivered' ? 'Send to CRM again' : 'Send to CRM') + '</button></div>';
     } else if (c.source === 'phone' && (c.transcript || []).length) {
       html += '<div class="tk-sum"><span>Summary' + (c.summary ? ' (ElevenLabs)' : '') + '</span>' + esc(c.summary || 'No AI summary yet.') + '</div>';
-      foot = '<div class="tk-foot"><button type="button" class="tk-link" data-ho="summary">Write the AI summary</button><button type="button" class="tk-link" data-ho="data">Webhook data</button></div>';
+      foot = '<div class="tk-foot"><button type="button" class="tk-link" data-ho="summary">Write the AI summary</button><button type="button" class="tk-link" data-ho="data">Webhook data</button><button type="button" class="tk-link" data-ho="hook" title="Write the summary and POST this call to the CRM webhook now">Send to CRM</button></div>';
     } else if (c.summary) html += '<div class="tk-sum"><span>Summary</span>' + esc(c.summary) + '</div>';
     const topLen = html.length;          // header, prices and AI summary stay fixed; the transcript scrolls below them
     const events = turns.filter(t => t.role === 'event');
@@ -363,6 +364,14 @@
           const j = await api('/api/admin/talk/calls/' + id + '/handoff');
           if (!j.ok) return alert(j.error || 'Could not build it.');
           return showJson('What the CRM webhook gets for this call', j.payload);
+        }
+        if (k === 'hook') {   // 1.19.140: send the call to the CRM webhook from the call page
+          b.disabled = true; b.textContent = 'Sending\u2026';
+          const j = await api('/api/admin/talk/calls/' + id + '/handoff', { method: 'POST', body: JSON.stringify({ webhook: true }) });
+          const w = j.webhook || {};
+          if (w.sent) alert('Delivered to the CRM (HTTP ' + w.status + ').\nDelivery id for the web team: talkai-call-' + id);
+          else alert('Not delivered: ' + (w.error || j.error || 'unknown error') + '\n\nDelivery id: talkai-call-' + id + (w.status === 401 ? '\n401 = the secret on the CRM does not match TALKAI_WEBHOOK_SECRET in Nova\u2019s .env.' : ''));
+          return openCall(id);
         }
         if (k === 'csr' && !confirm('Email this call\u2019s summary to the CSR team again now?')) return;
         b.disabled = true; b.textContent = k === 'csr' ? 'Sending\u2026' : 'Writing\u2026';
