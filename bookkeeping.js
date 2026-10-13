@@ -1267,6 +1267,36 @@ module.exports = function mountBookkeeping(app, deps) {
     return { by_rule: byRule, proposed, asked };
   }
 
+  // 1.19.71: lines synced before we asked for the bank's own memo line get it now — /transactions/get with
+  // include_original_description over the last 180 days, merged into `raw` by transaction id. Once per boot, in the background.
+  let descBackfilled = false;
+  function backfillOriginalDesc() {
+    if (descBackfilled || !plaidReady()) return; descBackfilled = true;
+    (async () => {
+      const rows = await dbAll("SELECT id, item_id, access_token, env FROM bk_accounts WHERE status = 'ok' AND (env IS NULL OR env = ?)", [PLAID_ENV]);
+      const end = new Date().toISOString().slice(0, 10), start = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
+      for (const r of rows) {
+        const missing = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE item_id = ? AND status NOT IN ('removed') AND (raw IS NULL OR raw NOT LIKE '%original_description%')", [r.item_id])).n;
+        if (!missing) continue;
+        let offset = 0, total = 1, updated = 0;
+        while (offset < total && offset < 5000) {
+          const j = await plaid('/transactions/get', { access_token: dec(r.access_token), start_date: start, end_date: end, options: { count: 500, offset, include_original_description: true } });
+          total = j.total_transactions || 0;
+          for (const t of (j.transactions || [])) {
+            if (!t.original_description) continue;
+            const cur = await dbGet('SELECT id, raw FROM bk_transactions WHERE txn_id = ?', [t.transaction_id]); if (!cur) continue;
+            let raw = {}; try { raw = JSON.parse(cur.raw || '{}'); } catch (e) {}
+            if (raw.original_description) continue;
+            raw.original_description = t.original_description;
+            await dbRun('UPDATE bk_transactions SET raw = ? WHERE id = ?', [JSON.stringify(raw).slice(0, 20000), cur.id]); updated++;
+          }
+          offset += (j.transactions || []).length || 500;
+        }
+        if (updated) await audit('system', 'plaid.backfill_desc', r.item_id, { updated });
+      }
+    })().catch(e => errlog('backfill original_description', e.message));
+  }
+
   // 1.19.51: the AI rates every new bank line in the background (80 a call) so the Bank feed can show its suggestion
   // under the Category picker. Triggered by the list; never two at once; at most `rounds` batches per trigger.
   let catBusy = false;
@@ -1740,6 +1770,7 @@ module.exports = function mountBookkeeping(app, deps) {
       if (!r.vendor_id && r.suggest_score == null && backfilled < 150) { backfilled++; try { await autoVendor(r); Object.assign(r, (await dbGet(VSEL, [r.id])) || {}); } catch (e) {} }
     }
     const matched = rows.length < 500 ? rows.length : (await dbGet('SELECT COUNT(*) n' + W, p)).n;   // how many the filters match (the list stops at 500)
+    if (rows.some(r => !r.orig_desc)) backfillOriginalDesc();
     const out = { ok: true, by_status, matched, transactions: rows, categorizing: catBusy };
     if ((by_status.new_status || 0) > 0 && !catBusy) { categorizeBacklog(userId(req)); out.categorizing = true; }
     if (st === 'categorized') {
