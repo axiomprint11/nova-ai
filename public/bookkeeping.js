@@ -19,16 +19,17 @@
   document.querySelectorAll('.bk-tabs button').forEach(b => b.onclick = () => show(b.dataset.v));
   // Main tabs with sub-tabs: Accounts (vendors / chart / rules) and Bills (bills / inbox). show('chart') or
   // show('inbox') opens that sub-tab directly; the last sub-tab of each is remembered per browser.
-  const BILL_SUBS = { pending: ['draft'], approved: ['approved'], scheduled: ['scheduled'], paid: ['paid'], rejected: ['rejected'] };
+  const BILL_SUBS = { all: ['draft', 'approved', 'scheduled', 'paid', 'rejected'], pending: ['draft'], approved: ['approved'], scheduled: ['scheduled'], paid: ['paid'], rejected: ['rejected'] };
   let billSub = 'pending';
   const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, equipment: loadEquipment, chart: loadChart, rules: loadRules, materials: loadMaterials }, first: 'vendors' },
     purchases: { bar: 'subPurchases', subs: { list: () => loadPurchases('list'), bank: loadTxns, waiting: () => loadPurchases('waiting'), notreceived: () => loadPurchases('notreceived') }, first: 'list' },
-    bills: { bar: 'subBills', subs: { pending: () => loadBills('pending'), approved: () => loadBills('approved'), scheduled: () => loadBills('scheduled'), paid: () => loadBills('paid'), rejected: () => loadBills('rejected') }, first: 'pending' } };
+    bills: { bar: 'subBills', subs: { all: () => loadBills('all'), pending: () => loadBills('pending'), approved: () => loadBills('approved'), scheduled: () => loadBills('scheduled'), paid: () => loadBills('paid'), rejected: () => loadBills('rejected') }, first: 'pending' } };
   // sub tabs as chips with an icon each (same look as the Inbox baskets)
   const SUB_ICON = { pending: 'clock', approved: 'check', scheduled: 'calendar', paid: 'dollar', rejected: 'x', list: 'cart', bank: 'landmark', waiting: 'clock', notreceived: 'package', vendors: 'users', equipment: 'printer', chart: 'layers', rules: 'target', materials: 'box' };
   document.querySelectorAll('.bk-sub button').forEach(b => { b.onclick = () => show(b.closest('.bk-view').dataset.v, b.dataset.s); });
   $('puQ').onkeydown = (e) => { if (e.key === 'Enter') { const sub = lastSub.purchases; sub === 'bank' ? loadTxns() : loadPurchases(sub); } };   // 1.19.29: one search for every Purchases view
   const lastSub = {}; Object.keys(TABS).forEach(k => { try { lastSub[k] = localStorage.getItem('bk_sub_' + k) || TABS[k].first; } catch (e) { lastSub[k] = TABS[k].first; } });
+  lastSub.bills = 'pending';   // 1.19.53: Bills always opens on Pending (All and the other statuses are a click away)
   function show(v, sub) {
     Object.keys(TABS).forEach(k => { if (TABS[k].subs[v] && v !== k) { sub = v; v = k; } });
     document.querySelectorAll('.bk-tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
@@ -78,7 +79,7 @@
     $('nPending').textContent = ov.counts.pending || '';
     $('nTxns').textContent = ov.counts.txn_open || ''; $('nTxns').title = (ov.counts.txn_open || 0) + ' transactions without a decided category';
     $('nBills').textContent = ov.counts.bill_drafts || ''; $('nBills').title = (ov.counts.bill_drafts || 0) + ' bill drafts waiting';
-    const bs = ov.counts.bills_by_status || {}; $('nBillsPending').textContent = bs.draft || 0; $('nBillsApproved').textContent = bs.approved || 0; $('nBillsScheduled').textContent = bs.scheduled || 0; $('nBillsPaid').textContent = bs.paid || 0; if ($('nBillsRejected')) $('nBillsRejected').textContent = bs.rejected || 0;
+    const bs = ov.counts.bills_by_status || {}; $('nBillsPending').textContent = bs.draft || 0; if ($('nBillsAll')) $('nBillsAll').textContent = Object.values(bs).reduce((a, n) => a + n, 0); $('nBillsApproved').textContent = bs.approved || 0; $('nBillsScheduled').textContent = bs.scheduled || 0; $('nBillsPaid').textContent = bs.paid || 0; if ($('nBillsRejected')) $('nBillsRejected').textContent = bs.rejected || 0;
     $('nInbox').textContent = (ov.counts.inbox_new || 0) + (ov.counts.inbox_messages || 0) || ''; $('nInbox').title = (ov.counts.inbox_new || 0) + ' not looked at yet, ' + (ov.counts.inbox_messages || 0) + ' messages for a person';
     const rs = $('runState');
     if (ov.running) { rs.className = 'bk-pill off'; rs.textContent = 'Running…'; }
@@ -679,7 +680,7 @@
       const emails = b.emails || [];
       const q = [b.vendor, b.vendor_card && b.vendor_card.name, b.invoice_no, '#' + b.id, 'bill #' + b.id, b.total, usd(b.total), b.note, b.proposal_reason, b.rejected_note, (b.lines || []).map(l => [l.name, l.description, l.category, l.material_name, l.equipment_name, l.estimate_no].filter(Boolean).join(' ')).join(' '), (b.emails || []).map(e => e.subject).join(' ')].filter(x => x != null && x !== '').join(' ').toLowerCase();
       return '<div class="bl-card' + (b.status === 'rejected' ? ' off' : '') + '" data-bill="' + b.id + '" data-q="' + esc(q) + '"><div class="bl-head">' + vendorBlock(b) +
-        '<div class="bl-meta"><div><span class="bk-tag">' + esc(KIND[b.kind] || b.kind) + '</span> ' + (b.invoice_no ? '<b>#' + esc(b.invoice_no) + '</b>' : '<span class="bk-dim">no number</span>') + ' <span class="bl-no" title="Nova\'s bill number">Bill #' + b.id + '</span>' + (b.duplicate_of && b.status !== 'rejected' ? ' <a href="#" class="bk-tag rejected bl-dup" data-goto="' + b.duplicate_of + '" title="Show bill #' + b.duplicate_of + '">possible duplicate of Bill #' + b.duplicate_of + '</a> <button class="bk-btn sm bl-merge" data-merge="' + b.id + '" data-into="' + b.duplicate_of + '">Merge into #' + b.duplicate_of + '</button>' : '') + (b.merged_into ? ' <span class="bk-tag rejected">merged into Bill #' + b.merged_into + '</span>' : '') + (b.merged && b.merged.length ? ' <span class="bk-tag">+ ' + b.merged.length + ' duplicate' + (b.merged.length === 1 ? '' : 's') + ' merged</span>' : '') + '</div>' +
+        '<div class="bl-meta"><div><span class="bk-tag">' + esc(KIND[b.kind] || b.kind) + '</span> ' + (b.invoice_no ? '<b>#' + esc(b.invoice_no) + '</b>' : '<span class="bk-dim">no number</span>') + ' <span class="bl-no" title="Nova\'s bill number">Bill #' + b.id + '</span>' + (billSub === 'all' ? ' <span class="bk-tag ' + esc(b.status) + '">' + (STATUS_L[b.status] || b.status) + '</span>' : '') + (b.duplicate_of && b.status !== 'rejected' ? ' <a href="#" class="bk-tag rejected bl-dup" data-goto="' + b.duplicate_of + '" title="Show bill #' + b.duplicate_of + '">possible duplicate of Bill #' + b.duplicate_of + '</a> <button class="bk-btn sm bl-merge" data-merge="' + b.id + '" data-into="' + b.duplicate_of + '">Merge into #' + b.duplicate_of + '</button>' : '') + (b.merged_into ? ' <span class="bk-tag rejected">merged into Bill #' + b.merged_into + '</span>' : '') + (b.merged && b.merged.length ? ' <span class="bk-tag">+ ' + b.merged.length + ' duplicate' + (b.merged.length === 1 ? '' : 's') + ' merged</span>' : '') + '</div>' +
           '<div class="bk-muted">' + (b.invoice_date ? 'Dated ' + esc(usDate(b.invoice_date)) : '') + (b.due_date ? ' · due <b>' + esc(usDate(b.due_date)) + '</b>' : '') + (b.terms ? ' · ' + esc(b.terms) : '') + (b.received_at ? ' · received ' + when(b.received_at) : '') + '</div></div>' +
         '<div class="bl-total"><b>' + usd(b.total) + '</b></div></div>' +
         (b.status === 'rejected' ? '<div class="bl-rej"><b>Rejected</b><span>' + (b.rejected_by ? 'by ' + whoHtml(b.rejected_by) + ' · ' : '') + esc(when(b.rejected_at) || '') + (b.rejected_note ? ' — ' + esc(b.rejected_note) : ' — no reason given') + (b.merged_into ? ' · merged into Bill #' + b.merged_into : '') + '</span></div>' : '') +
@@ -696,14 +697,17 @@
           (b.status === 'paid' ? '<span class="bk-muted">paid ' + esc(usDate(b.paid_at || '')) + (b.paid_note ? ' · ' + esc(b.paid_note) : '') + '</span><button class="bk-btn sm" data-bstatus="approved" data-bid="' + b.id + '">Not paid after all</button>' : '') + '</div></div>';
     };
     const bills = j.bills || [];
-    const TITLES = { pending: ['Pending', 'Bill drafts waiting for your decision.', 'No bill drafts waiting.'], approved: ['Approved', 'Approved and waiting to be paid — schedule a pay date or mark them paid as you go. (Paying through BILL comes in a later phase; nothing moves money here.)', 'Nothing approved and unpaid.'], scheduled: ['Scheduled', 'Approved bills with a pay date.', 'Nothing scheduled.'], paid: ['Paid', 'Paid bills, newest first.', 'Nothing paid yet.'], rejected: ['Rejected', 'Bills that were turned down, with the reason. Restore one if it was a mistake — it goes back to Pending.', 'Nothing rejected.'] };
+    const TITLES = { all: ['All', 'Every bill, whatever its status.', 'No bills yet.'], pending: ['Pending', 'Bill drafts waiting for your decision.', 'No bill drafts waiting.'], approved: ['Approved', 'Approved and waiting to be paid — schedule a pay date or mark them paid as you go. (Paying through BILL comes in a later phase; nothing moves money here.)', 'Nothing approved and unpaid.'], scheduled: ['Scheduled', 'Approved bills with a pay date.', 'Nothing scheduled.'], paid: ['Paid', 'Paid bills, newest first.', 'Nothing paid yet.'], rejected: ['Rejected', 'Bills that were turned down, with the reason. Restore one if it was a mistake — it goes back to Pending.', 'Nothing rejected.'] };
     const t = TITLES[billSub];
-    const main = bills.filter(b => b.status === (billSub === 'pending' ? 'draft' : billSub)), rejected = [];
+    const STATUS_L = { draft: 'Pending', approved: 'Approved', scheduled: 'Scheduled', paid: 'Paid', rejected: 'Rejected' };
+    const main = bills.filter(b => billSub === 'all' ? true : b.status === (billSub === 'pending' ? 'draft' : billSub)), rejected = [];
+    if (billSub === 'all') main.sort((a, b) => b.id - a.id);   // 1.19.53: every bill, newest first, each with its status
     if (billSub === 'rejected') main.sort((a, b) => String(b.rejected_at || b.updated_at || '').localeCompare(String(a.rejected_at || a.updated_at || '')));
     if (billSub === 'scheduled') main.sort((a, b) => String(a.scheduled_for || '').localeCompare(String(b.scheduled_for || '')));
     if (billSub === 'paid') main.sort((a, b) => String(b.paid_at || '').localeCompare(String(a.paid_at || '')));
     const total = main.reduce((a, b) => a + (Number(b.total) || 0), 0);
-    const HELP_TAB = { pending: 'Bills BookkeeperAI read from the inbox, waiting for your decision: fix the lines, then Approve or Reject (a reason is asked). Each one is paired with a CRM supplier or vendor — when the name is not an exact match, pick the right one once and the next bill from them links by itself.',
+    const HELP_TAB = { all: 'Every bill Nova knows, newest first, with its status on the card. Pending bills wait for your decision; the other tabs show one status each.',
+      pending: 'Bills BookkeeperAI read from the inbox, waiting for your decision: fix the lines, then Approve or Reject (a reason is asked). Each one is paired with a CRM supplier or vendor — when the name is not an exact match, pick the right one once and the next bill from them links by itself.',
       approved: 'Approved and waiting to be paid — schedule a pay date or mark them paid as you go. Paying through BILL comes in a later phase; nothing moves money here.',
       scheduled: 'Approved bills with a pay date, soonest first. Mark paid when the money goes out, or Unschedule.',
       paid: 'Paid bills, newest first. "Not paid after all" sends one back to Approved.',
