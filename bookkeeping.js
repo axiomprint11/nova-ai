@@ -1846,7 +1846,11 @@ module.exports = function mountBookkeeping(app, deps) {
     }
     // 1.19.77: a categorized line that no rule covers yet offers "Create a rule" — `can_rule` says so
     const liveRules = await dbAll('SELECT * FROM bk_rules WHERE active = 1 ORDER BY kind DESC, id');
-    for (const r of rows) r.can_rule = !!(r.category && r.category !== 'Uncategorized' && !r.rule_id && !r.refund_of && !r.transfer_of && !ruleMatch(liveRules, r) && !liveRules.some(x => x.kind === 'vendor' && r.vendor_name && normName(x.pattern) === normName(r.vendor_name)));
+    for (const r of rows) {
+      // 1.19.96: `rule_exists` for every row (so Use never offers "Make it a rule?" for a company that has one); `can_rule` only on filed lines
+      r.rule_exists = !!(r.rule_id || ruleMatch(liveRules, r) || liveRules.some(x => x.kind === 'vendor' && r.vendor_name && normName(x.pattern) === normName(r.vendor_name)));
+      r.can_rule = !!(r.category && r.category !== 'Uncategorized' && !r.refund_of && !r.transfer_of && !r.rule_exists);
+    }
     // 1.19.92: a line that looks like the other half of a transfer between our own accounts — same amount, opposite sign, a
     // different account, within 7 days, neither side matched yet — carries `transfer_hint` (id, account, date) for a one-click match
     if (rows.length) {
