@@ -1480,17 +1480,14 @@ module.exports = function mountBookkeeping(app, deps) {
     return { text, stats };
   }
   const laDay = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
-  // 1.19.108: the New / Pending cut-off as the UTC 'YYYY-MM-DD HH:MM:SS' SQLite's created_at uses.
-  // 1.19.110: New = synced today (Los Angeles calendar day — the overnight Plaid webhook lands at ~5 AM and must count);
-  // at 6:00 AM every morning yesterday's lines become Pending, so before 6 the cut-off is still yesterday's midnight.
-  const NEW_CUT_HOUR = 6;
+  // 1.19.108/1.19.111: the Today / Pending cut-off as the UTC 'YYYY-MM-DD HH:MM:SS' SQLite's created_at uses:
+  // midnight of today in Los Angeles. Today = synced today; at midnight the rest become Pending. No other cut-off.
   function newCutoff(now) {
     now = now || new Date();
     const f = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const la = (d) => { const o = {}; f.formatToParts(d).forEach(x => { o[x.type] = x.value; }); return o; };
     const n = la(now);
-    let y = Number(n.year), m = Number(n.month), d = Number(n.day);
-    if (Number(n.hour) < NEW_CUT_HOUR) { const t = new Date(Date.UTC(y, m - 1, d - 1)); y = t.getUTCFullYear(); m = t.getUTCMonth() + 1; d = t.getUTCDate(); }
+    const y = Number(n.year), m = Number(n.month), d = Number(n.day);
     let guess = Date.UTC(y, m - 1, d, 0);   // midnight as if LA were UTC, then shift by LA's offset at that moment
     for (let i = 0; i < 2; i++) { const g = la(new Date(guess)); const wall = Date.UTC(Number(g.year), Number(g.month) - 1, Number(g.day), Number(g.hour), Number(g.minute), Number(g.second)); guess += Date.UTC(y, m - 1, d, 0) - wall; }
     return new Date(guess).toISOString().slice(0, 19).replace('T', ' ');
@@ -1835,7 +1832,7 @@ module.exports = function mountBookkeeping(app, deps) {
     // 1.19.83: New = not categorized and freshly synced; Pending = not categorized and older (the cut-off is below);
     // Categorized = done (by rule, the AI approved, or by hand). The three never overlap.
     // 1.19.100: 90+ = not categorized and the bank date is older than 90 days (the backlog); Pending stops there
-    // 1.19.108: the cut-off is 6:00 AM Los Angeles, not 24 hours — every morning the lines that came in before 6 move to Pending
+    // 1.19.111: Today = synced today (Los Angeles day); at midnight they move to Pending
     const cut = newCutoff();
     if (st === 'pending') { where.push("t.status IN ('new', 'pending') AND t.created_at < ? AND t.date >= date('now', '-90 days')"); p.push(cut); }
     else if (st === 'old') where.push("t.status IN ('new', 'pending') AND t.date < date('now', '-90 days')");
@@ -1941,7 +1938,7 @@ module.exports = function mountBookkeeping(app, deps) {
       if (hit) r.loan_hint = { id: hit.id, name: hit.name };
     }
     if (rows.some(r => !r.orig_desc)) backfillOriginalDesc();
-    const out = { ok: true, by_status, matched, transactions: rows, categorizing: catBusy, new_since: cut };   // 1.19.108: the page's Status tags use the same 6 AM cut-off
+    const out = { ok: true, by_status, matched, transactions: rows, categorizing: catBusy, new_since: cut };   // 1.19.108: the page's Status tags use the same cut-off (midnight LA)
     if ((by_status.new_status || 0) > 0 && !catBusy) { categorizeBacklog(userId(req)); out.categorizing = true; }
     if (st === 'categorized') {
       const parentOfName = {}; chartOf(await settings()).forEach(c => { if (c.parent) parentOfName[c.name] = c.parent; });

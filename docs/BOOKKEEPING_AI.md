@@ -63,7 +63,7 @@ waiting for a person) or Categorized (with how it was set: approved / manual / r
 Last month, Last 90 days, This year, All time) or a From / To; **Vendor** lists every vendor seen on a bank line (and
 "Not linked"); **Account** lists each bank account ("Wells Fargo - 6595"); **Amount** is a from / to range; and
 **Category** lists the types of expense (and, in the Categorized view, the categories in use); the status comes from the sub-tabs — **Pending**
-(no category yet — the default), **New** (synced today, Los Angeles day (yesterday's move to Pending at 6 AM, 1.19.110)ours), **Categorized** (the report), All.
+(no category yet — the default), **New** (synced today, Los Angeles day (the chip is called Today since 1.19.111; at midnight they move to Pending)ours), **Categorized** (the report), All.
 The line above the table says what is shown ("12 pending lines in the last 30 days"; the list stops at 500). Each row: the date with the time Nova received it under it · the **vendor** (logo, name, SUPPLIER / VENDOR tag,
 **Link** or **Change**) · the bank's description · the **account** as "Wells Fargo - 6595" with the bank's logo (from
 Plaid's institution metadata) · amount · category. Vendor matching: an exact name / alias match or a near match of
