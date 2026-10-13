@@ -370,7 +370,7 @@ a **list** spec (array of `{v, l, n}`) applies on click; `{type:'text'}` opens a
 `{type:'range', kind:'number'|'date', presets}` opens From / To (date ranges also offer period chips) with Clear / Apply;
 the popover flips above when short of room. Vendors: Type (the tag sits under the 72px logo; the Approved column is gone — approval still exists in the data), Name, Contact, Specialty, Usual category.
 Transactions (Categorized): Date (period presets + custom range), Vendor, Account, Amount (min–max), Category, Set by —
-the old period / $ bar above the table is gone; a "Filtered · Clear filters" line shows when anything is set.
+the old period / $ bar above the table is gone; a "Filtered · Clear filters" line shows when anything is set. An active header shows a red × that clears that one filter on the spot, and its popover (the Company picker too) has "× Clear" in its title (1.19.104).
 
 ### Purchases tab (1.19.0)
 The Transactions tab became **Purchases**, with four views: **Purchases** · **Bank feed** (the old transactions views:

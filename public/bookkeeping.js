@@ -721,7 +721,7 @@
     v.querySelectorAll('[data-setv]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = (j.transactions || []).find(x => String(x.id) === a.dataset.setv); vendorPicker(a, { vendor: t ? (t.merchant || t.name) : '', suggestions: t && t.suggest_vendor_id ? [{ id: t.suggest_vendor_id, name: t.suggest_name, photo: t.suggest_photo, score: t.suggest_score || 0 }] : [] }, (vid) => setV(a.dataset.setv, vid)); });
     v.querySelectorAll('[data-usev]').forEach(b => b.onclick = () => setV(b.dataset.usev, Number(b.dataset.vid)));
     v.querySelectorAll('[data-vedit]').forEach(a => a.onclick = (e) => { e.preventDefault(); vendorCard(Number(a.dataset.vedit), () => loadTxns()); });   // 1.19.69: finish the vendor's record from the feed
-    const vth = v.querySelector('.thf[data-thf=vendor]'); if (vth) vth.onclick = (e) => { e.stopPropagation(); document.querySelectorAll('.thf-pop').forEach(p => p.remove()); vendorPicker(vth, { vendor: '', suggestions: [] }, (val, name) => { TF.vendor_id = val; TF.vendor_name = val && val !== 'none' ? name : ''; saveTF(); }, { filter: { current: TF.vendor_id } }); };
+    const vth = v.querySelector('.thf[data-thf=vendor]'); if (vth) vth.onclick = (e) => { e.stopPropagation(); document.querySelectorAll('.thf-pop').forEach(p => p.remove()); if (e.target.closest('.thf-x')) { TF.vendor_id = ''; TF.vendor_name = ''; saveTF(); return; } vendorPicker(vth, { vendor: '', suggestions: [] }, (val, name) => { TF.vendor_id = val; TF.vendor_name = val && val !== 'none' ? name : ''; saveTF(); }, { filter: { current: TF.vendor_id } }); };
     v.querySelectorAll('[data-newv]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = (j.transactions || []).find(x => String(x.id) === a.dataset.newv); novaVendorForm({ name: t ? (t.merchant || t.name) : '', aliases: t ? [t.merchant, t.name].filter((x, i, arr) => x && arr.indexOf(x) === i).join('\n') : '', website: t && t.website ? t.website : '' }, (nv) => setV(a.dataset.newv, nv.id)); });
   }
 
@@ -1308,7 +1308,7 @@
     pop.addEventListener('click', (e) => e.stopPropagation());
     let vtab = 'axiom';   // 1.19.65: Axiom (CRM) vendors | Nova vendors; the search box always looks through both
     const isNova = (x) => x.source === 'nova' || x.source === 'bill';
-    pop.innerHTML = '<div class="ckp-search"><input type="text" placeholder="Search all vendors…"></div><div class="vp-tabs"><button type="button" class="ib-chip sm on" data-vt="axiom">Axiom vendors <small>' + all.filter(x => !isNova(x)).length + '</small></button><button type="button" class="ib-chip sm" data-vt="nova">Nova vendors ' + AI_I + ' <small>' + all.filter(isNova).length + '</small></button></div><div class="ckp-list"></div><div class="ckp-foot">' + (asFilter ? '<span class="bk-muted">Show only this company\'s lines.</span>' : '<a href="#" class="ckp-new vp-new">+ New Nova vendor…</a>') + '</div>';
+    pop.innerHTML = (asFilter ? '<div class="thf-h">Company' + (opts.filter.current ? '<button type="button" class="thf-clear thf-hclear">× Clear</button>' : '') + '</div>' : '') + '<div class="ckp-search"><input type="text" placeholder="Search all vendors…"></div><div class="vp-tabs"><button type="button" class="ib-chip sm on" data-vt="axiom">Axiom vendors <small>' + all.filter(x => !isNova(x)).length + '</small></button><button type="button" class="ib-chip sm" data-vt="nova">Nova vendors ' + AI_I + ' <small>' + all.filter(isNova).length + '</small></button></div><div class="ckp-list"></div><div class="ckp-foot">' + (asFilter ? '<span class="bk-muted">Show only this company\'s lines.</span>' : '<a href="#" class="ckp-new vp-new">+ New Nova vendor…</a>') + '</div>';
     document.body.appendChild(pop);
     const r = anchor.getBoundingClientRect(), W = Math.min(380, window.innerWidth - 16);
     pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) + 'px'; pop.style.width = W + 'px';
@@ -1334,6 +1334,7 @@
     pop.querySelectorAll('[data-vt]').forEach(b => b.onclick = () => { vtab = b.dataset.vt; pop.querySelectorAll('[data-vt]').forEach(x => x.classList.toggle('on', x === b)); draw(); });
     draw(); setTimeout(() => q.focus(), 0); q.oninput = draw;
     list.onclick = (e) => { const it = e.target.closest('.ckp-i'); if (!it) return; onPick(asFilter ? it.dataset.v : Number(it.dataset.v), (it.querySelector('b') || {}).textContent || ''); close(); };
+    const hc = pop.querySelector('.thf-hclear'); if (hc) hc.onclick = () => { close(); onPick('', ''); };   // 1.19.104: "× Clear" on top, like every other filter popover
     if (pop.querySelector('.vp-new')) pop.querySelector('.vp-new').onclick = (e) => { e.preventDefault(); close(); novaVendorForm({ name: bill.vendor || '', aliases: bill.vendor || '' }, (nv) => onPick(nv.id)); };   // 1.19.63
     const close = () => { pop.remove(); document.removeEventListener('click', away); document.removeEventListener('keydown', esc1); };
     const away = (e) => { if (!pop.contains(e.target)) close(); }, esc1 = (e) => { if (e.key === 'Escape') close(); };
