@@ -1266,7 +1266,7 @@ module.exports = function mountBookkeeping(app, deps) {
     // 1.19.112: an amount condition narrows a rule ("Vendor is Amazon over $500 → Equipment"); a rule with one is tried before
     // the same vendor's plain rule, so the specific one wins. Kind 'none' ("No rule") never categorizes — see noRuleFor().
     const amt = Math.abs(Number(t.amount) || 0);
-    const amountOk = (r) => !r.amount_op || r.amount_val == null ? true : r.amount_op === 'over' ? amt > Number(r.amount_val) : r.amount_op === 'under' ? amt < Number(r.amount_val) : true;
+    const amountOk = (r) => !r.amount_op || r.amount_val == null ? true : r.amount_op === 'over' ? amt > Number(r.amount_val) : r.amount_op === 'under' ? amt < Number(r.amount_val) : r.amount_op === 'equal' ? Math.abs(amt - Number(r.amount_val)) < 0.005 : true;   // 1.19.114: 'equal' = exactly this amount (a fixed monthly fee)
     const live = rules.filter(r => r.kind !== 'none' && r.category);
     const ordered = live.filter(r => r.amount_op && r.amount_val != null).concat(live.filter(r => !(r.amount_op && r.amount_val != null)));
     return ordered.find(r => amountOk(r) && (r.kind === 'vendor' ? byVendor(r) : full.indexOf(normName(r.pattern)) > -1)) || null;
@@ -1275,7 +1275,7 @@ module.exports = function mountBookkeeping(app, deps) {
   const amountCond = (b) => {
     const op = String(b.amount_op || '').trim(), val = b.amount_val === '' || b.amount_val == null ? null : Number(b.amount_val);
     if (!op) return { op: null, val: null };
-    if (op !== 'over' && op !== 'under') return { error: 'Amount condition must be over or under.' };
+    if (op !== 'over' && op !== 'under' && op !== 'equal') return { error: 'Amount condition must be over, under or equal.' };
     if (val == null || !isFinite(val) || val < 0) return { error: 'Give the amount for "' + op + '".' };
     return { op, val: Math.round(val * 100) / 100 };
   };
