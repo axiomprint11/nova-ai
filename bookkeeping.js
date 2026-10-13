@@ -1295,6 +1295,19 @@ module.exports = function mountBookkeeping(app, deps) {
   }
   // 1.19.94 / 1.19.98: rules sweep every unfiled line (new or already rated) with no model call — run inside categorize() and on
   // every Bank feed load (throttled), so a rule made today catches yesterday's lines without waiting for an AI pass.
+  // 1.19.127: Plaid sets `check_number` on some lines that are not checks — on "MERCHANT ACCOUNT MERCH DEP 260916
+  // 934600000141895 …" it reports 141895, the tail of the merchant ID. A check number is real only when the digits are a
+  // token of their own in the wording (not the end of a longer number) and the line is money out or says check / chk.
+  function realCheckNo(raw, t) {
+    const cn = String(raw && raw.check_number || '').trim(); if (!cn) return null;
+    const text = [t.name, t.merchant, raw.original_description].filter(Boolean).join(' ');
+    const longer = (text.match(/\d{5,}/g) || []).some(d => d !== cn && d.endsWith(cn));
+    if (longer && !new RegExp('(^|[^0-9])' + cn + '([^0-9]|$)').test(text)) return null;
+    const saysCheck = /\b(check|chk|cheque)\b/i.test(text);
+    if (Number(t.amount) < 0 && !saysCheck) return null;   // a deposit is a check only when it says so
+    if (/\b(merch dep|merchant account|card settlement|stripe|square|paypal)\b/i.test(text) && !saysCheck) return null;
+    return cn;
+  }
   // ---------------------------------------------------------------- 1.19.119: overseas team (Wise payouts)
   // Wise batch payouts reach the bank as "Wise Ltd Sep 15-30 261006 XXXXX9740 AxiomPrint Inc." — no recipient name. A person is
   // recognised by the reference code (`wise_ref`, when Wise keeps it stable per recipient) or by their exact pay; two people on
@@ -1924,7 +1937,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const how = g('how');
     if (how === 'online') where.push("json_extract(t.raw, '$.payment_channel') = 'online'");
     else if (how === 'store') where.push("json_extract(t.raw, '$.payment_channel') = 'in store'");
-    else if (how === 'check') where.push("json_extract(t.raw, '$.check_number') IS NOT NULL AND json_extract(t.raw, '$.check_number') <> ''");
+    else if (how === 'check') where.push("json_extract(t.raw, '$.check_number') IS NOT NULL AND json_extract(t.raw, '$.check_number') <> '' AND (t.amount > 0 OR t.name LIKE '%check%' OR t.name LIKE '%chk%') AND t.name NOT LIKE '%MERCH DEP%'");   // 1.19.127: see realCheckNo()
     else if (how === 'other') where.push("COALESCE(json_extract(t.raw, '$.payment_channel'), 'other') NOT IN ('online', 'in store') AND (json_extract(t.raw, '$.check_number') IS NULL OR json_extract(t.raw, '$.check_number') = '')");
     if (g('account')) { where.push('t.account_name = ?'); p.push(g('account')); }
     const by_status = Object.fromEntries((await dbAll("SELECT status, COUNT(*) n FROM bk_transactions WHERE status NOT IN ('removed', 'excluded') GROUP BY status")).map(r => [r.status, r.n]));
@@ -1947,8 +1960,9 @@ module.exports = function mountBookkeeping(app, deps) {
       let raw = null; try { raw = r.raw ? JSON.parse(r.raw) : null; } catch (e) {} delete r.raw;
       if (raw) {
         r.orig_desc = raw.original_description || null;
-        r.channel = raw.check_number ? 'check' : raw.payment_channel === 'in store' ? 'store' : raw.payment_channel === 'online' ? 'online' : (raw.payment_channel || null);
-        r.check_no = raw.check_number || null;
+        const cn = realCheckNo(raw, r);   // 1.19.127: Plaid's check_number is not always a check (merchant-ID tails on card deposits)
+        r.channel = cn ? 'check' : raw.payment_channel === 'in store' ? 'store' : raw.payment_channel === 'online' ? 'online' : (raw.payment_channel || null);
+        r.check_no = cn;
         r.tx_time = raw.authorized_datetime || raw.datetime || null;
         r.tx_date = raw.authorized_date || raw.date || null;
         r.plaid_primary = raw.personal_finance_category ? raw.personal_finance_category.primary : null;
