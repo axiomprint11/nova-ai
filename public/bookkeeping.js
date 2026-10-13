@@ -226,8 +226,10 @@
     if (rm) { const wrap = rm.closest('.ckp'); ckpSet(wrap, splitCats(wrap.querySelector('.ckp-val').value).filter(v => v !== rm.dataset.rm)); e.preventDefault(); return; }
     const btn = e.target.closest && e.target.closest('.ckp-btn');
     if (btn) { const wrap = btn.closest('.ckp'); if (ckpOpen && ckpOpen.wrap === wrap) ckpClose(); else { ckpClose(); ckpShow(wrap); } return; }
-    if (ckpOpen && !e.target.closest('.ckp-pop') && !e.target.closest('.bk-modal')) ckpClose();
-  });
+    // 1.19.121: a click anywhere outside the popover closes it — inside a form too; a click on the modal backdrop closes the
+    // picker but not the form (the backdrop's own close is stopped here)
+    if (ckpOpen && !e.target.closest('.ckp-pop')) { const onBackdrop = e.target.classList && e.target.classList.contains('bk-modal'); ckpClose(); if (onBackdrop) { e.stopPropagation(); e.preventDefault(); } }
+  }, true);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ckpOpen) ckpClose(); });
   window.addEventListener('resize', ckpClose); document.querySelector('.bk-main').addEventListener('scroll', ckpClose);
   function ckpShow(wrap) {
