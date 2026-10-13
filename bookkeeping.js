@@ -1480,8 +1480,9 @@ module.exports = function mountBookkeeping(app, deps) {
     return { text, stats };
   }
   const laDay = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
-  // 1.19.108: the most recent 6:00 AM in Los Angeles, as the UTC 'YYYY-MM-DD HH:MM:SS' SQLite's created_at uses.
-  // Bank lines synced after it are "New"; at 6 every morning the rest become "Pending".
+  // 1.19.108: the New / Pending cut-off as the UTC 'YYYY-MM-DD HH:MM:SS' SQLite's created_at uses.
+  // 1.19.110: New = synced today (Los Angeles calendar day — the overnight Plaid webhook lands at ~5 AM and must count);
+  // at 6:00 AM every morning yesterday's lines become Pending, so before 6 the cut-off is still yesterday's midnight.
   const NEW_CUT_HOUR = 6;
   function newCutoff(now) {
     now = now || new Date();
@@ -1490,8 +1491,8 @@ module.exports = function mountBookkeeping(app, deps) {
     const n = la(now);
     let y = Number(n.year), m = Number(n.month), d = Number(n.day);
     if (Number(n.hour) < NEW_CUT_HOUR) { const t = new Date(Date.UTC(y, m - 1, d - 1)); y = t.getUTCFullYear(); m = t.getUTCMonth() + 1; d = t.getUTCDate(); }
-    let guess = Date.UTC(y, m - 1, d, NEW_CUT_HOUR);   // 6:00 as if LA were UTC, then shift by LA's offset at that moment
-    for (let i = 0; i < 2; i++) { const g = la(new Date(guess)); const wall = Date.UTC(Number(g.year), Number(g.month) - 1, Number(g.day), Number(g.hour), Number(g.minute), Number(g.second)); guess += Date.UTC(y, m - 1, d, NEW_CUT_HOUR) - wall; }
+    let guess = Date.UTC(y, m - 1, d, 0);   // midnight as if LA were UTC, then shift by LA's offset at that moment
+    for (let i = 0; i < 2; i++) { const g = la(new Date(guess)); const wall = Date.UTC(Number(g.year), Number(g.month) - 1, Number(g.day), Number(g.hour), Number(g.minute), Number(g.second)); guess += Date.UTC(y, m - 1, d, 0) - wall; }
     return new Date(guess).toISOString().slice(0, 19).replace('T', ' ');
   }
 
