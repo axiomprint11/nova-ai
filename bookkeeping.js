@@ -1875,7 +1875,10 @@ module.exports = function mountBookkeeping(app, deps) {
       if (!o || o.id === id) return res.json({ ok: false, error: 'No such charge' });
       if (!(Number(t.amount) < 0 && Number(o.amount) > 0)) return res.json({ ok: false, error: 'A refund is money in matched to money out' });
       const sets = ['refund_of = ?', "updated_at = datetime('now')"], args = [of];
-      if (o.category) { sets.push('category = ?', "category_source = 'refund'", "status = 'categorized'"); args.push(o.category); }
+      // 1.19.80: a category the person picked by hand (e.g. Income › Refund) stays; only an unfiled / machine-filed line takes the charge's
+      const keep = !!(t.category && ['manual', 'vendor', 'history'].indexOf(t.category_source) > -1);
+      if (o.category && !keep) { sets.push('category = ?', "category_source = 'refund'", "status = 'categorized'"); args.push(o.category); }
+      else if (t.category) sets.push("status = 'categorized'");
       args.push(id);
       await dbRun('UPDATE bk_transactions SET ' + sets.join(', ') + ' WHERE id = ?', args);
       await audit(userId(req), 'txn.refund', id, { of, category: o.category || null });
