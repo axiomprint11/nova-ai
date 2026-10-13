@@ -46,6 +46,8 @@ module.exports = function mountBookkeeping(app, deps) {
     db.run(`CREATE TABLE IF NOT EXISTS bk_settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT, updated_by TEXT)`);
     db.run(`CREATE TABLE IF NOT EXISTS bk_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, item_id TEXT UNIQUE, access_token TEXT, institution TEXT,
       accounts TEXT, cursor TEXT, status TEXT DEFAULT 'ok', error TEXT, last_sync_at TEXT, created_at TEXT DEFAULT (datetime('now')), created_by TEXT)`);
+    db.run('ALTER TABLE bk_accounts ADD COLUMN env TEXT', () => {});   // 1.19.46: sandbox | production — a sandbox connection is useless once PLAID_ENV is production
+    db.run("UPDATE bk_accounts SET env = 'sandbox' WHERE env IS NULL", () => {});   // every connection made before 1.19.46 was a sandbox one (Production was approved on 10-12-2026)
     db.run(`CREATE TABLE IF NOT EXISTS bk_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, txn_id TEXT UNIQUE, item_id TEXT, account_ref TEXT,
       account_name TEXT, date TEXT, name TEXT, merchant TEXT, amount REAL, pending INTEGER DEFAULT 0, plaid_category TEXT,
       category TEXT, category_source TEXT, rule_id INTEGER, proposal_id INTEGER, status TEXT DEFAULT 'new', raw TEXT,
@@ -1544,6 +1546,7 @@ module.exports = function mountBookkeeping(app, deps) {
 
   // ---------------------------------------------------------------- the page and its API
   app.get('/bookkeeping', serveVersionedHtml('bookkeeping.html'));
+  app.get('/bookkeeping/plaid-oauth', serveVersionedHtml('bookkeeping.html'));   // Plaid Link's OAuth return (the page re-opens Link to finish)
   app.get('/api/bookkeeping/overview', ...guard, async (req, res) => {
     const s = await settings();
     const items = await plaidItems();
@@ -2225,7 +2228,10 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!plaidReady()) return res.json({ ok: false, error: 'PLAID_CLIENT_ID and PLAID_SECRET are not in .env yet.' });
     try {
       const j = await plaid('/link/token/create', { user: { client_user_id: 'axiomprint-books' }, client_name: 'AxiomPrint BookkeeperAI', products: ['transactions'], country_codes: ['US'], language: 'en',
-        webhook: NOVA_URL + '/api/bookkeeping/plaid/webhook', transactions: { days_requested: 90 } });
+        webhook: NOVA_URL + '/api/bookkeeping/plaid/webhook', transactions: { days_requested: 90 },
+        // 1.19.46: OAuth banks (Chase, Bank of America, Wells Fargo, Capital One…) send the person back here after
+        // signing in at the bank. The same address must be in the Plaid dashboard: Team Settings → API → Allowed redirect URIs.
+        redirect_uri: NOVA_URL + '/bookkeeping/plaid-oauth' });
       res.json({ ok: true, link_token: j.link_token, env: PLAID_ENV });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
@@ -2234,7 +2240,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const j = await plaid('/item/public_token/exchange', { public_token: String(req.body.public_token || '') });
       let inst = String((req.body.metadata && req.body.metadata.institution && req.body.metadata.institution.name) || 'Bank');
       const accts = (req.body.metadata && req.body.metadata.accounts || []).map(a => ({ account_id: a.id, name: a.name, mask: a.mask, type: a.subtype || a.type }));
-      await dbRun('INSERT INTO bk_accounts (item_id, access_token, institution, accounts, created_by) VALUES (?,?,?,?,?) ON CONFLICT(item_id) DO UPDATE SET access_token = excluded.access_token, institution = excluded.institution, accounts = excluded.accounts',
+      await dbRun('INSERT INTO bk_accounts (item_id, access_token, institution, accounts, created_by, env) VALUES (?,?,?,?,?,' + JSON.stringify(PLAID_ENV) + ') ON CONFLICT(item_id) DO UPDATE SET access_token = excluded.access_token, institution = excluded.institution, accounts = excluded.accounts, env = excluded.env',
         [j.item_id, enc(j.access_token), inst, JSON.stringify(accts), userId(req)]);
       await audit(userId(req), 'plaid.connect', j.item_id, { institution: inst, accounts: accts.map(a => a.name) });
       const row = await dbGet('SELECT * FROM bk_accounts WHERE item_id = ?', [j.item_id]);

@@ -1505,9 +1505,9 @@
       '<div class="bk-muted" style="margin-top:8px">Goods or service is decided by the type of expense in the Chart of Accounts ("expects delivery"), and can be flipped on any purchase.</div></div>' +
       // Plaid
       '<div class="bk-card"><h2>Bank accounts ' + pill(c.plaid.configured, 'Plaid keys set (' + esc(c.plaid.env) + ')', 'Plaid keys not in .env') + '<span class="sp"></span><button class="bk-btn p" id="plaidLink"' + (c.plaid.configured ? '' : ' disabled') + '>Connect a bank</button></h2>' +
-      (c.plaid.items.length ? '<table class="bk"><thead><tr><th>Bank</th><th>Accounts</th><th>Last sync</th><th>Status</th><th></th></tr></thead><tbody>' + c.plaid.items.map(it => '<tr><td>' + esc(it.institution) + '</td><td>' + it.accounts.map(a => esc(a.name) + (a.mask ? ' ••' + esc(a.mask) : '')).join('<br>') + '</td><td>' + when(it.last_sync_at) + '</td><td>' + (it.status === 'ok' ? '<span class="bk-pill on">ok</span>' : '<span class="bk-pill err">' + esc(it.error || it.status) + '</span>') + '</td><td><button class="bk-btn sm bad" data-unlink="' + it.id + '">Disconnect</button></td></tr>').join('') + '</tbody></table>'
+      (c.plaid.items.length ? '<table class="bk"><thead><tr><th>Bank</th><th>Accounts</th><th>Last sync</th><th>Status</th><th></th></tr></thead><tbody>' + c.plaid.items.map(it => '<tr><td>' + esc(it.institution) + '</td><td>' + it.accounts.map(a => esc(a.name) + (a.mask ? ' ••' + esc(a.mask) : '')).join('<br>') + '</td><td>' + when(it.last_sync_at) + '</td><td>' + (it.env && it.env !== c.plaid.env ? '<span class="bk-pill err" title="Connected under Plaid ' + esc(it.env) + '; Nova now runs ' + esc(c.plaid.env) + ' — disconnect it and connect the real bank">' + esc(it.env) + ' — reconnect</span>' : it.status === 'ok' ? '<span class="bk-pill on">ok</span>' : '<span class="bk-pill err">' + esc(it.error || it.status) + '</span>') + '</td><td><button class="bk-btn sm bad" data-unlink="' + it.id + '">Disconnect</button></td></tr>').join('') + '</tbody></table>'
         : '<div class="bk-muted">No bank connected yet.</div>') +
-      '<ol class="bk-steps"><li>Create a Plaid account at dashboard.plaid.com (the Transactions product; Sandbox to try, then request Production / Limited Production).</li><li>Put <code>PLAID_CLIENT_ID</code>, <code>PLAID_SECRET</code> and <code>PLAID_ENV=sandbox|production</code> in <code>.env</code> and restart Nova.</li><li>Nothing to set in the dashboard\u2019s Webhooks page (that page is only for Transfer / Wallet / Income events): the Transactions webhook <code>' + esc(c.chat.plaid_webhook_url) + '</code> is attached to every bank connection Nova creates. Allowed redirect URIs are not needed.</li><li>Press <b>Connect a bank</b> and sign in to each bank (2 accounts). Transactions sync straight away; the webhook keeps them current, the daily run syncs again.</li></ol></div>' +
+      '<ol class="bk-steps"><li>Create a Plaid account at dashboard.plaid.com (the Transactions product; Sandbox to try, then request Production / Limited Production).</li><li>Put <code>PLAID_CLIENT_ID</code>, <code>PLAID_SECRET</code> and <code>PLAID_ENV=sandbox|production</code> in <code>.env</code> and restart Nova.</li><li>Nothing to set in the dashboard\u2019s Webhooks page (that page is only for Transfer / Wallet / Income events): the Transactions webhook <code>' + esc(c.chat.plaid_webhook_url) + '</code> is attached to every bank connection Nova creates. Under Team Settings \u2192 API \u2192 <b>Allowed redirect URIs</b> add <code>https://nova.axiomprint.com/bookkeeping/plaid-oauth</code> \u2014 banks that sign you in on their own page (Chase, Bank of America, Wells Fargo, Capital One\u2026) send you back there.</li><li>Press <b>Connect a bank</b> and sign in to each bank (2 accounts). Transactions sync straight away; the webhook keeps them current, the daily run syncs again.</li></ol></div>' +
       // Gmail
       '<div class="bk-card"><h2>Inbox ' + qHelp('inbox_baskets', 'Inbox baskets', 'What each basket means, in your words. The (?) next to a basket in the Inbox shows this text, and BookkeeperAI sorts incoming mail by these definitions — change them and the next scan sorts by the new words. Do Later is never filled by the AI.') + '</h2>' +
       '<div class="bk-muted" style="margin-bottom:8px">How BookkeeperAI decides which basket an email goes to. Edit freely; {poll} in the All line becomes the minutes between checks.</div>' +
@@ -1543,16 +1543,26 @@
     $('scanNow2').onclick = async () => { $('scanNow2').disabled = true; const r = await post('/api/bookkeeping/scan', {}); $('connMsg').textContent = r.ok ? 'Scanned: ' + r.scan.new + ' new email(s), ' + r.parsed.bills + ' bill draft(s).' : r.error; loadConn(); };
     if ($('watchBtn')) $('watchBtn').onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/gmail/watch', {}); $('connMsg').textContent = r.ok ? 'Watching.' : r.error; loadConn(); };
     v.querySelectorAll('[data-unlink]').forEach(b => b.onclick = async () => { if (!await ask('Its transactions stay; new ones stop coming in.', { title: 'Disconnect this bank?', ok: 'Disconnect', danger: true })) return; await api('/api/bookkeeping/plaid/' + b.dataset.unlink, { method: 'DELETE' }); loadConn(); });
+    const openLink = async (token, receivedRedirectUri) => {
+      await loadScript('https://cdn.plaid.com/link/v2/stable/link-initialize.js');
+      const h = window.Plaid.create(Object.assign({ token: token,
+        onSuccess: async (public_token, metadata) => { try { localStorage.removeItem('bk_plaid_link_token'); } catch (e) {} const x = await post('/api/bookkeeping/plaid/exchange', { public_token, metadata }); $('connMsg').textContent = x.ok ? 'Connected ' + x.institution + (x.first_sync && x.first_sync.added != null ? ' — ' + x.first_sync.added + ' transactions pulled.' : '.') : x.error; $('plaidLink').disabled = false; loadConn(); },
+        onExit: () => { $('plaidLink').disabled = false; try { localStorage.removeItem('bk_plaid_link_token'); } catch (e) {} } }, receivedRedirectUri ? { receivedRedirectUri: receivedRedirectUri } : {}));
+      h.open();
+    };
     $('plaidLink').onclick = async () => {
       $('plaidLink').disabled = true;
       const r = await post('/api/bookkeeping/plaid/link-token', {});
       if (!r.ok) { alert(r.error); $('plaidLink').disabled = false; return; }
-      await loadScript('https://cdn.plaid.com/link/v2/stable/link-initialize.js');
-      const h = window.Plaid.create({ token: r.link_token,
-        onSuccess: async (public_token, metadata) => { const x = await post('/api/bookkeeping/plaid/exchange', { public_token, metadata }); $('connMsg').textContent = x.ok ? 'Connected ' + x.institution + (x.first_sync && x.first_sync.added != null ? ' — ' + x.first_sync.added + ' transactions pulled.' : '.') : x.error; loadConn(); },
-        onExit: () => { $('plaidLink').disabled = false; } });
-      h.open();
+      try { localStorage.setItem('bk_plaid_link_token', r.link_token); } catch (e) {}   // 1.19.46: an OAuth bank sends the person back to /bookkeeping/plaid-oauth; Link resumes with this token
+      openLink(r.link_token, null);
     };
+    // Back from the bank's own sign-in page (OAuth): finish the connection with the token Link started with.
+    if (window.__plaidReturn) {
+      const back = window.__plaidReturn; window.__plaidReturn = null;
+      let tok = null; try { tok = localStorage.getItem('bk_plaid_link_token'); } catch (e) {}
+      if (tok) { $('plaidLink').disabled = true; openLink(tok, back); } else $('connMsg').textContent = 'The bank sent you back, but the connection could not be resumed — press Connect a bank again.';
+    }
   }
   function loadScript(src) { return new Promise((ok, no) => { if (document.querySelector('script[src="' + src + '"]')) return ok(); const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); }); }
 
@@ -1568,6 +1578,8 @@
       (j.audit || []).map(a => '<tr><td>' + when(a.at) + '</td><td>' + whoHtml(a.who) + '</td><td>' + esc(a.action) + '</td><td>' + esc(a.ref || '') + '</td><td class="bk-muted">' + esc(String(a.detail || '').slice(0, 200)) + '</td></tr>').join('') + '</tbody></table></div>';
   }
 
+  // 1.19.46: Plaid OAuth return → remember the address, land on Settings (the bank list), and let it resume Link.
+  if (/\/bookkeeping\/plaid-oauth/.test(location.pathname) && /oauth_state_id=/.test(location.search)) { window.__plaidReturn = location.href; history.replaceState(null, '', '/bookkeeping?tab=conn'); }
   const qs = new URLSearchParams(location.search), want = qs.get('tab');
   document.querySelectorAll('.bk-sub button').forEach(b => { const ic = SUB_ICON[b.dataset.s]; if (ic && iconKey(ic) && !b.querySelector('svg')) b.insertAdjacentHTML('afterbegin', iconSvg(ic)); });   // icons once the icon table exists
   show(['brief', 'purchases', 'list', 'bank', 'waiting', 'notreceived', 'bills', 'inbox', 'accounts', 'vendors', 'chart', 'rules', 'materials', 'conn', 'activity'].indexOf(want) > -1 ? (want === 'txns' ? 'purchases' : want) : 'brief', qs.get('sub'));

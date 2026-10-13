@@ -32,12 +32,18 @@ The clock is inside Nova (pm2), no Inngest / Trigger.dev: one process, one SQLit
 ### 1. Plaid (bank accounts)
 1. dashboard.plaid.com → create the account, product **Transactions**. Sandbox first (`PLAID_ENV=sandbox`, test
    bank `user_good` / `pass_good`), then apply for Production.
-2. `.env`: `PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ENV=sandbox|production` → `pm2 restart axiom-ai`.
+2. `.env`: `PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ENV=sandbox|production` → `pm2 reload axiom-ai`. **The Production
+   secret is a different key from the Sandbox one** (dashboard → Developers → Keys → Production); the client id is the same.
 3. No dashboard webhook to configure (Team Settings → Webhooks only lists Transfer / Wallet / Income events): the
    Transactions webhook `https://nova.axiomprint.com/api/bookkeeping/plaid/webhook` is set per connection by the Link
-   token Nova creates.
-4. Nova → Bookkeeping AI → Connections → **Connect a bank**, sign in to each bank (Plaid Link in the browser).
-   Access tokens are stored AES-256-GCM encrypted (key derived from `JWT_SECRET`); the first 90 days sync at once.
+   token Nova creates. **Allowed redirect URIs** (Team Settings → API): add
+   `https://nova.axiomprint.com/bookkeeping/plaid-oauth` — OAuth banks (Chase, Bank of America, Wells Fargo, Capital
+   One, US Bank…) sign you in on their own page and send you back there; Nova keeps the Link token in the browser
+   (`bk_plaid_link_token`) and resumes Link with `receivedRedirectUri` (1.19.46). Without it those banks cannot be connected.
+4. Nova → Bookkeeping AI → Settings (the gear) → Bank accounts → **Connect a bank**, sign in to each bank (Plaid Link
+   in the browser). Access tokens are stored AES-256-GCM encrypted (key derived from `JWT_SECRET`); the first 90 days
+   sync at once. Each connection remembers the Plaid environment it was made in (`bk_accounts.env`); after the switch
+   to production the old sandbox connections show **sandbox — reconnect**: Disconnect them and connect the real banks.
 
 ### 2. accounting@axiomprint.com
 Read with the service account in `/opt/axiom-ai/gmail-key.json`, impersonating `BOOKKEEPER_INBOX` (default
