@@ -71,6 +71,13 @@ Plaid's institution metadata) · amount · category. Vendor matching: an exact n
 **Use**. When a person links a line, the bank's wording becomes an alias of that vendor, so every future line with the
 same wording links by itself, and other unlinked lines with that wording are linked right away. Change is always there.
 
+### Which accounts are in use
+Settings → Bank accounts lists every account behind a connection with a checkbox. Untick an account (a personal
+checking on the same bank login, say) and its lines disappear from the Bank feed, the counts, the AI's work, purchase
+matching and the Account filter; nothing is deleted — tick it again and they come back exactly as they were. New lines
+from an unticked account are hidden as they arrive. At least one account of a connection stays in use (otherwise
+Disconnect the bank).
+
 ### 2. accounting@axiomprint.com
 Read with the service account in `/opt/axiom-ai/gmail-key.json`, impersonating `BOOKKEEPER_INBOX` (default
 `accounting@axiomprint.com`) exactly as Nova reads order@. Domain-wide delegation is per domain, so nothing new is

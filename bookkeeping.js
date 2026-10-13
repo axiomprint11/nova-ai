@@ -49,6 +49,8 @@ module.exports = function mountBookkeeping(app, deps) {
     db.run('ALTER TABLE bk_accounts ADD COLUMN env TEXT', () => {});   // 1.19.46: sandbox | production — a sandbox connection is useless once PLAID_ENV is production
     db.run("UPDATE bk_accounts SET env = 'sandbox' WHERE env IS NULL", () => {});   // every connection made before 1.19.46 was a sandbox one (Production was approved on 10-12-2026)
     ['institution_id TEXT', 'logo TEXT', 'color TEXT'].forEach(c => db.run('ALTER TABLE bk_accounts ADD COLUMN ' + c, () => {}));   // 1.19.47: the bank's logo (Plaid institution metadata)
+    db.run("ALTER TABLE bk_accounts ADD COLUMN excluded TEXT DEFAULT '[]'", () => {});   // 1.19.57: account_ids not in use (a personal account on the same login)
+    db.run('ALTER TABLE bk_transactions ADD COLUMN prev_status TEXT', () => {});        // status before the account was excluded
     ['vendor_by TEXT', 'vendor_score REAL', 'suggest_vendor_id INTEGER', 'suggest_score REAL'].forEach(c => db.run('ALTER TABLE bk_transactions ADD COLUMN ' + c, () => {}));   // 1.19.47: who linked the vendor (auto ≥ 95% / person) and the best near match
     db.run(`CREATE TABLE IF NOT EXISTS bk_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, txn_id TEXT UNIQUE, item_id TEXT, account_ref TEXT,
       account_name TEXT, date TEXT, name TEXT, merchant TEXT, amount REAL, pending INTEGER DEFAULT 0, plaid_category TEXT,
@@ -357,7 +359,7 @@ module.exports = function mountBookkeeping(app, deps) {
   async function plaidItems() {
     if (plaidReady()) await ensureLogos().catch(() => {});
     const rows = await dbAll('SELECT * FROM bk_accounts ORDER BY id');
-    return rows.map(r => { let a = []; try { a = JSON.parse(r.accounts || '[]'); } catch (e) {} return Object.assign({}, r, { access_token: undefined, accounts: a }); });
+    return rows.map(r => { let a = [], x = []; try { a = JSON.parse(r.accounts || '[]'); } catch (e) {} try { x = JSON.parse(r.excluded || '[]'); } catch (e) {} return Object.assign({}, r, { access_token: undefined, accounts: a, excluded: x }); });
   }
   // 1.19.47: the bank's logo and colour from Plaid, fetched once per connection (old connections get their
   // institution_id from /item/get). Logo is a small base64 PNG served inline to the page.
@@ -398,6 +400,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const names = {}; let accts = [];
       try { accts = JSON.parse(row.accounts || '[]'); } catch (e) {}
       accts.forEach(a => { names[a.account_id] = a.name; });
+      let excl = []; try { excl = JSON.parse(row.excluded || '[]'); } catch (e) {}
       for (const t of (j.added || []).concat(j.modified || [])) {
         const isNew = !(await dbGet('SELECT id FROM bk_transactions WHERE txn_id = ?', [t.transaction_id]));
         const cat = t.personal_finance_category ? (t.personal_finance_category.detailed || t.personal_finance_category.primary) : (t.category || []).join(' > ');
@@ -405,6 +408,7 @@ module.exports = function mountBookkeeping(app, deps) {
           const ins = await dbRun('INSERT INTO bk_transactions (txn_id, item_id, account_ref, account_name, date, name, merchant, amount, pending, plaid_category, raw) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
             [t.transaction_id, row.item_id, t.account_id, names[t.account_id] || null, t.date, t.name, t.merchant_name || null, Number(t.amount), t.pending ? 1 : 0, cat, JSON.stringify(t).slice(0, 20000)]);
           added++;
+          if (excl.indexOf(t.account_id) > -1) await dbRun("UPDATE bk_transactions SET status = 'excluded', prev_status = 'new' WHERE id = ?", [ins.lastID]);
           // 1.19.51: a posted line replaces its pending one — keep the category, vendor and the AI's suggestion the pending line had
           const prev = t.pending_transaction_id ? await dbGet('SELECT * FROM bk_transactions WHERE txn_id = ?', [t.pending_transaction_id]) : null;
           if (prev && (prev.category || prev.vendor_id || prev.proposal_id)) {
@@ -529,14 +533,14 @@ module.exports = function mountBookkeeping(app, deps) {
   }
   async function ensureTxnPurchases() {
     await dropOrphanPurchases().catch(() => {});
-    const rows = await dbAll("SELECT id, vendor_id, name, merchant, amount, date, category FROM bk_transactions WHERE purchase_id IS NULL AND category IS NOT NULL AND status NOT IN ('new', 'pending') AND amount > 0 LIMIT 300");
+    const rows = await dbAll("SELECT id, vendor_id, name, merchant, amount, date, category FROM bk_transactions WHERE purchase_id IS NULL AND category IS NOT NULL AND status NOT IN ('new', 'pending', 'removed', 'excluded') AND amount > 0 LIMIT 300");
     for (const t of rows) { const v = t.vendor_id ? await dbGet('SELECT name FROM bk_vendors WHERE id = ?', [t.vendor_id]) : null; const pid = await newPurchase({ vendor_id: t.vendor_id, vendor: v ? v.name : (t.merchant || t.name), amount: t.amount, date: t.date, category: t.category, txn_ids: [t.id], no_paperwork: 1 }, 'bank');  const eq = await equipmentFor(t.vendor_id, t.amount); if (eq) { await dbRun('UPDATE bk_transactions SET equipment_id = ? WHERE id = ? AND equipment_id IS NULL', [eq, t.id]); await dbRun('UPDATE bk_purchases SET equipment_id = ? WHERE id = ?', [eq, pid]); } }
     return rows.length;
   }
   // Bank lines that could be the purchase's payment: same amount to the cent, not in a purchase, within 10 days; same vendor first.
   async function suggestTxns(p) {
     if (p.amount == null) return [];
-    const rows = await dbAll("SELECT id, date, name, merchant, amount, category, vendor_id, account_name FROM bk_transactions WHERE purchase_id IS NULL AND ABS(ABS(amount) - ?) < 0.005 AND date BETWEEN date(?, '-10 days') AND date(?, '+20 days') ORDER BY date DESC LIMIT 10", [Math.abs(p.amount), p.date || today(), p.date || today()]);
+    const rows = await dbAll("SELECT id, date, name, merchant, amount, category, vendor_id, account_name FROM bk_transactions WHERE purchase_id IS NULL AND status NOT IN ('removed', 'excluded') AND ABS(ABS(amount) - ?) < 0.005 AND date BETWEEN date(?, '-10 days') AND date(?, '+20 days') ORDER BY date DESC LIMIT 10", [Math.abs(p.amount), p.date || today(), p.date || today()]);
     return rows.map(t => Object.assign(t, { same_vendor: !!(p.vendor_id && t.vendor_id === p.vendor_id) })).sort((a, b) => (b.same_vendor ? 1 : 0) - (a.same_vendor ? 1 : 0));
   }
   const laDayOf = (ts) => { const d = new Date(String(ts || '').replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(String(ts || '')) ? '' : 'Z')); return isNaN(d) ? today() : d.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }); };
@@ -1680,7 +1684,7 @@ module.exports = function mountBookkeeping(app, deps) {
     // Filters: status, q, from/to (dates), category (sub category name), type (type of expense → all its sub categories),
     // vendor_id, source (manual / approved / rule), min / max (absolute amount). Categorized views also get totals.
     const st = String(req.query.status || ''), q = String(req.query.q || '').trim(), g = (k) => String(req.query[k] || '').trim();
-    const where = ["t.status <> 'removed'"], p = [];
+    const where = ["t.status NOT IN ('removed', 'excluded')"], p = [];
     // 1.19.47: Pending = nothing decided yet (new or proposed); New = synced in the last 24 hours; Categorized = done.
     if (st === 'pending') where.push("t.status IN ('new', 'pending')");
     else if (st === 'new') where.push("t.created_at >= datetime('now', '-1 day')");
@@ -1695,10 +1699,10 @@ module.exports = function mountBookkeeping(app, deps) {
     if (g('min')) { where.push('ABS(t.amount) >= ?'); p.push(Number(g('min')) || 0); }
     if (g('max')) { where.push('ABS(t.amount) <= ?'); p.push(Number(g('max')) || 0); }
     if (g('account')) { where.push('t.account_name = ?'); p.push(g('account')); }
-    const by_status = Object.fromEntries((await dbAll("SELECT status, COUNT(*) n FROM bk_transactions WHERE status <> 'removed' GROUP BY status")).map(r => [r.status, r.n]));
+    const by_status = Object.fromEntries((await dbAll("SELECT status, COUNT(*) n FROM bk_transactions WHERE status NOT IN ('removed', 'excluded') GROUP BY status")).map(r => [r.status, r.n]));
     by_status.new_status = by_status.new || 0;   // lines the AI has not rated yet
     by_status.pending = (by_status.new || 0) + (by_status.pending || 0);
-    by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status <> 'removed' AND created_at >= datetime('now', '-1 day')")).n;
+    by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status NOT IN ('removed', 'excluded') AND created_at >= datetime('now', '-1 day')")).n;
     const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id LEFT JOIN bk_proposals pr ON pr.id = t.proposal_id WHERE ' + where.join(' AND ');
     const rows = await dbAll('SELECT t.id, t.txn_id, t.account_name, t.account_ref, t.date, t.created_at, t.name, t.raw, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, ' +
       'v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo, ba.institution, ba.logo AS bank_logo, ba.color AS bank_color, ba.accounts AS bank_accounts, pr.payload AS ai_payload, pr.confidence AS ai_conf, pr.reason AS ai_reason, pr.status AS ai_status' + W + ' ORDER BY t.date DESC, t.id DESC LIMIT 500', p);
@@ -1740,8 +1744,9 @@ module.exports = function mountBookkeeping(app, deps) {
     }
     if (st === 'categorized' || req.query.lists) {
       // 1.19.49: the Account filter shows "Wells Fargo - 6595", the Vendor filter every vendor seen on a bank line
-      const accs = await dbAll("SELECT DISTINCT t.account_name, t.account_ref, ba.institution, ba.accounts FROM bk_transactions t LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id WHERE t.account_name IS NOT NULL ORDER BY 1");
-      out.accounts = accs.map(r => { let a = null; try { a = JSON.parse(r.accounts || '[]').find(x => x.account_id === r.account_ref); } catch (e) {} return { account_name: r.account_name, label: (r.institution || 'Bank') + (a && a.mask ? ' - ' + a.mask : '') + (r.account_name ? ' · ' + r.account_name : '') }; });
+      const accs = await dbAll("SELECT DISTINCT t.account_name, t.account_ref, ba.institution, ba.accounts, ba.excluded FROM bk_transactions t JOIN bk_accounts ba ON ba.item_id = t.item_id WHERE t.account_name IS NOT NULL ORDER BY 1");
+      out.accounts = accs.filter(r => { let x = []; try { x = JSON.parse(r.excluded || '[]'); } catch (e) {} return x.indexOf(r.account_ref) < 0; })
+        .map(r => { let a = null; try { a = JSON.parse(r.accounts || '[]').find(x => x.account_id === r.account_ref); } catch (e) {} const short = (r.institution || 'Bank') + (a && a.mask ? ' - ' + a.mask : ''); return { account_name: r.account_name, short, label: short + (r.account_name ? ' · ' + r.account_name : '') }; });
       out.vendors = await dbAll("SELECT DISTINCT v.id, v.name FROM bk_transactions t JOIN bk_vendors v ON v.id = t.vendor_id ORDER BY v.name");
     }
     res.json(out);
@@ -1927,7 +1932,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const score = (b) => { let sc = 0, why = []; if (em.vendor_id && b.vendor_id === em.vendor_id) { sc += 3; why.push('same vendor'); } const inv = String(b.invoice_no || '').toUpperCase().replace(/\s+/g, ''); if (inv && nums.some(n => n.replace(/-/g, '') === inv.replace(/-/g, '') || inv.indexOf(n) > -1 || n.indexOf(inv) > -1)) { sc += 4; why.push('invoice # ' + b.invoice_no); } if (b.total && amts.some(a => Math.abs(a - b.total) < 0.01)) { sc += 2; why.push('amount ' + b.total); } if (b.status === 'paid') sc -= 1; return { sc, why }; };
     const billHits = bills.map(b => Object.assign({}, b, score(b))).filter(b => b.sc > 0).sort((a, b) => b.sc - a.sc).slice(0, 8);
     const since = String(em.received_at || nowIso()).slice(0, 10);
-    const txns = await dbAll("SELECT id, date, name, merchant, amount, category, status, vendor_id FROM bk_transactions WHERE date >= date(?, '-45 days') AND date <= date(?, '+10 days') AND amount < 0 ORDER BY date DESC LIMIT 600", [since, since]);
+    const txns = await dbAll("SELECT id, date, name, merchant, amount, category, status, vendor_id FROM bk_transactions WHERE status NOT IN ('removed', 'excluded') AND date >= date(?, '-45 days') AND date <= date(?, '+10 days') AND amount < 0 ORDER BY date DESC LIMIT 600", [since, since]);
     const tscore = (t) => { let sc = 0, why = []; if (em.vendor_id && t.vendor_id === em.vendor_id) { sc += 3; why.push('same vendor'); } if (amts.some(a => Math.abs(a - Math.abs(t.amount)) < 0.01)) { sc += 3; why.push('amount ' + Math.abs(t.amount)); } const vn = normV((em.from_addr || '').replace(/<.*$/, '')); if (vn && normV(t.name + ' ' + (t.merchant || '')).indexOf(vn.split(' ')[0]) > -1 && vn.split(' ')[0].length > 3) { sc += 1; why.push('name'); } return { sc, why }; };
     const txnHits = txns.map(t => Object.assign({}, t, tscore(t))).filter(t => t.sc > 0).sort((a, b) => b.sc - a.sc).slice(0, 8);
     res.json({ ok: true, numbers: nums.slice(0, 10), amounts: amts.slice(0, 10), bills: billHits, transactions: txnHits });
@@ -2324,6 +2329,25 @@ module.exports = function mountBookkeeping(app, deps) {
   app.post('/api/bookkeeping/scan', ...guard, async (req, res) => { try { const r = await scanInbox(userId(req)); const p = await parseNewEmails(userId(req)); res.json({ ok: true, scan: r, parsed: p }); } catch (e) { res.json({ ok: false, error: e.message }); } });
   // 1.19.47: the sandbox test data goes away once real banks are connected — sandbox connections, their bank lines, the
   // proposals / questions about those lines, and purchases that held only those lines (bills and emails are real, they stay).
+  // 1.19.57: which accounts of a connection are in use. Excluded accounts' lines are kept but hidden everywhere (status
+  // 'excluded', their old status in prev_status) and come back as they were when the account is ticked again.
+  app.post('/api/bookkeeping/plaid/items/:id/accounts', ...guard, async (req, res) => {
+    try {
+      const row = await dbGet('SELECT * FROM bk_accounts WHERE id = ?', [parseInt(req.params.id)]);
+      if (!row) return res.json({ ok: false, error: 'No such connection' });
+      let all = []; try { all = JSON.parse(row.accounts || '[]').map(a => a.account_id); } catch (e) {}
+      const excluded = (Array.isArray(req.body.excluded) ? req.body.excluded : []).map(String).filter(id => all.indexOf(id) > -1);
+      if (excluded.length === all.length && all.length) return res.json({ ok: false, error: 'Keep at least one account in use — or Disconnect the bank.' });
+      await dbRun('UPDATE bk_accounts SET excluded = ? WHERE id = ?', [JSON.stringify(excluded), row.id]);
+      let off = 0, on = 0;
+      for (const id of all) {
+        if (excluded.indexOf(id) > -1) off += (await dbRun("UPDATE bk_transactions SET prev_status = status, status = 'excluded', updated_at = datetime('now') WHERE item_id = ? AND account_ref = ? AND status NOT IN ('removed', 'excluded')", [row.item_id, id])).changes || 0;
+        else on += (await dbRun("UPDATE bk_transactions SET status = COALESCE(prev_status, 'new'), prev_status = NULL, updated_at = datetime('now') WHERE item_id = ? AND account_ref = ? AND status = 'excluded'", [row.item_id, id])).changes || 0;
+      }
+      await audit(userId(req), 'plaid.accounts', row.item_id, { excluded, hidden: off, restored: on });
+      res.json({ ok: true, excluded, hidden: off, restored: on });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
   app.post('/api/bookkeeping/plaid/purge-sandbox', ...guard, async (req, res) => {
     try {
       const items = await dbAll("SELECT id, item_id, institution FROM bk_accounts WHERE env = 'sandbox' OR env IS NULL");
