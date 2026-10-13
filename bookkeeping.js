@@ -1480,6 +1480,20 @@ module.exports = function mountBookkeeping(app, deps) {
     return { text, stats };
   }
   const laDay = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+  // 1.19.108: the most recent 6:00 AM in Los Angeles, as the UTC 'YYYY-MM-DD HH:MM:SS' SQLite's created_at uses.
+  // Bank lines synced after it are "New"; at 6 every morning the rest become "Pending".
+  const NEW_CUT_HOUR = 6;
+  function newCutoff(now) {
+    now = now || new Date();
+    const f = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const la = (d) => { const o = {}; f.formatToParts(d).forEach(x => { o[x.type] = x.value; }); return o; };
+    const n = la(now);
+    let y = Number(n.year), m = Number(n.month), d = Number(n.day);
+    if (Number(n.hour) < NEW_CUT_HOUR) { const t = new Date(Date.UTC(y, m - 1, d - 1)); y = t.getUTCFullYear(); m = t.getUTCMonth() + 1; d = t.getUTCDate(); }
+    let guess = Date.UTC(y, m - 1, d, NEW_CUT_HOUR);   // 6:00 as if LA were UTC, then shift by LA's offset at that moment
+    for (let i = 0; i < 2; i++) { const g = la(new Date(guess)); const wall = Date.UTC(Number(g.year), Number(g.month) - 1, Number(g.day), Number(g.hour), Number(g.minute), Number(g.second)); guess += Date.UTC(y, m - 1, d, NEW_CUT_HOUR) - wall; }
+    return new Date(guess).toISOString().slice(0, 19).replace('T', ' ');
+  }
 
   // ---------------------------------------------------------------- Google Chat
   let chatClient = null;
@@ -1817,12 +1831,14 @@ module.exports = function mountBookkeeping(app, deps) {
     const st = String(req.query.status || ''), q = String(req.query.q || '').trim(), g = (k) => String(req.query[k] || '').trim();
     if (Date.now() - rulesSweptAt > 20000) { rulesSweptAt = Date.now(); try { await applyRules(); } catch (e) { errlog('rules sweep', e.message); } }
     const where = ["t.status NOT IN ('removed', 'excluded')"], p = [];
-    // 1.19.83: New = not categorized and synced in the last 24 hours; Pending = not categorized, 24 hours and older;
+    // 1.19.83: New = not categorized and freshly synced; Pending = not categorized and older (the cut-off is below);
     // Categorized = done (by rule, the AI approved, or by hand). The three never overlap.
     // 1.19.100: 90+ = not categorized and the bank date is older than 90 days (the backlog); Pending stops there
-    if (st === 'pending') where.push("t.status IN ('new', 'pending') AND t.created_at < datetime('now', '-1 day') AND t.date >= date('now', '-90 days')");
+    // 1.19.108: the cut-off is 6:00 AM Los Angeles, not 24 hours — every morning the lines that came in before 6 move to Pending
+    const cut = newCutoff();
+    if (st === 'pending') { where.push("t.status IN ('new', 'pending') AND t.created_at < ? AND t.date >= date('now', '-90 days')"); p.push(cut); }
     else if (st === 'old') where.push("t.status IN ('new', 'pending') AND t.date < date('now', '-90 days')");
-    else if (st === 'new') where.push("t.status IN ('new', 'pending') AND t.created_at >= datetime('now', '-1 day')");
+    else if (st === 'new') { where.push("t.status IN ('new', 'pending') AND t.created_at >= ?"); p.push(cut); }
     else if (st) { where.push('t.status = ?'); p.push(st); }
     if (q) { where.push('(t.name LIKE ? OR t.merchant LIKE ? OR t.category LIKE ? OR v.name LIKE ?)'); p.push('%' + q + '%', '%' + q + '%', '%' + q + '%', '%' + q + '%'); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(g('from'))) { where.push('t.date >= ?'); p.push(g('from')); }
@@ -1837,7 +1853,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (g('account')) { where.push('t.account_name = ?'); p.push(g('account')); }
     const by_status = Object.fromEntries((await dbAll("SELECT status, COUNT(*) n FROM bk_transactions WHERE status NOT IN ('removed', 'excluded') GROUP BY status")).map(r => [r.status, r.n]));
     by_status.new_status = by_status.new || 0;   // lines the AI has not rated yet
-    by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND created_at >= datetime('now', '-1 day')")).n;
+    by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND created_at >= ?", [cut])).n;
     by_status.old = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND date < date('now', '-90 days')")).n;
     by_status.pending = (by_status.new_status || 0) + (by_status.pending || 0) - by_status.new - by_status.old;   // the open lines older than a day, within 90 days
     const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id LEFT JOIN bk_transactions tr ON tr.id = t.transfer_of LEFT JOIN bk_accounts tra ON tra.item_id = tr.item_id LEFT JOIN bk_loans lo ON lo.id = t.loan_id LEFT JOIN bk_proposals pr ON pr.id = t.proposal_id LEFT JOIN bk_transactions ro ON ro.id = t.refund_of LEFT JOIN bk_transactions rb ON rb.refund_of = t.id WHERE ' + where.join(' AND ');
@@ -1924,7 +1940,7 @@ module.exports = function mountBookkeeping(app, deps) {
       if (hit) r.loan_hint = { id: hit.id, name: hit.name };
     }
     if (rows.some(r => !r.orig_desc)) backfillOriginalDesc();
-    const out = { ok: true, by_status, matched, transactions: rows, categorizing: catBusy };
+    const out = { ok: true, by_status, matched, transactions: rows, categorizing: catBusy, new_since: cut };   // 1.19.108: the page's Status tags use the same 6 AM cut-off
     if ((by_status.new_status || 0) > 0 && !catBusy) { categorizeBacklog(userId(req)); out.categorizing = true; }
     if (st === 'categorized') {
       const parentOfName = {}; chartOf(await settings()).forEach(c => { if (c.parent) parentOfName[c.name] = c.parent; });
