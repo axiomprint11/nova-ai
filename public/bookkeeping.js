@@ -1426,7 +1426,7 @@
     v.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => {
       const r = (j.rules || []).find(x => String(x.id) === b.dataset.edit); if (!r) return;
       const tr = v.querySelector('tr[data-rule="' + r.id + '"]'), was = tr.innerHTML;
-      tr.innerHTML = '<td colspan="5"><div class="bk-row" style="flex-wrap:nowrap;align-items:center"><select class="bk re-kind"><option value="vendor"' + (r.kind === 'vendor' ? ' selected' : '') + '>Vendor is</option><option value="keyword"' + (r.kind === 'keyword' ? ' selected' : '') + '>Description contains</option><option value="none"' + (r.kind === 'none' ? ' selected' : '') + '>No rule for vendor</option></select>' +
+      tr.innerHTML = '<td colspan="6"><div class="bk-row rl-add" style="flex-wrap:nowrap"><select class="bk re-kind"><option value="vendor"' + (r.kind === 'vendor' ? ' selected' : '') + '>Vendor is</option><option value="keyword"' + (r.kind === 'keyword' ? ' selected' : '') + '>Description contains</option><option value="none"' + (r.kind === 'none' ? ' selected' : '') + '>No rule for vendor</option></select>' +
         '<input class="bk re-pat" value="' + esc(r.pattern) + '" style="flex:0 0 220px;min-width:0">' + amountCondHtml('re', r.amount_op, r.amount_val) + catSelect(r.category || '', 'recat', 'Category…') +
         '<button class="bk-btn p re-save" style="white-space:nowrap;flex:none">Save</button><button class="bk-btn re-cancel" style="flex:none">Cancel</button><span class="bk-muted re-msg"></span></div></td>';
       tr.querySelector('.re-cancel').onclick = () => { tr.innerHTML = was; loadRules(); };
