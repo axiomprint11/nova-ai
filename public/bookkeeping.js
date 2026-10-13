@@ -1445,18 +1445,26 @@
   async function loadNovaVendors() {
     const v = $('vNova');
     if (!ov) await overview();
-    const j = await api('/api/bookkeeping/directory?fresh=0');
-    const rows = (j.vendors || []).filter(x => x.source === 'nova').sort((a, b) => String(a.name).localeCompare(b.name));
-    const web = (x) => { let d = {}; try { d = JSON.parse(x.details || '{}') || {}; } catch (e) {} return d.website || ''; };
+    const j = await api('/api/bookkeeping/vendors/nova');
+    const rows = j.vendors || [];
+    const web = (x) => (x.bank && x.bank.website) || (() => { let d = {}; try { d = JSON.parse(x.details || '{}') || {}; } catch (e) {} return d.website || ''; })();
+    const prettyPC = (c) => { const w = String(c || '').toLowerCase().split('_').filter(Boolean); return w.length ? w.join(' ').replace(/^./, ch => ch.toUpperCase()) : ''; };
+    const CHW = { 'in store': 'Store', online: 'Online', other: 'Other' };
+    const usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : ''; };
+    const bankCell = (x) => { const b = x.bank || {}; if (!b.txns) return '<span class="bk-dim">nothing linked yet</span>';
+      return (b.place ? '<div>' + esc(b.place) + '</div>' : '') + (b.category ? '<div class="bk-muted">' + esc(prettyPC(b.category)) + '</div>' : '') +
+        (b.channels.length ? '<div class="bk-dim">' + b.channels.map(c => esc(CHW[c.channel] || c.channel) + ' ' + c.n).join(' · ') + '</div>' : '') +
+        (b.accounts.length ? '<div class="bk-dim">' + b.accounts.map(a => esc((a.bank || 'Bank') + (a.account ? ' · ' + a.account : ''))).join('<br>') + '</div>' : ''); };
+    const spendCell = (x) => { const b = x.bank || {}; if (!b.txns) return '<span class="bk-dim">—</span>';
+      return '<b>' + usd(b.spent) + '</b><div class="bk-muted">' + b.txns + ' line' + (b.txns === 1 ? '' : 's') + (b.monthly ? ' · ~' + usd(b.monthly) + '/mo' : '') + '</div><div class="bk-dim">' + (b.first && b.first !== b.last ? esc(usD(b.first)) + ' → ' : 'last ') + esc(usD(b.last)) + '</div>'; };
     const q = (v.dataset.q || '').toLowerCase();
     const shown = rows.filter(x => !q || (x.name + ' ' + (x.specialty || '') + ' ' + (x.default_category || '') + ' ' + (x.contact || '') + ' ' + (x.email || '')).toLowerCase().indexOf(q) > -1);
     v.innerHTML = '<div class="bk-card"><h2>Nova vendors ' + qHelp('nova_vendors', 'Nova vendors', 'Companies you pay that are not in the CRM supplier / vendor lists — the landlord, LinkedIn, a one-off contractor. They live only in Nova, carry what you buy from them and their usual category from the chart of accounts, and can be linked to bank lines and bills like any CRM company.') +
       '<span class="sp"></span><input class="bk" id="nvQ" placeholder="Search" value="' + esc(v.dataset.q || '') + '" style="width:220px"><button class="bk-btn p" id="nvAdd">+ New vendor</button></h2>' +
-      (shown.length ? '<table class="bk"><thead><tr><th></th><th>Company</th><th>What we buy</th><th>Usual category</th><th>Contact</th><th>On the statement as</th><th class="num">Linked</th><th></th></tr></thead><tbody>' +
-        shown.map(x => '<tr><td><span class="bk-logo ph">' + esc(String(x.name).charAt(0).toUpperCase()) + '</span></td><td><b>' + esc(x.name) + '</b>' + (web(x) ? '<div class="bk-dim"><a href="' + esc(/^https?:/.test(web(x)) ? web(x) : 'https://' + web(x)) + '" target="_blank" rel="noopener">' + esc(web(x)) + '</a></div>' : '') + '</td>' +
+      (shown.length ? '<table class="bk nv-table"><thead><tr><th></th><th>Company</th><th>What we buy</th><th>Usual category</th><th>Contact</th><th>From the bank</th><th>Spend</th><th>On the statement as</th><th></th></tr></thead><tbody>' +
+        shown.map(x => '<tr><td>' + (x.photo ? '<img class="bk-logo" src="' + esc(x.photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;bk-logo ph&quot;>' + esc(String(x.name).charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo ph">' + esc(String(x.name).charAt(0).toUpperCase()) + '</span>') + '</td><td><b>' + esc(x.name) + '</b>' + (web(x) ? '<div class="bk-dim"><a href="' + esc(/^https?:/.test(web(x)) ? web(x) : 'https://' + web(x)) + '" target="_blank" rel="noopener">' + esc(web(x)) + '</a></div>' : '') + '</td>' +
           '<td>' + esc(x.specialty || '') + '</td><td>' + (x.default_category ? splitCats(x.default_category).map(c => catLabel(c)).join('<br>') : '<span class="bk-dim">not set</span>') + '</td>' +
-          '<td class="bk-muted">' + esc(x.contact || '') + (x.email ? '<br>' + esc(x.email) : '') + (x.phone ? '<br>' + esc(x.phone) : '') + '</td><td class="bk-muted">' + esc(String(x.aliases || '').split('\n').filter(Boolean).join(' · ')) + '</td>' +
-          '<td class="num bk-muted">' + (x.txns || 0) + ' txn' + (x.txns == 1 ? '' : 's') + '<br>' + (x.bills || 0) + ' bill' + (x.bills == 1 ? '' : 's') + '</td>' +
+          '<td class="bk-muted">' + esc(x.contact || '') + (x.email ? '<br>' + esc(x.email) : '') + (x.phone ? '<br>' + esc(x.phone) : '') + (x.address ? '<br>' + esc(x.address) : '') + '</td><td class="nv-bank">' + bankCell(x) + '</td><td class="nv-spend">' + spendCell(x) + (x.bills ? '<div class="bk-dim">' + x.bills + ' bill' + (x.bills == 1 ? '' : 's') + '</div>' : '') + '</td><td class="bk-muted">' + esc(String(x.aliases || '').split('\n').filter(Boolean).join(' · ')) + '</td>' +
           '<td class="pu-acts"><button class="bk-btn sm" data-nvedit="' + x.id + '">Edit</button>' + (!x.txns && !x.bills ? '<button class="bk-btn sm bad" data-nvdel="' + x.id + '">Remove</button>' : '') + '</td></tr>').join('') + '</tbody></table>'
         : '<div class="bk-muted" style="padding:14px 0">' + (rows.length ? 'No match.' : 'No Nova vendors yet — add the landlord, LinkedIn, anyone you pay who is not in the CRM.') + '</div>') + '</div>';
     $('nvAdd').onclick = () => novaVendorForm({}, () => loadNovaVendors());

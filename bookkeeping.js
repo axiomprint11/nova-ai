@@ -2274,7 +2274,11 @@ module.exports = function mountBookkeeping(app, deps) {
     if (vid && t) { try { const raw = JSON.parse(t.raw || '{}'), v = await dbGet('SELECT id, source, photo, details FROM bk_vendors WHERE id = ?', [vid]);
       if (v && (v.source === 'nova' || v.source === 'bill')) { const sets = [], args = []; let d = {}; try { d = JSON.parse(v.details || '{}') || {}; } catch (e) {}
         if (!v.photo && raw.logo_url) { sets.push('photo = ?'); args.push(raw.logo_url); }
-        if (!d.website && raw.website) { d.website = raw.website; sets.push('details = ?'); args.push(JSON.stringify(d)); }
+        let dChanged = false;
+        if (!d.website && raw.website) { d.website = raw.website; dChanged = true; }
+        const loc = raw.location || {};
+        if (!d.plaid && (raw.merchant_entity_id || loc.city || loc.address)) { d.plaid = { entity_id: raw.merchant_entity_id || undefined, address: loc.address || undefined, city: loc.city || undefined, region: loc.region || undefined, postal_code: loc.postal_code || undefined, category: raw.personal_finance_category ? raw.personal_finance_category.primary : undefined }; dChanged = true; }
+        if (dChanged) { sets.push('details = ?'); args.push(JSON.stringify(d)); }
         if (sets.length) { await dbRun('UPDATE bk_vendors SET ' + sets.join(', ') + ' WHERE id = ?', args.concat([vid])); dirCache.at = 0; } } } catch (e) {} }
     // 1.19.47: the same bank wording elsewhere (unlinked, or linked by the machine) follows — and every future line too, through the alias.
     if (vid && t && req.body.alias !== false) { const text = t.merchant || t.name; req.body.alias = req.body.alias || text;
@@ -2299,6 +2303,35 @@ module.exports = function mountBookkeeping(app, deps) {
       dirCache.at = 0;
       await audit(userId(req), 'vendor.new', r.lastID, { name });
       res.json({ ok: true, vendor: await dbGet('SELECT * FROM bk_vendors WHERE id = ?', [r.lastID]) });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  // 1.19.66: the Nova vendors with everything the bank has told us about them — logo, website, place, bank category,
+  // how they are paid, how much and how often.
+  app.get('/api/bookkeeping/vendors/nova', ...guard, async (req, res) => {
+    try {
+      const rows = await dbAll("SELECT v.*, (SELECT COUNT(*) FROM bk_transactions t WHERE t.vendor_id = v.id AND t.status NOT IN ('removed','excluded')) AS txns, (SELECT COUNT(*) FROM bk_bills b WHERE b.vendor_id = v.id AND b.status <> 'rejected') AS bills, " +
+        "(SELECT SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) FROM bk_transactions t WHERE t.vendor_id = v.id AND t.status NOT IN ('removed','excluded')) AS spent, (SELECT MAX(date) FROM bk_transactions t WHERE t.vendor_id = v.id AND t.status NOT IN ('removed','excluded')) AS last_date, (SELECT MIN(date) FROM bk_transactions t WHERE t.vendor_id = v.id AND t.status NOT IN ('removed','excluded')) AS first_date " +
+        "FROM bk_vendors v WHERE v.source = 'nova' ORDER BY v.name COLLATE NOCASE");
+      for (const v of rows) {
+        let d = {}; try { d = JSON.parse(v.details || '{}') || {}; } catch (e) {}
+        const last = await dbGet("SELECT raw, account_name FROM bk_transactions WHERE vendor_id = ? AND status NOT IN ('removed','excluded') ORDER BY date DESC LIMIT 1", [v.id]);
+        let raw = null; try { raw = last && last.raw ? JSON.parse(last.raw) : null; } catch (e) {}
+        const loc = raw && raw.location || {};
+        const chans = await dbAll("SELECT json_extract(raw, '$.payment_channel') ch, COUNT(*) n FROM bk_transactions WHERE vendor_id = ? AND status NOT IN ('removed','excluded') GROUP BY ch ORDER BY n DESC", [v.id]).catch(() => []);
+        const accts = await dbAll("SELECT ba.institution, t.account_name, COUNT(*) n FROM bk_transactions t LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id WHERE t.vendor_id = ? AND t.status NOT IN ('removed','excluded') GROUP BY ba.institution, t.account_name ORDER BY n DESC LIMIT 3", [v.id]).catch(() => []);
+        v.bank = {
+          website: d.website || (raw && raw.website) || null,
+          logo: v.photo || (raw && raw.logo_url) || null,
+          place: [loc.address, [loc.city, loc.region].filter(Boolean).join(', '), loc.postal_code].filter(Boolean).join(' · ') || (d.plaid ? [d.plaid.address, [d.plaid.city, d.plaid.region].filter(Boolean).join(', ')].filter(Boolean).join(' · ') : ''),
+          category: raw && raw.personal_finance_category ? (raw.personal_finance_category.detailed || raw.personal_finance_category.primary) : (d.plaid && d.plaid.category) || null,
+          channels: chans.filter(c => c.ch).map(c => ({ channel: c.ch, n: c.n })),
+          accounts: accts.map(a => ({ bank: a.institution, account: a.account_name, n: a.n })),
+          spent: v.spent || 0, txns: v.txns, first: v.first_date, last: v.last_date,
+          monthly: v.spent && v.first_date && v.last_date ? Math.round(v.spent / Math.max(1, (new Date(v.last_date) - new Date(v.first_date)) / 2629800000 + 1)) : null
+        };
+        if (!v.photo && v.bank.logo) { await dbRun('UPDATE bk_vendors SET photo = ? WHERE id = ? AND photo IS NULL', [v.bank.logo, v.id]).catch(() => {}); v.photo = v.bank.logo; }
+      }
+      res.json({ ok: true, vendors: rows });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   app.post('/api/bookkeeping/vendors/:id/delete', ...guard, async (req, res) => {
