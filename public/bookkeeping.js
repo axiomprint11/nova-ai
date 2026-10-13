@@ -1799,7 +1799,7 @@
     const v = $('vVendors');
     if (!ov) await overview();
     const j = await api('/api/bookkeeping/directory');
-    const all = j.vendors || [];
+    const all = (j.vendors || []).filter(x => x.source !== 'nova');   // 1.19.133: the CRM lists only — Nova vendors (and the overseas team) have their own tab
     const KIND_LABEL = { supplier: 'Supplier', vendor: 'Vendor', nova: 'Nova vendor', bill: 'From a bill', other: 'Other' };
     const label = (k) => KIND_LABEL[k] || (String(k || 'other').charAt(0).toUpperCase() + String(k || 'other').slice(1));
     // The types are the CRM lists (read-only here — a row's type is the list it is in), then "from a bill".
