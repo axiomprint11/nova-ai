@@ -133,8 +133,10 @@
     if (Array.isArray(spec)) { const o = spec.find(x => x.v === cur); val = o && (cur || o.h != null) ? (o.h != null ? o.h : o.t != null ? esc(o.t) : o.l) : ''; }   // o.h = html shown in the header (an icon slot, kept even when nothing is picked so the header keeps its width)
     else if (spec.type === 'text') val = spec.value ? esc(spec.value) : '';
     else if (spec.type === 'range') { const pr = (spec.presets || []).find(x => x.v === spec.period); val = spec.period && spec.period !== 'custom' && spec.period !== spec.defaultPeriod && pr ? esc(pr.l) : (spec.from || spec.to) ? esc(spec.from && spec.to ? spec.from + ' – ' + spec.to : spec.from ? (spec.kind === 'date' ? 'from ' : '≥ ') + spec.from : (spec.kind === 'date' ? 'to ' : '≤ ') + spec.to) : ''; }
-    // 1.19.82: an active filter carries an × on the header that clears it without opening the popover
-    return '<button type="button" class="thf' + (on ? ' on' : '') + '" data-thf="' + esc(key) + '" data-v="' + esc(cur || '') + '"><span class="thf-l">' + esc(label) + '</span>' + (val ? ' <b>' + val + '</b>' : '') + (on ? '<i class="thf-x" title="Clear this filter">×</i>' : FUNNEL) + '</button>';
+    // 1.19.83: the header never shows the picked value (it wrapped the row) — an active filter is the label + a red × that clears it;
+    // what is picked is in the tooltip and ticked in the popover
+    const tip = val ? String(val).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+    return '<button type="button" class="thf' + (on ? ' on' : '') + '" data-thf="' + esc(key) + '" data-v="' + esc(cur || '') + '"' + (tip ? ' title="' + esc(label + ': ' + tip) + '"' : '') + '><span class="thf-l">' + esc(label) + '</span>' + (on ? '<i class="thf-x" title="Clear this filter">×</i>' : FUNNEL) + '</button>';
   };
   function thFilterBind(root, specs, onChange) {
     const clearOf = (spec) => Array.isArray(spec) ? '' : spec.type === 'text' ? '' : { from: '', to: '', period: spec.defaultPeriod || '' };
@@ -586,6 +588,8 @@
       amount: { type: 'range', kind: 'number', from: TF.min, to: TF.max }
     };
     const STL = { pending: 'Pending', new: 'New', categorized: 'Categorized', '': 'All' };
+    // 1.19.83: what the Status column says — New = synced < 24 h and not categorized, Pending = older and not categorized, else Categorized
+    const shown = (t) => t.status === 'categorized' ? 'categorized' : (Date.now() - new Date(String(t.created_at || '').replace(' ', 'T') + 'Z').getTime() < 86400000 ? 'new' : 'pending');
     const SRC_L = { manual: 'manually matched', approved: 'AI, approved', rule: 'by rule', refund: 'refund', vendor: 'company\'s usual', history: 'from history', ai: 'AI suggestion' };
     const HISTI = '<svg class="tx-ai-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
     const VENDI = '<svg class="tx-ai-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/></svg>';
@@ -636,7 +640,7 @@
         (t.can_rule ? '<div class="tx-ref"><a href="#" class="tx-refl tx-mkrule" data-mkrule="' + t.id + '" title="Always file ' + esc(t.vendor_name || t.merchant || t.name) + ' as ' + esc(t.category) + '">' + RULEI + ' Create a rule</a></div>' : '') +
         // 1.19.79: a deposit filed as income is a customer payment — tell Accounts Receivable (once; "again" resends)
         (t.amount < 0 && t.category && !t.refund_of && isIncome(t.category) ? (t.ar_notified_at ? '<div class="tx-ref bk-dim" title="Accounts Receivable was emailed"><div>' + MAILI + ' AR notified ' + esc(usD(t.ar_notified_at.slice(0, 10))) + ' · ' + whoHtml(t.ar_notified_by || '') + ' <a href="#" class="tx-arl" data-ar="' + t.id + '" data-again="1" title="Send the email again">again</a></div></div>' : '<div class="tx-ref"><a href="#" class="tx-refl tx-arl" data-ar="' + t.id + '" title="Email Accounts Receivable about this payment">' + MAILI + ' Notify Accounts Receivable</a></div>') : '') + '</td>' +
-        '<td><span class="bk-tag ' + esc(t.status) + '" title="' + esc(t.category ? 'Set ' + (t.category_source === 'approved' ? 'from the AI\'s proposal' : t.category_source === 'rule' ? 'by a vendor rule' : 'by hand') : t.status === 'pending' ? 'The AI has a suggestion — pick it or choose another' : 'Just synced, not rated yet') + '">' + esc(STL[t.status] || t.status) + '</span>' + (t.category && t.category_source ? '<div class="bk-dim">' + esc(SRC_L[t.category_source] || t.category_source) + '</div>' : '') + '</td></tr>').join('') + '</tbody></table>' +
+        '<td><span class="bk-tag ' + esc(shown(t)) + '" title="' + esc(t.category ? 'Categorized — set ' + (t.category_source === 'approved' ? 'from the AI\'s proposal' : t.category_source === 'rule' ? 'by a vendor rule' : 'by hand') : shown(t) === 'new' ? 'New — synced in the last 24 hours, not categorized yet' : 'Pending — 24 hours or older, still not categorized') + '">' + esc(STL[shown(t)]) + '</span>' + (t.category && t.category_source ? '<div class="bk-dim">' + esc(SRC_L[t.category_source] || t.category_source) + '</div>' : '') + '</td></tr>').join('') + '</tbody></table>' +
       (!(j.transactions || []).length ? '<div class="bk-muted" style="padding:14px 0">' + (st === 'new' ? 'Nothing came in from the bank in the last 24 hours.' : 'No transactions here — connect a bank under Settings, then Sync.') + '</div>' : '')) + '</div>';
     if ($('tfMore')) $('tfMore').onclick = () => { txStats = false; txnSt = 'categorized'; lastSub.bank = 'categorized'; document.querySelectorAll('#subBank button').forEach(b => b.classList.toggle('on', b.dataset.s === 'categorized')); loadTxns(); };
     v.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { txnSt = b.dataset.st; loadTxns(); });

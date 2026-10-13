@@ -1750,9 +1750,10 @@ module.exports = function mountBookkeeping(app, deps) {
     // vendor_id, source (manual / approved / rule), min / max (absolute amount). Categorized views also get totals.
     const st = String(req.query.status || ''), q = String(req.query.q || '').trim(), g = (k) => String(req.query[k] || '').trim();
     const where = ["t.status NOT IN ('removed', 'excluded')"], p = [];
-    // 1.19.47: Pending = nothing decided yet (new or proposed); New = synced in the last 24 hours; Categorized = done.
-    if (st === 'pending') where.push("t.status IN ('new', 'pending')");
-    else if (st === 'new') where.push("t.created_at >= datetime('now', '-1 day')");
+    // 1.19.83: New = not categorized and synced in the last 24 hours; Pending = not categorized, 24 hours and older;
+    // Categorized = done (by rule, the AI approved, or by hand). The three never overlap.
+    if (st === 'pending') where.push("t.status IN ('new', 'pending') AND t.created_at < datetime('now', '-1 day')");
+    else if (st === 'new') where.push("t.status IN ('new', 'pending') AND t.created_at >= datetime('now', '-1 day')");
     else if (st) { where.push('t.status = ?'); p.push(st); }
     if (q) { where.push('(t.name LIKE ? OR t.merchant LIKE ? OR t.category LIKE ? OR v.name LIKE ?)'); p.push('%' + q + '%', '%' + q + '%', '%' + q + '%', '%' + q + '%'); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(g('from'))) { where.push('t.date >= ?'); p.push(g('from')); }
@@ -1767,8 +1768,8 @@ module.exports = function mountBookkeeping(app, deps) {
     if (g('account')) { where.push('t.account_name = ?'); p.push(g('account')); }
     const by_status = Object.fromEntries((await dbAll("SELECT status, COUNT(*) n FROM bk_transactions WHERE status NOT IN ('removed', 'excluded') GROUP BY status")).map(r => [r.status, r.n]));
     by_status.new_status = by_status.new || 0;   // lines the AI has not rated yet
-    by_status.pending = (by_status.new || 0) + (by_status.pending || 0);
-    by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status NOT IN ('removed', 'excluded') AND created_at >= datetime('now', '-1 day')")).n;
+    by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND created_at >= datetime('now', '-1 day')")).n;
+    by_status.pending = (by_status.new_status || 0) + (by_status.pending || 0) - by_status.new;   // the open lines older than a day
     const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id LEFT JOIN bk_proposals pr ON pr.id = t.proposal_id LEFT JOIN bk_transactions ro ON ro.id = t.refund_of LEFT JOIN bk_transactions rb ON rb.refund_of = t.id WHERE ' + where.join(' AND ');
     const rows = await dbAll('SELECT t.id, t.txn_id, t.account_name, t.account_ref, t.date, t.created_at, t.name, t.raw, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, ' +
       't.refund_of, t.ar_notified_at, t.ar_notified_by, ro.date AS refund_of_date, ro.amount AS refund_of_amount, ro.merchant AS refund_of_merchant, ro.name AS refund_of_name, ro.category AS refund_of_category, rb.id AS refunded_by, rb.date AS refunded_by_date, rb.amount AS refunded_by_amount, ' +
