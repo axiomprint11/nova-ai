@@ -565,7 +565,7 @@
     // 1.19.64: photo with the kind tag under it on the left; company name (+ Link / Change icon, match pill) on the right
     const kindPill = (t) => t.vendor_source === 'nova' ? '<span class="bk-src nova" title="Nova vendor — kept in Nova, not in the CRM">vendor' + AI_I + '</span>' : '<span class="bk-src ' + esc(t.vendor_source || '') + '">' + esc(kindTag(t)) + '</span>';
     const vendorCell = (t) => {
-      if (t.vendor_id) return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft">' + vlogo(t.vendor_name, t.vendor_photo || t.plaid_logo) + kindPill(t) + '</div><div class="bl-vname"><b class="tx-vn">' + esc(t.vendor_name) + '</b> <a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Change vendor">' + PEN + '</a>' +
+      if (t.vendor_id) return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft"><a href="#" class="tx-vphoto" data-vedit="' + t.vendor_id + '" title="' + (t.vendor_source === 'nova' || t.vendor_source === 'bill' ? 'Edit this vendor' : 'Vendor details') + '">' + vlogo(t.vendor_name, t.vendor_photo || t.plaid_logo) + '<span class="tx-vedit">' + PEN + '</span></a>' + kindPill(t) + '</div><div class="bl-vname"><b class="tx-vn">' + esc(t.vendor_name) + '</b> <a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Change vendor">' + PEN + '</a>' +
         (t.vendor_by === 'auto' ? '<div class="tx-match ok">Matched ' + (t.vendor_score != null ? Math.round(t.vendor_score * 100) + '%' : 'by name') + '</div>' : t.vendor_by === 'person' ? '<div class="bk-dim">linked by a person</div>' : '') + '</div></div>';
       const sug = t.suggest_vendor_id ? '<div class="tx-sug"><span class="tx-match">Matched ' + Math.round((t.suggest_score || 0) * 100) + '%</span><button type="button" class="bk-btn sm p" data-usev="' + t.id + '" data-vid="' + t.suggest_vendor_id + '">Use</button></div><div class="tx-sug-n"><b>' + esc(t.suggest_name) + '</b></div>' : '';
       // 1.19.67: no vendor yet — the Link / Create icons sit under the photo where the kind pill would be
@@ -618,6 +618,7 @@
     const setV = async (id, vid) => { const r = await post('/api/bookkeeping/transactions/' + id + '/vendor', { vendor_id: vid }); if (!r.ok) alert(r.error || 'Could not link'); loadTxns(); };
     v.querySelectorAll('[data-setv]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = (j.transactions || []).find(x => String(x.id) === a.dataset.setv); vendorPicker(a, { vendor: t ? (t.merchant || t.name) : '', suggestions: t && t.suggest_vendor_id ? [{ id: t.suggest_vendor_id, name: t.suggest_name, photo: t.suggest_photo, score: t.suggest_score || 0 }] : [] }, (vid) => setV(a.dataset.setv, vid)); });
     v.querySelectorAll('[data-usev]').forEach(b => b.onclick = () => setV(b.dataset.usev, Number(b.dataset.vid)));
+    v.querySelectorAll('[data-vedit]').forEach(a => a.onclick = (e) => { e.preventDefault(); vendorCard(Number(a.dataset.vedit), () => loadTxns()); });   // 1.19.69: finish the vendor's record from the feed
     const vth = v.querySelector('.thf[data-thf=vendor]'); if (vth) vth.onclick = (e) => { e.stopPropagation(); document.querySelectorAll('.thf-pop').forEach(p => p.remove()); vendorPicker(vth, { vendor: '', suggestions: [] }, (val, name) => { TF.vendor_id = val; TF.vendor_name = val && val !== 'none' ? name : ''; saveTF(); }, { filter: { current: TF.vendor_id } }); };
     v.querySelectorAll('[data-newv]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = (j.transactions || []).find(x => String(x.id) === a.dataset.newv); novaVendorForm({ name: t ? (t.merchant || t.name) : '', aliases: t ? [t.merchant, t.name].filter((x, i, arr) => x && arr.indexOf(x) === i).join('\n') : '', website: t && t.website ? t.website : '' }, (nv) => setV(a.dataset.newv, nv.id)); });
   }
@@ -1153,7 +1154,7 @@
     pop.addEventListener('click', (e) => e.stopPropagation());
     let vtab = 'axiom';   // 1.19.65: Axiom (CRM) vendors | Nova vendors; the search box always looks through both
     const isNova = (x) => x.source === 'nova' || x.source === 'bill';
-    pop.innerHTML = '<div class="ckp-search"><input type="text" placeholder="Search all vendors…"></div><div class="vp-tabs"><button type="button" class="ib-chip sm on" data-vt="axiom">Axiom vendors <small>' + all.filter(x => !isNova(x)).length + '</small></button><button type="button" class="ib-chip sm" data-vt="nova">Nova vendors ' + AI_I + ' <small>' + all.filter(isNova).length + '</small></button></div><div class="ckp-list"></div><div class="ckp-foot">' + (asFilter ? '<span class="bk-muted">Show only this company\'s lines.</span>' : '<a href="#" class="ckp-new vp-new">+ New Nova vendor…</a><span class="sp"></span><span class="bk-muted">Linking “' + esc(bill.vendor) + '” remembers the name.</span>') + '</div>';
+    pop.innerHTML = '<div class="ckp-search"><input type="text" placeholder="Search all vendors…"></div><div class="vp-tabs"><button type="button" class="ib-chip sm on" data-vt="axiom">Axiom vendors <small>' + all.filter(x => !isNova(x)).length + '</small></button><button type="button" class="ib-chip sm" data-vt="nova">Nova vendors ' + AI_I + ' <small>' + all.filter(isNova).length + '</small></button></div><div class="ckp-list"></div><div class="ckp-foot">' + (asFilter ? '<span class="bk-muted">Show only this company\'s lines.</span>' : '<a href="#" class="ckp-new vp-new">+ New Nova vendor…</a>') + '</div>';
     document.body.appendChild(pop);
     const r = anchor.getBoundingClientRect(), W = Math.min(380, window.innerWidth - 16);
     pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) + 'px'; pop.style.width = W + 'px';
@@ -1445,6 +1446,24 @@
       if (!r.ok) { el.querySelector('#nvMsg').textContent = r.error + (r.duplicate ? ' — click again to add anyway.' : ''); if (r.duplicate) ev.target.dataset.force = '1'; return; }
       close(); if (onSaved) onSaved(r.vendor || Object.assign({}, init, body));
     };
+  }
+  // 1.19.69: open a vendor from anywhere — Nova / bill vendors get the edit form, CRM companies a details card
+  async function vendorCard(id, onDone) {
+    const j = await api('/api/bookkeeping/directory?fresh=0');
+    const x = (j.vendors || []).find(v => v.id === id); if (!x) { alert('Vendor not found'); return; }
+    if (x.source === 'nova' || x.source === 'bill') return novaVendorForm(x, onDone);
+    let d = {}; try { d = JSON.parse(x.details || '{}') || {}; } catch (e) {}
+    const line = (k, val) => val ? '<div class="bk-dl"><span>' + esc(k) + '</span><div>' + val + '</div></div>' : '';
+    const el = document.createElement('div'); el.className = 'bk-modal';
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(520px,100%)"><div class="bk-modal-head">' + (x.photo ? '<img class="bk-logo" src="' + esc(x.photo) + '" alt="">' : '<span class="bk-logo ph">' + esc(String(x.name).charAt(0).toUpperCase()) + '</span>') + '<div><div class="bk-modal-title">' + esc(x.name) + '</div><div><span class="bk-src ' + esc(x.kind || '') + '">' + esc(x.kind || '') + '</span></div></div></div>' +
+      line('Contact', esc(x.contact || '')) + line('Email', esc(x.email || '')) + line('Phone', esc(x.phone || '')) + line('Specialty', esc(x.specialty || '')) + line('Address', esc([d.address, d.city, d.state, d.zip].filter(Boolean).join(', '))) +
+      '<div class="nv-f" style="margin-top:10px"><span class="bk-muted">Usual category (Nova)</span><div id="vcCat">' + catSelect(x.default_category || '', 'vccat', 'not set', { multi: true }) + '</div></div>' +
+      '<label class="nv-f"><span class="bk-muted">On the bank statement as (Nova)</span><input class="bk" id="vcAlias" value="' + esc(String(x.aliases || '').split('\n').join(' | ')) + '" placeholder="separate with |"></label>' +
+      '<div class="bk-muted" style="margin-top:8px">From the CRM ' + esc(d.list || x.source || '') + ' list — name and contacts are edited in the CRM; the category and bank names live here.</div>' +
+      '<div class="bk-row" style="margin-top:12px"><button class="bk-btn p" id="vcSave">Save</button><button class="bk-btn bk-x">Close</button></div></div>';
+    const close = () => el.remove(); el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
+    document.body.appendChild(el);
+    el.querySelector('#vcSave').onclick = async () => { const r = await post('/api/bookkeeping/vendors/' + x.id, { default_category: el.querySelector('#vcCat .ckp-val').value, aliases: el.querySelector('#vcAlias').value.split('|').map(t => t.trim()).filter(Boolean).join('\n') }); if (!r.ok) return alert(r.error); close(); if (onDone) onDone(); };
   }
   async function loadNovaVendors() {
     const v = $('vNova');
