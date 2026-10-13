@@ -345,7 +345,8 @@
   </div>
   <div class="bk-tabs main" id="tabs">
     <button data-v="brief" class="on">Daily Brief<span class="n" id="nPending"></span></button>
-    <button data-v="purchases">Purchases<span class="n" id="nTxns"></span></button>
+    <button data-v="purchases">Purchases</button>
+    <button data-v="bank">Bank feed<span class="n" id="nTxns"></span></button>
     <button data-v="bills">Bills<span class="n" id="nBills"></span></button>
     <button data-v="inbox">Inbox<span class="n" id="nInbox"></span></button>
     <button data-v="accounts">Accounts</button>
@@ -360,15 +361,23 @@
   <section class="bk-view" data-v="purchases" id="vPurchases">
     <div class="bk-sub" id="subPurchases">
       <button data-s="list">Purchases</button>
-      <button data-s="bank">Bank feed</button>
       <button data-s="waiting">Waiting for the bank<span class="n" id="nWaiting"></span></button>
       <button data-s="notreceived">Not received<span class="n" id="nNotReceived"></span></button>
       <span class="sp"></span><input id="puQ" class="bk sub-q" placeholder="Search" autocomplete="off">
     </div>
     <div class="bk-subview" data-s="list" id="vPurchList"></div>
-    <div class="bk-subview" data-s="bank" id="vTxns"></div>
     <div class="bk-subview" data-s="waiting" id="vPurchWaiting"></div>
     <div class="bk-subview" data-s="notreceived" id="vPurchNotReceived"></div>
+  </section>
+  <section class="bk-view" data-v="bank" id="vBank">
+    <div class="bk-sub" id="subBank">
+      <button data-s="all">All<span class="n grey" id="nTxAll"></span></button>
+      <button data-s="new">New<span class="n grey" id="nTxNew"></span></button>
+      <button data-s="pending">Pending<span class="n" id="nTxPending"></span></button>
+      <button data-s="categorized">Categorized<span class="n grey" id="nTxCategorized"></span></button>
+      <span class="sp"></span><input id="txQ" class="bk sub-q" placeholder="Search" autocomplete="off">
+    </div>
+    <div class="bk-subview on" data-s="feed" id="vTxns"></div>
   </section>
   <section class="bk-view" data-v="bills" id="vBillsTab">
     <div class="bk-sub" id="subBills">
