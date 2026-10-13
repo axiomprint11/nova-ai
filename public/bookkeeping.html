@@ -459,7 +459,7 @@
 <!-- 1.19.73: BookkeeperAI bubble — the same conversation as the Daily Brief tab and Google Chat, from any tab -->
 <button id="bkBub" class="bk-bub" title="Ask BookkeeperAI" aria-label="Ask BookkeeperAI"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></button>
 <div id="bkBubPanel" class="bk-bub-panel" hidden>
-  <div class="bk-bub-head"><b>BookkeeperAI</b><span class="bk-muted">knows your chart of accounts, vendors and the books</span><button class="bk-x" id="bkBubClose" title="Close">✕</button></div>
+  <div class="bk-bub-head"><b>BookkeeperAI</b><button class="bk-x" id="bkBubClose" title="Close">✕</button></div>
   <div class="bk-bub-msgs" id="bubMsgs"></div>
   <div class="bk-bub-hint" id="bubHint">Try: <a href="#" data-ask="Where should Figma go in our chart of accounts?">Where should Figma go?</a> · <a href="#" data-ask="What is Upwork's usual category?">Upwork's usual category</a> · <a href="#" data-ask="What is pending for me?">What is pending?</a></div>
   <form class="bk-bub-in" id="bubForm"><input class="bk" id="bubIn" placeholder="Ask about a vendor, a category, a bill…" autocomplete="off"><button class="bk-btn p" id="bubSend" type="submit">Send</button></form>
