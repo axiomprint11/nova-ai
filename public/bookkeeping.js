@@ -548,6 +548,7 @@
     // 1.19.55: the Date column is two lines — "Oct 12, 2026" over "5:17pm"
     const laD2 = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(ts) ? '' : 'Z')); if (isNaN(d)) return ''; const o = { timeZone: 'America/Los_Angeles' }; return esc(d.toLocaleDateString([], Object.assign({ month: 'short', day: 'numeric', year: 'numeric' }, o))) + '<div class="bk-dim">' + esc(d.toLocaleTimeString([], Object.assign({ hour: 'numeric', minute: '2-digit' }, o)).replace(' ', '').toLowerCase()) + '</div>'; };
     const SVG = (d) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
+    const REFI = SVG('<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-5"/>');
     const PEN = SVG('<path d="M4 20h4l10-10-4-4L4 16z"/><path d="M12.5 7.5l4 4"/>'), LINKI = SVG('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5"/>');
     // how it was paid (Plaid's payment_channel / check_number)
     const CHAN = { store: ['Store', SVG('<path d="M3 9l1.5-5h15L21 9"/><path d="M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/><path d="M5 12v9h14v-9"/><path d="M10 21v-6h4v6"/>')], online: ['Online', SVG('<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>')], check: ['Check', SVG('<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h6M7 14h3"/><path d="M15 14l1.5 1.5L19 12"/>')], other: ['Other', SVG('<path d="M4 12h16"/><path d="M14 6l6 6-6 6"/>')] };
@@ -561,7 +562,8 @@
     const vendorCell = (t) => {
       if (t.vendor_id) return '<div class="bl-vendor pu-vendor">' + vlogo(t.vendor_name, t.vendor_photo) + '<div class="bl-vname"><b class="tx-vn">' + esc(t.vendor_name) + '</b> <a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Change vendor">' + PEN + '</a>' +
         '<div class="bk-dim"><span class="bk-src ' + esc(t.vendor_source || '') + '">' + esc(kindTag(t)) + '</span>' + (t.vendor_by === 'auto' ? ' · matched ' + (t.vendor_score != null ? Math.round(t.vendor_score * 100) + '%' : 'by name') : t.vendor_by === 'person' ? ' · linked by a person' : '') + '</div></div></div>';
-      const sug = t.suggest_vendor_id ? '<div class="tx-sug">Looks like <b>' + esc(t.suggest_name) + '</b> <span class="tx-pct">' + Math.round((t.suggest_score || 0) * 100) + '%</span> <button type="button" class="bk-btn sm p" data-usev="' + t.id + '" data-vid="' + t.suggest_vendor_id + '">Use</button></div>' : '';
+      // 1.19.60: "Matched 50%  [Use]" over the vendor's name
+      const sug = t.suggest_vendor_id ? '<div class="tx-sug"><span class="bk-dim">Matched ' + Math.round((t.suggest_score || 0) * 100) + '%</span> <button type="button" class="bk-btn sm p" data-usev="' + t.id + '" data-vid="' + t.suggest_vendor_id + '">Use</button></div><div class="tx-sug-n"><b>' + esc(t.suggest_name) + '</b></div>' : '';
       return '<div class="bl-vendor pu-vendor">' + (t.plaid_logo ? vlogo(t.merchant || t.name, t.plaid_logo) : vlogo(null, null)) + '<div class="bl-vname"><span class="bl-unlinked">Not linked</span> <a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Link to a vendor">' + LINKI + '</a>' + sug + '</div></div>';
     };
     // 1.19.58: short — logo + "WF ••0489"; the full bank and account name on hover
@@ -577,6 +579,8 @@
         (prettyCat(t) ? '<div class="bk-dim">' + esc(prettyCat(t)) + (t.place ? ' · ' + esc(t.place) : '') + '</div>' : t.place ? '<div class="bk-dim">' + esc(t.place) + '</div>' : '') + '</td><td>' + bankCell(t) + '</td>' +
         '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '">' + usd(-t.amount) + '<div class="tx-when bk-dim" title="When the transaction happened' + (t.pending ? ' (still pending at the bank)' : '') + '">' + esc(txWhen(t)) + ' ' + chanLine(t) + '</div></td>' +
         '<td data-txid="' + t.id + '">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : (t.amount < 0 ? 'Income…' : 'Choose…'), { only: t.amount < 0 ? 'income' : 'expense' }) +
+        (t.amount < 0 ? (t.refund_of ? '<div class="tx-ref" title="Matched to the charge it gives back; the category and the Stats follow that charge">' + REFI + ' refund of <b>' + esc(usD(t.refund_of_date)) + ' · ' + usd(t.refund_of_amount) + '</b> ' + esc(t.refund_of_merchant || t.refund_of_name || '') + ' <a href="#" class="tx-unref" data-unref="' + t.id + '" title="Unmatch">×</a></div>'
+            : '<div class="tx-ref"><a href="#" class="tx-refl" data-ref="' + t.id + '">' + REFI + ' Refund of a charge…</a></div>') : t.refunded_by ? '<div class="tx-ref bk-dim" title="A refund was matched to this charge">' + REFI + ' refunded ' + esc(usD(t.refunded_by_date)) + ' · ' + usd(-t.refunded_by_amount) + '</div>' : '') +
         (!t.category && t.ai_category ? '<div class="tx-ai" title="' + esc(t.ai_reason || '') + '">' + aiIcon + ' <b>' + esc(t.ai_category) + '</b>' + (t.ai_conf != null ? ' <span class="tx-pct">' + Math.round(t.ai_conf * 100) + '%</span>' : '') + ' <button type="button" class="bk-btn sm p tx-use" data-aicat="' + esc(t.ai_category) + '">Use</button></div>' :
           !t.category && t.status === 'new' ? '<div class="tx-ai bk-dim">' + aiIcon + ' rating…</div>' : '') + '</td>' +
         '<td><span class="bk-tag ' + esc(t.status) + '" title="' + esc(t.category ? 'Set ' + (t.category_source === 'approved' ? 'from the AI\'s proposal' : t.category_source === 'rule' ? 'by a vendor rule' : 'by hand') : t.status === 'pending' ? 'The AI has a suggestion — pick it or choose another' : 'Just synced, not rated yet') + '">' + esc(STL[t.status] || t.status) + '</span>' + (t.category && t.category_source ? '<div class="bk-dim">' + esc(t.category_source) + '</div>' : '') + '</td></tr>').join('') + '</tbody></table>' +
@@ -600,6 +604,8 @@
     // Picking a category sets it on the spot (no Set button); the row flashes green.
     v.querySelectorAll('td[data-txid]').forEach(td => { const wrap = td.querySelector('.ckp'), inp = td.querySelector('input.tx-cat'); let last = inp.value;
       wrap.addEventListener('change', async () => { if (inp.value === last || !inp.value) return; last = inp.value; const r = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/category', { category: inp.value }); const tr = td.closest('tr'); tr.classList.add(r.ok ? 'saved' : 'failed'); setTimeout(() => { tr.classList.remove('saved', 'failed'); loadTxns(); overview(); }, 700); }); });
+    v.querySelectorAll('[data-ref]').forEach(a => a.onclick = (e) => { e.preventDefault(); refundPicker(a, Number(a.dataset.ref), (j.transactions || []).find(x => x.id === Number(a.dataset.ref))); });
+    v.querySelectorAll('[data-unref]').forEach(a => a.onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/transactions/' + a.dataset.unref + '/refund', { of: null }); if (!r.ok) alert(r.error); loadTxns(); });
     v.querySelectorAll('.tx-more').forEach(b => b.onclick = () => { const m = b.nextElementSibling; m.hidden = !m.hidden; b.classList.toggle('open', !m.hidden); });
     v.querySelectorAll('.tx-use').forEach(b => b.onclick = () => { const td = b.closest('td'); ckpSet(td.querySelector('.ckp'), [b.dataset.aicat]); });
     clearTimeout(txnPoll); if (j.categorizing) txnPoll = setTimeout(() => { const on = document.querySelector('.bk-view.on'); if (on && on.dataset.v === 'bank') loadTxns(); }, 8000);   // the AI is rating new lines — refresh to show its suggestions
@@ -1109,6 +1115,27 @@
     document.addEventListener('keydown', onKey, true); document.body.appendChild(el);
   }
   // Pick a directory entry for a bill: near matches first, then search the whole directory.
+  // 1.19.60: match a money-in line to the charge it refunds — same amount and/or same merchant, last 120 days
+  async function refundPicker(anchor, id, t) {
+    document.querySelectorAll('.ckp-pop').forEach(p => p.remove());
+    const j = await api('/api/bookkeeping/transactions/' + id + '/refund-candidates');
+    const cands = j.candidates || [];
+    const pop = document.createElement('div'); pop.className = 'ckp-pop single';
+    pop.addEventListener('click', (e) => e.stopPropagation());
+    const usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : String(d || ''); };
+    pop.innerHTML = '<div class="ckp-gh" style="padding:10px 12px 4px">Which charge does this ' + usd(-t.amount) + ' give back?</div><div class="ckp-list">' +
+      (cands.length ? cands.map(c => '<div class="ckp-i vp" data-c="' + c.id + '"><span class="rf-amt' + (Math.abs(Math.abs(c.amount) - Math.abs(t.amount)) < 0.005 ? ' same' : '') + '">' + usd(-c.amount) + '</span><span class="rf-txt"><b>' + esc(c.merchant || c.name) + '</b><small>' + esc(usD(c.date)) + (c.category ? ' · ' + esc(c.category) : '') + (c.vendor_name && c.vendor_name !== (c.merchant || c.name) ? ' · ' + esc(c.vendor_name) : '') + '</small></span>' + (c.score >= 3 ? '<span class="bk-tag approved">same amount + merchant</span>' : c.score === 2 ? '<span class="bk-tag">same amount</span>' : '') + '</div>').join('')
+        : '<div class="bk-muted" style="padding:10px 12px">No charge with this amount or merchant in the last 120 days.</div>') +
+      '</div><div class="ckp-foot"><span class="bk-muted">The refund takes the charge\'s category and the Stats net it against what was spent.</span></div>';
+    document.body.appendChild(pop);
+    const r = anchor.getBoundingClientRect(), W = Math.min(420, window.innerWidth - 16);
+    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) + 'px'; pop.style.width = W + 'px';
+    const below = window.innerHeight - r.bottom - 8; if (below >= 260) { pop.style.top = (r.bottom + 4) + 'px'; pop.style.maxHeight = Math.min(400, below) + 'px'; } else { pop.style.bottom = (window.innerHeight - r.top + 4) + 'px'; pop.style.maxHeight = Math.min(400, r.top - 8) + 'px'; }
+    const close = () => { pop.remove(); document.removeEventListener('click', away); document.removeEventListener('keydown', esc1); };
+    const away = (e) => { if (!pop.contains(e.target)) close(); }, esc1 = (e) => { if (e.key === 'Escape') close(); };
+    setTimeout(() => { document.addEventListener('click', away); document.addEventListener('keydown', esc1); }, 0);
+    pop.querySelectorAll('[data-c]').forEach(el => el.onclick = async () => { const rr = await post('/api/bookkeeping/transactions/' + id + '/refund', { of: Number(el.dataset.c) }); close(); if (!rr.ok) alert(rr.error); loadTxns(); overview(); });
+  }
   async function vendorPicker(anchor, bill, onPick) {
     document.querySelectorAll('.ckp-pop').forEach(p => p.remove());
     const j = await api('/api/bookkeeping/directory?fresh=0');

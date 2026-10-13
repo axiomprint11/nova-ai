@@ -77,6 +77,13 @@ A deposit or payment received in the Bank feed then offers only that type's cate
 offers them), and the AI files money in under an income category only; if it tries anything else the line gets a
 question instead of a suggestion.
 
+### Refunds
+Money that comes back — a cancelled Uber ride, a returned order — is not income. Under the Category of any money-in
+line there is **↩ Refund of a charge…**: it lists the charges of the last 120 days with the same amount and/or the
+same merchant (best match first, "same amount + merchant" tagged), one click matches them. The refund takes the
+charge's category (Travel, not Income), both lines show the link ("refund of 10-11-2026 · $37.31 Uber" / "refunded
+10-12-2026"), and the Stats subtract it from what was spent instead of counting it as money received. × unmatches.
+
 ### Which accounts are in use
 Settings → Bank accounts lists every account behind a connection with a checkbox. Untick an account (a personal
 checking on the same bank login, say) and its lines disappear from the Bank feed, the counts, the AI's work, purchase
