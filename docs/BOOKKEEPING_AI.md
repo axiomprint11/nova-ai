@@ -71,6 +71,16 @@ Plaid's institution metadata) · amount · category. Vendor matching: an exact n
 **Use**. When a person links a line, the bank's wording becomes an alias of that vendor, so every future line with the
 same wording links by itself, and other unlinked lines with that wording are linked right away. Change is always there.
 
+### Category suggestions
+Every uncategorized line gets a suggestion under its Category picker, best source first:
+- **From history** (clock icon) — every past line from this company went to one category: 100% (≥3 lines; 90% when
+  at least 8 in 10 did).
+- **Company's usual** (building icon) — the usual category on the vendor record: one category → 95%; several →
+  each shown at 85%, pick the one that fits.
+- **AI** (✦) — the model's own reading of the line, when the company is unknown or has no history yet.
+Use files the line and the Status column says how it was matched (manually matched / company's usual / from history /
+AI, approved / by rule). Every pick becomes history, so a company that always lands in one place soon matches at 100%.
+
 ### Money in
 In Accounts → Chart of Accounts a type of expense can be marked **Money in (income)** — the Income type is, by default.
 A deposit or payment received in the Bank feed then offers only that type's categories in its picker (and money out never

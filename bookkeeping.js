@@ -1770,6 +1770,26 @@ module.exports = function mountBookkeeping(app, deps) {
       if (!r.vendor_id && r.suggest_score == null && backfilled < 150) { backfilled++; try { await autoVendor(r); Object.assign(r, (await dbGet(VSEL, [r.id])) || {}); } catch (e) {} }
     }
     const matched = rows.length < 500 ? rows.length : (await dbGet('SELECT COUNT(*) n' + W, p)).n;   // how many the filters match (the list stops at 500)
+    // 1.19.72: a category suggestion for every uncategorized line — the linked company's own history first (every
+    // past line in one category → 100%), then the company's usual category (one → 95%, several → 85% each), then the AI
+    const sugCache = {};
+    for (const r of rows) {
+      if (r.category || !r.vendor_id) { r.cat_suggest = r.category ? [] : (r.ai_category ? [{ category: r.ai_category, conf: r.ai_conf, why: 'ai' }] : []); continue; }
+      if (!sugCache[r.vendor_id]) {
+        const hist = await dbAll("SELECT category, COUNT(*) n FROM bk_transactions WHERE vendor_id = ? AND status = 'categorized' AND category IS NOT NULL AND category <> 'Uncategorized' GROUP BY category ORDER BY n DESC", [r.vendor_id]);
+        const total = hist.reduce((a, h) => a + h.n, 0);
+        const v = await dbGet('SELECT default_category FROM bk_vendors WHERE id = ?', [r.vendor_id]);
+        const usual = String(v && v.default_category || '').split(/\s*[;|\n]\s*/).map(x => x.trim()).filter(Boolean);
+        let out = [];
+        if (total >= 3 && hist[0].n === total) out = [{ category: hist[0].category, conf: 1, why: 'history', n: total }];
+        else if (total >= 3 && hist[0].n / total >= 0.8) out = [{ category: hist[0].category, conf: 0.9, why: 'history', n: hist[0].n }];
+        else if (usual.length === 1) out = [{ category: usual[0], conf: 0.95, why: 'vendor' }];
+        else if (usual.length > 1) out = usual.slice(0, 3).map(c => ({ category: c, conf: 0.85, why: 'vendor' }));
+        else if (total >= 1) out = hist.slice(0, 2).map(h => ({ category: h.category, conf: Math.min(0.8, 0.5 + h.n / Math.max(total, 1) * 0.3), why: 'history', n: h.n }));
+        sugCache[r.vendor_id] = out;
+      }
+      r.cat_suggest = sugCache[r.vendor_id].length ? sugCache[r.vendor_id] : (r.ai_category ? [{ category: r.ai_category, conf: r.ai_conf, why: 'ai' }] : []);
+    }
     if (rows.some(r => !r.orig_desc)) backfillOriginalDesc();
     const out = { ok: true, by_status, matched, transactions: rows, categorizing: catBusy };
     if ((by_status.new_status || 0) > 0 && !catBusy) { categorizeBacklog(userId(req)); out.categorizing = true; }
@@ -1829,7 +1849,9 @@ module.exports = function mountBookkeeping(app, deps) {
   app.post('/api/bookkeeping/transactions/:id/category', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), category = String(req.body.category || '').trim();
     if (!category) return res.json({ ok: false, error: 'No category' });
-    await dbRun("UPDATE bk_transactions SET category = ?, category_source = 'manual', status = 'categorized', updated_at = datetime('now') WHERE id = ?", [category, id]);
+    // 1.19.72: a picked suggestion keeps where it came from (vendor's usual / history / ai); a hand pick is 'manual'
+    const src = ['vendor', 'history', 'ai'].indexOf(String(req.body.source || '')) > -1 ? String(req.body.source) : 'manual';
+    await dbRun("UPDATE bk_transactions SET category = ?, category_source = ?, status = 'categorized', updated_at = datetime('now') WHERE id = ?", [category, src, id]);
     await dbRun("UPDATE bk_proposals SET status = 'edited', decided_by = ?, decided_at = ? WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [userId(req), nowIso(), id]);
     await audit(userId(req), 'category.manual', id, category);
     res.json({ ok: true });
