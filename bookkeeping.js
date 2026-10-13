@@ -851,6 +851,33 @@ module.exports = function mountBookkeeping(app, deps) {
   // 1.19.91: the bank's wording minus its per-payment codes — "STRIPE TRANSFER ST-W7G8K4C7T1Q6 AXIOMPRINT INC" and
   // "STRIPE TRANSFER ST-K2P9… AXIOMPRINT INC" are the same payer. Tokens with a digit, and 1-letter tokens, are dropped.
   const stableV = (t) => normV(t).split(' ').filter(w => w.length > 1 && !/\d/.test(w)).join(' ');
+  // 1.19.130: the part of a bank line that IS the vendor — the longest run of the vendor's own name words found in the
+  // wording ("BUSINESS TO BUSINESS ACH ZIGMUEMPERORSTEE BILL_PAY 092226 EMPEROR STEEL D WELLS FARGO" + "Emperor Steel Dies"
+  // → "emperor steel"). Learned as the alias when a person links a line, so every payment carrying those words links too,
+  // whatever random code sits beside them. '' when the name and the wording share nothing usable.
+  function vendorPhrase(vendorName, text) {
+    const GEN = /^(inc|llc|co|corp|corporation|company|the|of|and|ltd|group|services|service|usa|us|international|bank|na|ach|payment|pay|bill|business|to|des|id)$/;
+    const nw = normV(vendorName).split(' ').filter(Boolean), tw = normV(text).split(' ').filter(Boolean);
+    let best = [];
+    for (let i = 0; i < nw.length; i++) for (let j = 0; j < tw.length; j++) {
+      let k = 0; while (i + k < nw.length && j + k < tw.length && nw[i + k] === tw[j + k]) k++;
+      if (k > best.length) best = nw.slice(i, i + k);
+    }
+    const real = best.filter(w => !GEN.test(w) && w.length >= 3);
+    if (!real.length || real.join('').length < 5) return '';
+    return best.join(' ');
+  }
+  // 1.19.130: after a vendor's bank names change (an alias learned from a link, or typed into the vendor card), every
+  // unlinked line that now matches this vendor links to it — no waiting for the next sync. Wise lines stay out (the team list files those).
+  async function relinkVendor(vid) {
+    dirCache.at = 0; let n = 0;
+    for (const o of await dbAll("SELECT id, name, merchant FROM bk_transactions WHERE vendor_id IS NULL AND status NOT IN ('removed', 'excluded') ORDER BY id DESC LIMIT 3000")) {
+      const text = o.merchant || o.name; if (isWise(text)) continue;
+      const m = await matchVendor(text); if (!m || m.id !== vid) continue;
+      await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = 'auto', vendor_score = 1, suggest_vendor_id = NULL, suggest_score = NULL WHERE id = ? AND vendor_id IS NULL", [vid, o.id]); n++;
+    }
+    return n;
+  }
   const normV = (t) => String(t || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9 ]+/g, ' ').replace(/\b(inc|llc|corp|corporation|co|company|ltd|the)\b/g, ' ').replace(/\s+/g, ' ').trim();
   const domainOf = (e) => { const m = String(e || '').toLowerCase().match(/@([a-z0-9.-]+)/); return m ? m[1].replace(/^(www|mail|e)\./, '') : ''; };
   const FREE_MAIL = /^(gmail|yahoo|hotmail|outlook|aol|icloud|me|live|msn)\./;
@@ -2860,15 +2887,21 @@ module.exports = function mountBookkeeping(app, deps) {
         if (sets.length) { await dbRun('UPDATE bk_vendors SET ' + sets.join(', ') + ' WHERE id = ?', args.concat([vid])); dirCache.at = 0; } } } catch (e) {} }
     // 1.19.47: the same bank wording elsewhere (unlinked, or linked by the machine) follows — and every future line too, through the alias.
     if (vid && t && isWise(t.merchant || t.name)) req.body.alias = false;   // 1.19.119: every Wise payout shares the same wording — never learn it as an alias
-    if (vid && t && req.body.alias !== false) { const text = t.merchant || t.name; req.body.alias = req.body.alias || text;
+    let learned = null, relinked = 0;
+    if (vid && t && req.body.alias !== false) { const text = t.merchant || t.name;
+      // 1.19.130: learn the vendor's own words from the line, not the whole line — "emperor steel", not the ACH noise around it
+      if (!req.body.alias) { const vn = await dbGet('SELECT name FROM bk_vendors WHERE id = ?', [vid]); const ph = vn ? vendorPhrase(vn.name, text) : ''; if (ph && ph !== normV(vn.name)) { req.body.alias = ph; learned = ph; } }
+      req.body.alias = req.body.alias || text;
+
       await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = 'auto', vendor_score = 1, suggest_vendor_id = NULL, suggest_score = NULL WHERE id <> ? AND (vendor_id IS NULL OR vendor_by = 'auto') AND LOWER(COALESCE(merchant, name)) = LOWER(?)", [vid, id, text]); }
       // 1.19.91: and every line whose wording differs only by a per-payment code (Stripe transfer ids, check / ref numbers)
       const ns = stableV(t.merchant || t.name); if (ns.length >= 6) { const open = await dbAll("SELECT id, name, merchant FROM bk_transactions WHERE id <> ? AND vendor_id IS NULL AND status NOT IN ('removed', 'excluded')", [id]);
         for (const o of open) if (stableV(o.merchant || o.name) === ns) await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = 'auto', vendor_score = 1, suggest_vendor_id = NULL, suggest_score = NULL WHERE id = ? AND vendor_id IS NULL", [vid, o.id]); }
     // Remember the bank line as an alias of that vendor, so the next one matches by itself.
     if (vid && req.body.alias) { const v = await dbGet('SELECT aliases FROM bk_vendors WHERE id = ?', [vid]); const al = String(v && v.aliases || '').split('\n').filter(Boolean); if (al.indexOf(req.body.alias) < 0) { al.push(String(req.body.alias).slice(0, 120)); await dbRun('UPDATE bk_vendors SET aliases = ? WHERE id = ?', [al.join('\n'), vid]); dirCache.at = 0; } }
-    await audit(userId(req), 'transaction.vendor', req.params.id, { vendor_id: vid, alias: req.body.alias });
-    res.json({ ok: true });
+    if (vid) { try { relinked = await relinkVendor(vid); } catch (e) { errlog('relink', e.message); } }   // 1.19.130: the alias just learned catches the rest
+    await audit(userId(req), 'transaction.vendor', req.params.id, { vendor_id: vid, alias: req.body.alias, learned, relinked });
+    res.json({ ok: true, learned, relinked });
   });
   // 1.19.63: Nova vendors — companies kept only here (the landlord, LinkedIn, a one-off contractor…), not in the CRM lists.
   // source 'nova'; the chart of accounts is their map: `default_category` = what we buy from them, `specialty` = in words.
@@ -2947,7 +2980,8 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!sets.length) return res.json({ ok: false, error: 'Nothing to change' });
     await dbRun('UPDATE bk_vendors SET ' + sets.join(', ') + ' WHERE id = ?', args.concat([parseInt(req.params.id)]));
     dirCache.at = 0;
-    await audit(userId(req), 'vendor.update', req.params.id, b); res.json({ ok: true });
+    let relinked = 0; if (b.aliases !== undefined || b.name !== undefined) { try { relinked = await relinkVendor(parseInt(req.params.id)); } catch (e) { errlog('relink', e.message); } }   // 1.19.130: a bank name typed in links the open lines now
+    await audit(userId(req), 'vendor.update', req.params.id, Object.assign({ relinked }, b)); res.json({ ok: true, relinked });
   });
   app.get('/api/bookkeeping/activity', ...guard, async (req, res) => res.json({ ok: true, runs: await dbAll('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 40'), audit: await dbAll('SELECT * FROM bk_audit ORDER BY id DESC LIMIT 200'), briefs: await dbAll('SELECT day, stats, posted_at, post_error FROM bk_briefs ORDER BY day DESC LIMIT 30') }));
   app.post('/api/bookkeeping/settings', ...guard, async (req, res) => {

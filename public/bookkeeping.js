@@ -81,6 +81,9 @@
   };
   const flag = (code, title) => '<span class="tm-flag" title="' + esc(title || { AM: 'Armenia', MX: 'Mexico', PH: 'Philippines' }[code] || '') + '">' + (FLAG[code] || FLAG.other) + '</span>';
   const TEAMI = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/></svg>';
+  // 1.19.130: a small notice bottom-centre that fades by itself ("Learned “emperor steel” · 3 more lines linked")
+  function toast(html, ms) { const el = document.createElement('div'); el.className = 'bk-toast'; el.innerHTML = html; document.body.appendChild(el); requestAnimationFrame(() => el.classList.add('on')); setTimeout(() => { el.classList.remove('on'); setTimeout(() => el.remove(), 400); }, ms || 4500); }
+  const learnedNote = (r, who) => { if (!r || (!r.learned && !r.relinked)) return; toast((r.learned ? 'Read from the bank: <b>' + esc(String(r.learned).toUpperCase()) + '</b>' + (who ? ' → ' + esc(who) : '') : 'Bank names updated') + (r.relinked ? ' · <b>' + r.relinked + '</b> more line' + (r.relinked === 1 ? '' : 's') + ' linked' : '')); };
   function ask(text, opt) {
     opt = opt || {};
     return new Promise((resolve) => {
@@ -786,7 +789,7 @@
     v.querySelectorAll('.tx-more').forEach(b => b.onclick = () => { const m = b.nextElementSibling; m.hidden = !m.hidden; b.classList.toggle('open', !m.hidden); });
     v.querySelectorAll('.tx-use').forEach(b => b.onclick = () => { const td = b.closest('td'); td.dataset.src = b.dataset.src || ''; td.dataset.askrule = b.dataset.askrule || ''; ckpSet(td.querySelector('.ckp'), [b.dataset.aicat]); });
     clearTimeout(txnPoll); if (j.categorizing) txnPoll = setTimeout(() => { const on = document.querySelector('.bk-view.on'); if (on && on.dataset.v === 'bank') loadTxns(); }, 8000);   // the AI is rating new lines — refresh to show its suggestions
-    const setV = async (id, vid) => { const r = await post('/api/bookkeeping/transactions/' + id + '/vendor', { vendor_id: vid }); if (!r.ok) alert(r.error || 'Could not link'); loadTxns(); };
+    const setV = async (id, vid) => { const r = await post('/api/bookkeeping/transactions/' + id + '/vendor', { vendor_id: vid }); if (!r.ok) alert(r.error || 'Could not link'); else learnedNote(r); loadTxns(); };
     v.querySelectorAll('[data-setv]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = (j.transactions || []).find(x => String(x.id) === a.dataset.setv); vendorPicker(a, { vendor: t ? (t.merchant || t.name) : '', suggestions: t && t.suggest_vendor_id ? [{ id: t.suggest_vendor_id, name: t.suggest_name, photo: t.suggest_photo, score: t.suggest_score || 0 }] : [] }, (vid) => setV(a.dataset.setv, vid)); });
     v.querySelectorAll('[data-usev]').forEach(b => b.onclick = () => setV(b.dataset.usev, Number(b.dataset.vid)));
     v.querySelectorAll('[data-vedit]').forEach(a => a.onclick = (e) => { e.preventDefault(); vendorCard(Number(a.dataset.vedit), () => loadTxns()); });   // 1.19.69: finish the vendor's record from the feed
@@ -1761,7 +1764,7 @@
       '<div class="bk-row" style="margin-top:12px"><button class="bk-btn p" id="vcSave">Save</button><button class="bk-btn bk-x">Close</button></div></div>';
     const close = () => el.remove(); el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
     document.body.appendChild(el);
-    el.querySelector('#vcSave').onclick = async () => { const r = await post('/api/bookkeeping/vendors/' + x.id, { default_category: el.querySelector('#vcCat .ckp-val').value, aliases: el.querySelector('#vcAlias').value.split('|').map(t => t.trim()).filter(Boolean).join('\n') }); if (!r.ok) return alert(r.error); close(); if (onDone) onDone(); };
+    el.querySelector('#vcSave').onclick = async () => { const r = await post('/api/bookkeeping/vendors/' + x.id, { default_category: el.querySelector('#vcCat .ckp-val').value, aliases: el.querySelector('#vcAlias').value.split('|').map(t => t.trim()).filter(Boolean).join('\n') }); if (!r.ok) return alert(r.error); learnedNote(r, x.name); close(); if (onDone) onDone(); };
   }
   async function loadNovaVendors() {
     const v = $('vNova');
