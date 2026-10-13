@@ -545,6 +545,16 @@ remaining payments. The strip on top is the balance-sheet view — equipment boo
 In the Bank feed a payment that matches a loan's lender or monthly amount shows **Loan payment? Match**; matching files it
 as *Loan Payment (Principal)* and the loan's "Paid (bank)" column counts it.
 
+### Loans from the agreement (1.19.135)
+
+A loan can be entered the way the agreement reads: amount financed, **down payment / advance**, **months with no payment
+first**, the number of monthly payments, the monthly amount and the **total to be paid back** — the APR can stay blank and
+Nova works out the effective rate from the payments (the Screen L350 financing: 395,000 with 39,500 down, two months
+skipped, 72 × 5,808 = 457,676 in all → 5.2% effective). Money fields show thousands separators ("395,000.00") and a line
+under the form updates as you type with the financed amount, monthly, APR, total back and interest. A loan that finances a
+machine shows on that machine's row under Equipment — pill, financing, monthly progress, payments and book value — with a
+link back to Loans & Leases.
+
 ### Rule amount conditions and "No rule" (1.19.112)
 
 - A rule can be limited to lines **over**, **under** or **exactly** an amount (the line's absolute amount, money in or out). Blank = any amount, so existing rules are unchanged. When a vendor has both a plain rule and an amount rule, the amount rule is tried first.

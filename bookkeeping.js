@@ -105,6 +105,9 @@ module.exports = function mountBookkeeping(app, deps) {
       principal REAL, start_date TEXT, term_months INTEGER, apr REAL, monthly REAL, balloon REAL, notes TEXT, status TEXT DEFAULT 'active',
       created_by TEXT, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
     db.run('ALTER TABLE bk_transactions ADD COLUMN loan_id INTEGER', () => {});
+    // 1.19.135: a loan can start with a down / advance payment, skip some months before the regular payments, and be
+    // entered from the agreement's "total finance amount" instead of an APR (the effective rate is then solved).
+    ['down_payment REAL', 'deferred_months INTEGER', 'total_payback REAL'].forEach(c => db.run('ALTER TABLE bk_loans ADD COLUMN ' + c, () => {}));
     // 1.19.119: the overseas team — people paid through Wise (graphic design, web development, customer service…).
     // Each member is also a Nova vendor (vendor_id) so the feed shows the person; `pay` per period and `wise_ref` match the
     // bank line (Wise puts no recipient name on the statement), `category` files it, `category_alt` is the web-dev
@@ -1029,10 +1032,25 @@ module.exports = function mountBookkeeping(app, deps) {
     const paid = {}; (await dbAll('SELECT equipment_id, COUNT(*) AS n, SUM(ABS(amount)) AS total, MAX(date) AS last FROM bk_transactions WHERE equipment_id IS NOT NULL GROUP BY equipment_id')).forEach(r => { paid[r.equipment_id] = r; });
     const bills = {}; (await dbAll("SELECT equipment_id, COUNT(*) AS n, SUM(total) AS total FROM bk_bills WHERE equipment_id IS NOT NULL AND status <> 'rejected' GROUP BY equipment_id")).forEach(r => { bills[r.equipment_id] = r; });
     const y0 = new Date().getFullYear() + '-01-01';
+    // 1.19.135: a loan from Loans & Leases that finances a machine shows on the machine's row (financing, monthly, paid, value)
+    const byEq = {}; (await dbAll("SELECT l.*, v.name AS vendor_name, v.photo AS vendor_photo FROM bk_loans l LEFT JOIN bk_vendors v ON v.id = l.vendor_id WHERE l.equipment_id IS NOT NULL ORDER BY l.status = 'active' DESC, l.id DESC")).forEach(l => { if (!byEq[l.equipment_id]) byEq[l.equipment_id] = l; });
+    const loanPaid = {}; (await dbAll('SELECT loan_id, COUNT(*) AS n, SUM(ABS(amount)) AS total, MAX(date) AS last FROM bk_transactions WHERE loan_id IS NOT NULL AND equipment_id IS NULL GROUP BY loan_id')).forEach(r => { loanPaid[r.loan_id] = r; });
     return rows.map(e => {
       const out = Object.assign({}, e);
       const p = paid[e.id] || { n: 0, total: 0, last: null }, b = bills[e.id] || { n: 0, total: 0 };
       out.payments = { n: p.n, total: Math.round((p.total || 0) * 100) / 100, last: p.last, bills: b.n, billed: Math.round((b.total || 0) * 100) / 100 };
+      const L = byEq[e.id];
+      if (L) {   // a linked loan wins over the machine's own financing fields
+        const m = loanMath(L), isLease = L.kind === 'lease', done = Math.min((m.term + m.deferred) || 9999, monthsSince(L.start_date)), left = Math.max(0, (m.term + m.deferred) - done);
+        const a = isLease ? { balance: left * m.monthly } : amort(m.financed, m.apr, m.term, m.monthly, Math.max(0, done - m.deferred));
+        const lp = loanPaid[L.id]; if (lp) { out.payments.n += lp.n; out.payments.total = Math.round((out.payments.total + (lp.total || 0)) * 100) / 100; if (!out.payments.last || (lp.last && lp.last > out.payments.last)) out.payments.last = lp.last; }
+        out.mode = isLease ? 'lease' : 'loan';
+        out.loan = { id: L.id, name: L.name, kind: L.kind, lender: L.vendor_name || L.lender || null, status: L.status, principal: m.principal, down: m.down, financed: m.financed, deferred: m.deferred, apr: m.apr, apr_given: m.apr_given, total_payback: m.total_payback, total_interest: m.total_interest, term: m.term };
+        if (!out.vendor_id && L.vendor_id) { out.vendor_id = L.vendor_id; out.vendor_name = L.vendor_name; out.vendor_photo = L.vendor_photo; }
+        out.schedule = { start: L.start_date, end: m.term ? addMonths(L.start_date, m.term + m.deferred) : null, months_done: done, months_left: left, monthly: m.monthly, remaining: Math.round((a.balance || 0) * 100) / 100 };
+        if (!isLease) { const ee = Object.assign({}, e, { purchase_price: Number(e.purchase_price) || m.principal, purchase_date: e.purchase_date || L.start_date }); out.purchase_price = ee.purchase_price; out.purchase_date = ee.purchase_date; out.book = { year_start: bookValue(ee, y0), now: bookValue(ee, null), yearly: ee.purchase_price && ee.life_years !== 0 ? Math.round(((Number(ee.purchase_price) || 0) - (Number(ee.salvage) || 0)) / (Number(ee.life_years) || 7) * 100) / 100 : null }; }
+        return out;
+      }
       if (e.mode === 'loan') {
         const start = e.loan_start || e.purchase_date, term = Number(e.loan_term) || 0, done = Math.min(term, monthsSince(start)), left = Math.max(0, term - done);
         out.schedule = { start, end: term ? addMonths(start, term) : null, months_done: done, months_left: left, monthly: Number(e.monthly_payment) || 0, remaining: Math.round(left * (Number(e.monthly_payment) || 0) * 100) / 100 };
@@ -1054,19 +1072,42 @@ module.exports = function mountBookkeeping(app, deps) {
     return { monthly: Math.round(M * 100) / 100, balance: Math.round(bal * 100) / 100, interest_paid: Math.round(interest * 100) / 100, principal_paid: Math.round(principal * 100) / 100,
       total_interest: term ? Math.round((M * term - P) * 100) / 100 : null };
   };
+  // 1.19.135: the effective annual rate behind "N payments of M on P, after D months with no payment" — bisection on the
+  // monthly rate so that P grown over the deferred months equals the present value of the payments (+ a balloon).
+  function solveApr(P, term, monthly, deferred, balloon) {
+    P = Number(P) || 0; term = Number(term) || 0; monthly = Number(monthly) || 0; deferred = Number(deferred) || 0; balloon = Number(balloon) || 0;
+    if (!P || !term || !monthly) return null;
+    const pv = (i) => { const f = Math.pow(1 + i, -deferred); return f * (monthly * (1 - Math.pow(1 + i, -term)) / i + balloon * Math.pow(1 + i, -term)); };
+    if (monthly * term + balloon <= P + 0.005) return 0;
+    let lo = 1e-7, hi = 0.1;   // 0.00001% .. 120% APR
+    for (let k = 0; k < 80; k++) { const mid = (lo + hi) / 2; if (pv(mid) > P) lo = mid; else hi = mid; }
+    return Math.round(((lo + hi) / 2) * 12 * 100 * 1000) / 1000;
+  }
+  // what a loan row amounts to: financed principal, the monthly payment (given, or from the total, or from the APR),
+  // the APR (given, or solved from the payments), the total to be paid back and the interest
+  function loanMath(l) {
+    const principal = Number(l.principal) || 0, down = Number(l.down_payment) || 0, deferred = Number(l.deferred_months) || 0, term = Number(l.term_months) || 0, balloon = Number(l.balloon) || 0;
+    const financed = Math.max(0, principal - down);
+    let monthly = Number(l.monthly) || 0, apr = l.apr === '' || l.apr == null ? null : Number(l.apr), total = Number(l.total_payback) || 0;
+    if (!monthly && total && term) monthly = Math.max(0, (total - down - balloon) / term);
+    if (!monthly && apr != null && term) { const i = apr / 100 / 12; const g = financed * Math.pow(1 + i, deferred); monthly = i ? g * i / (1 - Math.pow(1 + i, -term)) : g / term; }
+    let effective = apr; if (effective == null && monthly && term) effective = solveApr(financed, term, monthly, deferred, balloon);
+    if (!total && monthly && term) total = down + monthly * term + balloon;
+    return { principal, down, deferred, term, balloon, financed, monthly: Math.round(monthly * 100) / 100, apr: effective, apr_given: apr != null, total_payback: Math.round(total * 100) / 100, total_interest: Math.round((total - principal) * 100) / 100 };
+  }
   async function loanRows() {
     const own = await dbAll('SELECT l.*, v.name AS vendor_name, v.photo AS vendor_photo, e.name AS equipment_name, e.photo AS equipment_photo FROM bk_loans l LEFT JOIN bk_vendors v ON v.id = l.vendor_id LEFT JOIN bk_equipment e ON e.id = l.equipment_id ORDER BY l.status, l.start_date DESC, l.id DESC');
     const paid = {}; (await dbAll('SELECT loan_id, COUNT(*) AS n, SUM(ABS(amount)) AS total, MAX(date) AS last FROM bk_transactions WHERE loan_id IS NOT NULL GROUP BY loan_id')).forEach(r => { paid[r.loan_id] = r; });
     const out = own.map(l => {
-      const done = Math.min(Number(l.term_months) || 9999, monthsSince(l.start_date)), left = Math.max(0, (Number(l.term_months) || 0) - done);
-      const a = l.kind === 'lease' ? { monthly: Number(l.monthly) || 0, balance: Math.round(left * (Number(l.monthly) || 0) * 100) / 100, interest_paid: 0, principal_paid: Math.round(done * (Number(l.monthly) || 0) * 100) / 100, total_interest: null } : amort(l.principal, l.apr, l.term_months, l.monthly, done);
+      const lm = loanMath(l), done = Math.min((lm.term + lm.deferred) || 9999, monthsSince(l.start_date)), left = Math.max(0, (lm.term + lm.deferred) - done);
+      const a = l.kind === 'lease' ? { monthly: Number(l.monthly) || 0, balance: Math.round(left * (Number(l.monthly) || 0) * 100) / 100, interest_paid: 0, principal_paid: Math.round(done * (Number(l.monthly) || 0) * 100) / 100, total_interest: null } : (() => { const m = loanMath(l); const r = amort(m.financed, m.apr, m.term, m.monthly, Math.max(0, done - m.deferred)); r.monthly = m.monthly; r.total_interest = m.total_interest; return r; })();   // 1.19.135: down payment, deferred months, solved APR
       const p = paid[l.id] || { n: 0, total: 0, last: null };
-      return Object.assign({}, l, { source: 'loan', schedule: { start: l.start_date, end: l.term_months ? addMonths(l.start_date, Number(l.term_months)) : null, months_done: done, months_left: left, monthly: a.monthly, next: l.status === 'active' && left ? addMonths(l.start_date, done + 1) : null },
+      return Object.assign({}, l, { source: 'loan', math: loanMath(l), schedule: { start: l.start_date, end: lm.term ? addMonths(l.start_date, lm.term + lm.deferred) : null, months_done: done, months_left: left, monthly: a.monthly, next: l.status === 'active' && left ? addMonths(l.start_date, done + 1) : null },
         balance: a.balance, interest_paid: a.interest_paid, principal_paid: a.principal_paid, total_interest: a.total_interest, payments: { n: p.n, total: Math.round((p.total || 0) * 100) / 100, last: p.last } });
     });
     // machines financed through the Equipment tab appear here too, read-only (edit them under Equipment)
     const linked = new Set(own.map(l => l.equipment_id).filter(Boolean));
-    for (const e of (await equipmentRows()).filter(e => (e.mode === 'loan' || e.mode === 'lease') && !linked.has(e.id))) {
+    for (const e of (await equipmentRows()).filter(e => (e.mode === 'loan' || e.mode === 'lease') && !e.loan && !linked.has(e.id))) {
       const isLoan = e.mode === 'loan', P = isLoan ? (Number(e.loan_amount) || Math.max(0, (Number(e.purchase_price) || 0) - (Number(e.down_payment) || 0))) : 0;
       const sch = e.schedule || { months_done: 0, months_left: 0, monthly: 0 };
       const a = isLoan ? amort(P, e.loan_rate, e.loan_term, e.monthly_payment, sch.months_done) : { monthly: sch.monthly, balance: sch.remaining || 0, interest_paid: 0, principal_paid: Math.round(sch.months_done * sch.monthly * 100) / 100, total_interest: null };
@@ -2728,8 +2769,8 @@ module.exports = function mountBookkeeping(app, deps) {
         sheet: { equipment_value: Math.round(assets * 100) / 100, owed: Math.round(owed * 100) / 100, monthly: Math.round(monthly * 100) / 100, net: Math.round((assets - owed) * 100) / 100, loans: active.length } });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
-  const LOAN_F = ['name', 'kind', 'lender', 'vendor_id', 'equipment_id', 'principal', 'start_date', 'term_months', 'apr', 'monthly', 'balloon', 'notes', 'status'];
-  const loanBody = (b) => { const o = {}; LOAN_F.forEach(k => { if (b[k] === undefined) return; let v = b[k]; if (['vendor_id', 'equipment_id', 'term_months'].indexOf(k) > -1) v = v === '' || v == null ? null : parseInt(v); else if (['principal', 'apr', 'monthly', 'balloon'].indexOf(k) > -1) v = v === '' || v == null ? null : Number(v); else v = v == null ? null : String(v).trim().slice(0, 500); o[k] = v; }); if (o.kind && ['loan', 'lease', 'credit_line'].indexOf(o.kind) < 0) o.kind = 'loan'; if (o.status && ['active', 'paid'].indexOf(o.status) < 0) o.status = 'active'; return o; };
+  const LOAN_F = ['name', 'kind', 'lender', 'vendor_id', 'equipment_id', 'principal', 'down_payment', 'deferred_months', 'start_date', 'term_months', 'apr', 'monthly', 'balloon', 'total_payback', 'notes', 'status'];
+  const loanBody = (b) => { const o = {}; LOAN_F.forEach(k => { if (b[k] === undefined) return; let v = b[k]; if (['vendor_id', 'equipment_id', 'term_months', 'deferred_months'].indexOf(k) > -1) v = v === '' || v == null ? null : parseInt(String(v).replace(/[^0-9-]/g, '')); else if (['principal', 'apr', 'monthly', 'balloon', 'down_payment', 'total_payback'].indexOf(k) > -1) { v = v === '' || v == null ? null : Number(String(v).replace(/[$,\s]/g, '')); if (v != null && !isFinite(v)) v = null; } else v = v == null ? null : String(v).trim().slice(0, 500); o[k] = v; }); if (o.kind && ['loan', 'lease', 'credit_line'].indexOf(o.kind) < 0) o.kind = 'loan'; if (o.status && ['active', 'paid'].indexOf(o.status) < 0) o.status = 'active'; return o; };
   app.post('/api/bookkeeping/loans', ...guard, async (req, res) => {
     const o = loanBody(req.body || {}); if (!o.name) return res.json({ ok: false, error: 'Give the loan a name.' });
     const keys = Object.keys(o); const r = await dbRun('INSERT INTO bk_loans (' + keys.join(', ') + ', created_by, updated_at) VALUES (' + keys.map(() => '?').join(', ') + ', ?, ?)', keys.map(k => o[k]).concat([userId(req), nowIso()]));

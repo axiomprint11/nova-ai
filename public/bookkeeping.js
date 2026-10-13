@@ -1927,6 +1927,7 @@
     const modePill = (e) => e.mode ? '<span class="eq-mode ' + e.mode + '">' + iconSvg(MODE[e.mode][1]) + MODE[e.mode][0] + '</span>' : '<span class="eq-mode none">not set</span>';
     const dateS = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString([], { month: 'short', year: 'numeric' }) : '';
     const finance = (e) => {
+      if (e.loan) { const L = e.loan; return '<div><b>' + usd(L.principal) + '</b>' + (L.down ? ' · ' + usd(L.down) + ' down' : '') + (L.lender ? ' · ' + esc(L.lender) : '') + '</div><div class="bk-dim">' + (L.kind === 'lease' ? 'Lease' : 'Financed ' + usd(L.financed)) + (L.term ? ' · ' + L.term + ' mo' : '') + (L.deferred ? ' after ' + L.deferred + ' skipped' : '') + (L.apr != null && L.kind !== 'lease' ? ' · ' + L.apr + '%' + (L.apr_given ? '' : ' effective') : '') + (e.schedule && e.schedule.end ? ' · ends ' + esc(dateS(e.schedule.end)) : '') + '</div><div class="bk-dim">from Loans &amp; Leases: <a href="#" data-lngo="' + L.id + '">' + esc(L.name) + '</a></div>'; }
       if (e.mode === 'owned') return '<div>Bought ' + esc(dateS(e.purchase_date)) + (e.purchase_price != null ? ' for <b>' + usd(e.purchase_price) + '</b>' : '') + '</div><div class="bk-dim">' + (e.life_years || 7) + '-year straight line' + (e.salvage ? ', ' + usd(e.salvage) + ' salvage' : '') + '</div>';
       if (e.mode === 'loan') return '<div>' + (e.purchase_price != null ? '<b>' + usd(e.purchase_price) + '</b> ' : '') + esc(dateS(e.purchase_date)) + (e.down_payment ? ' · ' + usd(e.down_payment) + ' down' : '') + '</div><div class="bk-dim">Loan ' + (e.loan_amount != null ? usd(e.loan_amount) : '—') + (e.loan_term ? ' · ' + e.loan_term + ' mo' : '') + (e.loan_rate != null ? ' · ' + e.loan_rate + '%' : '') + (e.schedule && e.schedule.end ? ' · ends ' + esc(dateS(e.schedule.end)) : '') + '</div>';
       if (e.mode === 'lease') return '<div>Lease from ' + esc(dateS(e.lease_start)) + (e.lease_term ? ' · ' + e.lease_term + ' mo' : '') + '</div><div class="bk-dim">' + (e.schedule && e.schedule.end ? 'ends ' + esc(dateS(e.schedule.end)) + ' · ' : '') + 'all of it is an expense (P&amp;L)</div>';
@@ -1954,6 +1955,7 @@
     $('eqMode').onchange = filter; $('eqQ').oninput = filter;
     $('eqAdd').onclick = async () => { const name = await askText('Name of the machine', { title: 'Add a machine' }); if (!name) return; const r = await post('/api/bookkeeping/equipment', { name }); if (!r.ok) return alert(r.error); loadEquipment(); };
     v.querySelectorAll('[data-vgo]').forEach(a => a.onclick = (e) => { e.preventDefault(); show('vendors'); setTimeout(() => { const tr = document.querySelector('tr[data-vid="' + a.dataset.vgo + '"]'); if (tr) { tr.scrollIntoView({ block: 'center' }); tr.style.background = '#eef2ff'; } }, 400); });
+    v.querySelectorAll('[data-lngo]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); show('loans'); });
     v.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => equipmentEditor(all.find(e => e.id === Number(b.dataset.edit)), vendors, loadEquipment));
     v.querySelectorAll('[data-pays]').forEach(b => b.onclick = () => equipmentPayments(all.find(e => e.id === Number(b.dataset.pays))));
   }
@@ -2020,7 +2022,7 @@
       return '<tr' + (l.status === 'paid' ? ' class="off"' : '') + '><td>' + pic(l) + '</td>' +
         '<td><b>' + esc(l.name) + '</b> <span class="ln-kind ' + esc(l.kind) + '">' + esc(KIND[l.kind] || l.kind) + '</span>' + (l.source === 'equipment' ? '<div class="bk-dim">financing from the Equipment tab</div>' : l.equipment_name ? '<div class="bk-dim">for ' + esc(l.equipment_name) + '</div>' : '') + (l.status === 'paid' ? '<div class="bk-dim">paid off</div>' : '') + '</td>' +
         '<td>' + esc(l.vendor_name || l.lender || '—') + '</td>' +
-        '<td>' + (l.principal != null ? '<b>' + usd(l.principal) + '</b>' : '<span class="bk-dim">—</span>') + '<div class="bk-dim">' + esc(dateS(l.start_date)) + (l.term_months ? ' · ' + l.term_months + ' mo' : '') + (l.apr != null && l.apr !== '' ? ' · ' + l.apr + '% APR' : '') + '</div></td>' +
+        '<td>' + (l.principal != null ? '<b>' + usd(l.principal) + '</b>' : '<span class="bk-dim">—</span>') + '<div class="bk-dim">' + esc(dateS(l.start_date)) + (l.math && l.math.down ? ' · ' + usd(l.math.down) + ' down' : '') + (l.term_months ? ' · ' + l.term_months + ' mo' : '') + (l.math && l.math.deferred ? ' after ' + l.math.deferred + ' skipped' : '') + (l.math && l.math.apr != null && l.kind !== 'lease' ? ' · ' + l.math.apr + '% APR' + (l.math.apr_given ? '' : ' (effective)') : l.apr != null && l.apr !== '' ? ' · ' + l.apr + '% APR' : '') + '</div>' + (l.math && l.math.total_payback ? '<div class="bk-dim">' + usd(l.math.total_payback) + ' back in all</div>' : '') + '</td>' +
         '<td class="num">' + (sch.monthly ? '<b>' + usd(sch.monthly) + '</b>' : '—') + (sch.next ? '<div class="bk-dim">next ' + esc(dateS(sch.next)) + '</div>' : '') + '</td>' +
         '<td>' + (total ? '<div>' + sch.months_done + ' of ' + total + ' paid</div><div class="ln-bar"><i style="width:' + pct + '%"></i></div>' : '<span class="bk-dim">open-ended</span>') + (sch.end ? '<div class="bk-dim">ends ' + esc(dateS(sch.end)) + '</div>' : '') + '</td>' +
         '<td class="num"><b>' + usd(l.balance || 0) + '</b>' + (l.interest_paid ? '<div class="bk-dim">' + usd(l.interest_paid) + ' interest so far</div>' : '') + (l.total_interest != null && l.total_interest > 0 ? '<div class="bk-dim">' + usd(l.total_interest) + ' over the term</div>' : '') + '</td>' +
@@ -2039,19 +2041,46 @@
     const el = document.createElement('div'); el.className = 'bk-modal';
     const f = (k, label, type, extra, ph) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><input class="bk" name="' + k + '" type="' + (type || 'text') + '" value="' + esc(l[k] != null ? l[k] : '') + '"' + (extra || '') + (ph ? ' placeholder="' + esc(ph) + '"' : '') + '></label>';
     const sel = (k, label, opts) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><select class="bk" name="' + k + '">' + opts.map(o => '<option value="' + esc(o[0]) + '"' + (String(l[k] == null ? '' : l[k]) === String(o[0]) ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') + '</select></label>';
+    // 1.19.135: money fields are text with thousands separators ("395,000.00"); parsed on save
+    const fmtMoney = (v) => { const n = Number(String(v == null ? '' : v).replace(/[$,\s]/g, '')); return v === '' || v == null || !isFinite(n) ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+    const money = (k, label, ph) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><input class="bk ln-money" name="' + k + '" type="text" inputmode="decimal" value="' + esc(fmtMoney(l[k])) + '"' + (ph ? ' placeholder="' + esc(ph) + '"' : '') + '></label>';
     el.innerHTML = '<div class="bk-modal-box" style="width:min(640px,100%)"><div class="bk-modal-title" style="margin-bottom:12px">' + (isEdit ? 'Edit ' + esc(l.name) : 'New loan / lease') + '</div>' +
       '<div class="nv-grid">' + f('name', 'Name', 'text', '', 'SBA EIDL · Line of credit · Van loan') + sel('kind', 'Kind', [['loan', 'Loan (amortized)'], ['lease', 'Lease (fixed payments)'], ['credit_line', 'Line of credit (open-ended)']]) +
       sel('vendor_id', 'Lender (company in the directory)', [['', '— pick a company —']].concat((j.vendors || []).map(x => [x.id, x.name]))) + f('lender', 'Lender, if not in the directory', 'text', '', 'Bank of America') +
-      f('principal', 'Amount borrowed', 'number', ' step="0.01" min="0"') + f('start_date', 'Date borrowed / first payment', 'date') +
-      f('term_months', 'Term (months)', 'number', ' step="1" min="0"', '60') + f('apr', 'Interest rate (APR %)', 'number', ' step="0.01" min="0"', '7.5') +
-      f('monthly', 'Monthly payment (blank = computed)', 'number', ' step="0.01" min="0"') + f('balloon', 'Balloon at the end, if any', 'number', ' step="0.01" min="0"') +
+      money('principal', 'Amount borrowed (price financed)', '395,000.00') + money('down_payment', 'Down payment / advance, if any', '39,500.00') +
+      f('start_date', 'Date borrowed / first payment', 'date') + f('deferred_months', 'Months with no payment first (optional)', 'number', ' step="1" min="0"', '0') +
+      f('term_months', 'Number of monthly payments', 'number', ' step="1" min="0"', '72') + money('monthly', 'Monthly payment (blank = computed)', '5,808.00') +
+      f('apr', 'APR % (blank = computed)', 'number', ' step="0.001" min="0"', '7.5') + money('total_payback', 'Total to be paid back (optional)', '457,676.00') +
+      money('balloon', 'Balloon at the end, if any') +
       sel('equipment_id', 'Finances a machine (optional)', [['', '— none —']].concat((j.equipment || []).map(x => [x.id, x.name]))) + sel('status', 'Status', [['active', 'Active'], ['paid', 'Paid off']]) + '</div>' +
+      '<div class="bk-dim" id="lnCalc" style="margin:8px 0 10px"></div>' +
       '<label class="nv-f"><span class="bk-muted">Notes</span><textarea class="bk" name="notes" rows="2">' + esc(l.notes || '') + '</textarea></label>' +
       '<div class="bk-row nv-acts"><button class="bk-btn p" id="lnSave">' + (isEdit ? 'Save' : 'Add loan') + '</button><button class="bk-btn bk-x">Cancel</button>' + (isEdit ? '<span class="sp"></span><button class="bk-btn sm bad" id="lnDel">Delete</button>' : '') + '<span class="bk-muted" id="lnMsg"></span></div></div>';
     const close = () => el.remove(); el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
     document.body.appendChild(el); el.querySelector('[name=name]').focus();
+    const num = (k) => { const v = Number(String(el.querySelector('[name=' + k + ']').value || '').replace(/[$,\s]/g, '')); return isFinite(v) ? v : 0; };
+    // live line under the fields: financed amount, monthly / APR (computed when blank), total back and interest
+    const recalc = () => {
+      const kind = el.querySelector('[name=kind]').value, P = num('principal'), down = num('down_payment'), term = num('term_months'), def = num('deferred_months'), balloon = num('balloon');
+      const aprV = el.querySelector('[name=apr]').value, apr = aprV === '' ? null : Number(aprV); let monthly = num('monthly'), total = num('total_payback');
+      const fin = Math.max(0, P - down), out = el.querySelector('#lnCalc');
+      if (!monthly && total && term) monthly = Math.max(0, (total - down - balloon) / term);
+      if (!monthly && apr != null && term && kind !== 'lease') { const i = apr / 100 / 12, g = fin * Math.pow(1 + i, def); monthly = i ? g * i / (1 - Math.pow(1 + i, -term)) : g / term; }
+      let eff = apr;
+      if (eff == null && monthly && term && fin && kind !== 'lease') {
+        const pv = (i) => Math.pow(1 + i, -def) * (monthly * (1 - Math.pow(1 + i, -term)) / i + balloon * Math.pow(1 + i, -term));
+        if (monthly * term + balloon <= fin + 0.005) eff = 0; else { let lo = 1e-7, hi = 0.1; for (let k = 0; k < 80; k++) { const mid = (lo + hi) / 2; if (pv(mid) > fin) lo = mid; else hi = mid; } eff = Math.round((lo + hi) / 2 * 12 * 100 * 1000) / 1000; }
+      }
+      if (!total && monthly && term) total = down + monthly * term + balloon;
+      if (!P && !monthly) { out.innerHTML = ''; return; }
+      out.innerHTML = 'Financed <b>' + usd(fin) + '</b>' + (down ? ' after ' + usd(down) + ' down' : '') + (monthly ? ' · <b>' + usd(monthly) + '</b> × ' + term + (def ? ' after ' + def + ' month' + (def === 1 ? '' : 's') + ' with no payment' : '') : '') +
+        (eff != null && kind !== 'lease' ? ' · <b>' + eff + '%</b> APR' + (apr == null ? ' (computed from the payments)' : '') : '') + (total ? ' · total back <b>' + usd(total) + '</b>' + (total - P > 0 ? ' (' + usd(total - P) + ' interest)' : '') : '');
+    };
+    el.querySelectorAll('.ln-money').forEach(i => { i.addEventListener('blur', () => { i.value = fmtMoney(i.value); recalc(); }); i.addEventListener('input', recalc); });
+    el.querySelectorAll('[name=apr],[name=term_months],[name=deferred_months],[name=kind]').forEach(i => { i.addEventListener('input', recalc); i.addEventListener('change', recalc); });
+    recalc();
     el.querySelector('#lnSave').onclick = async () => {
-      const body = {}; el.querySelectorAll('[name]').forEach(i => { body[i.name] = i.value; });
+      const body = {}; el.querySelectorAll('[name]').forEach(i => { body[i.name] = i.classList.contains('ln-money') ? String(i.value).replace(/[$,\s]/g, '') : i.value; });
       if (!body.name.trim()) { el.querySelector('#lnMsg').textContent = 'Give the loan a name.'; return; }
       const r = await post(isEdit ? '/api/bookkeeping/loans/' + l.id : '/api/bookkeeping/loans', body);
       if (!r.ok) { el.querySelector('#lnMsg').textContent = r.error || 'Could not save.'; return; }
