@@ -1799,23 +1799,27 @@ module.exports = function mountBookkeeping(app, deps) {
     const matched = rows.length < 500 ? rows.length : (await dbGet('SELECT COUNT(*) n' + W, p)).n;   // how many the filters match (the list stops at 500)
     // 1.19.72: a category suggestion for every uncategorized line — the linked company's own history first (every
     // past line in one category → 100%), then the company's usual category (one → 95%, several → 85% each), then the AI
-    const sugCache = {};
+    // Money in and money out never share a suggestion: a charge gets the company's expense history / categories, a
+    // deposit its income ones (a refund matched to a charge carries the charge's category and is left out of history).
+    const sugCache = {}; const chartRows = chartOf(await settings()); const isIncomeCat = (name) => { const c = chartRows.find(x => x.name === name); return !!(c && c.income); };
     for (const r of rows) {
       if (r.category || !r.vendor_id) { r.cat_suggest = r.category ? [] : (r.ai_category ? [{ category: r.ai_category, conf: r.ai_conf, why: 'ai' }] : []); continue; }
-      if (!sugCache[r.vendor_id]) {
-        const hist = await dbAll("SELECT category, COUNT(*) n FROM bk_transactions WHERE vendor_id = ? AND status = 'categorized' AND category IS NOT NULL AND category <> 'Uncategorized' GROUP BY category ORDER BY n DESC", [r.vendor_id]);
+      const moneyIn = Number(r.amount) < 0, key = r.vendor_id + (moneyIn ? ':in' : ':out');
+      if (!sugCache[key]) {
+        const hist = (await dbAll("SELECT category, COUNT(*) n FROM bk_transactions WHERE vendor_id = ? AND status = 'categorized' AND category IS NOT NULL AND category <> 'Uncategorized' AND refund_of IS NULL AND (amount < 0) = ? GROUP BY category ORDER BY n DESC", [r.vendor_id, moneyIn ? 1 : 0]))
+          .filter(h => isIncomeCat(h.category) === moneyIn);
         const total = hist.reduce((a, h) => a + h.n, 0);
         const v = await dbGet('SELECT default_category FROM bk_vendors WHERE id = ?', [r.vendor_id]);
-        const usual = String(v && v.default_category || '').split(/\s*[;|\n]\s*/).map(x => x.trim()).filter(Boolean);
+        const usual = String(v && v.default_category || '').split(/\s*[;|\n]\s*/).map(x => x.trim()).filter(Boolean).filter(c => isIncomeCat(c) === moneyIn);
         let out = [];
         if (total >= 3 && hist[0].n === total) out = [{ category: hist[0].category, conf: 1, why: 'history', n: total }];
         else if (total >= 3 && hist[0].n / total >= 0.8) out = [{ category: hist[0].category, conf: 0.9, why: 'history', n: hist[0].n }];
         else if (usual.length === 1) out = [{ category: usual[0], conf: 0.95, why: 'vendor' }];
         else if (usual.length > 1) out = usual.slice(0, 3).map(c => ({ category: c, conf: 0.85, why: 'vendor' }));
         else if (total >= 1) out = hist.slice(0, 2).map(h => ({ category: h.category, conf: Math.min(0.8, 0.5 + h.n / Math.max(total, 1) * 0.3), why: 'history', n: h.n }));
-        sugCache[r.vendor_id] = out;
+        sugCache[key] = out;
       }
-      r.cat_suggest = sugCache[r.vendor_id].length ? sugCache[r.vendor_id] : (r.ai_category ? [{ category: r.ai_category, conf: r.ai_conf, why: 'ai' }] : []);
+      r.cat_suggest = sugCache[key].length ? sugCache[key] : (r.ai_category && isIncomeCat(r.ai_category) === moneyIn ? [{ category: r.ai_category, conf: r.ai_conf, why: 'ai' }] : []);
     }
     if (rows.some(r => !r.orig_desc)) backfillOriginalDesc();
     const out = { ok: true, by_status, matched, transactions: rows, categorizing: catBusy };
