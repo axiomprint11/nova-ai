@@ -1724,31 +1724,44 @@ module.exports = function mountClientBot(app, deps) {
 
   // ---------------------------------------------------------------- prompt
   // ---------------------------------------------------------------- first-order coupon
-  // The website's first-order code for the chat (promo_code table; SavewithNova10 —
-  // "Nova Chat Coupon", 10% off — unless CLIENT_BOT_WELCOME_CODE says otherwise). Terms are read live, so a change on the website reaches NovaAI within
-  // the hour; an expired or deleted code is simply never offered.
+  // NovaAI's coupons come from the website's promo_code table: every code with the **NovaAI** box ticked (`nova_ai = 1`)
+  // that is valid today. SavewithNova10 ("Nova Chat Coupon", CLIENT_BOT_WELCOME_CODE) is always the main one when it is
+  // ticked and valid; the others (Halloween, Christmas…) are extra offers NovaAI may give when they fit better or the main one
+  // is used up. Terms are read live every 10 minutes, so ticking a box in the CRM reaches NovaAI without a restart; an
+  // expired, unticked or deleted code is simply never offered. (1.19.139 — was one hard-wired code.)
   const WELCOME_CODE = String(process.env.CLIENT_BOT_WELCOME_CODE || 'SavewithNova10').trim();
-  let welcomeCache = { at: 0, offer: null };
-  async function welcomeOffer() {
-    if (!WELCOME_CODE) return null;
-    if (Date.now() - welcomeCache.at < 60 * 60 * 1000) return welcomeCache.offer;
-    let offer = null;
+  const MONTHS_L = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const dateWords = (v) => { const d = v instanceof Date ? v : new Date(String(v).slice(0, 10) + 'T12:00:00'); return MONTHS_L[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear(); };
+  let offersCache = { at: 0, list: [] };
+  async function novaOffers() {
+    if (Date.now() - offersCache.at < 10 * 60 * 1000) return offersCache.list;
+    let list = [];
     try {
-      const r = await runQuery('SELECT id, promo_code, type, value, min_order_price, max_order_price, valid_to FROM promo_code WHERE promo_code = ' +
-        deps.mysql.escape(WELCOME_CODE) + ' AND (valid_from IS NULL OR valid_from <= CURDATE()) AND (valid_to IS NULL OR valid_to >= CURDATE()) LIMIT 1');
-      const c = r && r[0];
-      if (c && Number(c.value) > 0) {
-        const amount = c.type === 'percent' ? Number(c.value) + '% off' : '$' + Number(c.value).toLocaleString('en-US') + ' off';
-        offer = { id: Number(c.id), code: c.promo_code, amount: amount, min: Number(c.min_order_price) > 0 ? Number(c.min_order_price) : 0,
-          terms: amount + (Number(c.min_order_price) > 0 ? ' orders of $' + Number(c.min_order_price) + ' or more' : '') +
-            (Number(c.max_order_price) > 0 ? ' up to $' + Number(c.max_order_price) : '') +
-            (c.valid_to ? ' (valid until ' + (function (v) { const d = v instanceof Date ? v : new Date(String(v).slice(0, 10) + 'T12:00:00');
-              return ['January','February','March','April','May','June','July','August','September','October','November','December'][d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear(); })(c.valid_to) + ')' : '') };
+      const rows = await runQuery('SELECT id, name, promo_code, type, value, min_order_price, max_order_price, valid_to, multiple_use, product_ids FROM promo_code ' +
+        'WHERE (nova_ai = 1 OR promo_code = ' + deps.mysql.escape(WELCOME_CODE) + ') AND value > 0 AND (valid_from IS NULL OR valid_from <= CURDATE()) AND (valid_to IS NULL OR valid_to >= CURDATE()) ORDER BY id');
+      const pidsAll = [];
+      for (const c of rows || []) {
+        let pids = []; try { pids = (Array.isArray(c.product_ids) ? c.product_ids : JSON.parse(c.product_ids || '[]')).map(x => parseInt(x)).filter(Boolean); } catch (e) {}
+        c._pids = pids.slice(0, 30); pidsAll.push(...c._pids);
       }
-    } catch (e) { console.error('CLIENT_BOT welcome offer', e.message); }
-    welcomeCache = { at: Date.now(), offer: offer };
-    return offer;
+      const names = {};
+      if (pidsAll.length) (await runQuery('SELECT id, name FROM product WHERE id IN (' + [...new Set(pidsAll)].join(',') + ')').catch(() => [])).forEach(p => { names[p.id] = p.name; });
+      list = (rows || []).map(c => {
+        const amount = c.type === 'percent' ? Number(c.value) + '% off' : '$' + Number(c.value).toLocaleString('en-US') + ' off';
+        const products = c._pids.map(id => names[id]).filter(Boolean);
+        return { id: Number(c.id), code: c.promo_code, name: c.name || c.promo_code, amount: amount, value: Number(c.value), percent: c.type === 'percent',
+          min: Number(c.min_order_price) > 0 ? Number(c.min_order_price) : 0, once: Number(c.multiple_use) !== 1, products: products, valid_to: c.valid_to ? dateWords(c.valid_to) : null,
+          primary: String(c.promo_code).toLowerCase() === WELCOME_CODE.toLowerCase(),
+          terms: amount + (Number(c.min_order_price) > 0 ? ' orders of $' + Number(c.min_order_price) + ' or more' : '') + (Number(c.max_order_price) > 0 ? ' up to $' + Number(c.max_order_price) : '') +
+            (products.length ? ' on ' + products.slice(0, 6).join(', ') + (products.length > 6 ? ' and ' + (products.length - 6) + ' more' : '') + ' only' : '') +
+            (c.valid_to ? ' (valid until ' + dateWords(c.valid_to) + ')' : '') };
+      });
+      list.sort((a, b) => (b.primary ? 1 : 0) - (a.primary ? 1 : 0) || a.id - b.id);
+    } catch (e) { console.error('CLIENT_BOT nova offers', e.message); list = offersCache.list; }
+    offersCache = { at: Date.now(), list: list };
+    return list;
   }
+  async function welcomeOffer() { return (await novaOffers()).find(o => o.primary) || null; }
   // Has this customer ordered before (an estimate that became an invoice)? Cached a while.
   const orderedCache = new Map();
   async function hasOrdered(cid) {
@@ -1788,17 +1801,30 @@ module.exports = function mountClientBot(app, deps) {
   // The coupon rule for the prompt. channel 'phone' = said aloud on a call.
   // maybeIds: accounts the caller's phone number is on, when they are not verified (phone only).
   async function couponRule(who, channel, maybeIds) {
-    const o = await welcomeOffer();
+    const all = await novaOffers();
+    const o = all.find(x => x.primary) || all[0];
     if (!o) return '';
     const phone = channel === 'phone';
     const cid = who && who.customer ? who.customer.id : null;
     const isNew = !cid || !(await hasOrdered(cid));
     const used = cid ? await usedCoupon(cid, o.id) : false;
+    // 1.19.139: the other NovaAI-ticked codes (seasonal offers). A once-per-customer one the account already used is left out.
+    const extras = [];
+    for (const x of all) {
+      if (x.id === o.id) continue;
+      if (x.once && cid && await usedCoupon(cid, x.id)) continue;
+      if (x.once && !cid && Array.isArray(maybeIds) && maybeIds.length && await usedCoupon(maybeIds, x.id)) continue;
+      extras.push(x);
+    }
+    const extraRule = !extras.length ? '' : '\n18b. OTHER NOVAAI COUPONS (also from the website, entered at checkout, never combined with each other or with ' + o.code + '): ' +
+      extras.map(x => x.code + (phone ? ' (spell it out)' : '') + ' = ' + x.terms + (x.once ? ', one use per customer' : ', reusable') + (x.name && x.name !== x.code ? ' \u2014 "' + x.name + '"' : '')).join('; ') + '. ' +
+      'Lead with ' + o.code + '; mention one of these instead when it is clearly better for THIS order (a bigger saving, or the only one that applies to the product) or when ' + o.code + ' cannot be offered, ' +
+      'and when the customer asks about seasonal deals or a specific promotion. One code per order; the customer picks. Say what each one is for; never invent a code that is not listed here.';
     // Not verified, but their number is on an account that already used it: do not offer it, and do not
     // confirm anything about the account either.
     if (!cid && Array.isArray(maybeIds) && maybeIds.length && await usedCoupon(maybeIds, o.id)) {
       return '18. SAVE WITH NOVA COUPON: do NOT offer or share code ' + o.code + ' on this call. If they ask for a discount or a coupon, say prices are set by the website and ' +
-        'coupons are one use per customer; if they want to check their account, they can sign in at axiomprint.com or you take a message for the team. Never invent any other code.';
+        'coupons are one use per customer; if they want to check their account, they can sign in at axiomprint.com or you take a message for the team. Never invent any other code.' + extraRule;
     }
     const said = phone ? o.code + ' (say it as "Save with Nova 10", one word, and offer to spell it)' : o.code;
     const example = (isNew ? 'First order with us? ' : '') + 'Use code ' + o.code + ' at checkout for ' + o.amount + (o.min ? ' orders of $' + o.min + '+' : ' your order') + '.';
@@ -1807,7 +1833,7 @@ module.exports = function mountClientBot(app, deps) {
     if (used) {
       return head + 'This customer\u2019s account has ALREADY USED it. Never offer it. If they ask for a discount, a coupon or a lower price, or try to negotiate, say kindly that ' +
         'their account has already used the Save with Nova coupon' + (who.customer && who.customer.discount ? ' and their account discount is already in the price' : '') +
-        ', and that for special pricing on a larger order ' + contact + ' can take a look. Never invent or share any other code.';
+        ', and that for special pricing on a larger order ' + contact + ' can take a look. ' + (extras.length ? 'If one of the OTHER NOVAAI COUPONS below applies to their order and is still open to them, offer that one instead. ' : '') + 'Never invent or share any other code.' + extraRule;
     }
     return head + (cid ? 'This signed-in customer has NOT used it yet. ' : 'This visitor is not signed in, so you cannot tell whether they used it: say it is for one use per customer. ') +
       'Prices are never negotiated, but this code is the answer whenever they try to: when they ask for a lower price, a discount, a better deal or a price match, or hesitate about the price, ' +
@@ -1815,7 +1841,7 @@ module.exports = function mountClientBot(app, deps) {
       (isNew ? 'They have not ordered with us yet, so also mention it once after their first quote (e.g. "' + example + '"), and when they are ready to order. ' : '') +
       'Share it whenever they ask about coupons, promo codes or deals. At most twice in a conversation unless they ask; never pushy. ' +
       (phone ? 'It cannot be applied on the call; the quote email shows prices before the code. ' : 'It cannot be applied in this chat; quotes show prices before the code. ') +
-      'Never invent or share any other code, and never say it combines with other discounts.';
+      'Never invent or share any other code' + (extras.length ? ' than the ones listed in rule 18b' : '') + ', and never say it combines with other discounts.' + extraRule;
   }
 
   // ---------------------------------------------------------------- lessons from ratings

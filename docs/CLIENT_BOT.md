@@ -226,6 +226,17 @@ website changes what NovaAI says; an expired or deleted code is never offered. A
 NovaAI never invents or shares other codes and never says it combines with other discounts. Quotes show prices before
 the code.
 
+### More coupons for NovaAI (1.19.139)
+
+In the CRM's **List of Promo Codes**, tick **NovaAI** on any code and NovaAI knows it within 10 minutes — no restart. The
+Nova Chat Coupon stays the main one (it is always offered first); every other ticked code that is valid today (a Halloween
+or Christmas offer, say) is an extra NovaAI may give when it is clearly better for that order (a bigger saving, or the only
+one that covers the product), when the customer's account has already used the main one, or when the customer asks about
+seasonal deals or a specific promotion. NovaAI reads each code's terms from the CRM — percent or dollar amount, minimum /
+maximum order, valid-until date, "Multiple" (reusable) or one use per customer, and the products it is limited to — and
+says what each one is for. A once-per-customer code the account has already used is never offered again. One code per
+order; codes are never combined. Untick NovaAI, or let the code expire, and it is gone from the chat and the phone.
+
 ## Estimated ready date and its popup
 
 Every quote ends with **Estimated Ready: Wed, Oct 14 · 5:00 PM** and a small **?** — the same line and popup as the staff

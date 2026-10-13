@@ -184,7 +184,7 @@ admins can switch the user filter), "+ New chat" opens ChatBot, and a row of you
 has no Agents tab and Users has no per-member agents column: ChatBot's training opens from CRM Chat ("Train ChatBot",
 `trainAgent('chatbot')`) and TalkAi's from its page (`/admin?tab=agents&agent=talk-ai`).
 
-**One left menu.** `public/nova-nav.js` (`NovaNav.mount`) draws the same grouped menu (brand **NovaAI** with the running version beside it from `GET /api/version`, 1.19.138; page titles say NovaAI) on `/admin`, `/talk-ai` and
+**One left menu.** `public/nova-nav.js` (`NovaNav.mount`) draws the same grouped menu (brand **NovaAI** with the running version beside it from `GET /api/version`, 1.19.139; page titles say NovaAI) on `/admin`, `/talk-ai` and
 `/client-bot`: CRM Chat · Client ChatBot · TalkAi (each with its unread count) / Users · Domain Knowledge · Connectors /
 Installation Pricing · Delivery Pricing and Templates (both "Soon"); at the bottom New chat and who is signed in (photo or
 initial, name, email — from `/api/me`) with **Sign out** (`NovaNav.signOut()`: clears `axiom_token` / `axiom_user` /
@@ -264,7 +264,7 @@ posts it to `POST /api/client-bot/transcribe` → `speech-to-text.js` (OpenAI wi
 NovaAI tells the customer, `escalatePastDue()` emails CLIENT_BOT_ESCALATE_TO (default gary@axiomprint.com) via `sendMail()`
 (Gmail API, needs the `gmail.send` delegation scope), once per job per day (`client_escalations`). Graphic design: prompt rule 19 + `estimate_design` (hours from the editable guide × the hourly range, Training →
 Graphic design services; `client_bot_rules.design / design_min / design_max`). Save with Nova coupon: prompt rule 18 from `couponRule(who, channel)` — SavewithNova10, 10% off (`CLIENT_BOT_WELCOME_CODE`), terms read
-live from `promo_code`; ONE use per customer (`multiple_use = 0` means once per customer, not once overall — the website records a use as
+live from `promo_code`; since 1.19.139 **every promo code with the CRM's NovaAI box ticked** (`promo_code.nova_ai = 1`, valid today) is loaded by `novaOffers()` (10-min cache; `product_ids` resolved to product names, `multiple_use` → once / reusable): the welcome code stays rule 18 and the main offer, the rest become rule **18b OTHER NOVAAI COUPONS** (Halloween WICKED13, a Christmas code…) — offered when clearly better for the order, when the main code is used up / cannot be offered, or when the customer asks about seasonal deals; a once-per-customer extra the account already used is left out; one code per order, never combined; ONE use per customer (`multiple_use = 0` means once per customer, not once overall — the website records a use as
 `invoice.invoice_promo_code_id`, checked by `usedCoupon()`). It is the answer when a customer negotiates or asks for a discount; pitched
 after a quote to guests and customers with no invoiced estimate (`hasOrdered()`); never offered to an account that used it ("you've already
 used the Save with Nova coupon"). The phone prompt gets the same rule as its COUPON line.
