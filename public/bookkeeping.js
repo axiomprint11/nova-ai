@@ -536,7 +536,7 @@
       status: [{ v: 'pending', l: 'Pending — no category yet', t: 'Pending', n: bs.pending || 0 }, { v: 'new', l: 'New — synced in the last 24 hours', t: 'New', n: bs.new || 0 }, { v: 'categorized', l: 'Categorized', n: bs.categorized || 0 }, { v: '', l: 'All statuses' }],
       type: [{ v: '', l: 'All categories' }].concat(chart_types().map(t => ({ v: 'T:' + t.name, l: tile(t.color, t.icon, 'sm', '') + ' ' + esc(t.name) })), cat ? (T.by_category || []).map(c => ({ v: 'C:' + c.category, l: catLabel(c.category), n: c.n })) : []),
       vkind: [{ v: '', l: 'All' }, { v: 'supplier', l: '<span class="bk-src supplier">supplier</span>', t: 'Supplier' }, { v: 'vendor', l: '<span class="bk-src vendor">vendor</span>', t: 'Vendor' }, { v: 'nova', l: '<span class="bk-src nova">vendor' + AI_I + '</span>', t: 'Vendor ✦' }, { v: 'bill', l: '<span class="bk-src bill">from a bill</span>', t: 'From a bill' }, { v: 'none', l: 'Not linked' }],
-      vendor: [{ v: '', l: 'All companies' }].concat((j.vendors || []).map(x => ({ v: String(x.id), l: esc(x.name) }))),
+      vendor: [{ v: '', l: 'All companies' }, { v: 'none', l: 'Not linked' }].concat((j.vendors || []).map(x => ({ v: String(x.id), l: esc(x.name) })), TF.vendor_id && TF.vendor_id !== 'none' && !(j.vendors || []).some(x => String(x.id) === TF.vendor_id) ? [{ v: TF.vendor_id, l: esc(TF.vendor_name || 'Company') }] : []),
       source: [{ v: '', l: 'Any' }, { v: 'approved', l: 'Approved (AI proposed)' }, { v: 'manual', l: 'Manual' }, { v: 'rule', l: 'By rule' }],
       account: [{ v: '', l: 'All accounts' }].concat((j.accounts || []).map(a => ({ v: a.account_name, l: esc(a.label), t: a.short || a.label }))),
       date: { type: 'range', kind: 'date', from: TF.period === 'custom' ? TF.from : '', to: TF.period === 'custom' ? TF.to : '', period: TF.period, defaultPeriod: '30', presets: PERIODS },
@@ -568,7 +568,8 @@
       if (t.vendor_id) return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft">' + vlogo(t.vendor_name, t.vendor_photo || t.plaid_logo) + kindPill(t) + '</div><div class="bl-vname"><b class="tx-vn">' + esc(t.vendor_name) + '</b> <a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Change vendor">' + PEN + '</a>' +
         (t.vendor_by === 'auto' ? '<div class="tx-match ok">Matched ' + (t.vendor_score != null ? Math.round(t.vendor_score * 100) + '%' : 'by name') + '</div>' : t.vendor_by === 'person' ? '<div class="bk-dim">linked by a person</div>' : '') + '</div></div>';
       const sug = t.suggest_vendor_id ? '<div class="tx-sug"><span class="tx-match">Matched ' + Math.round((t.suggest_score || 0) * 100) + '%</span><button type="button" class="bk-btn sm p" data-usev="' + t.id + '" data-vid="' + t.suggest_vendor_id + '">Use</button></div><div class="tx-sug-n"><b>' + esc(t.suggest_name) + '</b></div>' : '';
-      return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft">' + (t.plaid_logo ? vlogo(t.merchant || t.name, t.plaid_logo) : vlogo(null, null)) + '</div><div class="bl-vname"><span class="bl-unlinked">Not linked</span> <a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Link to a vendor">' + LINKI + '</a><a href="#" class="bl-vact tx-vico" data-newv="' + t.id + '" title="Create a Nova vendor from this line">' + PLUSV + '</a>' + sug + '</div></div>';
+      // 1.19.67: no vendor yet — the Link / Create icons sit under the photo where the kind pill would be
+      return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft">' + (t.plaid_logo ? vlogo(t.merchant || t.name, t.plaid_logo) : vlogo(null, null)) + '<div class="tx-vacts"><a href="#" class="bl-vact tx-vico" data-setv="' + t.id + '" title="Link to a vendor">' + LINKI + '</a><a href="#" class="bl-vact tx-vico" data-newv="' + t.id + '" title="Create a Nova vendor from this line">' + PLUSV + '</a></div></div><div class="bl-vname"><span class="bl-unlinked">Not linked</span>' + sug + '</div></div>';
     };
     // 1.19.58: short — logo + "WF ••0489"; the full bank and account name on hover
     const BANK_ABBR = { 'wells fargo': 'WF', 'american express': 'Amex', 'bank of america': 'BofA', 'jpmorgan chase': 'Chase', 'capital one': 'CapOne', 'us bank': 'USB', 'u.s. bank': 'USB', 'citibank': 'Citi' };
@@ -617,6 +618,7 @@
     const setV = async (id, vid) => { const r = await post('/api/bookkeeping/transactions/' + id + '/vendor', { vendor_id: vid }); if (!r.ok) alert(r.error || 'Could not link'); loadTxns(); };
     v.querySelectorAll('[data-setv]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = (j.transactions || []).find(x => String(x.id) === a.dataset.setv); vendorPicker(a, { vendor: t ? (t.merchant || t.name) : '', suggestions: t && t.suggest_vendor_id ? [{ id: t.suggest_vendor_id, name: t.suggest_name, photo: t.suggest_photo, score: t.suggest_score || 0 }] : [] }, (vid) => setV(a.dataset.setv, vid)); });
     v.querySelectorAll('[data-usev]').forEach(b => b.onclick = () => setV(b.dataset.usev, Number(b.dataset.vid)));
+    const vth = v.querySelector('.thf[data-thf=vendor]'); if (vth) vth.onclick = (e) => { e.stopPropagation(); document.querySelectorAll('.thf-pop').forEach(p => p.remove()); vendorPicker(vth, { vendor: '', suggestions: [] }, (val, name) => { TF.vendor_id = val; TF.vendor_name = val && val !== 'none' ? name : ''; saveTF(); }, { filter: { current: TF.vendor_id } }); };
     v.querySelectorAll('[data-newv]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = (j.transactions || []).find(x => String(x.id) === a.dataset.newv); novaVendorForm({ name: t ? (t.merchant || t.name) : '', aliases: t ? [t.merchant, t.name].filter((x, i, arr) => x && arr.indexOf(x) === i).join('\n') : '', website: t && t.website ? t.website : '' }, (nv) => setV(a.dataset.newv, nv.id)); });
   }
 
@@ -1142,7 +1144,8 @@
     setTimeout(() => { document.addEventListener('click', away); document.addEventListener('keydown', esc1); }, 0);
     pop.querySelectorAll('[data-c]').forEach(el => el.onclick = async () => { const rr = await post('/api/bookkeeping/transactions/' + id + '/refund', { of: Number(el.dataset.c) }); close(); if (!rr.ok) alert(rr.error); loadTxns(); overview(); });
   }
-  async function vendorPicker(anchor, bill, onPick) {
+  async function vendorPicker(anchor, bill, onPick, opts) {
+    opts = opts || {}; const asFilter = !!opts.filter;   // 1.19.67: the same picker is the Bank feed's Company header filter
     document.querySelectorAll('.ckp-pop').forEach(p => p.remove());
     const j = await api('/api/bookkeeping/directory?fresh=0');
     const all = (j.vendors || []).filter(x => x.kind !== 'bill');
@@ -1150,7 +1153,7 @@
     pop.addEventListener('click', (e) => e.stopPropagation());
     let vtab = 'axiom';   // 1.19.65: Axiom (CRM) vendors | Nova vendors; the search box always looks through both
     const isNova = (x) => x.source === 'nova' || x.source === 'bill';
-    pop.innerHTML = '<div class="ckp-search"><input type="text" placeholder="Search all vendors…"></div><div class="vp-tabs"><button type="button" class="ib-chip sm on" data-vt="axiom">Axiom vendors <small>' + all.filter(x => !isNova(x)).length + '</small></button><button type="button" class="ib-chip sm" data-vt="nova">Nova vendors ' + AI_I + ' <small>' + all.filter(isNova).length + '</small></button></div><div class="ckp-list"></div><div class="ckp-foot"><a href="#" class="ckp-new vp-new">+ New Nova vendor…</a><span class="sp"></span><span class="bk-muted">Linking “' + esc(bill.vendor) + '” remembers the name.</span></div>';
+    pop.innerHTML = '<div class="ckp-search"><input type="text" placeholder="Search all vendors…"></div><div class="vp-tabs"><button type="button" class="ib-chip sm on" data-vt="axiom">Axiom vendors <small>' + all.filter(x => !isNova(x)).length + '</small></button><button type="button" class="ib-chip sm" data-vt="nova">Nova vendors ' + AI_I + ' <small>' + all.filter(isNova).length + '</small></button></div><div class="ckp-list"></div><div class="ckp-foot">' + (asFilter ? '<span class="bk-muted">Show only this company\'s lines.</span>' : '<a href="#" class="ckp-new vp-new">+ New Nova vendor…</a><span class="sp"></span><span class="bk-muted">Linking “' + esc(bill.vendor) + '” remembers the name.</span>') + '</div>';
     document.body.appendChild(pop);
     const r = anchor.getBoundingClientRect(), W = Math.min(380, window.innerWidth - 16);
     pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) + 'px'; pop.style.width = W + 'px';
@@ -1159,7 +1162,8 @@
     const row = (x, extra) => '<div class="ckp-i vp" data-v="' + x.id + '">' + (x.photo ? '<img class="bk-logo vp-logo" src="' + esc(x.photo) + '" alt="">' : '<span class="bk-logo vp-logo ph">' + esc(String(x.name).charAt(0).toUpperCase()) + '</span>') + '<span class="vp-n"><b>' + esc(x.name) + '</b><small>' + esc([x.kind, x.specialty].filter(Boolean).join(' · ')) + '</small></span>' + (extra || '') + '</div>';
     const draw = () => {
       const f = q.value.trim().toLowerCase(); let html = '';
-      if (!f && bill.suggestions.length) html += '<div class="ckp-g"><div class="ckp-gh">Near matches</div>' + bill.suggestions.map(sg => row(sg, '<span class="bk-dim">' + Math.round(sg.score * 100) + '%</span>')).join('') + '</div>';
+      if (asFilter && !f) html += '<div class="ckp-g">' + [['', 'All companies'], ['none', 'Not linked']].map(([v, l]) => '<div class="ckp-i vp' + (String(opts.filter.current || '') === v ? ' on' : '') + '" data-v="' + v + '"><span class="ckp-ck"></span><span class="vp-n"><b>' + l + '</b></span></div>').join('') + '</div>';
+      if (!f && !asFilter && bill.suggestions.length) html += '<div class="ckp-g"><div class="ckp-gh">Near matches</div>' + bill.suggestions.map(sg => row(sg, '<span class="bk-dim">' + Math.round(sg.score * 100) + '%</span>')).join('') + '</div>';
       const hit = (x) => (x.name + ' ' + (x.specialty || '') + ' ' + (x.aliases || '')).toLowerCase().indexOf(f) > -1;
       if (f) {   // a search looks through both lists
         const ax = all.filter(x => !isNova(x) && hit(x)).slice(0, 60), nv = all.filter(x => isNova(x) && hit(x)).slice(0, 60);
@@ -1174,8 +1178,8 @@
     };
     pop.querySelectorAll('[data-vt]').forEach(b => b.onclick = () => { vtab = b.dataset.vt; pop.querySelectorAll('[data-vt]').forEach(x => x.classList.toggle('on', x === b)); draw(); });
     draw(); setTimeout(() => q.focus(), 0); q.oninput = draw;
-    list.onclick = (e) => { const it = e.target.closest('.ckp-i'); if (!it) return; onPick(Number(it.dataset.v)); close(); };
-    pop.querySelector('.vp-new').onclick = (e) => { e.preventDefault(); close(); novaVendorForm({ name: bill.vendor || '', aliases: bill.vendor || '' }, (nv) => onPick(nv.id)); };   // 1.19.63
+    list.onclick = (e) => { const it = e.target.closest('.ckp-i'); if (!it) return; onPick(asFilter ? it.dataset.v : Number(it.dataset.v), (it.querySelector('b') || {}).textContent || ''); close(); };
+    if (pop.querySelector('.vp-new')) pop.querySelector('.vp-new').onclick = (e) => { e.preventDefault(); close(); novaVendorForm({ name: bill.vendor || '', aliases: bill.vendor || '' }, (nv) => onPick(nv.id)); };   // 1.19.63
     const close = () => { pop.remove(); document.removeEventListener('click', away); document.removeEventListener('keydown', esc1); };
     const away = (e) => { if (!pop.contains(e.target)) close(); }, esc1 = (e) => { if (e.key === 'Escape') close(); };
     setTimeout(() => { document.addEventListener('click', away); document.addEventListener('keydown', esc1); }, 0);
