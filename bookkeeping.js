@@ -1218,13 +1218,23 @@ module.exports = function mountBookkeeping(app, deps) {
   function ruleMatch(rules, t) {
     const name = normName(t.merchant || t.name), full = normName(t.name + ' ' + (t.merchant || '')), vn = t._vendor ? normName(t._vendor.name) : (t.vendor_name ? normName(t.vendor_name) : '');
     // 1.19.91: a vendor rule also matches through the linked company ("Vendor is Stripe" files every line linked to Stripe, whatever the transfer id says)
-    return rules.find(r => r.kind === 'vendor' ? (normName(r.pattern) === name || (vn && normName(r.pattern) === vn)) : full.indexOf(normName(r.pattern)) > -1) || null;
+    // 1.19.94: a vendor rule made from a bank line carries that line's wording — compared with the per-payment codes dropped
+    // ("PEACE & HAIGHT I PAYMENT 261008 20261007AC …" ≡ "… 261001 20261001AC …")
+    const st = stableV(t.merchant || t.name);
+    return rules.find(r => r.kind === 'vendor' ? (normName(r.pattern) === name || (vn && normName(r.pattern) === vn) || (st.length >= 6 && stableV(r.pattern) === st)) : full.indexOf(normName(r.pattern)) > -1) || null;
   }
   async function categorize(who) {
     const s = await settings();
     const rules = await dbAll('SELECT * FROM bk_rules WHERE active = 1 ORDER BY kind DESC, id');
     const txns = await dbAll("SELECT * FROM bk_transactions WHERE status = 'new' ORDER BY date DESC LIMIT 80");   // 1.19.51: lines still pending at the bank get a suggestion too
     let byRule = 0, proposed = 0, asked = 0;
+    // 1.19.94: rules also sweep lines the AI already rated but nobody filed — a rule made today should catch yesterday's lines
+    for (const t of await dbAll("SELECT t.*, v.name AS vendor_name FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id WHERE t.status = 'pending' AND (t.category IS NULL OR t.category = '') ORDER BY t.date DESC LIMIT 600")) {
+      const r = ruleMatch(rules, t); if (!r) continue;
+      await dbRun("UPDATE bk_transactions SET category = ?, category_source = 'rule', rule_id = ?, status = 'categorized', updated_at = datetime('now') WHERE id = ?", [r.category, r.id, t.id]);
+      await dbRun("UPDATE bk_proposals SET status = 'edited' WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [t.id]);
+      await dbRun('UPDATE bk_rules SET hits = hits + 1 WHERE id = ?', [r.id]); byRule++;
+    }
     const open = [];
     for (const t of txns) {
       const dv = t.vendor_id ? ((await directory()).find(v => v.id === t.vendor_id) || null) : await matchVendor(t.merchant || t.name);
