@@ -829,6 +829,9 @@ module.exports = function mountBookkeeping(app, deps) {
   // ---------------------------------------------------------------- the vendor directory (CRM suppliers + vendors)
   // Pulled from the production `suppliers` and `vendors` tables (read-only). They are our known partners, so they come
   // in approved; a transaction or bill that matches one is linked to it (vendor_id) and the AI is told who they are.
+  // 1.19.91: the bank's wording minus its per-payment codes — "STRIPE TRANSFER ST-W7G8K4C7T1Q6 AXIOMPRINT INC" and
+  // "STRIPE TRANSFER ST-K2P9… AXIOMPRINT INC" are the same payer. Tokens with a digit, and 1-letter tokens, are dropped.
+  const stableV = (t) => normV(t).split(' ').filter(w => w.length > 1 && !/\d/.test(w)).join(' ');
   const normV = (t) => String(t || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9 ]+/g, ' ').replace(/\b(inc|llc|corp|corporation|co|company|ltd|the)\b/g, ' ').replace(/\s+/g, ' ').trim();
   const domainOf = (e) => { const m = String(e || '').toLowerCase().match(/@([a-z0-9.-]+)/); return m ? m[1].replace(/^(www|mail|e)\./, '') : ''; };
   const FREE_MAIL = /^(gmail|yahoo|hotmail|outlook|aol|icloud|me|live|msn)\./;
@@ -1014,7 +1017,7 @@ module.exports = function mountBookkeeping(app, deps) {
   async function directory() {
     if (Date.now() - dirCache.at < 60000) return dirCache.list;
     const rows = await dbAll('SELECT * FROM bk_vendors ORDER BY name');
-    dirCache = { at: Date.now(), list: rows.map(v => Object.assign({}, v, { _n: normV(v.name), _al: String(v.aliases || '').split('\n').filter(a => a.indexOf('@') < 0).map(normV).filter(Boolean), _em: String(v.aliases || '').split('\n').map(a => a.trim().toLowerCase()).filter(a => a.indexOf('@') > 0), _dom: domainOf(v.email) })) };
+    dirCache = { at: Date.now(), list: rows.map(v => Object.assign({}, v, { _n: normV(v.name), _al: String(v.aliases || '').split('\n').filter(a => a.indexOf('@') < 0).map(normV).filter(Boolean), _als: String(v.aliases || '').split('\n').filter(a => a.indexOf('@') < 0).map(stableV).filter(a => a.length >= 6), _em: String(v.aliases || '').split('\n').map(a => a.trim().toLowerCase()).filter(a => a.indexOf('@') > 0), _dom: domainOf(v.email) })) };
     return dirCache.list;
   }
   // The directory entry a bank line / bill belongs to: an alias or the full name inside the text, or the email domain.
@@ -1027,6 +1030,9 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!n) return null;
     const hits = list.filter(v => v._n.length >= 3 && (n === v._n || (' ' + n + ' ').indexOf(' ' + v._n + ' ') > -1 || v._al.some(a => a.length >= 3 && (' ' + n + ' ').indexOf(' ' + a + ' ') > -1)));
     if (hits.length) return hits.sort((a, b) => b._n.length - a._n.length)[0];
+    // 1.19.91: an alias whose stable wording (codes dropped) equals, or sits inside, the line's stable wording
+    const ns = stableV(text);
+    if (ns.length >= 6) { const byStable = list.filter(v => (v._als || []).some(a => a === ns || (' ' + ns + ' ').indexOf(' ' + a + ' ') > -1)); if (byStable.length) return byStable.sort((a, b) => b._n.length - a._n.length)[0]; }
     // (No first-word guessing here: "Pacific Office Automation" must not land on "Pacific Engravers". Near matches are
     // offered by suggestVendors() for a person to confirm.)
     return null;
@@ -1209,8 +1215,9 @@ module.exports = function mountBookkeeping(app, deps) {
   // Rules first (deterministic), then the AI for what is left, in one call per batch.
   const normName = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
   function ruleMatch(rules, t) {
-    const name = normName(t.merchant || t.name), full = normName(t.name + ' ' + (t.merchant || ''));
-    return rules.find(r => r.kind === 'vendor' ? normName(r.pattern) === name : full.indexOf(normName(r.pattern)) > -1) || null;
+    const name = normName(t.merchant || t.name), full = normName(t.name + ' ' + (t.merchant || '')), vn = t._vendor ? normName(t._vendor.name) : (t.vendor_name ? normName(t.vendor_name) : '');
+    // 1.19.91: a vendor rule also matches through the linked company ("Vendor is Stripe" files every line linked to Stripe, whatever the transfer id says)
+    return rules.find(r => r.kind === 'vendor' ? (normName(r.pattern) === name || (vn && normName(r.pattern) === vn)) : full.indexOf(normName(r.pattern)) > -1) || null;
   }
   async function categorize(who) {
     const s = await settings();
@@ -1219,8 +1226,9 @@ module.exports = function mountBookkeeping(app, deps) {
     let byRule = 0, proposed = 0, asked = 0;
     const open = [];
     for (const t of txns) {
-      const dv = await matchVendor(t.merchant || t.name);
-      if (dv && !t.vendor_id) { await dbRun('UPDATE bk_transactions SET vendor_id = ? WHERE id = ?', [dv.id, t.id]); t.vendor_id = dv.id; t._vendor = dv; }
+      const dv = t.vendor_id ? ((await directory()).find(v => v.id === t.vendor_id) || null) : await matchVendor(t.merchant || t.name);
+      if (dv && !t.vendor_id) { await dbRun('UPDATE bk_transactions SET vendor_id = ? WHERE id = ?', [dv.id, t.id]); t.vendor_id = dv.id; }
+      if (dv) t._vendor = dv;
       const r = ruleMatch(rules, t);
       if (r) {
         await dbRun("UPDATE bk_transactions SET category = ?, category_source = 'rule', rule_id = ?, status = 'categorized', updated_at = datetime('now') WHERE id = ?", [r.category, r.id, t.id]);
@@ -2476,6 +2484,9 @@ module.exports = function mountBookkeeping(app, deps) {
     // 1.19.47: the same bank wording elsewhere (unlinked, or linked by the machine) follows — and every future line too, through the alias.
     if (vid && t && req.body.alias !== false) { const text = t.merchant || t.name; req.body.alias = req.body.alias || text;
       await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = 'auto', vendor_score = 1, suggest_vendor_id = NULL, suggest_score = NULL WHERE id <> ? AND (vendor_id IS NULL OR vendor_by = 'auto') AND LOWER(COALESCE(merchant, name)) = LOWER(?)", [vid, id, text]); }
+      // 1.19.91: and every line whose wording differs only by a per-payment code (Stripe transfer ids, check / ref numbers)
+      const ns = stableV(t.merchant || t.name); if (ns.length >= 6) { const open = await dbAll("SELECT id, name, merchant FROM bk_transactions WHERE id <> ? AND vendor_id IS NULL AND status NOT IN ('removed', 'excluded')", [id]);
+        for (const o of open) if (stableV(o.merchant || o.name) === ns) await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = 'auto', vendor_score = 1, suggest_vendor_id = NULL, suggest_score = NULL WHERE id = ? AND vendor_id IS NULL", [vid, o.id]); }
     // Remember the bank line as an alias of that vendor, so the next one matches by itself.
     if (vid && req.body.alias) { const v = await dbGet('SELECT aliases FROM bk_vendors WHERE id = ?', [vid]); const al = String(v && v.aliases || '').split('\n').filter(Boolean); if (al.indexOf(req.body.alias) < 0) { al.push(String(req.body.alias).slice(0, 120)); await dbRun('UPDATE bk_vendors SET aliases = ? WHERE id = ?', [al.join('\n'), vid]); dirCache.at = 0; } }
     await audit(userId(req), 'transaction.vendor', req.params.id, { vendor_id: vid, alias: req.body.alias });
