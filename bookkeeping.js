@@ -64,6 +64,9 @@ module.exports = function mountBookkeeping(app, deps) {
     db.run('CREATE INDEX IF NOT EXISTS bk_txn_date ON bk_transactions(date)');
     db.run(`CREATE TABLE IF NOT EXISTS bk_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, pattern TEXT, category TEXT, vendor TEXT,
       note TEXT, source TEXT, created_by TEXT, hits INTEGER DEFAULT 0, active INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')))`);
+    // 1.19.112: an optional amount condition ("over" / "under" $n on the line's absolute amount; blank = any amount), and
+    // kind 'none' = "No rule" for a vendor: never file it by rule and never offer "Make it a rule?" / "Create a rule" for it.
+    ['amount_op TEXT', 'amount_val REAL'].forEach(c => db.run('ALTER TABLE bk_rules ADD COLUMN ' + c, () => {}));
     db.run(`CREATE TABLE IF NOT EXISTS bk_vendors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, approved INTEGER DEFAULT 0, email TEXT,
       default_category TEXT, notes TEXT, created_at TEXT DEFAULT (datetime('now')), approved_by TEXT, approved_at TEXT)`);
     // 1.15.3 made bk_vendors.name UNIQUE; a company can be both a supplier and a vendor in the CRM, so the first
@@ -1259,7 +1262,27 @@ module.exports = function mountBookkeeping(app, deps) {
     // 1.19.94: a vendor rule made from a bank line carries that line's wording — compared with the per-payment codes dropped
     // ("PEACE & HAIGHT I PAYMENT 261008 20261007AC …" ≡ "… 261001 20261001AC …")
     const st = stableV(t.merchant || t.name);
-    return rules.find(r => r.kind === 'vendor' ? (normName(r.pattern) === name || (vn && normName(r.pattern) === vn) || (st.length >= 6 && stableV(r.pattern) === st)) : full.indexOf(normName(r.pattern)) > -1) || null;
+    const byVendor = (r) => normName(r.pattern) === name || (vn && normName(r.pattern) === vn) || (st.length >= 6 && stableV(r.pattern) === st);
+    // 1.19.112: an amount condition narrows a rule ("Vendor is Amazon over $500 → Equipment"); a rule with one is tried before
+    // the same vendor's plain rule, so the specific one wins. Kind 'none' ("No rule") never categorizes — see noRuleFor().
+    const amt = Math.abs(Number(t.amount) || 0);
+    const amountOk = (r) => !r.amount_op || r.amount_val == null ? true : r.amount_op === 'over' ? amt > Number(r.amount_val) : r.amount_op === 'under' ? amt < Number(r.amount_val) : true;
+    const live = rules.filter(r => r.kind !== 'none' && r.category);
+    const ordered = live.filter(r => r.amount_op && r.amount_val != null).concat(live.filter(r => !(r.amount_op && r.amount_val != null)));
+    return ordered.find(r => amountOk(r) && (r.kind === 'vendor' ? byVendor(r) : full.indexOf(normName(r.pattern)) > -1)) || null;
+  }
+  // 1.19.112: read an amount condition from a form: {amount_op: 'over'|'under'|'', amount_val: n}; blank = none
+  const amountCond = (b) => {
+    const op = String(b.amount_op || '').trim(), val = b.amount_val === '' || b.amount_val == null ? null : Number(b.amount_val);
+    if (!op) return { op: null, val: null };
+    if (op !== 'over' && op !== 'under') return { error: 'Amount condition must be over or under.' };
+    if (val == null || !isFinite(val) || val < 0) return { error: 'Give the amount for "' + op + '".' };
+    return { op, val: Math.round(val * 100) / 100 };
+  };
+  // 1.19.112: the "No rule" entry for this line's vendor, if one exists (kind 'none', matched like a vendor rule)
+  function noRuleFor(rules, t) {
+    const name = normName(t.merchant || t.name), vn = t._vendor ? normName(t._vendor.name) : (t.vendor_name ? normName(t.vendor_name) : ''), st = stableV(t.merchant || t.name);
+    return rules.find(r => r.kind === 'none' && (normName(r.pattern) === name || (vn && normName(r.pattern) === vn) || (st.length >= 6 && stableV(r.pattern) === st))) || null;
   }
   // 1.19.94 / 1.19.98: rules sweep every unfiled line (new or already rated) with no model call — run inside categorize() and on
   // every Bank feed load (throttled), so a rule made today catches yesterday's lines without waiting for an AI pass.
@@ -1418,7 +1441,7 @@ module.exports = function mountBookkeeping(app, deps) {
       let rule = null;
       if (opts.remember !== false) {
         const vendor = String(opts.vendor || payload.vendor || '').trim();
-        if (vendor && !(await dbGet('SELECT id FROM bk_rules WHERE kind = ? AND LOWER(pattern) = LOWER(?) AND active = 1', ['vendor', vendor]))) {
+        if (vendor && !(await dbGet("SELECT id FROM bk_rules WHERE kind IN ('vendor', 'none') AND LOWER(pattern) = LOWER(?) AND active = 1", [vendor]))) {   // 1.19.112: a "No rule" vendor stays without one
           const r = await dbRun('INSERT INTO bk_rules (kind, pattern, category, vendor, source, created_by) VALUES (?,?,?,?,?,?)', ['vendor', vendor, category, vendor, 'approval', who]);
           rule = r.lastID;
         }
@@ -1581,6 +1604,7 @@ module.exports = function mountBookkeeping(app, deps) {
       return r;
     }
     if (name === 'add_rule') {
+      if (await dbGet("SELECT id FROM bk_rules WHERE kind = 'none' AND LOWER(pattern) = LOWER(?) AND active = 1", [String(input.pattern || '')])) return { ok: false, error: '"No rule" is set for ' + input.pattern + ' — the team decided never to file it by rule.' };   // 1.19.112
       const r = await dbRun('INSERT INTO bk_rules (kind, pattern, category, vendor, source, created_by) VALUES (?,?,?,?,?,?)', [input.kind === 'keyword' ? 'keyword' : 'vendor', String(input.pattern).slice(0, 120), String(input.category).slice(0, 80), input.kind === 'vendor' ? String(input.pattern).slice(0, 120) : null, 'chat', who]);
       await audit(who, 'rule.add', r.lastID, input);
       return { ok: true, rule_id: r.lastID };
@@ -1912,7 +1936,8 @@ module.exports = function mountBookkeeping(app, deps) {
     const liveRules = await dbAll('SELECT * FROM bk_rules WHERE active = 1 ORDER BY kind DESC, id');
     for (const r of rows) {
       // 1.19.96: `rule_exists` for every row (so Use never offers "Make it a rule?" for a company that has one); `can_rule` only on filed lines
-      r.rule_exists = !!(r.rule_id || ruleMatch(liveRules, r) || liveRules.some(x => x.kind === 'vendor' && r.vendor_name && normName(x.pattern) === normName(r.vendor_name)));
+      r.no_rule = !!noRuleFor(liveRules, r);   // 1.19.112: "No rule" set for this vendor — never ask again
+      r.rule_exists = !!(r.rule_id || r.no_rule || ruleMatch(liveRules, r) || liveRules.some(x => x.kind !== 'keyword' && r.vendor_name && normName(x.pattern) === normName(r.vendor_name)));
       r.can_rule = !!(r.category && r.category !== 'Uncategorized' && !r.refund_of && !r.transfer_of && !r.rule_exists);
     }
     // 1.19.92: a line that looks like the other half of a transfer between our own accounts — same amount, opposite sign, a
@@ -2054,13 +2079,20 @@ module.exports = function mountBookkeeping(app, deps) {
   // 1.19.77: "Create a rule" on a categorized bank line — a vendor rule (the linked company's name, else the merchant) with the
   // line's category; the line is tied to it, and every pending line the rule matches is categorized by it on the spot.
   app.post('/api/bookkeeping/transactions/:id/rule', ...guard, async (req, res) => {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id), b = req.body || {};
     const t = await dbGet('SELECT t.*, v.name AS vendor_name FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id WHERE t.id = ?', [id]);
-    if (!t || !t.category) return res.json({ ok: false, error: 'Categorize the line first.' });
+    if (!t) return res.json({ ok: false, error: 'No such line.' });
     const pattern = String(t.vendor_name || t.merchant || t.name || '').trim().slice(0, 120);
     if (!pattern) return res.json({ ok: false, error: 'No vendor name on this line.' });
-    const dup = await dbGet('SELECT id, category FROM bk_rules WHERE kind = ? AND LOWER(pattern) = LOWER(?) AND active = 1', ['vendor', pattern]);
-    if (dup) return res.json({ ok: false, error: 'There is already a rule for ' + pattern + ' → ' + dup.category + ' (Accounts → Rules).' });
+    const dup = await dbGet("SELECT id, kind, category FROM bk_rules WHERE kind IN ('vendor', 'none') AND LOWER(pattern) = LOWER(?) AND active = 1", [pattern]);
+    if (b.none) {   // 1.19.112: "No rule" — remember never to ask for this vendor (eBay: every purchase is different)
+      if (dup) return res.json({ ok: false, error: dup.kind === 'none' ? 'No rule is already set for ' + pattern + '.' : 'There is already a rule for ' + pattern + ' → ' + dup.category + ' (Accounts → Rules) — remove it first.' });
+      const n = await dbRun('INSERT INTO bk_rules (kind, pattern, category, vendor, source, created_by) VALUES (?,?,?,?,?,?)', ['none', pattern, null, pattern, 'manual', userId(req)]);
+      await audit(userId(req), 'rule.none', n.lastID, { from_txn: id, pattern });
+      return res.json({ ok: true, id: n.lastID, pattern, none: true });
+    }
+    if (!t.category) return res.json({ ok: false, error: 'Categorize the line first.' });
+    if (dup) return res.json({ ok: false, error: dup.kind === 'none' ? 'No rule is set for ' + pattern + ' (Accounts → Rules) — remove that first.' : 'There is already a rule for ' + pattern + ' → ' + dup.category + ' (Accounts → Rules).' });
     const r = await dbRun('INSERT INTO bk_rules (kind, pattern, category, vendor, source, created_by) VALUES (?,?,?,?,?,?)', ['vendor', pattern, t.category, pattern, 'manual', userId(req)]);
     await dbRun('UPDATE bk_transactions SET rule_id = ? WHERE id = ?', [r.lastID, id]);
     // the vendor's bank wording is often not its name — the rule also matches by the linked vendor, so apply by vendor id or wording
@@ -2511,8 +2543,17 @@ module.exports = function mountBookkeeping(app, deps) {
   app.get('/api/bookkeeping/rules', ...guard, async (req, res) => res.json({ ok: true, rules: await dbAll('SELECT * FROM bk_rules WHERE active = 1 ORDER BY id DESC'), vendors: await dbAll('SELECT * FROM bk_vendors ORDER BY name') }));
   app.post('/api/bookkeeping/rules', ...guard, async (req, res) => {
     const b = req.body || {};
+    if (b.kind === 'none') {   // 1.19.112: "No rule for vendor"
+      const pat = String(b.pattern || '').trim().slice(0, 120); if (!pat) return res.json({ ok: false, error: 'A vendor name is needed.' });
+      const dup = await dbGet("SELECT id FROM bk_rules WHERE kind IN ('vendor', 'none') AND LOWER(pattern) = LOWER(?) AND active = 1", [pat]);
+      if (dup) return res.json({ ok: false, error: 'There is already a rule for ' + pat + ' — remove it first.' });
+      const n = await dbRun('INSERT INTO bk_rules (kind, pattern, category, vendor, source, created_by) VALUES (?,?,?,?,?,?)', ['none', pat, null, pat, 'manual', userId(req)]);
+      await audit(userId(req), 'rule.none', n.lastID, { pattern: pat });
+      return res.json({ ok: true, id: n.lastID, applied: 0 });
+    }
     if (!b.pattern || !b.category) return res.json({ ok: false, error: 'Pattern and category are needed.' });
-    const r = await dbRun('INSERT INTO bk_rules (kind, pattern, category, vendor, note, source, created_by) VALUES (?,?,?,?,?,?,?)', [b.kind === 'keyword' ? 'keyword' : 'vendor', String(b.pattern).slice(0, 120), String(b.category).slice(0, 80), b.kind === 'keyword' ? null : String(b.pattern).slice(0, 120), String(b.note || '').slice(0, 300), 'manual', userId(req)]);
+    const am = amountCond(b); if (am.error) return res.json({ ok: false, error: am.error });
+    const r = await dbRun('INSERT INTO bk_rules (kind, pattern, category, vendor, note, source, created_by, amount_op, amount_val) VALUES (?,?,?,?,?,?,?,?,?)', [b.kind === 'keyword' ? 'keyword' : 'vendor', String(b.pattern).slice(0, 120), String(b.category).slice(0, 80), b.kind === 'keyword' ? null : String(b.pattern).slice(0, 120), String(b.note || '').slice(0, 300), 'manual', userId(req), am.op, am.val]);
     const applied = await applyRules();
     await audit(userId(req), 'rule.add', r.lastID, Object.assign({ applied }, b));
     res.json({ ok: true, id: r.lastID, applied });
@@ -2531,17 +2572,18 @@ module.exports = function mountBookkeeping(app, deps) {
     const id = parseInt(req.params.id), b = req.body || {};
     const r = await dbGet('SELECT * FROM bk_rules WHERE id = ? AND active = 1', [id]);
     if (!r) return res.json({ ok: false, error: 'No such rule' });
-    const kind = b.kind === 'keyword' ? 'keyword' : 'vendor', pattern = String(b.pattern || r.pattern).trim().slice(0, 120), category = String(b.category || r.category).trim().slice(0, 80);
-    if (!pattern || !category) return res.json({ ok: false, error: 'Pattern and category are needed.' });
-    if (!chartOf(await settings()).some(c => c.name === category)) return res.json({ ok: false, error: 'Not a category in the chart of accounts: ' + category });
-    await dbRun('UPDATE bk_rules SET kind = ?, pattern = ?, category = ?, vendor = ? WHERE id = ?', [kind, pattern, category, kind === 'vendor' ? pattern : null, id]);
+    const kind = b.kind === 'keyword' ? 'keyword' : b.kind === 'none' ? 'none' : 'vendor', pattern = String(b.pattern || r.pattern).trim().slice(0, 120), category = kind === 'none' ? null : String(b.category || r.category || '').trim().slice(0, 80);
+    if (!pattern || (kind !== 'none' && !category)) return res.json({ ok: false, error: 'Pattern and category are needed.' });
+    if (category && !chartOf(await settings()).some(c => c.name === category)) return res.json({ ok: false, error: 'Not a category in the chart of accounts: ' + category });
+    const am = kind === 'none' ? { op: null, val: null } : amountCond(b); if (am.error) return res.json({ ok: false, error: am.error });
+    await dbRun('UPDATE bk_rules SET kind = ?, pattern = ?, category = ?, vendor = ?, amount_op = ?, amount_val = ? WHERE id = ?', [kind, pattern, category, kind === 'keyword' ? null : pattern, am.op, am.val, id]);
     let applied = 0;
-    if (b.apply && category !== r.category) {
+    if (b.apply && category && category !== r.category) {
       const u = await dbRun("UPDATE bk_transactions SET category = ?, updated_at = datetime('now') WHERE rule_id = ? AND category_source = 'rule' AND status = 'categorized'", [category, id]);
       applied = u.changes || 0;
     }
     applied += await applyRules();
-    await audit(userId(req), 'rule.edit', id, { from: { kind: r.kind, pattern: r.pattern, category: r.category }, to: { kind, pattern, category }, applied });
+    await audit(userId(req), 'rule.edit', id, { from: { kind: r.kind, pattern: r.pattern, category: r.category, amount_op: r.amount_op, amount_val: r.amount_val }, to: { kind, pattern, category, amount_op: am.op, amount_val: am.val }, applied });
     res.json({ ok: true, applied });
   });
   app.delete('/api/bookkeeping/rules/:id', ...guard, async (req, res) => { await dbRun('UPDATE bk_rules SET active = 0 WHERE id = ?', [parseInt(req.params.id)]); await audit(userId(req), 'rule.remove', req.params.id); res.json({ ok: true }); });

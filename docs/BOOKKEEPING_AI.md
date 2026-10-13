@@ -544,3 +544,8 @@ appear automatically. The balance is amortized (the interest share of each payme
 remaining payments. The strip on top is the balance-sheet view — equipment book value today against what is still owed.
 In the Bank feed a payment that matches a loan's lender or monthly amount shows **Loan payment? Match**; matching files it
 as *Loan Payment (Principal)* and the loan's "Paid (bank)" column counts it.
+
+### Rule amount conditions and "No rule" (1.19.112)
+
+- A rule can be limited to lines **over** or **under** an amount (the line's absolute amount, money in or out). Blank = any amount, so existing rules are unchanged. When a vendor has both a plain rule and an amount rule, the amount rule is tried first.
+- **No rule for vendor** (`bk_rules.kind = 'none'`): the vendor is never filed by rule and Nova stops offering "Make it a rule?" / "Create a rule" for it (eBay, where every purchase is different). Set it from Accounts → Rules, from the "Never for <vendor>" button on the Make-it-a-rule question, or the "· no rule" link beside Create a rule. Remove it under Accounts → Rules.

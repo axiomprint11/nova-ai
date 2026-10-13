@@ -655,7 +655,7 @@
             : t.transfer_of ? '' : '<div class="tx-ref"><a href="#" class="tx-refl" data-ref="' + t.id + '">' + REFI + ' Refund of a charge…</a></div>') : t.refunded_by ? '<div class="tx-ref bk-dim" title="A refund was matched to this charge"><div>' + REFI + ' refunded</div><div class="tx-ref2">' + esc(usD(t.refunded_by_date)) + ' · ' + usd(-t.refunded_by_amount) + '</div></div>' : '') +
         (!t.category && (t.cat_suggest || []).length ? '<div class="tx-ai">' + t.cat_suggest.map(sg => '<span class="tx-sg" title="' + esc(sg.why === 'history' ? 'Every past line from this company went here' + (sg.n ? ' (' + sg.n + ')' : '') : sg.why === 'vendor' ? 'The company\'s usual category' : (t.ai_reason || 'AI suggestion')) + '">' + (() => { const par = parentOf(sg.category), st = styleOf(par || sg.category); return '<span class="tx-sg-n" title="' + esc(par ? par + ' › ' + sg.category : sg.category) + '">' + (par ? tile(st.color, st.icon, 'xs', par.charAt(0)) + '<small class="tx-sg-par">›</small>' : '') + '<b>' + esc(sg.category) + '</b></span>'; })() + '<span class="tx-pct">' + Math.round((sg.conf || 0) * 100) + '%</span> <button type="button" class="bk-btn sm p tx-use" data-aicat="' + esc(sg.category) + '" data-src="' + esc(sg.why) + '"' + ((sg.conf || 0) >= 0.9 && !t.rule_exists && !t.refund_of ? ' data-askrule="' + esc(t.vendor_name || t.merchant || t.name) + '"' : '') + '>Use</button></span>').join('') + '</div>' :
           !t.category && t.status === 'new' ? '<div class="tx-ai bk-dim">' + aiIcon + ' rating…</div>' : '') +
-        (t.can_rule ? '<div class="tx-ref"><a href="#" class="tx-refl tx-mkrule" data-mkrule="' + t.id + '" title="Always file ' + esc(t.vendor_name || t.merchant || t.name) + ' as ' + esc(t.category) + '">' + RULEI + ' Create a rule</a></div>' : '') +
+        (t.can_rule ? '<div class="tx-ref"><a href="#" class="tx-refl tx-mkrule" data-mkrule="' + t.id + '" title="Always file ' + esc(t.vendor_name || t.merchant || t.name) + ' as ' + esc(t.category) + '">' + RULEI + ' Create a rule</a><a href="#" class="tx-refl tx-norule bk-dim" data-norule="' + t.id + '" title="Never make a rule for ' + esc(t.vendor_name || t.merchant || t.name) + ' and stop asking">· no rule</a></div>' : '') +
         // 1.19.79: a deposit filed as income is a customer payment — tell Accounts Receivable (once; "again" resends)
         (t.amount < 0 && t.category && !t.refund_of && isIncome(t.category) ? (t.ar_notified_at ? '<div class="tx-ref bk-dim" title="Accounts Receivable was emailed"><div>' + MAILI + ' AR notified ' + esc(usD(t.ar_notified_at.slice(0, 10))) + ' · ' + whoHtml(t.ar_notified_by || '') + ' <a href="#" class="tx-arl" data-ar="' + t.id + '" data-again="1" title="Send the email again">again</a></div></div>' : '<div class="tx-ref"><a href="#" class="tx-refl tx-arl" data-ar="' + t.id + '" title="Email Accounts Receivable about this payment">' + MAILI + ' Notify Accounts Receivable</a></div>') : '') + '</td>' +
         '<td><span class="bk-tag ' + esc(shown(t)) + '" title="' + esc(t.category ? 'Categorized — set ' + (t.category_source === 'approved' ? 'from the AI\'s proposal' : t.category_source === 'rule' ? 'by a vendor rule' : 'by hand') : shown(t) === 'new' ? 'Today — came in from the bank today, not categorized yet (at midnight it moves to Pending)' : shown(t) === 'old' ? '90+ — the bank date is more than 90 days back and it is still not categorized' : 'Pending — came in before today, still not categorized') + '">' + esc(STL[shown(t)]) + '</span>' + (t.category && t.category_source ? '<div class="bk-dim">' + esc(SRC_L[t.category_source] || t.category_source) + '</div>' : '') + (t.category && t.updated_at ? '<div class="bk-dim tx-when" title="When it was categorized">' + laD2(t.updated_at).replace(/<div[^>]*>/g, ' ').replace(/<\/div>/g, '').trim() + '</div>' : '') + '</td></tr>').join('') + '</tbody></table>' +
@@ -682,7 +682,7 @@
       wrap.addEventListener('change', async () => { if (inp.value === last || !inp.value) return; last = inp.value; const r = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/category', { category: inp.value, source: td.dataset.src || 'manual' }); td.dataset.src = ''; const tr = td.closest('tr'); tr.classList.add(r.ok ? 'saved' : 'failed');
         // 1.19.85: a 90%+ suggestion taken → offer to make it a rule, so the next line from that company files itself
         const who = td.dataset.askrule; td.dataset.askrule = '';
-        if (r.ok && who) { const ok = await ask('Always file ' + who + ' as ' + inp.value + '? A rule categorizes every future line from ' + who + ' on its own (and any pending ones now). You can edit or remove it under Accounts → Rules.', { title: 'Make it a rule?', ok: 'Yes, create the rule', cancel: 'Not now' }); if (ok) { const rr = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/rule', {}); if (!rr.ok) alert(rr.error || 'Could not create the rule.'); } }
+        if (r.ok && who) { const ok = await ask('Always file ' + who + ' as ' + inp.value + '? A rule categorizes every future line from ' + who + ' on its own (and any pending ones now). You can edit or remove it under Accounts → Rules. "Never for ' + who + '" stops this question for good (eBay, where every purchase is different).', { title: 'Make it a rule?', ok: 'Yes, create the rule', cancel: 'Not now', alt: 'Never for ' + who }); if (ok) { const rr = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/rule', ok === 'alt' ? { none: true } : {}); if (!rr.ok) alert(rr.error || 'Could not create the rule.'); } }   // 1.19.112: 'alt' = No rule
         setTimeout(() => { tr.classList.remove('saved', 'failed'); loadTxns(); overview(); }, 700); }); });
     v.querySelectorAll('[data-ref]').forEach(a => a.onclick = (e) => { e.preventDefault(); refundPicker(a, Number(a.dataset.ref), (j.transactions || []).find(x => x.id === Number(a.dataset.ref))); });
     // 1.19.99: loan payments — match from the hint, unlink
@@ -702,6 +702,16 @@
       const r = await post('/api/bookkeeping/transactions/' + t.id + '/notify-ar', { again: !!a.dataset.again });
       if (!r.ok) { alert(r.error || 'Could not send.'); return; }
       a.replaceWith(Object.assign(document.createElement('span'), { className: 'bk-dim', textContent: 'Sent to ' + r.to })); setTimeout(() => loadTxns(), 900);
+    });
+    // 1.19.112: "no rule" — remember never to file this vendor by rule and stop offering
+    v.querySelectorAll('[data-norule]').forEach(a => a.onclick = async (e) => {
+      e.preventDefault(); const t = (j.transactions || []).find(x => x.id === Number(a.dataset.norule)); if (!t) return;
+      const who = t.vendor_name || t.merchant || t.name;
+      const ok = await ask('Never make a rule for ' + who + '? Lines from ' + who + ' will keep asking for a category by hand, and Nova stops offering "Make it a rule?" for it. Undo under Accounts → Rules.', { title: 'No rule for ' + who, ok: 'Yes, no rule' });
+      if (!ok) return;
+      const r = await post('/api/bookkeeping/transactions/' + t.id + '/rule', { none: true });
+      if (!r.ok) { alert(r.error || 'Could not save.'); return; }
+      a.closest('.tx-ref').replaceWith(Object.assign(document.createElement('span'), { className: 'bk-dim', textContent: 'No rule for ' + who }));
     });
     // 1.19.77: Create a rule from a categorized line — asks first, then the rule also files every pending line of that vendor
     v.querySelectorAll('[data-mkrule]').forEach(a => a.onclick = async (e) => {
@@ -1343,34 +1353,41 @@
   }
 
   // ---------------------------------------------------------------- Rules
+  // 1.19.112: the optional amount condition of a rule — [any amount ▾ | over | under] [$ n]
+  const amountCondHtml = (pre, op, val) => '<span class="ra-amt"><select class="bk ' + pre + '-amt-op" id="' + pre + 'AmtOp" title="Only lines whose amount is over / under this"><option value=""' + (!op ? ' selected' : '') + '>any amount</option><option value="over"' + (op === 'over' ? ' selected' : '') + '>over</option><option value="under"' + (op === 'under' ? ' selected' : '') + '>under</option></select><input class="bk ' + pre + '-amt-val" id="' + pre + 'AmtVal" type="number" min="0" step="0.01" placeholder="$" value="' + (val != null && val !== '' ? esc(String(val)) : '') + '" style="width:92px"></span>';
   async function loadRules() {
     const v = $('vRules');
     if (!ov) await overview();
     const j = await api('/api/bookkeeping/rules');
     v.innerHTML = '<div class="bk-card">' +
-      '<div class="bk-row" style="margin-bottom:10px;flex-wrap:nowrap"><select class="bk" id="rKind"><option value="vendor">Vendor is</option><option value="keyword">Description contains</option></select><input class="bk" id="rPat" placeholder="e.g. Veritiv or AMAZON" style="flex:0 0 260px;min-width:0">' + catSelect('', 'rcat', 'Category…') + '<button class="bk-btn p" id="rAdd" style="white-space:nowrap;flex:none">Add rule</button></div>' +
+      '<div class="bk-row" style="margin-bottom:10px;flex-wrap:nowrap"><select class="bk" id="rKind"><option value="vendor">Vendor is</option><option value="keyword">Description contains</option><option value="none">No rule for vendor</option></select><input class="bk" id="rPat" placeholder="e.g. Veritiv or AMAZON" style="flex:0 0 220px;min-width:0">' + amountCondHtml('r', '', '') + catSelect('', 'rcat', 'Category…') + '<button class="bk-btn p" id="rAdd" style="white-space:nowrap;flex:none">Add rule</button></div>' +
+      '<div class="bk-muted" style="margin:-4px 0 10px;font-size:12px">Amount is optional — "over $500" or "under $50" narrows the rule to those lines (the line\'s amount, in or out); blank = any amount. <b>No rule for vendor</b> means: never file this vendor by rule and stop offering "Make it a rule?" for it (eBay, where every purchase is different).</div>' +
       '<table class="bk"><thead><tr><th>Rule</th><th>Category</th><th>From</th><th>Hits</th><th></th></tr></thead><tbody>' +
-      (j.rules || []).map(r => '<tr data-rule="' + r.id + '"><td>' + (r.kind === 'vendor' ? 'Vendor is ' : 'Contains ') + '<b>' + esc(r.pattern) + '</b></td><td>' + catLabel(r.category) + '</td><td><span class="bk-row" style="gap:6px;align-items:center">' + esc(r.source) + (r.created_by ? ' · ' + whoHtml(r.created_by) : '') + '</span></td><td>' + r.hits + '</td><td style="white-space:nowrap"><button class="bk-btn sm" data-edit="' + r.id + '">Edit</button> <button class="bk-btn sm bad" data-del="' + r.id + '">Remove</button></td></tr>').join('') + '</tbody></table>' +
+      (j.rules || []).map(r => '<tr data-rule="' + r.id + '"><td>' + (r.kind === 'vendor' ? 'Vendor is ' : r.kind === 'none' ? 'No rule for ' : 'Contains ') + '<b>' + esc(r.pattern) + '</b>' + (r.amount_op && r.amount_val != null ? ' <span class="bk-tag" title="Only lines with an amount ' + esc(r.amount_op) + ' ' + usd(r.amount_val) + '">' + esc(r.amount_op) + ' ' + usd(r.amount_val) + '</span>' : '') + '</td><td>' + (r.kind === 'none' ? '<span class="bk-muted">— never filed by rule, never asked</span>' : catLabel(r.category)) + '</td><td><span class="bk-row" style="gap:6px;align-items:center">' + esc(r.source) + (r.created_by ? ' · ' + whoHtml(r.created_by) : '') + '</span></td><td>' + r.hits + '</td><td style="white-space:nowrap"><button class="bk-btn sm" data-edit="' + r.id + '">Edit</button> <button class="bk-btn sm bad" data-del="' + r.id + '">Remove</button></td></tr>').join('') + '</tbody></table>' +
       (!(j.rules || []).length ? '<div class="bk-muted" style="padding:14px 0">No rules yet — each approval with "remember" ticked adds one.</div>' : '') + '</div>' +
       
       '<div class="bk-card"><h2>Notes for the AI ' + qHelp('notes', 'Notes for the AI', 'How AxiomPrint books things — BookkeeperAI reads this with every proposal. The chart of accounts itself is edited under Accounts → Chart of Accounts.') + '</h2>' +
       '<textarea class="bk" id="sNotes" style="margin-top:8px">' + esc(ov.settings.notes) + '</textarea>' +
       '<div class="bk-row" style="margin-top:8px"><label class="bk-muted">Ask me when confidence is below <input class="bk" id="sThr" type="number" min="0.3" max="1" step="0.05" value="' + esc(ov.settings.threshold) + '" style="width:80px"></label><button class="bk-btn p" id="sSave">Save</button><span class="bk-muted" id="sMsg"></span></div></div>';
-    $('rAdd').onclick = async () => { const r = await post('/api/bookkeeping/rules', { kind: $('rKind').value, pattern: $('rPat').value.trim(), category: v.querySelector('input.rcat').value }); if (!r.ok) alert(r.error); loadRules(); };
+    const noneUi = (sel, scope) => { const none = sel.value === 'none'; scope.querySelectorAll('.ra-amt, .ckp').forEach(el => { el.style.display = none ? 'none' : ''; }); };   // 1.19.112: "No rule" needs no amount or category
+    $('rKind').onchange = () => noneUi($('rKind'), v.querySelector('.bk-row'));
+    $('rAdd').onclick = async () => { const r = await post('/api/bookkeeping/rules', { kind: $('rKind').value, pattern: $('rPat').value.trim(), category: v.querySelector('input.rcat').value, amount_op: $('rAmtOp').value, amount_val: $('rAmtVal').value }); if (!r.ok) alert(r.error); loadRules(); };
     v.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await api('/api/bookkeeping/rules/' + b.dataset.del, { method: 'DELETE' }); loadRules(); });
     // 1.19.77: Edit turns the row into an editor; saving a new category asks whether the lines the rule already categorized follow it
     v.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => {
       const r = (j.rules || []).find(x => String(x.id) === b.dataset.edit); if (!r) return;
       const tr = v.querySelector('tr[data-rule="' + r.id + '"]'), was = tr.innerHTML;
-      tr.innerHTML = '<td colspan="5"><div class="bk-row" style="flex-wrap:nowrap;align-items:center"><select class="bk re-kind"><option value="vendor"' + (r.kind === 'vendor' ? ' selected' : '') + '>Vendor is</option><option value="keyword"' + (r.kind === 'keyword' ? ' selected' : '') + '>Description contains</option></select>' +
-        '<input class="bk re-pat" value="' + esc(r.pattern) + '" style="flex:0 0 260px;min-width:0">' + catSelect(r.category, 'recat', 'Category…') +
+      tr.innerHTML = '<td colspan="5"><div class="bk-row" style="flex-wrap:nowrap;align-items:center"><select class="bk re-kind"><option value="vendor"' + (r.kind === 'vendor' ? ' selected' : '') + '>Vendor is</option><option value="keyword"' + (r.kind === 'keyword' ? ' selected' : '') + '>Description contains</option><option value="none"' + (r.kind === 'none' ? ' selected' : '') + '>No rule for vendor</option></select>' +
+        '<input class="bk re-pat" value="' + esc(r.pattern) + '" style="flex:0 0 220px;min-width:0">' + amountCondHtml('re', r.amount_op, r.amount_val) + catSelect(r.category || '', 'recat', 'Category…') +
         '<button class="bk-btn p re-save" style="white-space:nowrap;flex:none">Save</button><button class="bk-btn re-cancel" style="flex:none">Cancel</button><span class="bk-muted re-msg"></span></div></td>';
       tr.querySelector('.re-cancel').onclick = () => { tr.innerHTML = was; loadRules(); };
+      noneUi(tr.querySelector('.re-kind'), tr); tr.querySelector('.re-kind').onchange = () => noneUi(tr.querySelector('.re-kind'), tr);
       tr.querySelector('.re-save').onclick = async () => {
         const kind = tr.querySelector('.re-kind').value, pattern = tr.querySelector('.re-pat').value.trim(), category = tr.querySelector('input.recat').value;
-        if (!pattern || !category) { tr.querySelector('.re-msg').textContent = 'Pattern and category are needed.'; return; }
+        const amount_op = kind === 'none' ? '' : tr.querySelector('.re-amt-op').value, amount_val = kind === 'none' ? '' : tr.querySelector('.re-amt-val').value;
+        if (!pattern || (kind !== 'none' && !category)) { tr.querySelector('.re-msg').textContent = 'Pattern and category are needed.'; return; }
         let apply = false;
-        if (category !== r.category) {
+        if (kind !== 'none' && category !== r.category) {
           const sc = await api('/api/bookkeeping/rules/' + r.id + '/scope');
           if (sc.ok && sc.lines > 0) {
             const a = await ask('This rule has already categorized ' + sc.lines + ' bank line' + (sc.lines === 1 ? '' : 's') + ' (' + usd(Math.abs(sc.total || 0)) + ') as ' + r.category + '. Change them to ' + category + ' too, or leave them and only use the new category from now on?',
@@ -1379,7 +1396,7 @@
             apply = a === true;
           }
         }
-        const res = await post('/api/bookkeeping/rules/' + r.id, { kind, pattern, category, apply });
+        const res = await post('/api/bookkeeping/rules/' + r.id, { kind, pattern, category, apply, amount_op, amount_val });
         if (!res.ok) { tr.querySelector('.re-msg').textContent = res.error || 'Could not save.'; return; }
         await loadRules();
         if (res.applied) { const m = document.createElement('div'); m.className = 'bk-muted'; m.style.padding = '6px 0'; m.textContent = res.applied + ' bank line' + (res.applied === 1 ? '' : 's') + ' re-categorized as ' + category + '.'; v.querySelector('.bk-card table').after(m); }
