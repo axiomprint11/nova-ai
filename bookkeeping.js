@@ -671,15 +671,32 @@ module.exports = function mountBookkeeping(app, deps) {
     await decideEmail(em.id, kind, who);
   }
   // Rows for the Purchases views, with their slots and status.
-  async function purchaseRows(view, q) {
+  // 1.19.141: f = the column filters of the Purchases list (from / to on the purchase date, vendor_id or 'none', vkind =
+  // supplier / vendor / nova / bill / none, min / max on the amount, type (a chart type) or category, dstatus = na / no /
+  // partial / yes / cancelled / bank). Each row also carries vendor_source / vendor_kind / vendor_by for the bank-feed cell.
+  async function purchaseRows(view, q, f) {
+    f = f || {};
     await ensureTxnPurchases();
     const s = await settings();
     const dir = await directory();
     const where = ['1=1'], args = [];
     if (view === 'waiting') where.push("p.confirm_email_id IS NOT NULL AND p.txn_ids = '[]' AND p.cancelled = 0");
     if (view === 'notreceived') where.push("p.expects_delivery = 1 AND p.received IN ('no', 'partial') AND p.cancelled = 0");
-    if (q) { where.push('(LOWER(COALESCE(p.vendor, \'\')) LIKE ? OR LOWER(COALESCE(p.order_no, \'\')) LIKE ? OR LOWER(COALESCE(p.category, \'\')) LIKE ?)'); const l = '%' + q.toLowerCase() + '%'; args.push(l, l, l); }
-    const rows = await dbAll('SELECT p.*, v.name AS vendor_name, v.photo AS vendor_photo FROM bk_purchases p LEFT JOIN bk_vendors v ON v.id = p.vendor_id WHERE ' + where.join(' AND ') + ' ORDER BY p.date DESC, p.id DESC LIMIT 400', args);
+    if (q) { where.push('(LOWER(COALESCE(p.vendor, \'\')) LIKE ? OR LOWER(COALESCE(p.order_no, \'\')) LIKE ? OR LOWER(COALESCE(p.category, \'\')) LIKE ? OR LOWER(COALESCE(v.name, \'\')) LIKE ?)'); const l = '%' + q.toLowerCase() + '%'; args.push(l, l, l, l); }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(f.from || '')) { where.push('p.date >= ?'); args.push(f.from); }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(f.to || '')) { where.push('p.date <= ?'); args.push(f.to); }
+    if (f.vendor_id === 'none') where.push('p.vendor_id IS NULL'); else if (parseInt(f.vendor_id)) { where.push('p.vendor_id = ?'); args.push(parseInt(f.vendor_id)); }
+    if (f.min !== '' && f.min != null && isFinite(Number(f.min))) { where.push('ABS(COALESCE(p.amount, 0)) >= ?'); args.push(Number(f.min)); }
+    if (f.max !== '' && f.max != null && isFinite(Number(f.max))) { where.push('ABS(COALESCE(p.amount, 0)) <= ?'); args.push(Number(f.max)); }
+    if (f.category) { where.push('p.category = ?'); args.push(f.category); }
+    else if (f.type) { const cats = chartOf(s).filter(c => c.parent === f.type || (c.parent && parentOf(s, c.parent) === f.type)).map(c => c.name).concat([f.type]); where.push('p.category IN (' + cats.map(() => '?').join(',') + ')'); args.push(...cats); }
+    if (f.vkind === 'none') where.push('p.vendor_id IS NULL');
+    else if (f.vkind) { const ids = dir.filter(v => (f.vkind === 'supplier' && v.source === 'suppliers') || (f.vkind === 'vendor' && v.source === 'vendors') || (f.vkind === 'nova' && v.source === 'nova') || (f.vkind === 'bill' && v.source === 'bill')).map(v => v.id); where.push(ids.length ? 'p.vendor_id IN (' + ids.map(() => '?').join(',') + ')' : '0'); args.push(...ids); }
+    if (f.dstatus === 'cancelled') where.push('p.cancelled = 1');
+    else if (f.dstatus === 'bank') where.push("p.txn_ids = '[]' AND p.no_paperwork = 0 AND p.cancelled = 0");
+    else if (f.dstatus === 'na') where.push('COALESCE(p.expects_delivery, 0) = 0 AND p.cancelled = 0');
+    else if (['no', 'partial', 'yes'].indexOf(f.dstatus) > -1) { where.push('p.expects_delivery = 1 AND p.received = ? AND p.cancelled = 0'); args.push(f.dstatus); }
+    const rows = await dbAll('SELECT p.*, v.name AS vendor_name, v.photo AS vendor_photo, v.source AS vendor_source, v.kind AS vendor_kind FROM bk_purchases p LEFT JOIN bk_vendors v ON v.id = p.vendor_id WHERE ' + where.join(' AND ') + ' ORDER BY p.date DESC, p.id DESC LIMIT 400', args);
     const out = [];
     for (const p of rows) {
       const bill = p.bill_id ? await dbGet('SELECT id, status, invoice_no, total, due_date, paid_at FROM bk_bills WHERE id = ?', [p.bill_id]) : null;
@@ -698,7 +715,9 @@ module.exports = function mountBookkeeping(app, deps) {
       const suggestions = (!vd || vd.source === 'bill') && (p.vendor_name || p.vendor) ? (await suggestVendors(p.vendor_name || p.vendor, null, 3)).map(x => Object.assign(vendorCard(x.vendor), { score: x.score })) : [];
       const firstArr = arr.length ? ems.filter(e => arr.indexOf(e.id) > -1).map(e => e.received_at).sort()[0] : null;
       const when = (confirm && confirm.received_at) || firstArr || p.created_at;
-      out.push(Object.assign({}, p, { vendor: p.vendor_name || p.vendor, vendor_card, suggestions, when, bill, txns: tx, confirm, arrivals: arr.length, status, days: age, paired: tx.length > 0,
+      const delivery = p.cancelled ? 'cancelled' : !p.expects_delivery ? 'na' : (p.received === 'yes' ? 'yes' : p.received === 'partial' ? 'partial' : 'no');   // 1.19.141: the receiving dropdown's value
+      const paid_on = tx.length ? tx.map(t => t.date).sort().slice(-1)[0] : null;
+      out.push(Object.assign({}, p, { vendor: p.vendor_name || p.vendor, vendor_card, suggestions, when, bill, txns: tx, confirm, arrivals: arr.length, status, days: age, paired: tx.length > 0, delivery, paid_on,
         emails: ems.length + (bill && bill.id ? 1 : 0), email_subjects: ems.map(e => e.subject).slice(0, 5), attachments: atts, items: its ? its.items || 0 : 0, items_linked: its ? its.linked || 0 : 0,
         late: (status === 'awaiting bank' && age >= s.waiting_days) || ((status === 'not received' || status === 'partly received') && age >= s.notreceived_days),
         suggest: status === 'awaiting bank' ? (await suggestTxns(p)).length : 0 }));
@@ -2608,7 +2627,36 @@ module.exports = function mountBookkeeping(app, deps) {
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // Purchases views + actions.
-  app.get('/api/bookkeeping/purchases', ...guard, async (req, res) => { try { const view = String(req.query.view || 'all'); const q = String(req.query.q || '').trim(); const rows = await purchaseRows(view, q); const all = view === 'list' && !q ? rows : await purchaseRows('list', ''); res.json({ ok: true, purchases: rows, counts: { waiting: all.filter(r => r.status === 'awaiting bank').length, notreceived: all.filter(r => r.status === 'not received' || r.status === 'partly received').length } }); } catch (e) { res.json({ ok: false, error: e.message }); } });
+  app.get('/api/bookkeeping/purchases', ...guard, async (req, res) => { try {
+    const view = String(req.query.view || 'all'); const q = String(req.query.q || '').trim();
+    const f = {}; ['from', 'to', 'vendor_id', 'vkind', 'min', 'max', 'type', 'category', 'dstatus'].forEach(k => { if (req.query[k] != null && req.query[k] !== '') f[k] = String(req.query[k]); });
+    const filtered = Object.keys(f).length > 0;
+    const rows = await purchaseRows(view, q, f);
+    const all = view === 'list' && !q && !filtered ? rows : await purchaseRows('list', '');
+    const vendors = await dbAll('SELECT DISTINCT v.id, v.name FROM bk_purchases p JOIN bk_vendors v ON v.id = p.vendor_id ORDER BY v.name COLLATE NOCASE');   // 1.19.141: the Company filter's list
+    res.json({ ok: true, purchases: rows, vendors, counts: { waiting: all.filter(r => r.status === 'awaiting bank').length, notreceived: all.filter(r => r.status === 'not received' || r.status === 'partly received').length } });
+  } catch (e) { res.json({ ok: false, error: e.message }); } });
+  // 1.19.141: the receiving status as one dropdown — na (nothing to receive: a service), no / partial / yes (goods)
+  app.post('/api/bookkeeping/purchases/:id/delivery', ...guard, async (req, res) => {
+    const pid = parseInt(req.params.id), st = String((req.body || {}).status || ''), note = String((req.body || {}).note || '').slice(0, 300) || null;
+    const p = await dbGet('SELECT id FROM bk_purchases WHERE id = ?', [pid]); if (!p) return res.json({ ok: false, error: 'No such purchase' });
+    if (st === 'na') await dbRun("UPDATE bk_purchases SET expects_delivery = 0, received = 'na', received_at = NULL, received_note = NULL, updated_at = datetime('now') WHERE id = ?", [pid]);
+    else if (['no', 'partial', 'yes'].indexOf(st) > -1) await dbRun("UPDATE bk_purchases SET expects_delivery = 1, received = ?, received_at = ?, received_note = ?, updated_at = datetime('now') WHERE id = ?", [st, st === 'no' ? null : today(), note, pid]);
+    else return res.json({ ok: false, error: 'na, no, partial or yes' });
+    await audit(userId(req), 'purchase.delivery', pid, { status: st, note }); res.json({ ok: true });
+  });
+  // 1.19.141: the category picked on a purchase row — the purchase and the bank lines behind it
+  app.post('/api/bookkeeping/purchases/:id/category', ...guard, async (req, res) => {
+    const pid = parseInt(req.params.id), cat = String((req.body || {}).category || '').trim();
+    const p = await dbGet('SELECT id, txn_ids, expects_delivery FROM bk_purchases WHERE id = ?', [pid]); if (!p) return res.json({ ok: false, error: 'No such purchase' });
+    const s = await settings(); if (!cat || categoriesOf(s).indexOf(cat) < 0) return res.json({ ok: false, error: 'Pick a category from the chart' });
+    const node = chartOf(s).find(c => c.name === cat && c.parent);
+    const exp = p.expects_delivery == null ? (node && node.delivery ? 1 : 0) : null;   // a purchase never flagged by hand follows the chart's Expects delivery
+    await dbRun("UPDATE bk_purchases SET category = ?" + (exp != null ? ', expects_delivery = ' + exp + ", received = '" + (exp ? 'no' : 'na') + "'" : '') + ", updated_at = datetime('now') WHERE id = ?", [cat, pid]);
+    const tx = jarr(p.txn_ids).map(Number).filter(Boolean);
+    if (tx.length) await dbRun("UPDATE bk_transactions SET category = ?, category_source = 'manual', status = 'categorized', updated_at = datetime('now') WHERE id IN (" + tx.map(() => '?').join(',') + ')', [cat].concat(tx));
+    await audit(userId(req), 'purchase.category', pid, { category: cat, txns: tx }); res.json({ ok: true });
+  });
   // 1.19.30: link a purchase to a CRM supplier / vendor (the bill and bank lines behind it follow when they have none).
   app.post('/api/bookkeeping/purchases/:id/vendor', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), vid = parseInt(req.body && req.body.vendor_id) || null;

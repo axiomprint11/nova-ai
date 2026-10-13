@@ -545,6 +545,19 @@ remaining payments. The strip on top is the balance-sheet view — equipment boo
 In the Bank feed a payment that matches a loan's lender or monthly amount shows **Loan payment? Match**; matching files it
 as *Loan Payment (Principal)* and the loan's "Paid (bank)" column counts it.
 
+### Purchases list, Bank-feed style (1.19.141)
+
+The Purchases table now reads like the Bank feed. Every header is a filter: **Date** (All time, last 30 days, this /
+last month, last 90 days, this year, or a From / To range with the calendar picker), **Vendor** (supplier / vendor / Nova
+vendor / from a bill / not linked) and **Company** side by side, **Amount** (From / To), **Category** (by type of expense
+or a single category) and **Status**. The vendor cell shows the logo with its kind under it and the company name with a
+pencil to change it; an unlinked purchase shows Nova's best match with a **Use** button. The amount has "paid 10-06-2026"
+under it when the bank line is matched. The category is a picker that saves at once — on the purchase and on the bank lines
+behind it. **Status** is two things: the money (awaiting bank / awaiting payment / **paid** / **closed** / cancelled) and a
+**delivery dropdown** — *Not applicable* for a service or a fee (the purchase is then *closed* once paid), or *Not received →
+Partially received → Received* for goods (the purchase is *paid* until it is received, then *closed*). Picking *Partially
+received* asks what came.
+
 ### Loans from the agreement (1.19.135)
 
 A loan can be entered the way the agreement reads: amount financed, **down payment / advance**, **months with no payment

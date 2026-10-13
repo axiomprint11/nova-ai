@@ -487,48 +487,93 @@
   const puInfo = (p) => { const bits = []; if (p.emails) bits.push(p.emails + ' ' + (p.emails === 1 ? 'email' : 'emails')); if (p.attachments) bits.push(p.attachments + ' ' + (p.attachments === 1 ? 'attachment' : 'attachments')); if (p.items) bits.push(p.items + ' ' + (p.items === 1 ? 'item' : 'items') + (p.items_linked ? ' · ' + p.items_linked + ' linked' : '')); if (!bits.length) return '';
     return '<a href="#" class="pu-info" data-open="' + p.id + '"' + (p.email_subjects && p.email_subjects.length ? ' data-tip="' + esc(p.email_subjects.join('\n')) + '"' : '') + '>' + bits.join(' · ') + '</a>'; };
   const puStatus = (p) => '<span class="pu-st ' + (p.late ? 'late' : p.status === 'closed' ? 'closed' : p.status === 'awaiting bank' ? 'bank' : /received/.test(p.status) ? 'recv' : '') + '">' + esc(p.status) + (p.late ? ' · ' + p.days + ' days' : '') + '</span>';
+  // 1.19.141: the Purchases list has the Bank feed's column filters — Date (presets + From / To), Vendor (kind) + Company,
+  // Amount (From / To), Category (type / sub category), Status (delivery) — kept in PF / localStorage bk_pu_filters.
+  let PF = { period: 'all', from: '', to: '', vendor_id: '', vendor_name: '', vkind: '', min: '', max: '', type: '', category: '', dstatus: '' };
+  try { PF = Object.assign(PF, JSON.parse(localStorage.getItem('bk_pu_filters') || '{}')); } catch (e) {}
+  const savePF = () => { try { localStorage.setItem('bk_pu_filters', JSON.stringify(PF)); } catch (e) {} loadPurchases(lastSub.purchases || 'list'); };
+  const P_SVG = (d) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
+  const P_PEN = P_SVG('<path d="M4 20h4l10-10-4-4L4 16z"/><path d="M12.5 7.5l4 4"/>'), P_LINK = P_SVG('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5"/>');
+  const DELIV = [['na', 'Not applicable', 'Nothing to receive — a service, a fee, a subscription'], ['no', 'Not received', 'Goods ordered, nothing has arrived yet'], ['partial', 'Partially received', 'Some of it arrived'], ['yes', 'Received', 'All of it arrived']];
   async function loadPurchases(view) {
     const v = $(view === 'waiting' ? 'vPurchWaiting' : view === 'notreceived' ? 'vPurchNotReceived' : 'vPurchList');
     if (!ov) await overview();
     const q = ($('puQ') || {}).value || '';
-    const j = await api('/api/bookkeeping/purchases?view=' + view + '&q=' + encodeURIComponent(q)); if (!j.ok) { v.innerHTML = '<div class="bk-card">' + esc(j.error) + '</div>'; return; }
+    const [pf, pt] = periodRange(PF.period);
+    const qs = ['from=' + (pf || ''), 'to=' + (pt || '')].concat(['vendor_id', 'vkind', 'min', 'max', 'type', 'category', 'dstatus'].map(k => PF[k] ? k + '=' + encodeURIComponent(PF[k]) : '').filter(Boolean)).join('&');
+    const j = await api('/api/bookkeeping/purchases?view=' + view + '&q=' + encodeURIComponent(q) + '&' + qs); if (!j.ok) { v.innerHTML = '<div class="bk-card">' + esc(j.error) + '</div>'; return; }
     const rows = j.purchases || [];
     $('nWaiting').textContent = j.counts.waiting || 0; $('nNotReceived').textContent = j.counts.notreceived || 0;
     const S = ov.settings;
     const intro = view === 'waiting' ? 'Emails you marked Transaction: proof of a payment with no bank line yet. Nova proposes the bank line when it lands (same amount to the cent); you confirm. After ' + esc(S.waiting_days) + ' days they are emailed to ' + esc(S.alert_to) + '.'
       : view === 'notreceived' ? 'Goods bought (by category) with no arrival attached. Mark them received when they come, partly received with a note, or cancelled. After ' + esc(S.notreceived_days) + ' days they are emailed to ' + esc(S.alert_to) + '.'
-      : 'Everything we bought, one row per purchase, with its four slots: bill · bank line · confirmation · delivery. Hover a slot for what is in it; click the vendor for the emails and items behind it.';
-    // 1.19.30: US date with the time it was first seen under it; the vendor as the bill card shows it (logo, tag, change / link to a vendor)
+      : 'Everything we bought, one row per purchase, with its four slots: bill · bank line · confirmation · delivery. Hover a slot for what is in it; click the vendor for the emails and items behind it. Every column header is a filter.';
     const tm = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(ts) ? '' : 'Z')); return isNaN(d) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }); };
-    const vlogo = (c) => c && c.photo ? '<img class="bk-logo bk-vl" src="' + esc(c.photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;bk-logo bk-vl ph&quot;>' + esc(String(c.name || '?').charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo bk-vl ph' + (c ? '' : ' none') + '">' + esc(c ? String(c.name).charAt(0).toUpperCase() : '?') + '</span>';
-    const kindTag = (k) => k ? '<span class="bk-src ' + esc(k) + '">' + esc(k === 'bill' ? 'from a bill' : k) + '</span>' : '';
+    const vlogo = (name, photo) => photo ? '<img class="bk-logo bk-vl" src="' + esc(photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;bk-logo bk-vl ph&quot;>' + esc(String(name || '?').charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo bk-vl ph' + (name ? '' : ' none') + '">' + esc(name ? String(name).charAt(0).toUpperCase() : '?') + '</span>';
+    const kindTag = (p) => p.vendor_source === 'suppliers' ? 'supplier' : p.vendor_source === 'vendors' ? 'vendor' : p.vendor_source === 'nova' ? 'Nova vendor' : (p.vendor_kind || 'from a bill');
+    const kindPill = (p) => p.vendor_source === 'nova' ? '<span class="bk-src nova" title="Nova vendor — kept in Nova, not in the CRM">vendor' + AI_I + '</span>' : '<span class="bk-src ' + esc(p.vendor_source || '') + '">' + esc(kindTag(p)) + '</span>';
+    // the Bank feed's vendor cell: photo + kind pill on the left, company name + change icon on the right; unlinked = Link icon + near matches
     const vendorCell = (p) => { const c = p.vendor_card, linked = c && c.kind !== 'bill', sg = p.suggestions || [];
-      const act = '<a href="#" class="bl-vact" data-pvlink="' + p.id + '">' + (linked ? 'change' : (sg.length ? 'pick another' : 'Link')) + '</a>';
-      return '<div class="bl-vendor pu-vendor">' + vlogo(linked ? c : null) + '<div class="bl-vname"><a href="#" class="pu-vn" data-open="' + p.id + '">' + esc(p.vendor || '?') + '</a> ' + act +
-        (linked ? '<div class="bk-dim">' + kindTag(c.kind) + (c.name !== p.vendor ? ' ' + esc(c.name) : '') + (c.specialty ? ' · ' + esc(c.specialty) : '') + '</div>'
-          : '<div class="bl-unlinked">Not in the CRM directory' + (sg.length ? ' — is it ' + sg.map(x => '<a href="#" class="bl-sug" data-pvpair="' + p.id + '" data-vid="' + x.id + '" title="' + Math.round(x.score * 100) + '% match">' + esc(x.name) + '</a>').join(' or ') + '?' : '') + '</div>') +
-        (p.order_no || p.note ? '<div class="bk-muted">' + (p.order_no ? '#' + esc(p.order_no) : '') + (p.order_no && p.note ? ' · ' : '') + (p.note ? '<span class="bk-dim">' + esc(p.note) + '</span>' : '') + '</div>' : '') + puInfo(p) + '</div></div>'; };
-    const row = (p) => '<tr data-pid="' + p.id + '"><td class="pu-date">' + esc(usD(p.date)) + (tm(p.when) ? '<div class="bk-dim">' + esc(tm(p.when)) + '</div>' : '') + '</td><td>' + vendorCell(p) + '</td>' +
-      '<td class="num">' + (p.amount != null ? usd(p.amount) : '<span class="bk-dim">—</span>') + '</td><td>' + (p.category ? catLabel(p.category) : '<span class="bk-dim">—</span>') + '</td><td>' + slots(p) + '</td><td>' + puStatus(p) + '</td>' +
+      const extra = (p.order_no || p.note ? '<div class="bk-muted">' + (p.order_no ? '#' + esc(p.order_no) : '') + (p.order_no && p.note ? ' · ' : '') + (p.note ? '<span class="bk-dim">' + esc(p.note) + '</span>' : '') + '</div>' : '') + puInfo(p);
+      if (linked) return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft"><a href="#" class="tx-vphoto" data-vcard="' + c.id + '" title="Vendor details">' + vlogo(c.name, c.photo) + '<span class="tx-vedit">' + P_PEN + '</span></a>' + kindPill(p) + '</div>' +
+        '<div class="bl-vname"><b class="tx-vn"><a href="#" class="pu-vn" data-open="' + p.id + '">' + esc(c.name) + '</a></b> <a href="#" class="bl-vact tx-vico" data-pvlink="' + p.id + '" title="Change vendor">' + P_PEN + '</a>' +
+        (p.vendor && p.vendor !== c.name ? '<div class="bk-dim">' + esc(p.vendor) + '</div>' : '') + extra + '</div></div>';
+      const best = sg[0];
+      const sug = best ? '<div class="tx-sug"><span class="tx-match">Matched ' + Math.round((best.score || 0) * 100) + '%</span><button type="button" class="bk-btn sm p" data-pvpair="' + p.id + '" data-vid="' + best.id + '">Use</button></div><div class="tx-sug-n"><b>' + esc(best.name) + '</b>' + (sg.length > 1 ? ' <span class="bk-dim">or ' + sg.slice(1).map(x => '<a href="#" class="bl-sug" data-pvpair="' + p.id + '" data-vid="' + x.id + '" title="' + Math.round(x.score * 100) + '% match">' + esc(x.name) + '</a>').join(', ') + '</span>' : '') + '</div>' : '';
+      return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft">' + vlogo(null, null) + '<div class="tx-vacts"><a href="#" class="bl-vact tx-vico" data-pvlink="' + p.id + '" title="Link to a vendor">' + P_LINK + '</a></div></div>' +
+        '<div class="bl-vname"><b class="tx-vn"><a href="#" class="pu-vn" data-open="' + p.id + '">' + esc(p.vendor || '?') + '</a></b><div class="bl-unlinked">Not linked</div>' + sug + extra + '</div></div>'; };
+    const amountCell = (p) => '<td class="num neg"><div class="tx-amt">' + (p.amount != null ? usd(p.amount) : '<span class="bk-dim">—</span>') + '</div><div class="tx-when bk-dim" title="' + (p.paid_on ? 'Paid — the bank line\'s date' : p.status === 'awaiting payment' ? 'The bill is not paid yet' : 'No bank line yet') + '">' + (p.paid_on ? 'paid ' + esc(usD(p.paid_on)) : p.status === 'awaiting payment' ? 'awaiting payment' : p.no_paperwork ? '' : 'awaiting bank') + '</div></td>';
+    // Status: the money side as a pill (awaiting bank / awaiting payment / closed / cancelled) + the receiving dropdown
+    // closed = paid and nothing left to receive; paid = the bank line is matched but goods are still on the way
+    const statusCell = (p) => { const money = p.cancelled ? '<span class="pu-st">cancelled</span>' : p.status === 'awaiting bank' || p.status === 'awaiting payment' ? puStatus(p) : p.status === 'closed' ? '<span class="pu-st closed">closed</span>' : '<span class="pu-st paid" title="Bank line matched — goods still to receive">paid</span>';
+      const sel = p.cancelled ? '' : '<select class="bk sm pu-deliv' + (p.delivery === 'no' ? ' warn' : p.delivery === 'partial' ? ' part' : p.delivery === 'yes' ? ' ok' : '') + '" data-deliv="' + p.id + '" title="Delivery">' + DELIV.map(d => '<option value="' + d[0] + '"' + (p.delivery === d[0] ? ' selected' : '') + ' title="' + esc(d[2]) + '">' + esc(d[1]) + '</option>').join('') + '</select>' + (p.late && /received/.test(p.status) ? '<div class="bk-dim pu-late">' + p.days + ' days</div>' : '') + (p.received_note ? '<div class="bk-dim pu-rnote" title="' + esc(p.received_note) + '">' + esc(p.received_note) + '</div>' : '');
+      return '<td class="pu-status">' + money + sel + '</td>'; };
+    const row = (p) => '<tr data-pid="' + p.id + '"><td class="pu-date">' + esc(usD(p.date)) + (tm(p.when) ? '<div class="bk-dim">' + esc(tm(p.when)) + '</div>' : '') + '</td><td>' + vendorCell(p) + '</td>' + amountCell(p) +
+      '<td data-pcat="' + p.id + '">' + catSelect(p.category || '', 'pu-cat', 'Choose…', { only: 'expense' }) + '</td><td>' + slots(p) + '</td>' + statusCell(p) +
       '<td class="pu-acts">' + (p.status === 'awaiting bank' && p.suggest ? '<button class="bk-btn sm p" data-sug="' + p.id + '">' + p.suggest + ' bank line' + (p.suggest === 1 ? '' : 's') + ' match</button>' : p.status === 'awaiting bank' ? '<button class="bk-btn sm" data-sug="' + p.id + '">Pick bank line…</button>' : '') +
-        (p.expects_delivery && p.received !== 'yes' && !p.cancelled ? '<button class="bk-btn sm" data-recv="' + p.id + '" data-s="yes">Received</button><button class="bk-btn sm" data-recv="' + p.id + '" data-s="partial">Partly</button>' : '') +
-        (!p.cancelled && p.status !== 'closed' ? '<button class="bk-btn sm" data-recv="' + p.id + '" data-s="cancel" title="Cancelled or refunded — stops the reminders">Cancel</button>' : p.cancelled ? '<button class="bk-btn sm" data-recv="' + p.id + '" data-s="reopen">Reopen</button>' : '') +
-        (p.expects_delivery ? '<button class="bk-btn sm ico" data-flag="' + p.id + '" data-e="0" title="This is a service, nothing arrives">' + iconSvg('zap') + '</button>' : '<button class="bk-btn sm ico" data-flag="' + p.id + '" data-e="1" title="Goods — something should arrive">' + iconSvg('package') + '</button>') + '</td></tr>';
+        (!p.cancelled && p.status !== 'closed' ? '<button class="bk-btn sm" data-recv="' + p.id + '" data-s="cancel" title="Cancelled or refunded — stops the reminders">Cancel</button>' : p.cancelled ? '<button class="bk-btn sm" data-recv="' + p.id + '" data-s="reopen">Reopen</button>' : '') + '</td></tr>';
+    const PERIODS = [['all', 'All time'], ['30', 'Last 30 days'], ['month', 'This month'], ['last', 'Last month'], ['90', 'Last 90 days'], ['year', 'This year']].map(([v, l]) => ({ v, l }));
+    const inUse = {}; rows.forEach(p => { if (p.category) inUse[p.category] = (inUse[p.category] || 0) + 1; });
+    const FO = {
+      date: { type: 'range', kind: 'date', from: PF.period === 'custom' ? PF.from : '', to: PF.period === 'custom' ? PF.to : '', period: PF.period, defaultPeriod: 'all', presets: PERIODS },
+      vkind: [{ v: '', l: 'All' }, { v: 'supplier', l: '<span class="bk-src supplier">supplier</span>', t: 'Supplier' }, { v: 'vendor', l: '<span class="bk-src vendor">vendor</span>', t: 'Vendor' }, { v: 'nova', l: '<span class="bk-src nova">vendor' + AI_I + '</span>', t: 'Vendor ✦' }, { v: 'bill', l: '<span class="bk-src bill">from a bill</span>', t: 'From a bill' }, { v: 'none', l: 'Not linked' }],
+      vendor: [{ v: '', l: 'All companies' }, { v: 'none', l: 'Not linked' }].concat((j.vendors || []).map(x => ({ v: String(x.id), l: esc(x.name) })), PF.vendor_id && PF.vendor_id !== 'none' && !(j.vendors || []).some(x => String(x.id) === PF.vendor_id) ? [{ v: PF.vendor_id, l: esc(PF.vendor_name || 'Company') }] : []),
+      amount: { type: 'range', kind: 'number', from: PF.min, to: PF.max },
+      type: [{ v: '', l: 'All categories' }].concat(chart_types().filter(t => !t.income).map(t => ({ v: 'T:' + t.name, l: tile(t.color, t.icon, 'sm', '') + ' ' + esc(t.name) })), Object.keys(inUse).sort().map(c => ({ v: 'C:' + c, l: catLabel(c), n: inUse[c] }))),
+      dstatus: [{ v: '', l: 'All' }, { v: 'bank', l: 'Awaiting bank / payment', t: 'Awaiting' }].concat(DELIV.map(d => ({ v: d[0], l: d[1] })), [{ v: 'cancelled', l: 'Cancelled' }])
+    };
+    const anyF = PF.period !== 'all' || PF.from || PF.to || PF.vendor_id || PF.vkind || PF.min || PF.max || PF.type || PF.category || PF.dstatus;
     const title = view === 'waiting' ? 'Waiting for the bank' : view === 'notreceived' ? 'Not received' : 'Purchases';
-    v.innerHTML = '<div class="bk-card"><h2>' + title + ' ' + qHelp('purch_' + view, title, intro) + '<span class="sp"></span><span class="bk-muted">' + rows.length + ' purchase' + (rows.length === 1 ? '' : 's') + '</span></h2>' +
-      '<table class="bk pu-table"><thead><tr><th>Date</th><th>Vendor</th><th class="num">Amount</th><th>Category</th><th>Paperwork</th><th>Status</th><th></th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table>' +
-      (!rows.length ? '<div class="bk-muted" style="padding:14px 0">' + (view === 'list' ? 'No purchases yet. They appear when you press Bill, Transaction or Arrival on an email, or when a bank line is categorized.' : 'Nothing here.') + '</div>' : '') + '</div>';
+    v.innerHTML = '<div class="bk-card"><h2>' + title + ' ' + qHelp('purch_' + view, title, intro) + '<span class="sp"></span>' + (anyF ? '<button class="bk-btn sm" id="pfClear" title="Remove every column filter">× Clear filters</button>' : '') + '<span class="bk-muted">' + rows.length + ' purchase' + (rows.length === 1 ? '' : 's') + '</span></h2>' +
+      '<table class="bk pu-table"><thead><tr><th class="tx-date">' + thFilter('date', 'Date', FO.date) + '</th><th class="tx-vth">' + thFilter('vkind', 'Vendor', FO.vkind, PF.vkind) + thFilter('vendor', 'Company', FO.vendor, PF.vendor_id) + '</th><th class="num">' + thFilter('amount', 'Amount', FO.amount) + '</th><th>' + thFilter('type', 'Category', FO.type, PF.type ? 'T:' + PF.type : PF.category ? 'C:' + PF.category : '') + '</th><th>Paperwork</th><th>' + thFilter('dstatus', 'Status', FO.dstatus, PF.dstatus) + '</th><th></th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table>' +
+      (!rows.length ? '<div class="bk-muted" style="padding:14px 0">' + (view === 'list' && !anyF && !q ? 'No purchases yet. They appear when you press Bill, Transaction or Arrival on an email, or when a bank line is categorized.' : 'Nothing matches.') + '</div>' : '') + '</div>';
+    if ($('pfClear')) $('pfClear').onclick = () => { Object.assign(PF, { period: 'all', from: '', to: '', vendor_id: '', vendor_name: '', vkind: '', min: '', max: '', type: '', category: '', dstatus: '' }); savePF(); };
+    thFilterBind(v, FO, (key, val) => {
+      if (key === 'type') { PF.type = val.startsWith('T:') ? val.slice(2) : ''; PF.category = val.startsWith('C:') ? val.slice(2) : ''; }
+      else if (key === 'vendor') { PF.vendor_id = val; const o = FO.vendor.find(x => x.v === val); PF.vendor_name = o && val && val !== 'none' ? o.l : ''; }
+      else if (key === 'date') { PF.period = val.period || 'all'; PF.from = val.from || ''; PF.to = val.to || ''; }
+      else if (key === 'amount') { PF.min = val.from || ''; PF.max = val.to || ''; }
+      else PF[key] = val; savePF(); });
     v.querySelectorAll('[data-open]').forEach(a => a.onclick = (e) => { e.preventDefault(); purchaseView(Number(a.dataset.open), () => loadPurchases(view)); });
+    v.querySelectorAll('[data-vcard]').forEach(a => a.onclick = (e) => { e.preventDefault(); if (typeof vendorCard === 'function') vendorCard(Number(a.dataset.vcard), () => loadPurchases(view)); });
     const setPV = async (pid, vid) => { const r = await post('/api/bookkeeping/purchases/' + pid + '/vendor', { vendor_id: vid, remember: true }); if (!r.ok) return alert(r.error); loadPurchases(view); };
     v.querySelectorAll('[data-pvlink]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); const p = rows.find(x => String(x.id) === a.dataset.pvlink); vendorPicker(a, { vendor: p.vendor || '', suggestions: p.suggestions || [] }, (vid) => setPV(p.id, vid)); });
     v.querySelectorAll('[data-pvpair]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); setPV(a.dataset.pvpair, Number(a.dataset.vid)); });
     v.querySelectorAll('.pu-slots').forEach(sl => { sl.onclick = (ev) => { ev.preventDefault(); const tr = sl.closest('tr'); paperworkPop(sl, Number(tr.dataset.pid)); }; });
+    // the receiving dropdown — Partially received asks what came
+    v.querySelectorAll('select[data-deliv]').forEach(sel => { const was = sel.value; sel.onchange = async () => {
+      const st = sel.value; let note = '';
+      if (st === 'partial') { note = await askText('What arrived, what is missing?', { title: 'Partially received' }); if (note == null) { sel.value = was; return; } }
+      const r = await post('/api/bookkeeping/purchases/' + sel.dataset.deliv + '/delivery', { status: st, note }); if (!r.ok) { alert(r.error); sel.value = was; return; } loadPurchases(view); overview();
+    }; });
+    // the category picker sets it on the spot — on the purchase and the bank lines behind it
+    v.querySelectorAll('td[data-pcat]').forEach(td => { const wrap = td.querySelector('.ckp'), inp = td.querySelector('input.pu-cat'); if (!wrap || !inp) return; let last = inp.value;
+      wrap.addEventListener('change', async () => { if (inp.value === last || !inp.value) return; last = inp.value; const r = await post('/api/bookkeeping/purchases/' + td.dataset.pcat + '/category', { category: inp.value }); const tr = td.closest('tr'); tr.classList.add(r.ok ? 'saved' : 'failed'); setTimeout(() => tr.classList.remove('saved', 'failed'), 1200); if (!r.ok) alert(r.error); else loadPurchases(view); }); });
     v.querySelectorAll('[data-recv]').forEach(b => b.onclick = async () => {
       const st = b.dataset.s; let note = '';
-      if (st === 'partial' || st === 'cancel') { note = await askText(st === 'partial' ? 'What arrived, what is missing?' : 'Why? (cancelled, refunded, returned…)', { title: st === 'partial' ? 'Partly received' : 'Cancel this purchase' }); if (note == null) return; }
+      if (st === 'cancel') { note = await askText('Why? (cancelled, refunded, returned…)', { title: 'Cancel this purchase' }); if (note == null) return; }
       const r = await post('/api/bookkeeping/purchases/' + b.dataset.recv + '/receive', { status: st, note }); if (!r.ok) return alert(r.error); loadPurchases(view); overview();
     });
-    v.querySelectorAll('[data-flag]').forEach(b => b.onclick = async () => { const r = await post('/api/bookkeeping/purchases/' + b.dataset.flag + '/flag', { expects_delivery: b.dataset.e === '1' }); if (!r.ok) return alert(r.error); loadPurchases(view); });
     v.querySelectorAll('[data-sug]').forEach(b => b.onclick = async () => {
       const pid = b.dataset.sug, j2 = await api('/api/bookkeeping/purchases/' + pid + '/suggest'); const list = j2.transactions || [];
       const el = document.createElement('div'); el.className = 'bk-modal';
