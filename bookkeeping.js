@@ -52,6 +52,8 @@ module.exports = function mountBookkeeping(app, deps) {
     db.run("ALTER TABLE bk_accounts ADD COLUMN excluded TEXT DEFAULT '[]'", () => {});   // 1.19.57: account_ids not in use (a personal account on the same login)
     db.run('ALTER TABLE bk_transactions ADD COLUMN prev_status TEXT', () => {});        // status before the account was excluded
     db.run('ALTER TABLE bk_transactions ADD COLUMN refund_of INTEGER', () => {});       // 1.19.60: a money-in line that gives back this charge (id)
+    db.run('ALTER TABLE bk_transactions ADD COLUMN ar_notified_at TEXT', () => {});     // 1.19.79: Accounts Receivable told about this customer payment
+    db.run('ALTER TABLE bk_transactions ADD COLUMN ar_notified_by TEXT', () => {});
     ['vendor_by TEXT', 'vendor_score REAL', 'suggest_vendor_id INTEGER', 'suggest_score REAL'].forEach(c => db.run('ALTER TABLE bk_transactions ADD COLUMN ' + c, () => {}));   // 1.19.47: who linked the vendor (auto ≥ 95% / person) and the best near match
     db.run(`CREATE TABLE IF NOT EXISTS bk_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, txn_id TEXT UNIQUE, item_id TEXT, account_ref TEXT,
       account_name TEXT, date TEXT, name TEXT, merchant TEXT, amount REAL, pending INTEGER DEFAULT 0, plaid_category TEXT,
@@ -173,7 +175,7 @@ module.exports = function mountBookkeeping(app, deps) {
     triage_auto: 0,   // 0 = BookkeeperAI only RATES emails; a person sets them aside ("Set aside all ads"). 1 = it sets aside by itself above the thresholds.
     categories: DEFAULT_CATEGORIES.join('\n'), chat_webhook: env('BOOKKEEPER_CHAT_WEBHOOK') || '', chat_space: '',
     backfill_days: parseInt(env('BOOKKEEPER_BACKFILL_DAYS')) || 30,
-    notreceived_days: 30, waiting_days: 30, alert_to: env('BOOKKEEPER_ALERT_TO') || 'gary@axiomprint.com', alert_at: '08:00', gmail_history_id: '', gmail_watch_expires: '',
+    notreceived_days: 30, waiting_days: 30, alert_to: env('BOOKKEEPER_ALERT_TO') || 'gary@axiomprint.com', alert_at: '08:00', ar_to: env('BOOKKEEPER_AR_TO') || 'gary@axiomprint.com', ar_cc: env('BOOKKEEPER_AR_CC') || 'paymentsupport@axiomprint.com', gmail_history_id: '', gmail_watch_expires: '',
     notes: 'AxiomPrint is a print shop in Glendale, CA. Inks, paper, printing supplies and outsourced printing are cost of goods. Equipment over $2,500 is a fixed asset, not an expense. Transfers between our own accounts and credit card payments are not expenses.'
   };
   let settingsCache = null;
@@ -1769,7 +1771,7 @@ module.exports = function mountBookkeeping(app, deps) {
     by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status NOT IN ('removed', 'excluded') AND created_at >= datetime('now', '-1 day')")).n;
     const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id LEFT JOIN bk_proposals pr ON pr.id = t.proposal_id LEFT JOIN bk_transactions ro ON ro.id = t.refund_of LEFT JOIN bk_transactions rb ON rb.refund_of = t.id WHERE ' + where.join(' AND ');
     const rows = await dbAll('SELECT t.id, t.txn_id, t.account_name, t.account_ref, t.date, t.created_at, t.name, t.raw, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, ' +
-      't.refund_of, ro.date AS refund_of_date, ro.amount AS refund_of_amount, ro.merchant AS refund_of_merchant, ro.name AS refund_of_name, ro.category AS refund_of_category, rb.id AS refunded_by, rb.date AS refunded_by_date, rb.amount AS refunded_by_amount, ' +
+      't.refund_of, t.ar_notified_at, t.ar_notified_by, ro.date AS refund_of_date, ro.amount AS refund_of_amount, ro.merchant AS refund_of_merchant, ro.name AS refund_of_name, ro.category AS refund_of_category, rb.id AS refunded_by, rb.date AS refunded_by_date, rb.amount AS refunded_by_amount, ' +
       'v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo, ba.institution, ba.logo AS bank_logo, ba.color AS bank_color, ba.accounts AS bank_accounts, pr.payload AS ai_payload, pr.confidence AS ai_conf, pr.reason AS ai_reason, pr.status AS ai_status' + W + ' ORDER BY t.date DESC, t.id DESC LIMIT 500', p);
     // the account's last digits ("Wells Fargo - 6595") and the near-match vendor for rows that never got one
     const VSEL = 'SELECT t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id WHERE t.id = ?';
@@ -1916,6 +1918,36 @@ module.exports = function mountBookkeeping(app, deps) {
     if (applied) await dbRun('UPDATE bk_rules SET hits = hits + ? WHERE id = ?', [applied, rule.id]);
     await audit(userId(req), 'rule.add', rule.id, { from_txn: id, pattern, category: t.category, applied });
     res.json({ ok: true, id: rule.id, pattern, category: t.category, applied });
+  });
+  // 1.19.79: a money-in line filed as customer income → tell Accounts Receivable. One email (Settings → Alerts: ar_to, Cc ar_cc)
+  // with the bank's facts about the payment; the line remembers who sent it and when, so it is offered once.
+  app.post('/api/bookkeeping/transactions/:id/notify-ar', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), s = await settings();
+    const t = await dbGet('SELECT t.*, v.name AS vendor_name, ba.institution FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id WHERE t.id = ?', [id]);
+    if (!t) return res.json({ ok: false, error: 'No such line' });
+    if (!(Number(t.amount) < 0)) return res.json({ ok: false, error: 'Only money in can be a customer payment.' });
+    if (!t.category) return res.json({ ok: false, error: 'Categorize the line first.' });
+    if (t.ar_notified_at && !req.body.again) return res.json({ ok: false, error: 'Accounts Receivable was told on ' + t.ar_notified_at + ' by ' + (t.ar_notified_by || '?') + '.', already: true });
+    let raw = {}; try { raw = JSON.parse(t.raw || '{}') || {}; } catch (e) {}
+    const amount = Math.abs(Number(t.amount)), who = userId(req), note = String(req.body.note || '').trim().slice(0, 500);
+    const usd = (n) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), esc = (x) => String(x == null ? '' : x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const lines = [
+      ['Amount', usd(amount)], ['Date', t.date + (t.pending ? ' (still pending at the bank)' : '')],
+      ['From', t.merchant || t.name], ['Bank description', raw.original_description || t.name],
+      ['Deposited to', [t.institution, t.account_name].filter(Boolean).join(' · ') || '—'],
+      ['Payment channel', raw.payment_channel && raw.payment_channel !== 'other' ? raw.payment_channel : null], ['Check #', raw.check_number || null],
+      ['Linked company', t.vendor_name || null], ['Filed as', t.category], ['Sent by', who], ['Note', note || null]
+    ].filter(l => l[1]);
+    const text = 'A customer payment landed in the bank and was filed as ' + t.category + ' in BookkeeperAI. Please apply it to the customer\'s open invoices.\n\n' +
+      lines.map(l => l[0] + ': ' + l[1]).join('\n') + '\n\nhttps://nova.axiomprint.com/bookkeeping?tab=bank&sub=categorized';
+    const html = '<div style="font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#111"><p>A customer payment landed in the bank and was filed as <b>' + esc(t.category) + '</b> in BookkeeperAI. Please apply it to the customer\'s open invoices.</p>' +
+      '<table style="border-collapse:collapse">' + lines.map(l => '<tr><td style="padding:3px 14px 3px 0;color:#666;white-space:nowrap">' + esc(l[0]) + '</td><td style="padding:3px 0"><b>' + esc(l[1]) + '</b></td></tr>').join('') + '</table>' +
+      '<p style="margin-top:14px"><a href="https://nova.axiomprint.com/bookkeeping?tab=bank&sub=categorized">Open the bank feed</a></p></div>';
+    try { await sendMail({ to: s.ar_to, cc: s.ar_cc || undefined, subject: 'Customer payment received: ' + usd(amount) + ' from ' + (t.vendor_name || t.merchant || t.name) + ' (' + t.date + ')', text, html }); }
+    catch (e) { errlog('ar mail', e.message); return res.json({ ok: false, error: 'Could not send: ' + e.message }); }
+    await dbRun('UPDATE bk_transactions SET ar_notified_at = ?, ar_notified_by = ? WHERE id = ?', [nowIso(), who, id]);
+    await audit(who, 'ar.notify', id, { to: s.ar_to, cc: s.ar_cc, amount, note });
+    res.json({ ok: true, to: s.ar_to, cc: s.ar_cc });
   });
   app.get('/api/bookkeeping/bills', ...guard, async (req, res) => {
     const rows = await dbAll('SELECT b.*, e.from_addr, e.subject, e.received_at, p.status AS proposal_status, p.confidence AS proposal_confidence, p.reason AS proposal_reason, p.decision AS rejected_note, p.decided_by AS rejected_by, p.decided_at AS rejected_at FROM bk_bills b LEFT JOIN bk_emails e ON e.id = b.email_id LEFT JOIN bk_proposals p ON p.id = b.proposal_id ORDER BY b.id DESC LIMIT 200');
@@ -2510,7 +2542,7 @@ module.exports = function mountBookkeeping(app, deps) {
   app.get('/api/bookkeeping/activity', ...guard, async (req, res) => res.json({ ok: true, runs: await dbAll('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 40'), audit: await dbAll('SELECT * FROM bk_audit ORDER BY id DESC LIMIT 200'), briefs: await dbAll('SELECT day, stats, posted_at, post_error FROM bk_briefs ORDER BY day DESC LIMIT 30') }));
   app.post('/api/bookkeeping/settings', ...guard, async (req, res) => {
     const b = req.body || {};
-    for (const k of ['run_at', 'poll_min', 'threshold', 'notes', 'chat_webhook', 'backfill_days', 'triage_ad', 'triage_bill', 'triage_notice', 'triage_message', 'triage_auto', 'notreceived_days', 'waiting_days', 'alert_to', 'alert_at', 'baskets']) if (b[k] !== undefined) await setSetting(k, b[k] === true ? 1 : b[k] === false ? 0 : b[k], userId(req));
+    for (const k of ['run_at', 'poll_min', 'threshold', 'notes', 'chat_webhook', 'backfill_days', 'triage_ad', 'triage_bill', 'triage_notice', 'triage_message', 'triage_auto', 'notreceived_days', 'waiting_days', 'alert_to', 'alert_at', 'ar_to', 'ar_cc', 'baskets']) if (b[k] !== undefined) await setSetting(k, b[k] === true ? 1 : b[k] === false ? 0 : b[k], userId(req));
     if (b.categories !== undefined) await saveChart(parseChartText(b.categories, chartTree(await settings())), userId(req));
     await audit(userId(req), 'settings', null, Object.keys(b));
     res.json({ ok: true, settings: await settings() });

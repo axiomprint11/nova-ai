@@ -520,3 +520,10 @@ of accounts, notes for the AI, chat_webhook, chat_space, waiting_days, notreceiv
 - **Vendor logo / photo** — the Nova vendor form shows the picture (the bank's logo when one was picked up) with a URL
   box, Upload — or paste a copied image (Ctrl+V) anywhere in the form, or drop one on the box — cropped to a centred
   square and shrunk to 160px in the browser, and × to remove.
+
+## Customer payments → Accounts Receivable (1.19.79)
+
+A deposit filed under an income category shows **Notify Accounts Receivable** under its category in the Bank feed. It asks,
+then emails the payment's facts (amount, date, the bank's wording, account, channel / check number, linked company, category,
+who sent it, a link back) To the AR address, Cc the payments address — Settings → Alerts, defaults gary@axiomprint.com and
+paymentsupport@axiomprint.com. The row then reads "AR notified <date> · who", with "again" to resend.
