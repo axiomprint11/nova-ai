@@ -30,7 +30,7 @@
   .da-sk { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 3px; } .da-sk span { font-size: 10.5px; background: #eef2ff; color: #3730a3; border-radius: 6px; padding: 2px 6px; } .da-sk .t2 { background: #ede9fe; color: #5b21b6; }
   .da-d .edit { position: absolute; top: 8px; right: 8px; border: none; background: none; color: var(--indigo-dark); font: 600 11px/1 inherit; cursor: pointer; }
   .da-form { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; width: 100%; } .da-form input, .da-form textarea { width: 100%; box-sizing: border-box; font: 12px/1.3 inherit; border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; }
-  .da-form label { font-size: 11px; color: var(--muted); } .da-form .row { display: flex; gap: 8px; align-items: center; font-size: 12px; } .da-form .row input[type=number] { width: 64px; }
+  .da-form label { font-size: 11px; color: var(--muted); } .da-form .row { display: flex; gap: 14px; align-items: center; font-size: 12px; } .da-form .row label { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-soft); } .da-form .row input[type=number] { width: 64px; }
   .bk-btn { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; font: 600 12px/1 inherit; cursor: pointer; color: var(--ink-soft); }
   .bk-btn.pri { background: var(--indigo); border-color: var(--indigo); color: #fff; } .bk-btn.sm { padding: 5px 9px; font-size: 11.5px; }
   .bk-btn.go { background: #059669; border-color: #059669; color: #fff; }
@@ -53,6 +53,16 @@
   .da-pick .who { flex: 1; min-width: 0; } .da-pick .who b { font-size: 13px; } .da-pick .why { font-size: 11px; color: var(--muted); }
   .da-assigned { display: flex; gap: 8px; align-items: center; font-size: 12px; } .da-assigned .da-av { width: 28px; height: 28px; font-size: 11px; }
   .da-assigned a { color: var(--muted); font-size: 11px; }
+  .da-sub { display: flex; gap: 6px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  .da-sub button[data-s] { border: 1px solid var(--line); background: #fff; border-radius: 20px; padding: 6px 14px; font: 600 12.5px/1 inherit; cursor: pointer; color: var(--ink-soft); }
+  .da-sub button[data-s].on { background: var(--indigo-light); border-color: var(--indigo); color: var(--indigo-dark); } .da-sub button .n { margin-left: 6px; font-weight: 500; color: var(--muted); } .da-sub button .n:empty { display: none; }
+  .da-sub .sp { flex: 1; } .da-sub label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .da-subview { display: none; } .da-subview.on { display: block; }
+  table.da-tt { width: 100%; border-collapse: collapse; font-size: 12.5px; } table.da-tt th { text-align: left; font-size: 11.5px; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  table.da-tt td { padding: 8px; border-bottom: 1px solid #f0f0f5; vertical-align: middle; } table.da-tt tr.off td { opacity: .5; }
+  .da-who { display: flex; align-items: center; gap: 10px; } .da-who .da-av { width: 36px; height: 36px; font-size: 13px; } .da-who b { display: block; font-size: 13px; } .da-who .t { font-size: 11px; color: var(--muted); }
+  .da-num { font-weight: 700; font-size: 14px; } .da-num small { font-weight: 500; color: var(--muted); font-size: 11px; }
+  td .da-sk { margin-top: 0; } .da-formrow td { background: #fafaff; }
   .da-empty { color: var(--muted); font-size: 13px; padding: 24px; text-align: center; }
   .da-soon { padding: 60px 20px; text-align: center; color: var(--muted); } .da-soon b { display: block; font-size: 16px; color: var(--ink); margin-bottom: 6px; }
   .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #1c1c28; color: #fff; padding: 9px 14px; border-radius: 9px; font-size: 13px; z-index: 50; }
@@ -73,19 +83,24 @@
   <div class="da-view" data-v="template"><div class="da-soon"><b>Template Designer</b>Coming soon.</div></div>
   <div class="da-view" data-v="online"><div class="da-soon"><b>Online Designer</b>Coming soon.</div></div>
   <div class="da-view on" data-v="assign">
-    <div class="da-card">
-      <h2>Designers <span class="n" id="daTeamN"></span><span class="sp"></span><span class="da-muted">Faces, titles and active jobs come from the CRM. Strong sides and limits are kept in Nova.</span></h2>
-      <div class="da-team" id="daTeam"><div class="da-muted">Loading…</div></div>
+    <div class="da-sub">
+      <button data-s="jobs" class="on">Jobs<span class="n" id="daQueueN"></span></button>
+      <button data-s="designers">Designers<span class="n" id="daTeamN"></span></button>
+      <span class="sp"></span>
+      <label class="da-muted" id="daAllWrap"><input type="checkbox" id="daAll"> include quotes (not invoiced yet)</label>
+      <button class="bk-btn sm" id="daRefresh">Refresh</button>
     </div>
-    <div class="da-card">
-      <h2>Jobs waiting for a designer <span class="n" id="daQueueN"></span><span class="sp"></span><button class="bk-btn sm" id="daRefresh">Refresh</button></h2>
-      <div class="da-chips">
-        <button data-tier="1" class="on">Tier 1<span class="n" id="daT1"></span></button>
-        <button data-tier="2">Tier 2<span class="n" id="daT2"></span></button>
-        <label><input type="checkbox" id="daAll"> include quotes (not invoiced yet)</label>
-        <span class="da-muted" style="margin-left:auto">Jobs parked on "PrePress 1 Tier 1" / "PrePress Tier 2" in the CRM, in the prepress stage.</span>
+    <div class="da-subview on" data-s="jobs">
+      <div class="da-card">
+        <h2>Jobs waiting for a designer <span class="n" id="daTierN"></span><span class="sp"></span><span class="da-muted">Parked on "PrePress 1 Tier 1" / "PrePress Tier 2" in the CRM, in the prepress stage.</span></h2>
+        <div id="daQueue"><div class="da-muted">Loading…</div></div>
       </div>
-      <div id="daQueue"><div class="da-muted">Loading…</div></div>
+    </div>
+    <div class="da-subview" data-s="designers">
+      <div class="da-card">
+        <h2>Designers<span class="sp"></span><span class="da-muted">Faces, titles and active jobs come from the CRM. Strong sides, Tier 2 and limits are kept in Nova — the matcher reads them.</span></h2>
+        <div id="daTeam"><div class="da-muted">Loading…</div></div>
+      </div>
     </div>
   </div>
 </div>

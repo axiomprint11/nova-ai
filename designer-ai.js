@@ -123,15 +123,21 @@ module.exports = function mountDesignerAi(app, deps) {
       res.json({ ok: true });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
+  // both tiers in one list (1.20.15); ?tier=1|2 narrows. A job parked on both placeholders shows once, as Tier 2.
+  async function queueAll(all, tier) {
+    const want = tier === 1 || tier === 2 ? [tier] : [2, 1];
+    const seen = new Map();
+    for (const t of want) for (const j of await queue(t, all)) if (!seen.has(j.id)) seen.set(j.id, j);
+    return Array.from(seen.values()).sort((a, b) => String(b.created).localeCompare(String(a.created)));
+  }
   app.get('/api/designer/queue', ...guard, async (req, res) => {
-    try { const tier = req.query.tier === '2' ? 2 : 1; res.json({ ok: true, tier, jobs: await queue(tier, req.query.all === '1') }); }
+    try { const tier = req.query.tier === '2' ? 2 : req.query.tier === '1' ? 1 : 0; const jobs = await queueAll(req.query.all === '1', tier); res.json({ ok: true, tier, jobs, counts: { t1: jobs.filter(j => j.tier === 1).length, t2: jobs.filter(j => j.tier === 2).length } }); }
     catch (e) { res.json({ ok: false, error: 'CRM not reachable: ' + e.message }); }
   });
   app.post('/api/designer/match', ...guard, async (req, res) => {
     try {
       const id = parseInt(req.body.estimate_id); if (!id) return res.json({ ok: false, error: 'Which job?' });
-      const tier = req.body.tier === 2 || req.body.tier === '2' ? 2 : 1;
-      const job = (await queue(tier, true)).find(j => j.id === id) || (await queue(tier === 1 ? 2 : 1, true)).find(j => j.id === id);
+      const job = (await queueAll(true, 0)).find(j => j.id === id);
       if (!job) return res.json({ ok: false, error: 'E' + id + ' is not in the queue any more' });
       const picks = await match(job);
       res.json({ ok: true, job, picks: picks.slice(0, 4) });

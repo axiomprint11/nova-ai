@@ -341,7 +341,7 @@ match lives in `bk_ar`; the invoice is still marked paid in the CRM by the AR te
 
 `designer-ai.js` (`require('./designer-ai')(app, { db, auth, adminOnly, serveVersionedHtml, runQuery })` in server.js, before the SPA
 catch-all) mounts **Designer AI** at `/designer-ai` (`public/designer-ai.html/.js`, left-menu item `designer`, admins only) with three
-top tabs — **Template Designer** and **Online Designer** are "Soon" placeholders, **AutoAssign Jobs** works. It reads the CRM
+top tabs — **Template Designer** and **Online Designer** are "Soon" placeholders, **AutoAssign Jobs** works, with two sub-tabs since 1.20.15: **Jobs** (one table of both tiers, columns Job · Product · Created · **Tier** · Proof type · Status · Team on it · Designer; `GET /api/designer/queue` with no `tier` merges both through `queueAll()`, a job on both placeholders shows once as Tier 2, `counts.t1/t2`) and **Designers** (a table: face + name, active jobs, approved 30 d, picked here, Tier 2, max active, strong sides, notes, Edit → an inline form row). It reads the CRM
 read-only: the jobs parked on the placeholder users **PrePress 1 Tier 1** (`user.id` 239) / **PrePress Tier 2** (331) in
 `estimate_team_members`, in `estimate_stage.estimate_stage = 'prepress'` (not canceled), invoiced unless "include quotes" is
 ticked (`GET /api/designer/queue?tier=1|2&all=1`): E-number, name, customer, product (+ `product.image`, `productcategory.title`),
