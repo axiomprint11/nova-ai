@@ -33,6 +33,16 @@ module.exports = function mountAr(ctx) {
   // 1.20.3: the queue starts at AR_FROM (bank date; .env, default 2026-10-01) — older deposits were handled by email before Nova AR
   // and only cloud the list. Rows already queued from before the cut-off are set aside as 'old' (never shown, never counted).
   const AR_FROM = /^\d{4}-\d{2}-\d{2}$/.test(env('AR_FROM')) ? env('AR_FROM') : '2026-10-01';
+  // 1.20.5: a Los Angeles calendar day as an ISO instant — its start, or (end) the start of the next day; matched_at is UTC ISO
+  function laBound(ymd, end) {
+    const [y, m, d] = ymd.split('-').map(Number);
+    const f = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const la = (t) => { const o = {}; f.formatToParts(new Date(t)).forEach(x => { o[x.type] = x.value; }); return Date.UTC(Number(o.year), Number(o.month) - 1, Number(o.day), Number(o.hour), Number(o.minute), Number(o.second)); };
+    const want = Date.UTC(y, m - 1, d + (end ? 1 : 0), 0);
+    let guess = want;
+    for (let i = 0; i < 2; i++) guess += want - la(guess);
+    return new Date(guess).toISOString();
+  }
   const bankDate = (t) => { let d = t.tx_date; if (!d && t.raw) { try { const raw = JSON.parse(t.raw); d = raw.authorized_date || raw.date; } catch (e) {} } return String(d || t.date || '').slice(0, 10); };
   async function syncQueue() {
     const rows = await dbAll("SELECT id, amount, category, date, raw FROM bk_transactions WHERE status = 'categorized' AND amount < 0 AND category IS NOT NULL AND transfer_of IS NULL AND refund_of IS NULL");
@@ -200,6 +210,10 @@ module.exports = function mountAr(ctx) {
       const where = [st === 'open' ? "q.status = 'open'" : "q.status IN ('matched', 'skipped')"], p = [];
       if (req.query.from) { where.push('date(t.created_at) >= ?'); p.push(String(req.query.from)); }   // 1.20.1: the Synced column is the date filter
       if (req.query.to) { where.push('date(t.created_at) <= ?'); p.push(String(req.query.to)); }
+      if (st === 'done') {   // 1.20.5: the Matched tab is filtered on when the match was made (LA calendar days; default last 30 on the page)
+        if (/^\d{4}-\d{2}-\d{2}$/.test(req.query.mfrom || '')) { where.push('q.matched_at >= ?'); p.push(laBound(req.query.mfrom, false)); }
+        if (/^\d{4}-\d{2}-\d{2}$/.test(req.query.mto || '')) { where.push('q.matched_at < ?'); p.push(laBound(req.query.mto, true)); }
+      }
       if (req.query.min !== undefined && req.query.min !== '') { where.push('q.amount >= ?'); p.push(Number(req.query.min) || 0); }
       if (req.query.max !== undefined && req.query.max !== '') { where.push('q.amount <= ?'); p.push(Number(req.query.max) || 0); }
       const q = String(req.query.q || '').trim().toLowerCase();
