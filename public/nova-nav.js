@@ -23,15 +23,17 @@
     delivery: '<path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>',
     templates: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/>',
     books: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M7 15h4"/><path d="M15 15h2"/>',
+    ar: '<path d="M12 2v20"/><path d="M17 6.5c0-1.9-2.2-3-5-3s-5 1.1-5 3 2.2 3 5 3 5 1.1 5 3-2.2 3-5 3-5-1.1-5-3"/>',
     chatbot: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/>'
   };
   // [key, label, href, who] — who: 'all' (everyone), 'admin', 'knowledge' (members with Domain Knowledge access),
-  // 'bookkeeper' (the people named in BOOKKEEPER_USERS — admin or not).
+  // 'bookkeeper' (the people named in BOOKKEEPER_USERS — admin or not), 'ar' (Nova AR: bookkeepers + members ticked AR).
   const GROUPS = [
     [['history', 'CRM Chat', '/admin?tab=history', 'all'],
      ['client', 'Client ChatBot', '/client-bot', 'admin'],
      ['talk', 'TalkAi', '/talk-ai', 'admin'],
-     ['books', 'Bookkeeping AI', '/bookkeeping', 'bookkeeper']],
+     ['books', 'Bookkeeping AI', '/bookkeeping', 'bookkeeper'],
+     ['ar', 'Nova AR', '/nova-ar', 'ar']],
     [['users', 'Users', '/admin?tab=users', 'admin'],
      ['knowledge', 'Domain Knowledge', '/admin?tab=knowledge', 'knowledge'],
      ['connections', 'Connectors', '/admin?tab=connections', 'admin']],
@@ -133,6 +135,7 @@ body.nn-shell { flex-direction: row !important; }
   function allowed(who) {
     if (!me) return who === 'all';
     if (who === 'bookkeeper') return !!me.bookkeeper;
+    if (who === 'ar') return !!me.ar;   // 1.19.153: Nova AR — bookkeepers and the members ticked AR
     if (me.is_admin) return true;
     if (who === 'knowledge') return (me.knowledge_access || 'none') !== 'none';
     return who === 'all';

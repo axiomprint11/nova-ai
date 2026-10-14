@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.19.152';
-const NOVA_BUILT = '10-13-2026 10:35pm';
+const NOVA_VERSION = '1.19.153';
+const NOVA_BUILT = '10-13-2026 10:55pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -477,6 +477,7 @@ db.serialize(() => {
   // Promote a member to full admin (sees Users, all history, agent training).
   db.run('ALTER TABLE members ADD COLUMN is_admin INTEGER DEFAULT 0', () => {});
   db.run('ALTER TABLE members ADD COLUMN is_bookkeeper INTEGER DEFAULT 0', () => {});   // 1.19.138: Bookkeeping AI access from Admin → Users
+  db.run('ALTER TABLE members ADD COLUMN is_ar INTEGER DEFAULT 0', () => {});   // 1.19.153: Nova AR (Accounts Receivable queue) access
   // Candidates the admin chose to ignore (so they stop appearing)
   db.run(`CREATE TABLE IF NOT EXISTS dismissed_candidates (
     message_id INTEGER PRIMARY KEY,
@@ -2535,6 +2536,7 @@ app.get('/api/me', auth, (req, res) => {
     success: true,
     key: key,
     bookkeeper: bookkeeping.isBookkeeper(req),
+    ar: bookkeeping.isAr(req),   // 1.19.153: Nova AR — bookkeepers and the members ticked "AR"
     username: req.user.username,
     is_admin: !!req.user.is_admin,
     display_name: req.user.username,
@@ -5490,6 +5492,17 @@ app.post('/api/admin/members/set-bookkeeper', auth, adminOnly, (req, res) => {
     if (err) return res.json({ success: false, error: err.message });
     if (bookkeeping && bookkeeping.refreshAccess) bookkeeping.refreshAccess();
     res.json({ success: true, is_bookkeeper: on });
+  });
+});
+
+// 1.19.153: Nova AR (the customer-payment queue) per member — Karen and whoever else matches payments; bookkeepers have it anyway.
+app.post('/api/admin/members/set-ar', auth, adminOnly, (req, res) => {
+  const id = parseInt(req.body.id), on = req.body.is_ar ? 1 : 0;
+  if (!id) return res.json({ success: false, error: 'No member id' });
+  db.run('UPDATE members SET is_ar = ? WHERE id = ?', [on, id], function (err) {
+    if (err) return res.json({ success: false, error: err.message });
+    if (bookkeeping && bookkeeping.refreshAccess) bookkeeping.refreshAccess();
+    res.json({ success: true, is_ar: on });
   });
 });
 

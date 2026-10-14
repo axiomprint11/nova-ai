@@ -10,7 +10,7 @@
 // Tabs: Unmatched (status open) · Matched (matched + skipped, the history). Filters: date range, amount range, search.
 
 module.exports = function mountAr(ctx) {
-  const { app, guard, dbAll, dbGet, dbRun, runQuery, mysql, audit, userId, nowIso, realCheckNo, errlog } = ctx;
+  const { app, guard, dbAll, dbGet, dbRun, runQuery, mysql, audit, userId, nowIso, realCheckNo, errlog, people } = ctx;
 
   // 1.19.152: the queue
   ctx.db.serialize(() => {
@@ -110,6 +110,11 @@ module.exports = function mountAr(ctx) {
     return m;
   };
 
+  // GET /api/bookkeeping/ar/me — what the AR-only page needs instead of the full Bookkeeping overview (1.19.153)
+  app.get('/api/bookkeeping/ar/me', ...guard, async (req, res) => {
+    try { res.json({ ok: true, me: userId(req), people: people ? await people.list() : [], open: (await dbGet("SELECT COUNT(*) n FROM bk_ar WHERE status = 'open'")).n }); }
+    catch (e) { res.json({ ok: false, error: e.message }); }
+  });
   // GET /api/bookkeeping/ar?status=open|done&from&to&min&max&q
   app.get('/api/bookkeeping/ar', ...guard, async (req, res) => {
     try {

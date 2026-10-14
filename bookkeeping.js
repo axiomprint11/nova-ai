@@ -359,12 +359,17 @@ module.exports = function mountBookkeeping(app, deps) {
   const userId = (req) => String((req.user && (req.user.key || req.user.username)) || '').replace(/^(member|user):/, '').toLowerCase();
   // 1.19.138: members ticked "Bookkeeper" in Admin → Users (members.is_bookkeeper) join the .env list; cached, refreshed
   // on every change and every 60 s so a just-granted member gets in without a restart.
-  let dbUsers = new Set(), dbUsersAt = 0;
+  let dbUsers = new Set(), arUsers = new Set(), dbUsersAt = 0;
   function refreshAccess() {
     dbUsersAt = Date.now();
     db.all("SELECT email, username FROM members WHERE is_bookkeeper = 1 AND enabled = 1", [], (err, rows) => {
       if (err) return;
       dbUsers = new Set((rows || []).flatMap(r => [r.email, r.username]).filter(Boolean).map(x => String(x).toLowerCase()));
+    });
+    // 1.19.153: Nova AR people (members.is_ar) — the queue only, not the rest of Bookkeeping
+    db.all("SELECT email, username FROM members WHERE is_ar = 1 AND enabled = 1", [], (err, rows) => {
+      if (err) return;
+      arUsers = new Set((rows || []).flatMap(r => [r.email, r.username]).filter(Boolean).map(x => String(x).toLowerCase()));
     });
   }
   refreshAccess();
@@ -380,6 +385,14 @@ module.exports = function mountBookkeeping(app, deps) {
     next();
   }
   const guard = [auth, bookkeeperOnly];
+  // 1.19.153: Nova AR — bookkeepers, plus the members ticked "AR" in Admin → Users
+  function isAr(req) {
+    if (isBookkeeper(req)) return true;
+    const key = String((req.user && req.user.key) || '').toLowerCase(), email = key.replace(/^(member|user):/, ''), uname = String((req.user && req.user.username) || '').toLowerCase();
+    return arUsers.has(email) || arUsers.has(uname);
+  }
+  function arOnly(req, res, next) { if (!isAr(req)) return res.status(403).json({ ok: false, error: 'Nova AR is not open to this account.' }); next(); }
+  const arGuard = [auth, arOnly];
 
   // ---------------------------------------------------------------- secrets at rest
   const encKey = crypto.createHash('sha256').update('bookkeeper:' + String(process.env.JWT_SECRET || 'nova')).digest();
@@ -2013,7 +2026,22 @@ module.exports = function mountBookkeeping(app, deps) {
 
   // ---------------------------------------------------------------- the page and its API
   app.get('/bookkeeping', serveVersionedHtml('bookkeeping.html'));
+  app.get('/nova-ar', serveVersionedHtml('bookkeeping.html'));   // 1.19.153: the same page in AR-only mode (the script reads the path)
   app.get('/bookkeeping/plaid-oauth', serveVersionedHtml('bookkeeping.html'));   // Plaid Link's OAuth return (the page re-opens Link to finish)
+  // who is who, for the page to show a face instead of an email (members: photo from the CRM, else an initial); 1.19.153: shared with Nova AR
+  async function peopleList() {
+    try {
+      const ms = await dbAll('SELECT email, username, display_name, photo, axiom_user_id FROM members');
+      // the CRM holds the team photos (user.memberimage, an S3 key); members.photo is only filled at sign-in
+      const ids = ms.map(m => parseInt(m.axiom_user_id)).filter(Boolean); const img = {}, img2 = {};
+      if (ids.length) { try { (await runQuery('SELECT id, email, memberimage FROM user WHERE id IN (' + ids.join(',') + ')')).forEach(r => { img[r.id] = r.memberimage || null; }); } catch (e) {} }
+      const noId = ms.filter(m => !m.axiom_user_id && m.email).map(m => mysql.escape(String(m.email).toLowerCase()));
+      if (noId.length) { try { (await runQuery('SELECT email, memberimage FROM user WHERE LOWER(email) IN (' + noId.join(',') + ')')).forEach(r => { img2[String(r.email).toLowerCase()] = r.memberimage || null; }); } catch (e) {} }
+      const url = (ph) => !ph ? null : /^https?:\/\//.test(ph) ? ph : 'https://axiomprint.s3.us-west-1.amazonaws.com/MemberImages/' + String(ph).replace(/^\/+/, '');
+      return ms.map(m => ({ email: m.email, username: m.username, name: m.display_name || m.username || m.email, photo: url(m.photo || img[m.axiom_user_id] || img2[String(m.email || '').toLowerCase()] || null) }));
+    } catch (e) { return []; }
+  }
+  const people = { list: peopleList };
   app.get('/api/bookkeeping/overview', ...guard, async (req, res) => {
     const s = await settings();
     const items = await plaidItems();
@@ -2033,17 +2061,7 @@ module.exports = function mountBookkeeping(app, deps) {
       emails: (await dbGet('SELECT COUNT(*) AS n FROM bk_emails')).n, rules: (await dbGet('SELECT COUNT(*) AS n FROM bk_rules WHERE active = 1')).n
     };
     const lastRun = await dbGet('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 1');
-    // who is who, for the page to show a face instead of an email (members: photo from the CRM, else an initial)
-    let people = []; try {
-      const ms = await dbAll('SELECT email, username, display_name, photo, axiom_user_id FROM members');
-      // the CRM holds the team photos (user.memberimage, an S3 key); members.photo is only filled at sign-in
-      const ids = ms.map(m => parseInt(m.axiom_user_id)).filter(Boolean); const img = {}, img2 = {};
-      if (ids.length) { try { (await runQuery('SELECT id, email, memberimage FROM user WHERE id IN (' + ids.join(',') + ')')).forEach(r => { img[r.id] = r.memberimage || null; }); } catch (e) {} }
-      const noId = ms.filter(m => !m.axiom_user_id && m.email).map(m => mysql.escape(String(m.email).toLowerCase()));
-      if (noId.length) { try { (await runQuery('SELECT email, memberimage FROM user WHERE LOWER(email) IN (' + noId.join(',') + ')')).forEach(r => { img2[String(r.email).toLowerCase()] = r.memberimage || null; }); } catch (e) {} }
-      const url = (ph) => !ph ? null : /^https?:\/\//.test(ph) ? ph : 'https://axiomprint.s3.us-west-1.amazonaws.com/MemberImages/' + String(ph).replace(/^\/+/, '');
-      people = ms.map(m => ({ email: m.email, username: m.username, name: m.display_name || m.username || m.email, photo: url(m.photo || img[m.axiom_user_id] || img2[String(m.email || '').toLowerCase()] || null) }));
-    } catch (e) {}
+    const people = await peopleList();
     res.json({ ok: true, me: userId(req), people, settings: Object.assign({}, s, { chat_webhook: s.chat_webhook ? '(set)' : '' }), baskets: basketDefs(s), basket_defaults: BASKET_DEFAULTS, chart: chartOf(s), counts, brief, last_run: lastRun, running: !!running,
       connections: {
         plaid: { configured: plaidReady(), env: PLAID_ENV, items, leftovers: items.some(i => i.env && i.env !== PLAID_ENV) || !!(await dbGet("SELECT 1 FROM bk_transactions t WHERE t.status <> 'removed' AND (t.item_id NOT IN (SELECT item_id FROM bk_accounts) OR t.account_name LIKE 'Plaid %')")) || !!(await dbGet("SELECT 1 FROM bk_purchases p WHERE p.txn_ids <> '[]' AND p.bill_id IS NULL AND p.confirm_email_id IS NULL AND NOT EXISTS (SELECT 1 FROM bk_transactions t WHERE p.txn_ids LIKE '%' || t.id || '%') LIMIT 1").catch(() => null)) },
@@ -3518,6 +3536,6 @@ module.exports = function mountBookkeeping(app, deps) {
   });
 
   // 1.19.152: Nova AR — the customer-payment queue (bookkeeping-ar.js)
-  const AR = require('./bookkeeping-ar')({ app, db, guard, dbAll, dbGet, dbRun, runQuery, mysql, audit, userId, nowIso, realCheckNo, errlog });
-  return { isBookkeeper, refreshAccess, runDaily, converse, settings, runChatTool, AR };
+  const AR = require('./bookkeeping-ar')({ app, db, guard: arGuard, dbAll, dbGet, dbRun, runQuery, mysql, audit, userId, nowIso, realCheckNo, errlog, people });
+  return { isBookkeeper, isAr, refreshAccess, runDaily, converse, settings, runChatTool, AR };
 };

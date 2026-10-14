@@ -14,7 +14,19 @@
     return r.json();
   }
   const post = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body || {}) });
-  NovaNav.mount({ current: 'books' });
+  // 1.19.153: /nova-ar is this page in AR-only mode — the Nova AR tab alone, for people with the AR role but not Bookkeeping
+  const AR_ONLY = location.pathname.replace(/\/+$/, '') === '/nova-ar';
+  NovaNav.mount({ current: AR_ONLY ? 'ar' : 'books' });
+  if (AR_ONLY) {
+    document.title = 'Nova AR · NovaAI';
+    document.body.classList.add('ar-only');
+    const h1 = document.querySelector('.bk-top h1'); if (h1) { const svg = h1.querySelector('svg'); h1.textContent = ' Nova AR'; if (svg) h1.prepend(svg); }
+    document.querySelectorAll('.bk-tabs.main button').forEach(b => { if (b.dataset.v !== 'ar') b.remove(); });
+    const t2 = document.getElementById('tabs2'); if (t2) t2.remove();
+    const rs = document.getElementById('runState'); if (rs) rs.remove();
+    const bub = document.getElementById('bkBub'); if (bub) bub.remove(); const bp = document.getElementById('bkBubPanel'); if (bp) bp.remove();
+  }
+  else { const t = document.querySelector('.bk-tabs.main button[data-v="ar"]'); if (t) t.remove(); }   // Nova AR lives in the left menu, not among the Bookkeeping tabs
 
   let ov = null, categories = [], chart = [];
   document.querySelectorAll('.bk-tabs button').forEach(b => b.onclick = () => show(b.dataset.v));
@@ -48,7 +60,7 @@
       document.querySelectorAll('#' + T.bar + ' button').forEach(b => b.classList.toggle('on', b.dataset.s === sub));
       if (v !== 'bills' && v !== 'bank' && v !== 'ar') document.querySelectorAll('.bk-view[data-v="' + v + '"] .bk-subview').forEach(s => s.classList.toggle('on', s.dataset.s === sub));
       T.subs[sub]();
-      try { history.replaceState(null, '', '/bookkeeping?tab=' + v + '&sub=' + sub); } catch (e) {}
+      try { history.replaceState(null, '', (AR_ONLY ? '/nova-ar?tab=' : '/bookkeeping?tab=') + v + '&sub=' + sub); } catch (e) {}
       return;
     }
     ({ brief: loadBrief, inbox: loadInbox, conn: loadConn, activity: loadActivity })[v]();
@@ -102,6 +114,11 @@
     });
   }
   async function overview() {
+    if (AR_ONLY) {   // 1.19.153: the AR page only needs who-is-who and its own count
+      const j = await api('/api/bookkeeping/ar/me'); ov = { me: j.me, people: j.people || [], counts: { ar_open: j.open || 0 }, settings: {}, chart: [], connections: {} };
+      if ($('nAr')) $('nAr').textContent = ov.counts.ar_open || '';
+      return ov;
+    }
     ov = await api('/api/bookkeeping/overview');
     chart = ov.chart || [];
     categories = chart.filter(c => c.parent || !c.children).map(c => c.name).filter((n, i, a) => a.indexOf(n) === i);
@@ -2440,5 +2457,7 @@
   if (/\/bookkeeping\/plaid-oauth/.test(location.pathname) && /oauth_state_id=/.test(location.search)) { window.__plaidReturn = location.href; history.replaceState(null, '', '/bookkeeping?tab=conn'); }
   const qs = new URLSearchParams(location.search), want = qs.get('tab');
   document.querySelectorAll('.bk-sub button').forEach(b => { const ic = SUB_ICON[b.dataset.s]; if (ic && iconKey(ic) && !b.querySelector('svg')) b.insertAdjacentHTML('afterbegin', iconSvg(ic)); });   // icons once the icon table exists
+  if (AR_ONLY) { show('ar', qs.get('sub') === 'done' ? 'done' : 'open'); return; }
+  if (want === 'ar') { location.replace('/nova-ar' + (qs.get('sub') ? '?sub=' + qs.get('sub') : '')); return; }
   show(['brief', 'purchases', 'list', 'bank', 'waiting', 'notreceived', 'bills', 'ar', 'inbox', 'accounts', 'vendors', 'chart', 'rules', 'materials', 'conn', 'activity'].indexOf(want) > -1 ? (want === 'txns' ? 'purchases' : want === 'purchases' && qs.get('sub') === 'bank' ? 'bank' : want) : 'brief', qs.get('sub') === 'bank' ? 'pending' : qs.get('sub'));
 })();

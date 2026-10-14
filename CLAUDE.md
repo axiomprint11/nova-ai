@@ -313,8 +313,13 @@ confidence become questions). The CRM `suppliers` + `vendors` tables are synced 
 ### Nova AR (1.19.152)
 
 `bookkeeping-ar.js` (`require('./bookkeeping-ar')(ctx)` at the end of `mountBookkeeping`, exported as `AR`) is the Accounts
-Receivable queue — a **Nova AR** top tab in Bookkeeping (between Bills and Inbox; `TABS.ar`, bar `#subAr`, sub-tabs
-**Unmatched** (`open`) / **Matched** (`done` = matched + skipped, the history), `?tab=ar`). Every categorized deposit
+Receivable queue — its own left-menu page **Nova AR** at `/nova-ar` (1.19.153: `serveVersionedHtml('bookkeeping.html')`; the script
+sets `AR_ONLY` from the path and strips the page to the one tab — no other tabs, settings, run pill or bubble; `overview()`
+reads `GET /api/bookkeeping/ar/me` (me, people, open count) instead of the full overview; `/bookkeeping?tab=ar` redirects
+there). Access is the **AR** role: `members.is_ar` (Admin → Users, Roles column beside Bookkeeper; `POST /api/admin/members/set-ar`),
+`isAr(req)` = bookkeeper OR ticked AR (`arUsers`, refreshed with `refreshAccess()`), `arGuard` on every `/api/bookkeeping/ar*`
+route, `/api/me` returns `ar`, nova-nav shows the item for `who: 'ar'`. Inside the page: `TABS.ar`, bar `#subAr`, sub-tabs
+**Unmatched** (`open`) / **Matched** (`done` = matched + skipped, the history). Every categorized deposit
 (`amount < 0`, not a transfer / refund) whose category name says customer / client payment(s) (`isArCategory`, name based)
 is put in SQLite `bk_ar` by `syncQueue()` (on every overview and AR load; a line re-filed elsewhere goes `void`, back to
 `open` if it returns). It replaces the manual email to payments@ — "Notify Accounts Receivable" stays as an extra. Open
@@ -330,8 +335,7 @@ customer, person, PO, email → click = Matched) + **Skip** (note optional, kept
 `bk_ar_filters`, All time default; the sub-bar search `#arQ`); `POST /ar/:id/match {invoice_ids[], customer, customer_id,
 note}`, `/ar/:id/skip {note}`, `/ar/:id/undo`; audit `ar.match / ar.skip / ar.undo`. Tiles: $ and count to match, open
 invoices in the CRM (+ refresh), a red tile when the CRM is unreachable. **Nothing is written to the production DB** — the
-match lives in `bk_ar`; the invoice is still marked paid in the CRM by the AR team. Access = Bookkeeping (Karen needs the
-Bookkeeper tick in Admin → Users). The tab badge `#nAr` = `counts.ar_open` from the overview.
+match lives in `bk_ar`; the invoice is still marked paid in the CRM by the AR team. The badge `#nAr` = `counts.ar_open` (overview) or `open` (`/ar/me`).
 
 ## Shipping rates & draft quotes (Axiom API, 1.19.142)
 
