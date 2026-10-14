@@ -30,15 +30,20 @@ module.exports = function mountAr(ctx) {
 
   // Put every categorized deposit filed as a customer payment into the queue; drop (void) open rows whose line was
   // re-filed somewhere else or uncategorized.
+  // 1.20.3: the queue starts at AR_FROM (bank date; .env, default 2026-10-01) — older deposits were handled by email before Nova AR
+  // and only cloud the list. Rows already queued from before the cut-off are set aside as 'old' (never shown, never counted).
+  const AR_FROM = /^\d{4}-\d{2}-\d{2}$/.test(env('AR_FROM')) ? env('AR_FROM') : '2026-10-01';
+  const bankDate = (t) => { let d = t.tx_date; if (!d && t.raw) { try { const raw = JSON.parse(t.raw); d = raw.authorized_date || raw.date; } catch (e) {} } return String(d || t.date || '').slice(0, 10); };
   async function syncQueue() {
-    const rows = await dbAll("SELECT id, amount, category FROM bk_transactions WHERE status = 'categorized' AND amount < 0 AND category IS NOT NULL AND transfer_of IS NULL AND refund_of IS NULL");
+    const rows = await dbAll("SELECT id, amount, category, date, raw FROM bk_transactions WHERE status = 'categorized' AND amount < 0 AND category IS NOT NULL AND transfer_of IS NULL AND refund_of IS NULL");
     let added = 0;
-    for (const t of rows) {
-      if (!isArCategory(t.category)) continue;
+    const fresh = rows.filter(t => isArCategory(t.category) && bankDate(t) >= AR_FROM), stale = rows.filter(t => isArCategory(t.category) && bankDate(t) < AR_FROM);
+    for (const t of fresh) {
       const r = await dbRun('INSERT OR IGNORE INTO bk_ar (txn_id, amount) VALUES (?, ?)', [t.id, Math.abs(Number(t.amount))]);
       if (r.changes) added++;
     }
-    const keep = new Set(rows.filter(t => isArCategory(t.category)).map(t => t.id));
+    if (stale.length) await dbRun("UPDATE bk_ar SET status = 'old', updated_at = ? WHERE status IN ('open', 'void') AND txn_id IN (" + stale.map(t => t.id).join(',') + ')', [nowIso()]);
+    const keep = new Set(fresh.map(t => t.id));
     const open = await dbAll("SELECT id, txn_id FROM bk_ar WHERE status = 'open'");
     for (const q of open) if (!keep.has(q.txn_id)) await dbRun("UPDATE bk_ar SET status = 'void', updated_at = ? WHERE id = ?", [nowIso(), q.id]);
     // a voided row whose line is a customer payment again comes back
@@ -92,7 +97,8 @@ module.exports = function mountAr(ctx) {
     const words = keyWords(text), nos = invoiceNos(text);
     const paidOn = new Date(String(t.tx_date || t.date || '').slice(0, 10) + 'T12:00:00Z').getTime();
     const ageDays = (r) => { const c = r.created ? new Date(r.created).getTime() : NaN; return isNaN(c) || isNaN(paidOn) ? null : Math.round((paidOn - c) / DAY); };
-    const datePts = (r) => { const d = ageDays(r); if (d == null) return [0, null]; if (d >= -3 && d <= 30) return [25, 'invoiced ' + d + ' day' + (d === 1 ? '' : 's') + ' before']; if (d > 30 && d <= 60) return [12, 'invoiced ' + d + ' days before']; return [0, d > 60 ? 'invoiced ' + d + ' days before' : 'invoiced after the payment']; };
+    // 1.20.3: fresh = within 30 days (+25); 31–60 days 10 points less (+15); older nothing
+    const datePts = (r) => { const d = ageDays(r); if (d == null) return [0, null]; if (d >= -3 && d <= 30) return [25, 'invoiced ' + d + ' day' + (d === 1 ? '' : 's') + ' before']; if (d > 30 && d <= 60) return [15, 'invoiced ' + d + ' days before']; return [0, d > 60 ? 'invoiced ' + d + ' days before' : 'invoiced after the payment']; };
     const out = [], keys = new Set();
     const push = (ids, score, why, cust) => { const key = ids.length > 1 ? ids.slice().sort().join(',') : null; if (key) { if (keys.has(key)) return; keys.add(key); } out.push({ invoice_ids: ids, score, why, customer: cust }); };
     const nameHit = (r) => { if (!words.length || !r._k.length) return 0; let n = 0; for (const w of words) for (const k of r._k) if (k === w || (w.length >= 5 && k.length >= 5 && (k.indexOf(w) === 0 || w.indexOf(k) === 0))) { n++; break; } return n; };
@@ -205,7 +211,7 @@ module.exports = function mountAr(ctx) {
         out.push(row);
       }
       const counts = await dbGet("SELECT SUM(status = 'open') AS open, SUM(status IN ('matched', 'skipped')) AS done, SUM(CASE WHEN status = 'open' THEN amount ELSE 0 END) AS open_total FROM bk_ar");
-      res.json({ ok: true, rows: out, counts: { open: counts.open || 0, done: counts.done || 0, open_total: Math.round((counts.open_total || 0) * 100) / 100 }, invoices_open: invoices.length, invoices_at: inv.at, crm_error });
+      res.json({ ok: true, rows: out, counts: { open: counts.open || 0, done: counts.done || 0, open_total: Math.round((counts.open_total || 0) * 100) / 100 }, invoices_open: invoices.length, invoices_at: inv.at, crm_error, from: AR_FROM });
     } catch (e) { errlog('ar list', e.message); res.json({ ok: false, error: e.message }); }
   });
   // GET /api/bookkeeping/ar/:id/suggest — the suggestions for one payment (the page asks row by row, a few at a time)
