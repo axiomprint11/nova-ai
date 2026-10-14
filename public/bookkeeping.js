@@ -2025,8 +2025,8 @@
     const members = j.members || [], depts = j.depts || {}, countries = j.countries || {};
     const dateS = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
     const row = (m) => '<tr' + (m.status === 'left' ? ' class="off"' : '') + '><td><span class="tm-av">' + flag(m.country, m.country_name) + '<span class="bk-logo ph">' + esc(String(m.name || '?').charAt(0).toUpperCase()) + '</span></span></td>' +
-      '<td><b>' + esc(m.name) + '</b>' + (m.status === 'left' ? ' <span class="bk-tag">left</span>' : '') + '<div class="bk-dim">' + esc(m.country_name || '') + (m.start_date ? ' · since ' + esc(dateS(m.start_date)) : '') + (m.end_date ? ' · until ' + esc(dateS(m.end_date)) : '') + '</div></td>' +
-      '<td>' + esc(m.dept || '') + '</td>' +
+      '<td><b>' + esc(m.name) + '</b>' + (m.status === 'left' ? ' <span class="bk-tag">left</span>' : '') + (m.crm_user_id ? ' <span class="bk-tag" title="Pulled from the Axiom CRM — name, department, start date and status follow it">CRM</span>' : '') + '<div class="bk-dim">' + esc(m.country_name || '') + (m.start_date ? ' · since ' + esc(dateS(m.start_date)) : '') + (m.end_date ? ' · until ' + esc(dateS(m.end_date)) : '') + '</div></td>' +
+      '<td>' + esc(m.dept || '') + (m.crm_team ? '<div class="bk-dim">' + esc(m.crm_team) + '</div>' : '') + '</td>' +
       '<td class="num">' + (m.pay != null ? '<b>' + usd(m.pay) + '</b><div class="bk-dim">' + (m.period === 'monthly' ? 'monthly' : 'twice a month') + '</div>' : '<span class="bk-dim">not set</span>') + '</td>' +
       '<td>' + (m.category ? catShort(m.category) : '<span class="bk-dim">—</span>') + (m.category_alt ? '<div class="bk-dim" style="margin-top:3px">maintenance: ' + catShort(m.category_alt) + '</div>' : '') + '</td>' +
       '<td>' + (m.wise_ref ? '<code>' + esc(m.wise_ref) + '</code>' : '<span class="bk-dim">by amount</span>') + '</td>' +
@@ -2034,30 +2034,65 @@
       '<td class="pu-acts"><button class="bk-btn sm" data-tedit="' + m.id + '">Edit</button></td></tr>';
     v.innerHTML = '<div class="bk-card"><h2>Overseas team ' + qHelp('team', 'Overseas team', 'The people paid through Wise — graphic design, web development, customer service. Wise puts no name on the bank line, so each person is recognised by their exact pay per period (or the Wise reference code when it stays the same for them). A matched payout is linked to the person and filed under their category; two people on the same pay are left for you to pick in the Bank feed. Each person is also a Nova vendor, so the feed and the history work as for a company.') + '</h2>' +
       (j.open_wise && j.open_wise.n ? '<div class="tm-open">' + TEAMI + ' <b>' + j.open_wise.n + '</b> Wise payout' + (j.open_wise.n === 1 ? '' : 's') + ' (' + usd(j.open_wise.total) + ') still waiting for a person — <a href="/bookkeeping?tab=bank&sub=pending">open the Bank feed</a></div>' : '') +
-      '<div class="bk-filters"><span class="bk-muted" style="flex:1">' + members.length + ' team member' + (members.length === 1 ? '' : 's') + '</span><button class="bk-btn p" id="tmAdd">+ Add a person</button></div>' +
-      (members.length ? '<table class="bk bk-dir tm-table"><thead><tr><th></th><th>Person</th><th>Department</th><th class="num">Pay / period</th><th>Files under</th><th>Wise ref</th><th class="num">Paid so far</th><th></th></tr></thead><tbody>' + members.map(row).join('') + '</tbody></table>' : '<div class="bk-muted" style="padding:14px 0">Nobody yet. Add each person with their department and pay per period, and Nova starts matching the Wise payouts.</div>') +
+      '<div class="bk-filters"><span class="bk-muted" style="flex:1">' + members.length + ' team member' + (members.length === 1 ? '' : 's') + '</span><button class="bk-btn p" id="tmAdd">+ Add from Axiom</button></div>' +
+      (members.length ? '<table class="bk bk-dir tm-table"><thead><tr><th></th><th>Person</th><th>Department</th><th class="num">Pay / period</th><th>Files under</th><th>Wise ref</th><th class="num">Paid so far</th><th></th></tr></thead><tbody>' + members.map(row).join('') + '</tbody></table>' : '<div class="bk-muted" style="padding:14px 0">Nobody yet. Add each person from the Axiom staff list and pick the category their payouts file under.</div>') +
       '<div class="bk-muted" style="margin-top:10px;font-size:12px">Web development: set <b>Files under</b> to the capital category for building the site (Assets &amp; Capital › Website Development) and <b>Maintenance category</b> to the expense one; a payout can be flipped between the two from the Bank feed.</div></div>';
-    $('tmAdd').onclick = () => teamForm({}, j, loadTeam);
+    $('tmAdd').onclick = () => teamPicker(j, loadTeam);
     v.querySelectorAll('[data-tedit]').forEach(b => b.onclick = () => teamForm(members.find(x => String(x.id) === b.dataset.tedit), j, loadTeam));
+  }
+  // 1.19.148: pick a person from the Axiom CRM staff list (name, team, start date and status come from there)
+  function teamPicker(j, done) {
+    const el = document.createElement('div'); el.className = 'bk-modal';
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(640px,100%)"><div class="bk-modal-title" style="margin-bottom:10px">Add from Axiom</div>' +
+      '<div class="bk-row" style="margin-bottom:8px"><input class="bk" id="tpQ" placeholder="Search the staff list" style="flex:1"><span class="bk-muted" id="tpN"></span></div>' +
+      '<div class="tp-list" id="tpList"><div class="bk-dim" style="padding:10px 2px">Loading the staff list…</div></div>' +
+      '<div class="bk-row nv-acts"><button class="bk-btn bk-x">Cancel</button><span class="sp"></span><a href="#" class="bk-dim" id="tpHand" style="font-size:12px">Not in the CRM — type in by hand</a></div></div>';
+    const close = () => el.remove(); el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
+    document.body.appendChild(el); el.querySelector('#tpQ').focus();
+    let staff = [];
+    const paint = () => {
+      const q = el.querySelector('#tpQ').value.trim().toLowerCase();
+      const rows = staff.filter(u => !q || (u.name + ' ' + u.title + ' ' + u.crm_team).toLowerCase().indexOf(q) > -1);
+      el.querySelector('#tpN').textContent = rows.length + ' of ' + staff.length;
+      el.querySelector('#tpList').innerHTML = rows.length ? rows.map(u => '<div class="tp-row' + (u.linked ? ' on' : '') + (u.active ? '' : ' off') + '" data-uid="' + u.user_id + '">' +
+        '<span class="tm-av">' + flag(u.country, u.country_name) + '<span class="bk-logo ph">' + esc(String(u.name || '?').charAt(0).toUpperCase()) + '</span></span>' +
+        '<div class="tp-main"><b>' + esc(u.name) + '</b>' + (u.active ? '' : ' <span class="bk-tag">inactive</span>') + '<div class="bk-dim">' + esc([u.title, u.crm_team].filter(Boolean).join(' · ') || u.dept) + '</div></div>' +
+        '<div class="bk-dim tp-side">' + (u.start_date ? 'since ' + esc(usD(u.start_date)) : '') + '</div>' +
+        (u.linked ? '<span class="bk-tag ok">on the team</span>' : '<button class="bk-btn sm p" data-add="' + u.user_id + '">Add</button>') + '</div>').join('') : '<div class="bk-dim" style="padding:10px 2px">No match.</div>';
+      el.querySelectorAll('[data-add]').forEach(b => b.onclick = async () => {
+        b.disabled = true; b.textContent = 'Adding…';
+        const r = await post('/api/bookkeeping/team/from-crm', { user_id: Number(b.dataset.add) }); if (!r.ok) { alert(r.error || 'Could not add.'); b.disabled = false; b.textContent = 'Add'; return; }
+        close(); const t = await api('/api/bookkeeping/team'); const m = (t.members || []).find(x => x.id === r.id); if (m) teamForm(m, t, done); else done();
+      });
+    };
+    el.querySelector('#tpQ').oninput = paint;
+    el.querySelector('#tpHand').onclick = (ev) => { ev.preventDefault(); close(); teamForm({}, j, done); };
+    api('/api/bookkeeping/team/crm').then(r => { if (!r.ok) { el.querySelector('#tpList').innerHTML = '<div class="bk-dim" style="padding:10px 2px">' + esc(r.error || 'Could not read the CRM staff list.') + '</div>'; return; } staff = r.staff || []; paint(); });
   }
   function teamForm(m, j, done) {
     m = m || {}; const isEdit = !!m.id, depts = j.depts || {}, countries = j.countries || {};
+    // 1.19.148: a CRM-linked member — name, country, department, start date and status follow the CRM; pay, period,
+    // Wise ref, ended and notes wait for the CRM to carry them. Only the two categories are Nova's to fill in.
+    const crm = !!m.crm_user_id, CRM_F = ['name', 'country', 'department', 'start_date', 'status'], SOON_F = ['pay', 'period', 'wise_ref', 'end_date', 'notes'];
+    const dis = (k) => crm && (CRM_F.indexOf(k) > -1 || SOON_F.indexOf(k) > -1) ? ' disabled title="' + (CRM_F.indexOf(k) > -1 ? 'From the Axiom CRM' : 'Soon from the Axiom CRM') + '"' : '';
     const el = document.createElement('div'); el.className = 'bk-modal';
-    const f = (k, label, type, extra, ph) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><input class="bk" name="' + k + '" type="' + (type || 'text') + '" value="' + esc(m[k] != null ? m[k] : '') + '"' + (extra || '') + (ph ? ' placeholder="' + esc(ph) + '"' : '') + '></label>';
-    const sel = (k, label, opts) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><select class="bk" name="' + k + '">' + opts.map(o => '<option value="' + esc(o[0]) + '"' + (String(m[k] == null ? '' : m[k]) === String(o[0]) ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') + '</select></label>';
-    el.innerHTML = '<div class="bk-modal-box" style="width:min(640px,100%)"><div class="bk-modal-title" style="margin-bottom:12px">' + (isEdit ? 'Edit ' + esc(m.name) : 'Add a team member') + '</div>' +
+    const f = (k, label, type, extra, ph) => '<label class="nv-f' + (dis(k) ? ' ro' : '') + '"><span class="bk-muted">' + label + '</span><input class="bk" name="' + k + '" type="' + (type || 'text') + '" value="' + esc(m[k] != null ? m[k] : '') + '"' + (extra || '') + (ph && !dis(k) ? ' placeholder="' + esc(ph) + '"' : '') + dis(k) + '></label>';
+    const sel = (k, label, opts) => '<label class="nv-f' + (dis(k) ? ' ro' : '') + '"><span class="bk-muted">' + label + '</span><select class="bk" name="' + k + '"' + dis(k) + '>' + opts.map(o => '<option value="' + esc(o[0]) + '"' + (String(m[k] == null ? '' : m[k]) === String(o[0]) ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') + '</select></label>';
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(640px,100%)"><div class="bk-modal-title" style="margin-bottom:12px">' + (isEdit ? 'Edit ' + esc(m.name) : 'Add a team member') + (crm ? ' <span class="bk-tag" title="Name, department, start date and status follow the Axiom CRM">CRM</span>' : '') + '</div>' +
+      (crm ? '<div class="bk-muted" style="margin:-6px 0 10px;font-size:12px">From the Axiom CRM' + (m.crm_team ? ' — ' + esc(m.crm_team) : '') + (m.title ? ' · ' + esc(m.title) : '') + '. The greyed fields follow the CRM; fill in the categories here.</div>' : '') +
       '<div class="nv-grid">' + f('name', 'Name', 'text', '', 'First and last name') + sel('country', 'Country', Object.keys(countries).map(c => [c, countries[c]]).concat([['other', 'Other']])) +
       sel('department', 'Department', Object.keys(depts).map(d => [d, depts[d]])) + sel('period', 'Paid', [['semi', 'Twice a month'], ['monthly', 'Monthly']]) +
       f('pay', 'Pay per period ($)', 'number', ' step="0.01" min="0"', '706.59') + f('wise_ref', 'Wise reference code (if it stays the same)', 'text', '', 'XXXXX9740') +
       '<label class="nv-f"><span class="bk-muted">Files under (category)</span>' + catSelect(m.category || '', 'tmcat', 'Category…') + '</label>' +
       '<label class="nv-f"><span class="bk-muted">Maintenance category (web dev only, optional)</span>' + catSelect(m.category_alt || '', 'tmalt', 'Category…') + '</label>' +
       f('start_date', 'Started', 'date') + f('end_date', 'Ended (blank = still with us)', 'date') + sel('status', 'Status', [['active', 'Active'], ['left', 'Left']]) + '</div>' +
-      '<label class="nv-f"><span class="bk-muted">Notes</span><textarea class="bk" name="notes" rows="2">' + esc(m.notes || '') + '</textarea></label>' +
+      '<label class="nv-f' + (dis('notes') ? ' ro' : '') + '"><span class="bk-muted">Notes</span><textarea class="bk" name="notes" rows="2"' + dis('notes') + '>' + esc(m.notes || '') + '</textarea></label>' +
       '<div class="bk-row nv-acts"><button class="bk-btn p" id="tmSave">' + (isEdit ? 'Save' : 'Add') + '</button><button class="bk-btn bk-x">Cancel</button>' + (isEdit ? '<span class="sp"></span><button class="bk-btn sm bad" id="tmDel">Remove</button>' : '') + '<span class="bk-muted" id="tmMsg"></span></div></div>';
     const close = () => el.remove(); el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
-    document.body.appendChild(el); el.querySelector('[name=name]').focus();
+    document.body.appendChild(el); if (!crm) el.querySelector('[name=name]').focus();
     el.querySelector('#tmSave').onclick = async () => {
-      const body = {}; el.querySelectorAll('input[name], select[name], textarea[name]').forEach(i => { body[i.name] = i.value; });
+      const body = {}; el.querySelectorAll('input[name], select[name], textarea[name]').forEach(i => { if (!i.disabled) body[i.name] = i.value; });
+      if (crm) body.name = m.name;
       body.category = el.querySelector('input.tmcat').value; body.category_alt = el.querySelector('input.tmalt').value;
       if (!body.name.trim()) { el.querySelector('#tmMsg').textContent = 'Give the person a name.'; return; }
       if (!body.category) { el.querySelector('#tmMsg').textContent = 'Pick the category their payouts file under.'; return; }

@@ -599,6 +599,8 @@ and can be typed as 10/1/26).
 
 ### Overseas Team (1.19.119)
 
+**From the Axiom CRM (1.19.148).** "+ Add from Axiom" lists the CRM staff (name, title and team, country flag, start date; inactive accounts greyed, people already on the team marked). Adding one pulls the full name, department, start date and status from the CRM and keeps them in step on every visit — those fields are greyed in the form, as are pay, pay period, Wise reference, end date and notes, which the CRM will carry soon. What Nova fills in is **Files under** and the **Maintenance category**. A person who is not in the CRM can still be typed in by hand.
+
 Accounts → **Overseas Team** lists the people paid through Wise — name, country (Armenia / Mexico / Philippines flags), department (graphic design, web development, customer service), pay per period, the category their payouts file under, and an optional maintenance category for web development (the main one being the capitalized build). Each person is also a Nova vendor.
 
 Wise payouts reach the bank with no recipient name, so Nova recognises a person by the Wise reference code (when it stays the same for them) or by their exact pay. A matched payout is linked to the person and filed under their category on its own; when two people are on the same pay, the Bank feed shows **Who is this?** with a picker. Picking someone for a different amount can remember it as their new pay. Wise lines never get vendor aliases or rules — the team list is what files them.

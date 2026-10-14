@@ -120,6 +120,9 @@ module.exports = function mountBookkeeping(app, deps) {
       category TEXT, category_alt TEXT, wise_ref TEXT, vendor_id INTEGER, start_date TEXT, end_date TEXT, status TEXT DEFAULT 'active', notes TEXT,
       created_by TEXT, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
     db.run('ALTER TABLE bk_transactions ADD COLUMN team_id INTEGER', () => {});
+    // 1.19.148: a member pulled from the CRM `user` table — name, department (their CRM team), start date, status and
+    // country follow the CRM on every sync and are read-only in Nova; the categories stay Nova's
+    ['crm_user_id INTEGER', 'crm_team TEXT', 'title TEXT', 'photo TEXT'].forEach(c => db.run('ALTER TABLE bk_team ADD COLUMN ' + c, () => {}));
     db.run('ALTER TABLE bk_bills ADD COLUMN merged_into INTEGER', () => {});
     // How bill lines were linked by hand: vendor + the line's wording → material / machine. The next bill from that
     // vendor with the same wording links by itself (1.19.15).
@@ -3022,8 +3025,79 @@ module.exports = function mountBookkeeping(app, deps) {
     }
     return rows;
   }
+  // 1.19.148: staff from the CRM. `user` (type member) + `team.members` (JSON ids) → one row per person with their CRM teams,
+  // a department guess for Nova (design / web / csr / other), the country from the personal phone's ISO (AM / MX / PH),
+  // the start date and whether the account is active (status 10). Cached 10 minutes. Passwords, tokens and hashes are never read.
+  const TEAM_OF = [[/graphic design|creative|prepress|pre-press|cad/i, 'design'], [/website|web dev|it and web|ux/i, 'web'], [/customer|email support|client success|front desk|account manager|onboarding/i, 'csr']];
+  const crmStaffCache = { at: 0, rows: [] };
+  async function crmStaff(force) {
+    if (!runQuery) return [];
+    if (!force && Date.now() - crmStaffCache.at < 10 * 60000) return crmStaffCache.rows;
+    const users = await runQuery("SELECT id, name, last_name, title, personal_phone_iso, phone_country_iso, DATE_FORMAT(working_start_date, '%Y-%m-%d') AS started, status, blocked_at, memberimage FROM user WHERE type = 'member' ORDER BY name, last_name");
+    const teams = await runQuery('SELECT id, name, members FROM team');
+    const teamsOf = {};
+    for (const t of teams) { let ids = []; try { ids = Array.isArray(t.members) ? t.members : JSON.parse(t.members || '[]'); } catch (e) {} ids.forEach(id => { (teamsOf[id] = teamsOf[id] || []).push(t.name); }); }
+    const rows = users.map(u => {
+      const tn = teamsOf[u.id] || [], blob = tn.concat([u.title || '']).join(' | ');
+      const dept = (TEAM_OF.find(([re]) => re.test(blob)) || [null, 'other'])[1];
+      const iso = String(u.personal_phone_iso || '').toUpperCase(), iso2 = String(u.phone_country_iso || '').toUpperCase();
+      const country = COUNTRIES[iso] ? iso : COUNTRIES[iso2] ? iso2 : 'other';
+      return { user_id: u.id, name: [u.name, u.last_name].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim(), title: u.title || '', teams: tn, crm_team: tn.join(', '), department: dept, country, start_date: u.started || null, active: Number(u.status) === 10 && !u.blocked_at, photo: u.memberimage || null };
+    });
+    crmStaffCache.at = Date.now(); crmStaffCache.rows = rows; return rows;
+  }
+  // CRM-owned fields on a linked member; Nova keeps pay, period, Wise ref, categories, end date and notes
+  const CRM_TEAM_F = ['name', 'country', 'department', 'crm_team', 'title', 'start_date', 'status', 'photo'];
+  const crmFields = (u) => ({ name: u.name, country: u.country, department: u.department, crm_team: u.crm_team || null, title: u.title || null, start_date: u.start_date, status: u.active ? 'active' : 'left', photo: u.photo });
+  let teamSyncedAt = 0;
+  async function syncTeamFromCrm(force) {
+    if (!force && Date.now() - teamSyncedAt < 10 * 60000) return 0;
+    teamSyncedAt = Date.now();
+    const linked = await dbAll('SELECT * FROM bk_team WHERE crm_user_id IS NOT NULL'); if (!linked.length) return 0;
+    let staff; try { staff = await crmStaff(force); } catch (e) { console.error('BK team sync:', e.message); return 0; }
+    const byId = {}; staff.forEach(u => { byId[u.user_id] = u; });
+    let n = 0;
+    for (const m of linked) {
+      const u = byId[m.crm_user_id]; if (!u) continue;
+      const f = crmFields(u), ch = CRM_TEAM_F.filter(k => (f[k] || null) !== (m[k] || null)); if (!ch.length) continue;
+      await dbRun('UPDATE bk_team SET ' + ch.map(k => k + ' = ?').join(', ') + ', updated_at = ? WHERE id = ?', ch.map(k => f[k]).concat([nowIso(), m.id]));
+      if (ch.indexOf('name') > -1 || ch.indexOf('department') > -1) await ensureTeamVendor(Object.assign({}, m, f), 'crm-sync');
+      n++;
+    }
+    return n;
+  }
+  app.get('/api/bookkeeping/team/crm', ...guard, async (req, res) => {
+    try {
+      const q = String(req.query.q || '').trim().toLowerCase();
+      const have = await dbAll('SELECT id, crm_user_id, name FROM bk_team');
+      const linkedBy = {}; have.forEach(m => { if (m.crm_user_id) linkedBy[m.crm_user_id] = m.id; });
+      const byName = {}; have.forEach(m => { if (!m.crm_user_id) byName[String(m.name || '').toLowerCase()] = m.id; });
+      const staff = (await crmStaff(req.query.fresh === '1')).filter(u => !q || (u.name + ' ' + u.title + ' ' + u.crm_team).toLowerCase().indexOf(q) > -1)
+        .map(u => Object.assign({}, u, { linked: linkedBy[u.user_id] || null, same_name: byName[u.name.toLowerCase()] || null, dept: DEPTS[u.department] || u.department, country_name: COUNTRIES[u.country] || '' }));
+      staff.sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name));
+      res.json({ ok: true, staff });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  // Add a CRM person to the overseas team (or link them to a same-name member already typed in)
+  app.post('/api/bookkeeping/team/from-crm', ...guard, async (req, res) => {
+    try {
+      const uid = parseInt(req.body.user_id); if (!uid) return res.json({ ok: false, error: 'Which person?' });
+      const u = (await crmStaff()).find(x => x.user_id === uid); if (!u) return res.json({ ok: false, error: 'Not a CRM staff member' });
+      const already = await dbGet('SELECT id FROM bk_team WHERE crm_user_id = ?', [uid]); if (already) return res.json({ ok: true, id: already.id, existed: true });
+      const f = crmFields(u), keys = Object.keys(f);
+      const same = await dbGet('SELECT * FROM bk_team WHERE crm_user_id IS NULL AND lower(name) = lower(?)', [u.name]);
+      let id;
+      if (same) { id = same.id; await dbRun('UPDATE bk_team SET crm_user_id = ?, ' + keys.map(k => k + ' = ?').join(', ') + ', updated_at = ? WHERE id = ?', [uid].concat(keys.map(k => f[k]), [nowIso(), id])); }
+      else { const r = await dbRun('INSERT INTO bk_team (crm_user_id, ' + keys.join(', ') + ', created_by, updated_at) VALUES (?, ' + keys.map(() => '?').join(', ') + ', ?, ?)', [uid].concat(keys.map(k => f[k]), [userId(req), nowIso()])); id = r.lastID; }
+      const m = await dbGet('SELECT * FROM bk_team WHERE id = ?', [id]);
+      const vid = await ensureTeamVendor(m, userId(req)); if (vid !== m.vendor_id) await dbRun('UPDATE bk_team SET vendor_id = ? WHERE id = ?', [vid, id]);
+      await audit(userId(req), 'team.add', id, { from: 'crm', user_id: uid, name: u.name, linked_existing: !!same });
+      res.json({ ok: true, id, linked_existing: !!same });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
   app.get('/api/bookkeeping/team', ...guard, async (req, res) => {
     try {
+      try { await syncTeamFromCrm(req.query.fresh === '1'); } catch (e) {}
       const open = await dbGet("SELECT COUNT(*) n, SUM(amount) total FROM bk_transactions WHERE status IN ('new', 'pending') AND team_id IS NULL AND amount > 0 AND (name LIKE '%wise%' OR merchant LIKE '%wise%')");
       res.json({ ok: true, members: await teamRows(), depts: DEPTS, countries: COUNTRIES, open_wise: { n: open.n || 0, total: Math.round((open.total || 0) * 100) / 100 } });
     } catch (e) { res.json({ ok: false, error: e.message }); }
@@ -3048,7 +3122,8 @@ module.exports = function mountBookkeeping(app, deps) {
   app.post('/api/bookkeeping/team/:id', ...guard, async (req, res) => {
     try {
       const id = parseInt(req.params.id), m = await dbGet('SELECT * FROM bk_team WHERE id = ?', [id]); if (!m) return res.json({ ok: false, error: 'No such team member' });
-      const o = teamBody(req.body || {}); const keys = Object.keys(o); if (!keys.length) return res.json({ ok: false, error: 'Nothing to change' });
+      const o = teamBody(req.body || {}); if (m.crm_user_id) CRM_TEAM_F.forEach(k => { delete o[k]; });   // 1.19.148: the CRM owns these
+      const keys = Object.keys(o); if (!keys.length) return res.json({ ok: false, error: 'Nothing to change' });
       if (o.category && !chartOf(await settings()).some(c => c.name === o.category)) return res.json({ ok: false, error: 'Not a category in the chart of accounts: ' + o.category });
       await dbRun('UPDATE bk_team SET ' + keys.map(k => k + ' = ?').join(', ') + ', updated_at = ? WHERE id = ?', keys.map(k => o[k]).concat([nowIso(), id]));
       const after = Object.assign({}, m, o); const vid = await ensureTeamVendor(after, userId(req)); if (vid !== m.vendor_id) await dbRun('UPDATE bk_team SET vendor_id = ? WHERE id = ?', [vid, id]);
