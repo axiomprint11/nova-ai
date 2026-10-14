@@ -351,8 +351,7 @@ non-placeholder team on it, and any of the nine designers already on it. **Desig
 ids `TEAM` (Ani Muradyan 437, Alex Vradiy 277, George Abrahamyan 365, Max Mazmanyan 326, Edgar Papoyan 329, Fernando Lira 416,
 Rodrigo Garcia 417, Jelly Ace Pamatin 219, Greg Belarmino 232; faces from `user.memberimage` via `staffPhoto()`, re-synced every
 10 min) with the Nova-side fields **skills** (strong sides, comma list), `tier2`, `max_active` (25), `active`, notes (Edit on the
-card, `POST /api/designer/designers/:id`); each card shows the live load — jobs in the prepress stage assigned to them in the CRM
-(invoiced, not canceled), approved in 30 days, picks made here. **Match** (`POST /api/designer/match {estimate_id, tier}`) scores
+card, `POST /api/designer/designers/:id`); each row shows the live load — **active jobs** = what the CRM board counts: jobs in the prepress stage assigned to them (invoiced, not canceled) whose `prepress_status` is on the designer's desk (`proof_checking`, `rejected_edits`, `insta_proof_manual`; 1.20.16 — Alex's board showed 5 while every prepress-stage job counted 28), **waiting on client** = `proof_sent` / `rejected_reupload` / `waiting_files` / `upload_files` shown apart, approved in 30 days, picks made here. **Match** (`POST /api/designer/match {estimate_id, tier}`) scores
 every active designer from 50: history (same product in 180 days 5/job up to 30, else same category 2/job up to 15), strong sides
 found in product / category / proof type / job name (12 each, up to 36), Tier 2 job (+15 marked / −20 not), load (3 per job above
 the lightest designer, up to 30; −40 at max), fairness (−4 per Nova pick in the last 2 h); the top 4 with the reasons, the first

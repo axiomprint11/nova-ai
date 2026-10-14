@@ -24,9 +24,9 @@
   async function loadTeam() {
     const j = await api('/api/designer/designers'); if (!j.ok) { $('daTeam').innerHTML = '<div class="da-muted">' + esc(j.error) + '</div>'; return; }
     team = j.designers; $('daTeamN').textContent = team.filter(d => d.active).length;
-    $('daTeam').innerHTML = '<table class="da-tt"><thead><tr><th>Designer</th><th>Active jobs</th><th>Approved · 30 d</th><th>Picked here</th><th>Tier 2</th><th>Max active</th><th>Strong sides</th><th>Notes</th><th></th></tr></thead><tbody>' +
+    $('daTeam').innerHTML = '<table class="da-tt"><thead><tr><th>Designer</th><th>Active jobs</th><th>Waiting on client</th><th>Approved · 30 d</th><th>Picked here</th><th>Tier 2</th><th>Max active</th><th>Strong sides</th><th>Notes</th><th></th></tr></thead><tbody>' +
       team.map(d => '<tr data-d="' + d.user_id + '"' + (d.active ? '' : ' class="off"') + '><td><div class="da-who">' + av(d) + '<div><b>' + esc(d.name + ' ' + (d.last_name || '')) + '</b><div class="t">' + esc(d.title || 'Designer') + (d.active ? '' : ' · not taking jobs') + '</div></div></div></td>' +
-        '<td><span class="da-num">' + d.active_jobs + '</span></td><td><span class="da-num">' + d.done_30 + '</span></td><td><span class="da-num">' + (d.nova_assigned || 0) + '</span></td>' +
+        '<td><span class="da-num" title="Proof Checking / edits on the desk — what the CRM board counts">' + d.active_jobs + '</span></td><td><span class="da-num" title="Proof Sent / waiting for files">' + d.waiting_client + '</span></td><td><span class="da-num">' + d.done_30 + '</span></td><td><span class="da-num">' + (d.nova_assigned || 0) + '</span></td>' +
         '<td>' + (d.tier2 ? '<span class="da-sk"><span class="t2">Tier 2</span></span>' : '<span class="da-muted">—</span>') + '</td><td>' + (d.max_active || 25) + '</td>' +
         '<td><div class="da-sk">' + (d.skill_list.length ? d.skill_list.map(s => '<span>' + esc(s) + '</span>').join('') : '<span style="background:#fff7ed;color:#c2410c">none yet</span>') + '</div></td>' +
         '<td class="da-muted" style="max-width:220px">' + esc(d.notes || '') + '</td><td><button class="bk-btn sm" data-edit="' + d.user_id + '">Edit</button></td></tr>').join('') + '</tbody></table>';
@@ -36,7 +36,7 @@
     const d = team.find(x => x.user_id === id); const tr = $('daTeam').querySelector('tr[data-d="' + id + '"]'); if (!d || !tr) return;
     const old = tr.nextElementSibling; if (old && old.classList.contains('da-formrow')) { old.remove(); return; }
     const fr = document.createElement('tr'); fr.className = 'da-formrow';
-    fr.innerHTML = '<td colspan="9"><div class="da-form" style="max-width:760px"><label>Strong sides — comma separated; matched against the product, its category, the proof type and the job name (e.g. packaging, die cut, large format, business cards, labels, booklets, vehicle wrap, variable data)</label><textarea rows="2" class="sk">' + esc(d.skills) + '</textarea>' +
+    fr.innerHTML = '<td colspan="10"><div class="da-form" style="max-width:760px"><label>Strong sides — comma separated; matched against the product, its category, the proof type and the job name (e.g. packaging, die cut, large format, business cards, labels, booklets, vehicle wrap, variable data)</label><textarea rows="2" class="sk">' + esc(d.skills) + '</textarea>' +
       '<div class="row"><label><input type="checkbox" class="t2"' + (d.tier2 ? ' checked' : '') + '> Tier 2 designer</label><label>max active <input type="number" class="mx" min="1" value="' + (d.max_active || 25) + '"></label><label><input type="checkbox" class="ac"' + (d.active ? ' checked' : '') + '> takes jobs</label></div>' +
       '<label>Notes</label><input class="nt" value="' + esc(d.notes || '') + '">' +
       '<div class="row"><button class="bk-btn pri sm sv">Save</button><button class="bk-btn sm cx">Cancel</button></div></div></td>';

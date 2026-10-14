@@ -40,13 +40,15 @@ module.exports = function mountDesignerAi(app, deps) {
     if (Date.now() - teamAt > 10 * 60000) { try { await syncTeam(); teamAt = Date.now(); } catch (e) { errlog('team sync', e.message); } }
     const rows = await dbAll('SELECT * FROM da_designers ORDER BY name');
     // the live load: jobs in the prepress stage assigned to each designer (not canceled), and what they finished in 30 days
-    let load = {}, done = {};
+    let load = {}, waiting = {}, done = {};
     try {
-      (await runQuery("SELECT m.user_id, COUNT(DISTINCT e.id) n FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id JOIN estimate_stage s ON s.estimate_id = e.id WHERE m.user_id IN (" + TEAM.join(',') + ") AND s.estimate_stage = 'prepress' AND s.estimate_substage <> 'canceled' AND e.estimate_invoiceid > 0 GROUP BY m.user_id")).forEach(r => { load[r.user_id] = Number(r.n); });
+      // 1.20.16: "active" is what the CRM board counts — proof_checking (and a rejected-edits round) on the designer's desk;
+      // proof_sent / rejected_reupload sit with the customer and are shown apart as "waiting on client"
+      (await runQuery("SELECT m.user_id, SUM(e.prepress_status IN ('proof_checking', 'rejected_edits', 'insta_proof_manual')) n, SUM(e.prepress_status IN ('proof_sent', 'rejected_reupload', 'waiting_files', 'upload_files')) w FROM (SELECT DISTINCT m0.user_id, m0.estimate_id FROM estimate_team_members m0 WHERE m0.user_id IN (" + TEAM.join(',') + ")) m JOIN estimate e ON e.id = m.estimate_id JOIN estimate_stage s ON s.estimate_id = e.id WHERE s.estimate_stage = 'prepress' AND s.estimate_substage <> 'canceled' AND e.estimate_invoiceid > 0 GROUP BY m.user_id")).forEach(r => { load[r.user_id] = Number(r.n) || 0; waiting[r.user_id] = Number(r.w) || 0; });
       (await runQuery("SELECT m.user_id, COUNT(DISTINCT e.id) n FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id WHERE m.user_id IN (" + TEAM.join(',') + ") AND e.prepress_status = 'approved' AND e.created >= DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY m.user_id")).forEach(r => { done[r.user_id] = Number(r.n); });
     } catch (e) { errlog('load', e.message); }
     const nova = {}; (await dbAll("SELECT user_id, COUNT(*) n FROM da_assign WHERE status = 'assigned' AND at >= datetime('now', '-14 days') GROUP BY user_id")).forEach(r => { nova[r.user_id] = r.n; });
-    return rows.map(r => Object.assign({}, r, { skills: r.skills || '', skill_list: skillList(r.skills), active_jobs: load[r.user_id] || 0, done_30: done[r.user_id] || 0, nova_assigned: nova[r.user_id] || 0 }));
+    return rows.map(r => Object.assign({}, r, { skills: r.skills || '', skill_list: skillList(r.skills), active_jobs: load[r.user_id] || 0, waiting_client: waiting[r.user_id] || 0, done_30: done[r.user_id] || 0, nova_assigned: nova[r.user_id] || 0 }));
   }
   const skillList = (s) => String(s || '').split(/[,;\n]+/).map(x => x.trim().toLowerCase()).filter(Boolean);
 
