@@ -227,6 +227,10 @@ module.exports = function mountAr(ctx) {
     try { let pl = []; try { pl = people ? await people.list() : []; } catch (e) {} res.json({ ok: true, me: userId(req), people: pl, open: (await dbGet("SELECT COUNT(*) n FROM bk_ar WHERE status = 'open'")).n }); }
     catch (e) { res.json({ ok: false, error: e.message }); }
   });
+  // 1.20.14: the left menu's badge — the open queue (synced first, so a fresh customer payment counts at once)
+  app.get('/api/bookkeeping/ar/unread-count', ...guard, async (req, res) => {
+    try { await syncQueue(); res.json({ ok: true, unread: (await dbGet("SELECT COUNT(*) n FROM bk_ar WHERE status = 'open'")).n }); } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
   // GET /api/bookkeeping/ar?status=open|done&from&to&min&max&q
   app.get('/api/bookkeeping/ar', ...guard, async (req, res) => {
     try {

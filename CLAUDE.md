@@ -323,7 +323,7 @@ sets `AR_ONLY` from the path and strips the page to the one tab — no other tab
 reads `GET /api/bookkeeping/ar/me` (me, people, open count) instead of the full overview; `/bookkeeping?tab=ar` redirects
 there). Access is the **AR** role: `members.is_ar` (Admin → Users, Roles column beside Bookkeeper; `POST /api/admin/members/set-ar`),
 `isAr(req)` = bookkeeper OR ticked AR (`arUsers`, refreshed with `refreshAccess()`), `arGuard` on every `/api/bookkeeping/ar*`
-route, `/api/me` returns `ar`, nova-nav shows the item for `who: 'ar'`. Inside the page: `TABS.ar`, bar `#subAr`, sub-tabs
+route, `/api/me` returns `ar`, nova-nav shows the item for `who: 'ar'` with the open-queue count as its badge (`GET /api/bookkeeping/ar/unread-count`, 1.20.14). Inside the page: `TABS.ar`, bar `#subAr`, sub-tabs
 **Unmatched** (`open`) / **Matched** (`done` = matched + skipped, the history; since 1.20.5 its last column is **Matched** — the LA day + time of the match, who, Undo — with its own date filter, **last 30 days by default** (`AF.mperiod`, `mfrom` / `mto` on `bk_ar.matched_at`, LA days turned into UTC bounds by `laBound()`), so the history never loads everything; 1.20.6: the matched invoices are **snapshotted** into `bk_ar.inv_json` at match time (`snapshotInvoices()`: the warm cache, else one `SEL_ONE` read per id — never the 15k-invoice load), the Matched list reads only that (older rows are backfilled from the warm cache), its Matched-to cell is three lines — tag + INV / company / contact person — and the Payer column is 30% wide). Every categorized deposit
 (`amount < 0`, not a transfer / refund) whose category name says customer / client payment(s) (`isArCategory`, name based)
 is put in SQLite `bk_ar` by `syncQueue()` (on every overview and AR load; a line re-filed elsewhere goes `void`, back to
@@ -336,6 +336,29 @@ customer, person, PO, email → click = Match & Pay / Pair; since 1.20.4 a full 
 note}`, `/ar/:id/skip {note}`, `/ar/:id/undo`; audit `ar.match / ar.skip / ar.undo`. Tiles: $ and count to match, open
 invoices in the CRM (+ refresh), a red tile when the CRM is unreachable. **Nothing is written to the production DB** — the
 match lives in `bk_ar`; the invoice is still marked paid in the CRM by the AR team. The badge `#nAr` = `counts.ar_open` (overview) or `open` (`/ar/me`).
+
+## Designer AI (1.20.14)
+
+`designer-ai.js` (`require('./designer-ai')(app, { db, auth, adminOnly, serveVersionedHtml, runQuery })` in server.js, before the SPA
+catch-all) mounts **Designer AI** at `/designer-ai` (`public/designer-ai.html/.js`, left-menu item `designer`, admins only) with three
+top tabs — **Template Designer** and **Online Designer** are "Soon" placeholders, **AutoAssign Jobs** works. It reads the CRM
+read-only: the jobs parked on the placeholder users **PrePress 1 Tier 1** (`user.id` 239) / **PrePress Tier 2** (331) in
+`estimate_team_members`, in `estimate_stage.estimate_stage = 'prepress'` (not canceled), invoiced unless "include quotes" is
+ticked (`GET /api/designer/queue?tier=1|2&all=1`): E-number, name, customer, product (+ `product.image`, `productcategory.title`),
+created / complete_by, **proof type** = the newest `estimate_design_details.design_type` that says Proof ("Manual Proof Tier1",
+"Insta Proof", "Manual Proof Tier2", "Insta Proof Manual Tier1"…; else the substage), `prepress_status` (PROOF_LABEL), the
+non-placeholder team on it, and any of the nine designers already on it. **Designers** = SQLite `da_designers` seeded from the CRM
+ids `TEAM` (Ani Muradyan 437, Alex Vradiy 277, George Abrahamyan 365, Max Mazmanyan 326, Edgar Papoyan 329, Fernando Lira 416,
+Rodrigo Garcia 417, Jelly Ace Pamatin 219, Greg Belarmino 232; faces from `user.memberimage` via `staffPhoto()`, re-synced every
+10 min) with the Nova-side fields **skills** (strong sides, comma list), `tier2`, `max_active` (25), `active`, notes (Edit on the
+card, `POST /api/designer/designers/:id`); each card shows the live load — jobs in the prepress stage assigned to them in the CRM
+(invoiced, not canceled), approved in 30 days, picks made here. **Match** (`POST /api/designer/match {estimate_id, tier}`) scores
+every active designer from 50: history (same product in 180 days 5/job up to 30, else same category 2/job up to 15), strong sides
+found in product / category / proof type / job name (12 each, up to 36), Tier 2 job (+15 marked / −20 not), load (3 per job above
+the lightest designer, up to 30; −40 at max), fairness (−4 per Nova pick in the last 2 h); the top 4 with the reasons, the first
+green. **Assign** writes `da_assign` only (status assigned / replaced / cleared; `POST /api/designer/assign`, `/unassign`,
+`GET /api/designer/history`) — **nothing is written to the CRM**; the row shows "picked in Nova … not in the CRM yet" until the web
+team provides an assignment endpoint.
 
 ## Shipping rates & draft quotes (Axiom API, 1.19.142)
 

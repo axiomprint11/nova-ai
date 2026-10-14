@@ -24,6 +24,7 @@
     templates: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/>',
     books: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M7 15h4"/><path d="M15 15h2"/>',
     ar: '<path d="M12 2v20"/><path d="M17 6.5c0-1.9-2.2-3-5-3s-5 1.1-5 3 2.2 3 5 3 5 1.1 5 3-2.2 3-5 3-5-1.1-5-3"/>',
+    designer: '<path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/>',
     chatbot: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/>'
   };
   // [key, label, href, who] — who: 'all' (everyone), 'admin', 'knowledge' (members with Domain Knowledge access),
@@ -33,7 +34,8 @@
      ['client', 'Client ChatBot', '/client-bot', 'admin'],
      ['talk', 'TalkAi', '/talk-ai', 'admin'],
      ['books', 'Bookkeeping AI', '/bookkeeping', 'bookkeeper'],
-     ['ar', 'Nova AR', '/nova-ar', 'ar']],
+     ['ar', 'Nova AR', '/nova-ar', 'ar'],
+     ['designer', 'Designer AI', '/designer-ai', 'admin']],
     [['users', 'Users', '/admin?tab=users', 'admin'],
      ['knowledge', 'Domain Knowledge', '/admin?tab=knowledge', 'knowledge'],
      ['connections', 'Connectors', '/admin?tab=connections', 'admin']],
@@ -44,7 +46,8 @@
   const UNREAD = {
     history: ['/api/crm/unread-count', 'conversations you have not opened'],
     client: ['/api/admin/client-bot/unread-count', 'unread client conversations'],
-    talk: ['/api/admin/talk/unread-count', 'unread calls']
+    talk: ['/api/admin/talk/unread-count', 'unread calls'],
+    ar: ['/api/bookkeeping/ar/unread-count', 'customer payments waiting to be matched']   // 1.20.14
   };
   // Pages that are their own tab of admin.html (switch in place there, instead of reloading).
   const ADMIN_TABS = ['history', 'users', 'knowledge', 'connections', 'pricing'];
@@ -207,7 +210,7 @@ body.nn-shell { flex-direction: row !important; }
   async function refresh() {
     const t = token();
     if (!t || !me) return;
-    const keys = Object.keys(UNREAD).filter(k => k === 'history' ? me.is_admin : allowed('admin'));
+    const keys = Object.keys(UNREAD).filter(k => k === 'history' ? me.is_admin : k === 'ar' ? allowed('ar') : allowed('admin'));
     await Promise.all(keys.map(async k => {
       try {
         const r = await fetch(UNREAD[k][0], { headers: { 'Authorization': 'Bearer ' + t } });
