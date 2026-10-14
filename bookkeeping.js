@@ -774,21 +774,32 @@ module.exports = function mountBookkeeping(app, deps) {
     await audit(who || 'clock', 'loan.alert', null, { n: due.length }); return { sent: 1, n: due.length };
   }
   // The 30-day email: everything still waiting for the bank or not received, once a day, to alert_to.
+  // 1.20.12: the lines Nova filed by itself in the last `hours` (a rule, the overseas-team match, a loan sweep) — the daily snapshot
+  async function autoFiled(hours) {
+    const rows = await dbAll("SELECT t.id, t.date, t.amount, t.name, t.merchant, t.category, t.category_source, t.updated_at, v.name AS vendor_name, ru.kind AS rule_kind, ru.pattern AS rule_pattern FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_rules ru ON ru.id = t.rule_id WHERE t.status = 'categorized' AND t.category_source IN ('rule', 'team', 'loan') AND t.updated_at >= datetime('now', ?) ORDER BY t.updated_at DESC", ['-' + (hours || 24) + ' hours']);
+    const line = (r) => '• ' + String(r.date || '').slice(5).replace('-', '/') + ' · ' + (r.vendor_name || r.merchant || r.name || '?').slice(0, 40) + ' — ' + (r.amount < 0 ? '+' : '') + usd(Math.abs(r.amount)) + ' → ' + r.category + ' (' + (r.category_source === 'rule' ? 'rule: ' + (r.rule_kind === 'vendor' ? 'vendor is ' : 'contains ') + String(r.rule_pattern || '').slice(0, 28) : r.category_source === 'team' ? 'overseas team' : 'loan payment') + ')';
+    const spent = rows.filter(r => r.amount > 0).reduce((a, r) => a + r.amount, 0), received = rows.filter(r => r.amount < 0).reduce((a, r) => a - r.amount, 0);
+    return { rows, spent, received, lines: rows.map(line), head: 'AUTO-CATEGORIZED BY NOVA (' + rows.length + ' line' + (rows.length === 1 ? '' : 's') + (spent ? ' · ' + usd(spent) + ' out' : '') + (received ? ' · ' + usd(received) + ' in' : '') + ')' };
+  }
   async function alertOverdue(who) {
     const s = await settings();
     try { await loanAlerts(who); } catch (e) { errlog('loan alerts', e.message); }
     const rows = (await purchaseRows('all', '')).filter(r => r.late);
-    if (!rows.length || !sendMail) return { sent: 0, n: 0 };
+    const auto = await autoFiled(24);   // 1.20.12: the daily email also carries what Nova filed by itself since yesterday
+    if ((!rows.length && !auto.rows.length) || !sendMail) return { sent: 0, n: 0 };
     const line = (r) => '• ' + (r.vendor || '?') + ' — ' + (r.amount != null ? '$' + Number(r.amount).toFixed(2) : 'no amount') + (r.order_no ? ' · #' + r.order_no : '') + ' · ' + r.date + ' · ' + r.status + ' for ' + r.days + ' days';
     const waiting = rows.filter(r => r.status === 'awaiting bank'), notrec = rows.filter(r => r.status !== 'awaiting bank');
-    const text = 'BookkeeperAI — purchases waiting more than ' + s.waiting_days + ' / ' + s.notreceived_days + ' days\n\n' +
+    const text = 'BookkeeperAI — daily\n\n' +
+      (auto.rows.length ? auto.head + '\n' + auto.lines.slice(0, 40).join('\n') + (auto.rows.length > 40 ? '\n• …and ' + (auto.rows.length - 40) + ' more' : '') + '\nSee them: ' + NOVA_URL + '/bookkeeping?tab=bank&sub=auto\n\n' : '') +
+      (rows.length ? 'Purchases waiting more than ' + s.waiting_days + ' / ' + s.notreceived_days + ' days\n' : '') +
       (waiting.length ? 'WAITING FOR THE BANK (' + waiting.length + ')\n' + waiting.map(line).join('\n') + '\n\n' : '') +
       (notrec.length ? 'NOT RECEIVED (' + notrec.length + ')\n' + notrec.map(line).join('\n') + '\n\n' : '') +
-      'Open Purchases: ' + NOVA_URL + '/bookkeeping?tab=purchases\nThis email goes out once a day while anything is overdue. Change the days or the address under Bookkeeping → Settings → Alerts.';
-    try { await sendMail({ to: s.alert_to, subject: 'BookkeeperAI: ' + rows.length + ' purchase' + (rows.length === 1 ? '' : 's') + ' overdue', text }); } catch (e) { errlog('alert mail', e.message); return { sent: 0, n: rows.length, error: e.message }; }
+      (rows.length ? 'Open Purchases: ' + NOVA_URL + '/bookkeeping?tab=purchases\n' : '') + 'This email goes out once a day. Change the time or the address under Bookkeeping → Settings → Alerts.';
+    const subject = 'BookkeeperAI: ' + [auto.rows.length ? auto.rows.length + ' auto-categorized' : '', rows.length ? rows.length + ' purchase' + (rows.length === 1 ? '' : 's') + ' overdue' : ''].filter(Boolean).join(' · ');
+    try { await sendMail({ to: s.alert_to, subject, text }); } catch (e) { errlog('alert mail', e.message); return { sent: 0, n: rows.length, error: e.message }; }
     for (const r of rows) await dbRun("UPDATE bk_purchases SET alerted_at = datetime('now') WHERE id = ?", [r.id]);
-    await audit(who || 'clock', 'purchase.alert', null, { n: rows.length, to: s.alert_to });
-    return { sent: 1, n: rows.length };
+    await audit(who || 'clock', 'purchase.alert', null, { n: rows.length, auto: auto.rows.length, to: s.alert_to });
+    return { sent: 1, n: rows.length, auto: auto.rows.length };
   }
 
   // ---------------------------------------------------------------- the accounting inbox (Gmail)
@@ -1739,6 +1750,11 @@ module.exports = function mountBookkeeping(app, deps) {
     if (bal.length) lines.push('Cash: ' + bal.filter(b => !b.error).map(b => b.name + (b.mask ? ' ••' + b.mask : '') + ' ' + usd(b.available != null ? b.available : b.current)).join(' · '));
     if (runSummary) lines.push('Overnight: ' + runSummary);
     lines.push('');
+    const auto = await autoFiled(24);   // 1.20.12
+    lines.push('*Auto-categorized by Nova (' + auto.rows.length + ')*' + (auto.rows.length ? (auto.spent ? ' · ' + usd(auto.spent) + ' out' : '') + (auto.received ? ' · ' + usd(auto.received) + ' in' : '') : ' — none since yesterday'));
+    auto.lines.slice(0, 20).forEach(l => lines.push(l));
+    if (auto.rows.length > 20) lines.push('• …and ' + (auto.rows.length - 20) + ' more under Bank feed → Auto');
+    lines.push('');
     lines.push('*Questions (' + qs.length + ')*' + (qs.length ? '' : ' — none'));
     qs.slice(0, 15).forEach(p => lines.push('• Q' + p.question.id + ' · ' + p.question.question + '  _(' + p.title + ')_'));
     lines.push('');
@@ -2149,6 +2165,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (st === 'pending') { where.push("t.status IN ('new', 'pending') AND t.created_at < ? AND t.date >= date('now', '-90 days')"); p.push(cut); }
     else if (st === 'old') where.push("t.status IN ('new', 'pending') AND t.date < date('now', '-90 days')");
     else if (st === 'new') { where.push("t.status IN ('new', 'pending') AND t.created_at >= ?"); p.push(cut); }   // 1.19.115: Today = synced today and still open; a categorized line moves to Categorized
+    else if (st === 'auto') where.push("t.status = 'categorized' AND t.category_source IN ('rule', 'team', 'loan')");   // 1.20.12: Auto = filed by the system with no click (a rule, the overseas-team match, a loan sweep)
     else if (st) { where.push('t.status = ?'); p.push(st); }
     if (q) { where.push('(t.name LIKE ? OR t.merchant LIKE ? OR t.category LIKE ? OR v.name LIKE ?)'); p.push('%' + q + '%', '%' + q + '%', '%' + q + '%', '%' + q + '%'); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(g('from'))) { where.push('t.date >= ?'); p.push(g('from')); }
@@ -2173,11 +2190,12 @@ module.exports = function mountBookkeeping(app, deps) {
     by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND created_at >= ?", [cut])).n;
     by_status.new_open = by_status.new;
     by_status.old = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND date < date('now', '-90 days')")).n;
+    by_status.auto = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status = 'categorized' AND category_source IN ('rule', 'team', 'loan') AND status NOT IN ('removed', 'excluded')")).n;   // 1.20.12
     by_status.pending = (by_status.new_status || 0) + (by_status.pending || 0) - by_status.new_open - by_status.old;   // the open lines older than a day, within 90 days
     const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id LEFT JOIN bk_transactions tr ON tr.id = t.transfer_of LEFT JOIN bk_accounts tra ON tra.item_id = tr.item_id LEFT JOIN bk_loans lo ON lo.id = t.loan_id LEFT JOIN bk_proposals pr ON pr.id = t.proposal_id LEFT JOIN bk_transactions ro ON ro.id = t.refund_of LEFT JOIN bk_transactions rb ON rb.refund_of = t.id WHERE ' + where.join(' AND ');
     const rows = await dbAll('SELECT t.id, t.txn_id, t.team_id, t.account_name, t.account_ref, t.date, t.created_at, t.name, t.raw, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, ' +
       't.refund_of, t.ar_notified_at, t.ar_notified_by, t.updated_at, t.loan_id, lo.name AS loan_name, (t.check_image IS NOT NULL) AS has_check_image, t.transfer_of, tr.date AS transfer_date, tr.amount AS transfer_amount, tr.account_name AS transfer_account, tr.name AS transfer_name, tra.institution AS transfer_institution, ro.date AS refund_of_date, ro.amount AS refund_of_amount, ro.merchant AS refund_of_merchant, ro.name AS refund_of_name, ro.category AS refund_of_category, rb.id AS refunded_by, rb.date AS refunded_by_date, rb.amount AS refunded_by_amount, ' +
-      'v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo, ba.institution, ba.logo AS bank_logo, ba.color AS bank_color, ba.accounts AS bank_accounts, pr.payload AS ai_payload, pr.confidence AS ai_conf, pr.reason AS ai_reason, pr.status AS ai_status' + W + ' ORDER BY ' + (st === 'categorized' ? 'COALESCE(t.updated_at, t.created_at) DESC, t.id DESC' : 't.date DESC, t.id DESC') + ' LIMIT 500', p)   // 1.19.90: Categorized = most recent work first;
+      'v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo, ba.institution, ba.logo AS bank_logo, ba.color AS bank_color, ba.accounts AS bank_accounts, pr.payload AS ai_payload, pr.confidence AS ai_conf, pr.reason AS ai_reason, pr.status AS ai_status' + W + ' ORDER BY ' + (st === 'categorized' || st === 'auto' ? 'COALESCE(t.updated_at, t.created_at) DESC, t.id DESC' : 't.date DESC, t.id DESC') + ' LIMIT 500', p)   // 1.19.90: Categorized = most recent work first;
     // the account's last digits ("Wells Fargo - 6595") and the near-match vendor for rows that never got one
     const VSEL = 'SELECT t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, v.name AS vendor_name, v.source AS vendor_source, v.photo AS vendor_photo, v.kind AS vendor_kind, sv.name AS suggest_name, sv.photo AS suggest_photo FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id WHERE t.id = ?';
     let backfilled = 0;
@@ -2276,7 +2294,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (rows.some(r => !r.orig_desc)) backfillOriginalDesc();
     const out = { ok: true, by_status, matched, transactions: rows, categorizing: catBusy, new_since: cut };   // 1.19.108: the page's Status tags use the same cut-off (midnight LA)
     if ((by_status.new_status || 0) > 0 && !catBusy) { categorizeBacklog(userId(req)); out.categorizing = true; }
-    if (st === 'categorized') {
+    if (st === 'categorized' || st === 'auto') {
       const parentOfName = {}; chartOf(await settings()).forEach(c => { if (c.parent) parentOfName[c.name] = c.parent; });
       const tot = await dbGet('SELECT COUNT(*) n, SUM(CASE WHEN t.transfer_of IS NOT NULL THEN 0 WHEN t.amount > 0 THEN t.amount WHEN t.refund_of IS NOT NULL THEN t.amount ELSE 0 END) spent, SUM(CASE WHEN t.amount < 0 AND t.refund_of IS NULL AND t.transfer_of IS NULL THEN -t.amount ELSE 0 END) received' + W, p);
       const byCat = await dbAll('SELECT t.category, SUM(CASE WHEN t.transfer_of IS NOT NULL THEN 0 WHEN t.amount > 0 THEN t.amount WHEN t.refund_of IS NOT NULL THEN t.amount ELSE 0 END) spent, SUM(CASE WHEN t.amount < 0 AND t.refund_of IS NULL AND t.transfer_of IS NULL THEN -t.amount ELSE 0 END) received, COUNT(*) n' + W + ' GROUP BY t.category ORDER BY spent DESC', p);
@@ -2285,7 +2303,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const byVendor = await dbAll('SELECT COALESCE(v.name, t.merchant, t.name) vendor, t.vendor_id, SUM(CASE WHEN t.amount > 0 AND t.transfer_of IS NULL THEN t.amount ELSE 0 END) spent, COUNT(*) n' + W + ' GROUP BY COALESCE(v.name, t.merchant, t.name), t.vendor_id ORDER BY spent DESC LIMIT 12', p);
       out.totals = { count: tot.n, spent: tot.spent || 0, received: tot.received || 0, by_type: Object.values(byType).sort((a, b) => b.spent - a.spent), by_category: byCat, by_month: byMonth, by_vendor: byVendor };
     }
-    if (st === 'categorized' || req.query.lists) {
+    if (st === 'categorized' || st === 'auto' || req.query.lists) {
       // 1.19.49: the Account filter shows "Wells Fargo - 6595", the Vendor filter every vendor seen on a bank line
       const accs = await dbAll("SELECT DISTINCT t.account_name, t.account_ref, ba.institution, ba.accounts, ba.excluded, ba.logo, ba.color FROM bk_transactions t JOIN bk_accounts ba ON ba.item_id = t.item_id WHERE t.account_name IS NOT NULL ORDER BY 1");
       out.accounts = accs.filter(r => { let x = []; try { x = JSON.parse(r.excluded || '[]'); } catch (e) {} return x.indexOf(r.account_ref) < 0; })
