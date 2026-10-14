@@ -69,6 +69,8 @@ module.exports = function mountAr(ctx) {
       customer_id: r.customer_id, company: r.company_name || '', person: [r.name, r.last_name].filter(Boolean).join(' '), email: r.email || '' };
     o.customer = o.company || o.person || (o.customer_id ? 'Customer #' + o.customer_id : 'No customer on the invoice');
     o._k = keyWords(o.company + ' ' + o.person + ' ' + (o.email || '').split('@')[0]);
+    o._c = compact(o.company); if (o._c.length < 5) o._c = '';   // 1.20.10: "4Over" against "4 OVER, LLC PAYMENTS…", "WILD WEST SOCIAL" against "Wild West Social House"
+
     return o;
   }
   const inv = { at: 0, rows: [], error: null }, sugCache = new Map();
@@ -87,12 +89,34 @@ module.exports = function mountAr(ctx) {
     const df = {}; const seen = {}; inv.rows.forEach(r => { if (seen[r.customer_id]) return; seen[r.customer_id] = 1; r._k.forEach(w => { df[w] = (df[w] || 0) + 1; }); });
     const common = new Set(Object.keys(df).filter(w => df[w] > 25));
     inv.rows.forEach(r => { r._k = r._k.filter(w => !common.has(w)); });
-    inv.byId = new Map(inv.rows.map(r => [r.id, r]));
+    inv.byId = new Map(inv.rows.map(r => [r.id, r])); inv.common = common; inv.extra = new Map();
     inv.at = Date.now(); return inv.rows;
+  }
+  // 1.20.10: invoices the 5-minute set does not hold but this deposit points at — read from the CRM on the spot and kept
+  // beside the set (`inv.extra`, so byId / snapshots find them): the invoice numbers typed in the memo, and every invoice
+  // whose total or balance equals the deposit to the cent, whatever its age or status (the amount is the first proof —
+  // INV125839 from May, paid in the CRM on 10/06, was outside the paid window and never suggested)
+  async function extraFor(t, invoices) {
+    if (!runQuery || !inv.byId) return [];
+    const amt = Math.round(Math.abs(Number(t.amount)) * 100) / 100;
+    const text = [t.name, t.merchant, t.orig_desc].filter(Boolean).join(' ');
+    const want = invoiceNos(text).filter(id => !inv.byId.has(id) && !inv.extra.has(id));
+    const add = (rows) => rows.map(shapeInvoice).filter(r => !inv.byId.has(r.id)).map(r => { r._k = r._k.filter(w => !inv.common.has(w)); inv.extra.set(r.id, r); inv.byId.set(r.id, r); return r; });
+    const out = [];
+    try {
+      if (want.length) out.push(...add(await runQuery(SEL_ONE + ' WHERE i.id IN (' + want.map(n => Math.floor(n)).join(',') + ')')));
+      if (amt >= 1) {
+        const a = amt.toFixed(2);
+        const hit = await runQuery(SEL_ONE + " WHERE i.invoice_type = 'invoice' AND i.payment_status IN ('unpaid', 'partial', 'paid') AND (i.invoice_total_payment = " + a + " OR ROUND(i.invoice_total_payment - i.invoice_total_payment_done, 2) = " + a + ") ORDER BY i.id DESC LIMIT 20");
+        out.push(...add(hit)); hit.forEach(r => { const x = inv.byId.get(r.id); if (x && out.indexOf(x) < 0 && invoices.indexOf(x) < 0) out.push(x); });
+      }
+    } catch (e) { errlog('ar extra', e.message); }
+    return out;
   }
 
   // words worth matching on, from either side
   const NOISE = new Set(['the', 'and', 'inc', 'llc', 'ltd', 'corp', 'co', 'company', 'deposit', 'mobile', 'online', 'transfer', 'from', 'ref', 'number', 'ach', 'credit', 'payment', 'payments', 'pmt', 'zelle', 'venmo', 'paypal', 'check', 'chk', 'wire', 'incoming', 'des', 'id', 'indn', 'ppd', 'ccd', 'web', 'trn', 'orig', 'name', 'axiom', 'axiomprint', 'print', 'printing', 'invoice', 'inv', 'bill', 'pay', 'to', 'of', 'for', 'business', 'account', 'merchant', 'merch', 'dep', 'stripe', 'square', 'intuit', 'quickbooks', 'bank', 'wells', 'fargo', 'chase', 'amex', 'usd']);
+  const compact = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '').replace(/(inc|llc|ltd|corp|co)$/, '');
   function keyWords(s) {
     return Array.from(new Set(String(s || '').toLowerCase().replace(/[^a-z0-9&]+/g, ' ').split(' ').filter(w => w.length >= 3 && !NOISE.has(w) && !/^\d+$/.test(w))));
   }
@@ -110,14 +134,14 @@ module.exports = function mountAr(ctx) {
   function suggest(t, invoices) {
     const amt = Math.round(Math.abs(Number(t.amount)) * 100) / 100;
     const text = [t.name, t.merchant, t.orig_desc].filter(Boolean).join(' ');
-    const words = keyWords(text), nos = invoiceNos(text);
+    const words = keyWords(text), nos = invoiceNos(text), ctext = compact(text);
     const paidOn = new Date(String(t.tx_date || t.date || '').slice(0, 10) + 'T12:00:00Z').getTime();
     const ageDays = (r) => { const c = r.created ? new Date(r.created).getTime() : NaN; return isNaN(c) || isNaN(paidOn) ? null : Math.round((paidOn - c) / DAY); };
     // 1.20.3: fresh = within 30 days (+25); 31–60 days 10 points less (+15); older nothing
     const datePts = (r) => { const d = ageDays(r); if (d == null) return [0, null]; if (d >= -3 && d <= 30) return [25, 'invoiced ' + d + ' day' + (d === 1 ? '' : 's') + ' before']; if (d > 30 && d <= 60) return [15, 'invoiced ' + d + ' days before']; return [0, d > 60 ? 'invoiced ' + d + ' days before' : 'invoiced after the payment']; };
     const out = [], keys = new Set();
     const push = (ids, score, why, cust) => { const key = ids.length > 1 ? ids.slice().sort().join(',') : null; if (key) { if (keys.has(key)) return; keys.add(key); } out.push({ invoice_ids: ids, score, why, customer: cust }); };
-    const nameHit = (r) => { if (!words.length || !r._k.length) return 0; let n = 0; for (const w of words) for (const k of r._k) if (k === w || (w.length >= 5 && k.length >= 5 && (k.indexOf(w) === 0 || w.indexOf(k) === 0))) { n++; break; } return n; };
+    const nameHit = (r) => { if (r._c && ctext.indexOf(r._c) > -1) return 1; if (!words.length || !r._k.length) return 0; let n = 0; for (const w of words) for (const k of r._k) if (k === w || (w.length >= 5 && k.length >= 5 && (k.indexOf(w) === 0 || w.indexOf(k) === 0))) { n++; break; } return n; };
     for (const r of invoices) {
       const age = ageDays(r); if (age != null && age > 730) continue;   // 1.20.4: an invoice open for over two years is not what a fresh deposit pays
       const exactBal = Math.abs(r.balance - amt) < 0.005, exactTot = !exactBal && Math.abs(r.total - amt) < 0.005;
@@ -137,11 +161,12 @@ module.exports = function mountAr(ctx) {
       if (score >= 15) push([r.id], Math.min(100, score), why, r);
     }
     // 2–3 invoices of one customer adding up to the deposit
-    const byCust = {}; invoices.forEach(r => { if (r.status !== 'paid' && r.customer_id && (ageDays(r) == null || ageDays(r) <= 365)) (byCust[r.customer_id] = byCust[r.customer_id] || []).push(r); });
+    // 1.20.10: paid invoices of the customer count too — 4 Over's $3,545.76 was INV132547 + INV132523, both already marked paid (→ Pair)
+    const byCust = {}; invoices.forEach(r => { if (r.customer_id && (ageDays(r) == null || ageDays(r) <= 365)) (byCust[r.customer_id] = byCust[r.customer_id] || []).push(r); });
     for (const cid of Object.keys(byCust)) {
       const list = byCust[cid].slice(0, 12); if (list.length < 2) continue;
       const nh = nameHit(list[0]);
-      const combo = (ids, label) => { const rs = ids.map(id => list.find(x => x.id === id)); const dp = Math.min(...rs.map(r => datePts(r)[0])); push(ids, Math.min(100, 50 + dp + (nh ? 10 : 0)), [label, dp === 25 ? 'all invoiced within 30 days' : dp === 12 ? 'all invoiced within 60 days' : 'older invoices'].concat(nh ? ['client: ' + list[0].customer] : []), list[0]); };
+      const combo = (ids, label) => { const rs = ids.map(id => list.find(x => x.id === id)); const dp = Math.min(...rs.map(r => datePts(r)[0])); const paidN = rs.filter(r => r.status === 'paid').length; push(ids, Math.min(100, 50 + dp + (nh ? 10 : 0)), [label, dp === 25 ? 'all invoiced within 30 days' : dp === 15 ? 'all invoiced within 60 days' : 'older invoices'].concat(nh ? ['client: ' + list[0].customer] : []).concat(paidN ? [paidN === rs.length ? 'all already paid in the CRM — pair them' : paidN + ' of them already paid in the CRM'] : []), list[0]); };
       for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
         if (Math.abs(list[i].balance + list[j].balance - amt) < 0.005) combo([list[i].id, list[j].id], 'two invoices add up');
         else for (let k = j + 1; k < list.length; k++) if (Math.abs(list[i].balance + list[j].balance + list[k].balance - amt) < 0.005) combo([list[i].id, list[j].id, list[k].id], 'three invoices add up');
@@ -247,7 +272,7 @@ module.exports = function mountAr(ctx) {
       const q = await dbGet('SELECT * FROM bk_ar WHERE id = ?', [parseInt(req.params.id)]); if (!q) return res.json({ ok: false, error: 'No such payment' });
       let invoices; try { invoices = await openInvoices(); inv.error = null; } catch (e) { inv.error = e.message; return res.json({ ok: false, error: 'CRM not reachable: ' + e.message, crm_error: e.message }); }
       const ck = q.txn_id + ':' + inv.at;
-      if (!sugCache.has(ck)) { const t = (await txFields([q.txn_id]))[q.txn_id] || {}; if (sugCache.size > 2000) sugCache.clear(); sugCache.set(ck, invoices.length ? suggest(t, invoices) : []); }
+      if (!sugCache.has(ck)) { const t = (await txFields([q.txn_id]))[q.txn_id] || {}; if (sugCache.size > 2000) sugCache.clear(); const extra = await extraFor(t, invoices); sugCache.set(ck, invoices.length || extra.length ? suggest(t, invoices.concat(extra)) : []); }
       res.json({ ok: true, suggestions: sugCache.get(ck), invoices_open: invoices.length, invoices_at: inv.at });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
@@ -257,6 +282,14 @@ module.exports = function mountAr(ctx) {
     try {
       const q = String(req.query.q || '').trim().toLowerCase(); if (!q) return res.json({ ok: true, invoices: [] });
       const invoices = await openInvoices();
+      // 1.20.10: several numbers at once ("125839, 125840 125841") — a bulk payment typed in by hand; each read from the CRM when needed
+      const many = q.split(/[\s,;]+/).map(x => Number(x.replace(/^#/, '').replace(/^inv/i, ''))).filter(n => n >= 100000);
+      if (many.length > 1 && runQuery) {
+        const found = []; const miss = many.filter(id => { const x = inv.byId && inv.byId.get(id); if (x) found.push(x); return !x; });
+        if (miss.length) (await runQuery(SEL_ONE + ' WHERE i.id IN (' + miss.map(n => Math.floor(n)).join(',') + ')')).map(shapeInvoice).forEach(r => { found.push(r); if (inv.byId && !inv.byId.has(r.id)) { inv.byId.set(r.id, r); inv.extra && inv.extra.set(r.id, r); } });
+        const lost = many.filter(id => !found.some(r => r.id === id));
+        return res.json({ ok: true, invoices: found.map(r => ({ id: r.id, no: r.no, total: r.total, balance: r.balance, status: r.status, created: r.created, due: r.due, po: r.po, customer: r.customer, customer_id: r.customer_id, paid_at: r.paid_at })), note: lost.length ? 'Not in the CRM: INV' + lost.join(', INV') : null, many: true });
+      }
       const n = Number(q.replace(/^#/, '').replace(/^inv\s*/i, ''));
       let hits = invoices.filter(r => (n && String(r.id).indexOf(String(n)) === 0) || r.customer.toLowerCase().indexOf(q) > -1 || r.person.toLowerCase().indexOf(q) > -1 || (r.po && String(r.po).toLowerCase().indexOf(q) > -1) || (r.email && r.email.toLowerCase().indexOf(q) > -1)).slice(0, 25);
       let note = null;
@@ -282,7 +315,7 @@ module.exports = function mountAr(ctx) {
       const snap = await snapshotInvoices(ids);
       const first = snap[0] && snap[0].customer_id != null ? snap[0] : null;
       const customer = String(req.body.customer || (first ? first.customer : '')).slice(0, 160), cid = parseInt(req.body.customer_id) || (first ? first.customer_id : null);
-      const kind = req.body.kind === 'pair' ? 'pair' : 'match';
+      const kind = req.body.kind === 'pair' ? 'pair' : req.body.kind === 'manual' ? 'manual' : 'match';   // 1.20.10: manual = typed in by hand (a bulk payment) — recorded only, the CRM is not told
       await dbRun("UPDATE bk_ar SET status = 'matched', kind = ?, invoice_ids = ?, inv_json = ?, customer_id = ?, customer_name = ?, note = ?, matched_by = ?, matched_at = ?, updated_at = ? WHERE id = ?", [kind, ids.join(','), JSON.stringify(snap), cid, customer, String(req.body.note || '').slice(0, 500) || null, userId(req), nowIso(), nowIso(), id]);
       await audit(userId(req), kind === 'pair' ? 'ar.pair' : 'ar.match', id, { txn_id: q.txn_id, amount: q.amount, invoice_ids: ids, customer });
       // 1.20.2: Match & Pay tells the CRM to record the payment — once the Dev team's endpoint exists (AR_PAY_WEBHOOK_URL in .env).
@@ -347,5 +380,5 @@ module.exports = function mountAr(ctx) {
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
 
-  return { syncQueue, isArCategory, suggest, openInvoices, openCount: async () => (await dbGet("SELECT COUNT(*) n FROM bk_ar WHERE status = 'open'")).n };
+  return { syncQueue, isArCategory, suggest, openInvoices, extraFor, _inv: inv, _shape: shapeInvoice, openCount: async () => (await dbGet("SELECT COUNT(*) n FROM bk_ar WHERE status = 'open'")).n };
 };
