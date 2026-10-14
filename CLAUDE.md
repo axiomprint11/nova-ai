@@ -310,6 +310,29 @@ confidence become questions). The CRM `suppliers` + `vendors` tables are synced 
 (post only) or a Chat app (`/api/bookkeeping/chat/events`, JWT audience `BOOKKEEPER_CHAT_AUDIENCE`; only
 `BOOKKEEPER_CHAT_USERS` may act). `BOOKKEEPER_CLOCK=0` disables the clock. Full write-up: `docs/BOOKKEEPING_AI.md`.
 
+### Nova AR (1.19.152)
+
+`bookkeeping-ar.js` (`require('./bookkeeping-ar')(ctx)` at the end of `mountBookkeeping`, exported as `AR`) is the Accounts
+Receivable queue — a **Nova AR** top tab in Bookkeeping (between Bills and Inbox; `TABS.ar`, bar `#subAr`, sub-tabs
+**Unmatched** (`open`) / **Matched** (`done` = matched + skipped, the history), `?tab=ar`). Every categorized deposit
+(`amount < 0`, not a transfer / refund) whose category name says customer / client payment(s) (`isArCategory`, name based)
+is put in SQLite `bk_ar` by `syncQueue()` (on every overview and AR load; a line re-filed elsewhere goes `void`, back to
+`open` if it returns). It replaces the manual email to payments@ — "Notify Accounts Receivable" stays as an extra. Open
+invoices come read-only from the production DB (`openInvoices()`: `invoice` unpaid / partial, type invoice, total > 0,
+joined to `customer`; cached 5 min, `?fresh=1` re-reads) and `suggest(t, invoices)` scores each deposit: invoice number
+typed in the memo (6-digit 1xxxxx, +70), balance due to the cent (+55) or invoice total to the cent (+40), payer words in
+the bank wording against company / person / email (`keyWords`, `NOISE` list; +18..40), and two or three open invoices of
+one customer adding up (+50/+45, +30 with the name); ≥ 40 shown, top 5, 70+ highlighted green. Row: Date / Amount / Payer
+(merchant, original description, bank ••mask, check #) / **Nova suggests** (score pill, invoice #, customer, total, date,
+PO, why, **Matched** button) + "Other invoice # or customer…" (`GET /api/bookkeeping/ar/invoices?q=` by number prefix,
+customer, person, PO, email → click = Matched) + **Skip** (note optional, kept in history). `GET /api/bookkeeping/ar
+?status=open|done&from&to&min&max&q` (filters: Date and Amount column `thFilter`s, state `AF` in localStorage
+`bk_ar_filters`, All time default; the sub-bar search `#arQ`); `POST /ar/:id/match {invoice_ids[], customer, customer_id,
+note}`, `/ar/:id/skip {note}`, `/ar/:id/undo`; audit `ar.match / ar.skip / ar.undo`. Tiles: $ and count to match, open
+invoices in the CRM (+ refresh), a red tile when the CRM is unreachable. **Nothing is written to the production DB** — the
+match lives in `bk_ar`; the invoice is still marked paid in the CRM by the AR team. Access = Bookkeeping (Karen needs the
+Bookkeeper tick in Admin → Users). The tab badge `#nAr` = `counts.ar_open` from the overview.
+
 ## Shipping rates & draft quotes (Axiom API, 1.19.142)
 
 `shipping.js` (`Shipping = require('./shipping')({ runQuery, mysql })` in server.js, passed to client-bot as `deps.Shipping`) follows

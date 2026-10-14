@@ -591,6 +591,10 @@ kept on the server, listed with who added them and when, and can be opened, down
 Bookkeeping now uses Nova's own calendar picker (month grid, month / year dropdowns, Today, Clear; dates read 10/01/2026
 and can be typed as 10/1/26).
 
+### Nova AR — customer payments to match (1.19.152)
+
+The **Nova AR** tab is the Accounts Receivable queue. Every bank deposit filed as a customer payment lands under **Unmatched** instead of being emailed to payments@. For each one Nova reads the open invoices from the CRM (read-only) and suggests the invoice the money pays — by the amount to the cent (the balance due, or the invoice total), by the payer's name on the bank line, by an invoice number typed in the memo, or by two or three invoices of one customer adding up — with a confidence percentage and the reason. Karen clicks **Matched** on the right one (or types another invoice number / customer in "Other invoice…" and picks from the list), and the payment moves to **Matched**, the history, with who matched it and when (Undo is there). **Skip** is for a deposit that is not a customer payment after all. Both tabs filter by date range and amount range from the column headers, and the search box looks through payer, amount, invoice and note. Nova never writes to the CRM: marking the invoice paid is still done in the CRM.
+
 ### Uncategorize (1.19.149)
 
 In the Bank feed's **Categorized** view the Category picker ends with **↺ Uncategorize**: the line goes back to Pending with no category, and whatever the category came with (a rule, a team member, a loan, a transfer or refund match) is undone. Rules and the AI then leave that line alone until a person files it again. Only the Categorized view has the link.

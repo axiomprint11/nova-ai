@@ -2023,6 +2023,7 @@ module.exports = function mountBookkeeping(app, deps) {
       questions: (await dbGet("SELECT COUNT(*) AS n FROM bk_questions WHERE answer IS NULL AND proposal_id IN (SELECT id FROM bk_proposals WHERE status = 'pending')")).n,
       transactions: (await dbGet('SELECT COUNT(*) AS n FROM bk_transactions')).n,
       txn_open: (await dbGet("SELECT COUNT(*) AS n FROM bk_transactions WHERE status IN ('new', 'pending')")).n,
+      ar_open: (await AR.syncQueue().then(() => dbGet("SELECT COUNT(*) AS n FROM bk_ar WHERE status = 'open'")).catch(() => ({ n: 0 }))).n,   // 1.19.152: Nova AR queue (synced here so the badge is right before the tab is opened)
       bills: (await dbGet("SELECT COUNT(*) AS n FROM bk_bills WHERE status <> 'rejected'")).n,
       bill_drafts: (await dbGet("SELECT COUNT(*) AS n FROM bk_bills WHERE status = 'draft'")).n,
       bills_by_status: Object.fromEntries((await dbAll('SELECT status, COUNT(*) n FROM bk_bills GROUP BY status')).map(r => [r.status, r.n])),
@@ -3516,5 +3517,7 @@ module.exports = function mountBookkeeping(app, deps) {
     res.json({ ok: true });
   });
 
-  return { isBookkeeper, refreshAccess, runDaily, converse, settings, runChatTool };
+  // 1.19.152: Nova AR — the customer-payment queue (bookkeeping-ar.js)
+  const AR = require('./bookkeeping-ar')({ app, db, guard, dbAll, dbGet, dbRun, runQuery, mysql, audit, userId, nowIso, realCheckNo, errlog });
+  return { isBookkeeper, refreshAccess, runDaily, converse, settings, runChatTool, AR };
 };

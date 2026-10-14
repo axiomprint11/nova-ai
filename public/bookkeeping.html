@@ -22,7 +22,7 @@
   .bk-tabs.main { grid-column: 1; grid-row: 1; gap: 8px; justify-self: start; } .bk-tabs.main button { font-size: 16px; padding: 10px 22px; border-radius: 11px; }
   .bk-tabs.main button { display: inline-flex; align-items: center; gap: 7px; border-bottom: 2px solid transparent; border-radius: 0; padding: 10px 6px 8px; color: var(--ink-soft); }
   .bk-tabs.main button:hover { color: var(--ink); } .bk-tabs.main button.on { background: none; color: var(--indigo-dark); border-bottom-color: var(--indigo); }
-  .bk-tabs.main { gap: 26px; } .bk-tabs.main .n { margin: 0; font-size: 11px; line-height: 1.4; padding: 1px 6px; } .bk-tabs.main button.on .n { background: var(--indigo); color: #fff; }
+  .bk-tabs.main { gap: 20px; } .bk-tabs.main .n { margin: 0; font-size: 11px; line-height: 1.4; padding: 1px 6px; } .bk-tabs.main button.on .n { background: var(--indigo); color: #fff; }
   .bk-tabs.small { grid-column: 3; grid-row: 1; justify-self: end; gap: 6px; }
   .bk-tabs.small button { width: 38px; height: 38px; padding: 0; display: grid; place-items: center; border-radius: 10px; color: var(--muted); border-color: var(--line); } .bk-tabs.small button svg { width: 19px; height: 19px; }
   .bk-tabs.small button:hover { color: var(--indigo-dark); background: #f7f7fc; } .bk-tabs.small button.on { background: var(--indigo-light); color: var(--indigo-dark); border-color: var(--indigo-light); }
@@ -66,6 +66,19 @@
   .nd-foot { display: flex; align-items: center; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); } .nd-sp { flex: 1; }
   .nd-lnk { border: 0; background: none; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--indigo-dark); padding: 6px 6px; border-radius: 6px; cursor: pointer; } .nd-lnk:hover { background: #eef2ff; }
   /* 1.19.144: loan payment calendar */
+  /* 1.19.152: Nova AR */
+  .ar-table th:nth-child(1), .ar-table td:nth-child(1) { width: 110px; } .ar-table td { vertical-align: top; }
+  .ar-amt { font-weight: 700; color: #047857; white-space: nowrap; } .ar-pay b { display: block; } .ar-pay .bk-dim { font-size: 12px; }
+  .ar-sg { display: flex; flex-direction: column; gap: 6px; min-width: 420px; }
+  .ar-s { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fafafe; }
+  .ar-s.top { border-color: #a7f3d0; background: #ecfdf5; } .ar-s .ar-inv { flex: 1; min-width: 0; } .ar-s .ar-inv b { font-size: 13px; } .ar-s .ar-inv .bk-dim { font-size: 11.5px; }
+  .ar-pct { font-weight: 700; font-size: 12px; padding: 2px 7px; border-radius: 999px; background: #e0e7ff; color: #3730a3; white-space: nowrap; } .ar-s.top .ar-pct { background: #d1fae5; color: #065f46; }
+  .ar-why { font-size: 11px; color: var(--muted); }
+  .ar-acts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 2px; } .ar-acts .bk-dim { font-size: 12px; }
+  .ar-other { display: flex; gap: 6px; align-items: center; } .ar-other input { width: 190px; }
+  .ar-pick { position: absolute; z-index: 70; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 36px rgba(20,20,40,.18); width: 420px; max-height: 320px; overflow: auto; }
+  .ar-pick .ar-s { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: #fff; cursor: pointer; } .ar-pick .ar-s:hover { background: #f3f3fa; }
+  .ar-done .bk-tag.ok { background: #d1fae5; color: #065f46; } .ar-tiles { display: flex; gap: 10px; margin: 0 0 12px; flex-wrap: wrap; } .ar-tile { border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; min-width: 150px; } .ar-tile b { display: block; font-size: 18px; } .ar-tile .bk-muted { font-size: 11.5px; }
   .ln-docs-l { white-space: nowrap; }   /* 1.19.150: "Add docs" / "3 docs" on one line */
   .ln-cal { display: grid; grid-template-columns: repeat(12, 9px); gap: 2px; margin: 4px 0 3px; }   /* one year per row */ .ln-sq { display: block; width: 9px; height: 9px; border-radius: 2px; background: #fff; border: 1px solid #d6d6e4; box-sizing: border-box; }
   .ln-sq.paid { background: #22c55e; border-color: #16a34a; } .ln-sq.missed { background: #ef4444; border-color: #dc2626; } .ln-sq.due { background: #f59e0b; border-color: #d97706; } .ln-sq.skip { background: repeating-linear-gradient(135deg, #e5e5ef 0 2px, #fff 2px 4px); border-color: #d6d6e4; }
@@ -438,6 +451,7 @@
     <button data-v="purchases">Purchases</button>
     <button data-v="bank">Bank feed<span class="n" id="nTxns"></span></button>
     <button data-v="bills">Bills<span class="n" id="nBills"></span></button>
+    <button data-v="ar">Nova AR<span class="n" id="nAr"></span></button>
     <button data-v="inbox">Inbox<span class="n" id="nInbox"></span></button>
     <button data-v="accounts">Accounts</button>
   </div>
@@ -469,6 +483,14 @@
       <span class="sp"></span><button data-s="stats">Stats</button><input id="txQ" class="bk sub-q" placeholder="Search" autocomplete="off">
     </div>
     <div class="bk-subview on" data-s="feed" id="vTxns"></div>
+  </section>
+  <section class="bk-view" data-v="ar" id="vAr">
+    <div class="bk-sub" id="subAr">
+      <button data-s="open">Unmatched<span class="n" id="nArOpen"></span></button>
+      <button data-s="done">Matched<span class="n grey" id="nArDone"></span></button>
+      <span class="sp"></span><input id="arQ" class="bk sub-q" placeholder="Search payer, amount, invoice" autocomplete="off">
+    </div>
+    <div class="bk-subview on" data-s="list" id="vArList"></div>
   </section>
   <section class="bk-view" data-v="bills" id="vBillsTab">
     <div class="bk-sub" id="subBills">
