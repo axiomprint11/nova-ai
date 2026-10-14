@@ -2963,7 +2963,8 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!vid && source !== 'loan') {
       if (t.vendor_id) vid = t.vendor_id;
       else {
-        const name = String(t.merchant || t.name || l.lender || l.name).replace(/\s+/g, ' ').trim().slice(0, 120);
+        // 1.19.145: the lender's name typed on the loan beats the bank's merchant guess (Plaid reads a Mitsubishi HCC ACH as "Axiom Print")
+        const name = String((l.lender && l.lender.trim()) || t.merchant || t.name || l.name).replace(/\s+/g, ' ').trim().slice(0, 120);
         const dup = await dbGet('SELECT id FROM bk_vendors WHERE lower(name) = lower(?)', [name]);
         if (dup) vid = dup.id;
         else { const r = await dbRun('INSERT INTO bk_vendors (name, source, kind, approved, approved_by, approved_at, default_category, specialty, aliases, notes) VALUES (?,?,?,?,?,?,?,?,?,?)', [name, 'nova', 'lender', 1, who, nowIso(), cat, 'Lender · ' + l.name, String(t.name || '').slice(0, 120) || null, 'Made from a loan payment (' + l.name + ')']); vid = r.lastID; made = name; dirCache.at = 0; }
