@@ -855,18 +855,14 @@ async function setKnowledgeAccess(id, level) {
   });
 }
 
-async function setMemberAr(id, on) {   // 1.19.153: Nova AR
-  await fetch('/api/admin/members/set-ar', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-    body: JSON.stringify({ id, is_ar: on })
-  });
+// 1.20.8: a role tick reports what the server saved — before, a failed save left the box ticked until the next reload
+async function setMemberRole(url, body, label) {
+  let r; try { r = await (await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify(body) })).json(); } catch (e) { r = { success: false, error: e.message }; }
+  if (!r.success) alert('Could not save the ' + label + ' role: ' + (r.error || 'no answer from the server'));
+  loadUsers();
 }
-async function setMemberBookkeeper(id, on) {   // 1.19.138
-  await fetch('/api/admin/members/set-bookkeeper', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-    body: JSON.stringify({ id, is_bookkeeper: on })
-  });
-}
+function setMemberAr(id, on) { setMemberRole('/api/admin/members/set-ar', { id, is_ar: on }, 'AR'); }   // 1.19.153: Nova AR
+function setMemberBookkeeper(id, on) { setMemberRole('/api/admin/members/set-bookkeeper', { id, is_bookkeeper: on }, 'Bookkeeper'); }   // 1.19.138
 async function setMemberAdmin(id, makeAdmin) {
   await fetch('/api/admin/members/set-admin', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
