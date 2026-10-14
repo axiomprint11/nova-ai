@@ -222,7 +222,7 @@
   const splitCats = (v) => String(v || '').split(/\s*[;|\n]\s*/).map(x => x.trim()).filter(Boolean);
   const catSelect = (cur, cls, blank, o) => {
     o = o || {}; const vals = splitCats(cur);
-    return '<span class="ckp ' + esc(cls || '') + (o.multi ? ' multi' : '') + '" data-blank="' + esc(blank || '') + '"' + (o.only ? ' data-only="' + esc(o.only) + '"' : '') + '"><button type="button" class="ckp-btn">' + ckpFace(vals, blank, !!o.multi) + '</button><input type="hidden" class="' + esc(cls || '') + ' ckp-val" value="' + esc(vals.join('; ')) + '"></span>';
+    return '<span class="ckp ' + esc(cls || '') + (o.multi ? ' multi' : '') + '" data-blank="' + esc(blank || '') + '"' + (o.only ? ' data-only="' + esc(o.only) + '"' : '') + (o.reset ? ' data-reset="1"' : '') + '"><button type="button" class="ckp-btn">' + ckpFace(vals, blank, !!o.multi) + '</button><input type="hidden" class="' + esc(cls || '') + ' ckp-val" value="' + esc(vals.join('; ')) + '"></span>';
   };
   const ckpFace = (vals, blank, multi) => {
     if (!vals.length) return '<span class="ckp-empty">' + esc(blank || 'Choose…') + '</span><span class="ckp-caret"></span>';
@@ -249,7 +249,7 @@
     let vals = splitCats(wrap.querySelector('.ckp-val').value);
     const pop = document.createElement('div'); pop.className = 'ckp-pop' + (multi ? ' multi' : ' single');
     pop.innerHTML = '<div class="ckp-search"><input type="text" placeholder="Search categories…"></div><div class="ckp-list"></div>' +
-      '<div class="ckp-foot"><a href="#" class="ckp-new">+ New category…</a><span class="sp"></span>' + (blank ? '<a href="#" class="ckp-clear">' + esc(multi ? 'Clear' : blank) + '</a>' : '') + (multi ? '<button type="button" class="bk-btn sm p ckp-done">Done</button>' : '') + '</div>';
+      '<div class="ckp-foot"><a href="#" class="ckp-new">+ New category…</a>' + (wrap.dataset.reset ? '<a href="#" class="ckp-reset" title="Clear the category and send the line back to Pending">↺ Uncategorize</a>' : '') + '<span class="sp"></span>' + (blank ? '<a href="#" class="ckp-clear">' + esc(multi ? 'Clear' : blank) + '</a>' : '') + (multi ? '<button type="button" class="bk-btn sm p ckp-done">Done</button>' : '') + '</div>';
     pop.addEventListener('click', (e) => e.stopPropagation());   // clicks inside (which re-draw the list) must not reach the close-on-outside-click handler
     document.body.appendChild(pop);
     const r = wrap.getBoundingClientRect(), W = Math.min(360, window.innerWidth - 16);
@@ -290,6 +290,7 @@
       else { ckpSet(wrap, [v]); ckpClose(); }
     };
     pop.querySelector('.ckp-new').onclick = (e) => { e.preventDefault(); ckpClose(); newCategory(wrap); };
+    const rst = pop.querySelector('.ckp-reset'); if (rst) rst.onclick = (e) => { e.preventDefault(); ckpClose(); wrap.dispatchEvent(new CustomEvent('ckp-reset', { bubbles: true })); };   // 1.19.149
     const clr = pop.querySelector('.ckp-clear'); if (clr) clr.onclick = (e) => { e.preventDefault(); vals = []; ckpSet(wrap, vals); if (multi) draw(); else ckpClose(); };
     const done = pop.querySelector('.ckp-done'); if (done) done.onclick = ckpClose;
   }
@@ -734,7 +735,7 @@
       (j.transactions || []).map(t => '<tr><td class="tx-date" title="Synced from the bank · bank date ' + esc(usD(t.date)) + (t.pending ? ' (still pending at the bank)' : '') + '">' + laD2(t.created_at) + checkLine(t) + '</td>' +
         '<td>' + vendorCell(t) + '</td><td class="tx-desc-td" title="' + esc([prettyCat(t) ? 'Bank category: ' + prettyCat(t) : '', t.place].filter(Boolean).join(' · ')) + '">' + esc(t.merchant || t.name) + ((t.orig_desc || t.name) !== (t.merchant || t.name) ? '<div class="bk-muted tx-orig">' + esc(t.orig_desc || t.name) + '</div>' : '') + '</td><td>' + bankCell(t) + '</td>' +
         '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '"><div class="tx-amt">' + usd(-t.amount) + chanLine(t) + '</div><div class="tx-when bk-dim" title="When the transaction happened' + (t.pending ? ' (still pending at the bank)' : '') + '">' + esc(txWhen(t)) + '</div></td>' +
-        '<td data-txid="' + t.id + '">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : (t.amount < 0 ? 'Income…' : 'Choose…'), { only: t.amount < 0 ? 'income' : 'expense' }) +
+        '<td data-txid="' + t.id + '">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : (t.amount < 0 ? 'Income…' : 'Choose…'), { only: t.amount < 0 ? 'income' : 'expense', reset: txnSt === 'categorized' && t.status === 'categorized' }) +
         // 1.19.119: a Wise payout — pick the team member (the server lists the candidates by pay, or everyone), and a web-dev
         // member's line can flip between the build (asset) category and maintenance
         (t.team_hint && t.team_hint.members.length ? '<div class="tx-ref tx-team-hint"><span class="tx-match" title="' + esc(t.team_hint.ambiguous ? 'Two or more team members are on this pay — which one?' : 'A Wise payout — who is it for?') + '">' + TEAMI + ' Who is this?</span><select class="bk sm tx-team-sel" data-teamsel="' + t.id + '"><option value="">— team member —</option>' + t.team_hint.members.map(m => '<option value="' + m.id + '">' + esc(m.name) + (m.dept ? ' · ' + esc(m.dept) : '') + (m.pay != null ? ' · ' + usd(m.pay) : '') + '</option>').join('') + '</select></div>' : '') +
@@ -774,6 +775,9 @@
     $('syncNow').onclick = async () => { $('syncNow').disabled = true; const r = await post('/api/bookkeeping/sync', {}); if (!r.ok) alert(r.error); loadTxns(); overview(); };
     // Picking a category sets it on the spot (no Set button); the row flashes green.
     v.querySelectorAll('td[data-txid]').forEach(td => { const wrap = td.querySelector('.ckp'), inp = td.querySelector('input.tx-cat'); let last = inp.value;
+      // 1.19.149: "↺ Uncategorize" (Categorized view only) — back to Pending, the sweeps leave it alone until it is filed again
+      wrap.addEventListener('ckp-reset', async () => { if (!(await ask('Clear **' + (inp.value || 'the category') + '** and send this line back to **Pending**? Rules and the AI will not file it again on their own — you pick the category when you are ready.', { title: 'Uncategorize this line?', ok: 'Uncategorize' }))) return;
+        const r = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/uncategorize', {}); if (!r.ok) { alert(r.error || 'Could not reset.'); return; } toast('Back to Pending'); loadTxns(); overview(); });
       wrap.addEventListener('change', async () => { if (inp.value === last || !inp.value) return; last = inp.value; const r = await post('/api/bookkeeping/transactions/' + td.dataset.txid + '/category', { category: inp.value, source: td.dataset.src || 'manual' }); td.dataset.src = ''; const tr = td.closest('tr'); tr.classList.add(r.ok ? 'saved' : 'failed');
         // 1.19.85: a 90%+ suggestion taken → offer to make it a rule, so the next line from that company files itself
         const who = td.dataset.askrule; td.dataset.askrule = '';
@@ -2024,7 +2028,7 @@
     const j = await api('/api/bookkeeping/team'); if (!j.ok) { v.innerHTML = '<div class="bk-card bk-muted">' + esc(j.error || 'Could not load') + '</div>'; return; }
     const members = j.members || [], depts = j.depts || {}, countries = j.countries || {};
     const dateS = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
-    const row = (m) => '<tr' + (m.status === 'left' ? ' class="off"' : '') + '><td><span class="tm-av">' + flag(m.country, m.country_name) + '<span class="bk-logo ph">' + esc(String(m.name || '?').charAt(0).toUpperCase()) + '</span></span></td>' +
+    const row = (m) => '<tr' + (m.status === 'left' ? ' class="off"' : '') + '><td>' + teamAv(m) + '</td>' +
       '<td><b>' + esc(m.name) + '</b>' + (m.status === 'left' ? ' <span class="bk-tag">left</span>' : '') + (m.crm_user_id ? ' <span class="bk-tag" title="Pulled from the Axiom CRM — name, department, start date and status follow it">CRM</span>' : '') + '<div class="bk-dim">' + esc(m.country_name || '') + (m.start_date ? ' · since ' + esc(dateS(m.start_date)) : '') + (m.end_date ? ' · until ' + esc(dateS(m.end_date)) : '') + '</div></td>' +
       '<td>' + esc(m.dept || '') + (m.crm_team ? '<div class="bk-dim">' + esc(m.crm_team) + '</div>' : '') + '</td>' +
       '<td class="num">' + (m.pay != null ? '<b>' + usd(m.pay) + '</b><div class="bk-dim">' + (m.period === 'monthly' ? 'monthly' : 'twice a month') + '</div>' : '<span class="bk-dim">not set</span>') + '</td>' +
@@ -2040,6 +2044,8 @@
     $('tmAdd').onclick = () => teamPicker(j, loadTeam);
     v.querySelectorAll('[data-tedit]').forEach(b => b.onclick = () => teamForm(members.find(x => String(x.id) === b.dataset.tedit), j, loadTeam));
   }
+  // 1.19.149: a team member's face — the CRM photo when there is one, else the initial; the country flag in the corner
+  const teamAv = (m) => '<span class="tm-av">' + flag(m.country, m.country_name) + (m.photo ? '<img class="bk-logo tm-ph" src="' + esc(m.photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;bk-logo ph&quot;>' + esc(String(m.name || '?').charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo ph">' + esc(String(m.name || '?').charAt(0).toUpperCase()) + '</span>') + '</span>';
   // 1.19.148: pick a person from the Axiom CRM staff list (name, team, start date and status come from there)
   function teamPicker(j, done) {
     const el = document.createElement('div'); el.className = 'bk-modal';
@@ -2055,7 +2061,7 @@
       const rows = staff.filter(u => !q || (u.name + ' ' + u.title + ' ' + u.crm_team).toLowerCase().indexOf(q) > -1);
       el.querySelector('#tpN').textContent = rows.length + ' of ' + staff.length;
       el.querySelector('#tpList').innerHTML = rows.length ? rows.map(u => '<div class="tp-row' + (u.linked ? ' on' : '') + (u.active ? '' : ' off') + '" data-uid="' + u.user_id + '">' +
-        '<span class="tm-av">' + flag(u.country, u.country_name) + '<span class="bk-logo ph">' + esc(String(u.name || '?').charAt(0).toUpperCase()) + '</span></span>' +
+        teamAv(u) +
         '<div class="tp-main"><b>' + esc(u.name) + '</b>' + (u.active ? '' : ' <span class="bk-tag">inactive</span>') + '<div class="bk-dim">' + esc([u.title, u.crm_team].filter(Boolean).join(' · ') || u.dept) + '</div></div>' +
         '<div class="bk-dim tp-side">' + (u.start_date ? 'since ' + esc(usD(u.start_date)) : '') + '</div>' +
         (u.linked ? '<span class="bk-tag ok">on the team</span>' : '<button class="bk-btn sm p" data-add="' + u.user_id + '">Add</button>') + '</div>').join('') : '<div class="bk-dim" style="padding:10px 2px">No match.</div>';

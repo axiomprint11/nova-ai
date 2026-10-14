@@ -591,6 +591,10 @@ kept on the server, listed with who added them and when, and can be opened, down
 Bookkeeping now uses Nova's own calendar picker (month grid, month / year dropdowns, Today, Clear; dates read 10/01/2026
 and can be typed as 10/1/26).
 
+### Uncategorize (1.19.149)
+
+In the Bank feed's **Categorized** view the Category picker ends with **↺ Uncategorize**: the line goes back to Pending with no category, and whatever the category came with (a rule, a team member, a loan, a transfer or refund match) is undone. Rules and the AI then leave that line alone until a person files it again. Only the Categorized view has the link.
+
 ### Rule amount conditions and "No rule" (1.19.112)
 
 - A rule can be limited to lines **over**, **under** or **exactly** an amount (the line's absolute amount, money in or out). Blank = any amount, so existing rules are unchanged. When a vendor has both a plain rule and an amount rule, the amount rule is tried first.

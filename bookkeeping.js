@@ -123,6 +123,9 @@ module.exports = function mountBookkeeping(app, deps) {
     // 1.19.148: a member pulled from the CRM `user` table — name, department (their CRM team), start date, status and
     // country follow the CRM on every sync and are read-only in Nova; the categories stay Nova's
     ['crm_user_id INTEGER', 'crm_team TEXT', 'title TEXT', 'photo TEXT'].forEach(c => db.run('ALTER TABLE bk_team ADD COLUMN ' + c, () => {}));
+    // 1.19.149: a line a person sent back to Pending ("Uncategorize" in the Categorized view) — the rule / team / loan
+    // sweeps leave it alone until someone files it again
+    db.run('ALTER TABLE bk_transactions ADD COLUMN no_auto INTEGER DEFAULT 0', () => {});
     db.run('ALTER TABLE bk_bills ADD COLUMN merged_into INTEGER', () => {});
     // How bill lines were linked by hand: vendor + the line's wording → material / machine. The next bill from that
     // vendor with the same wording links by itself (1.19.15).
@@ -1485,7 +1488,7 @@ module.exports = function mountBookkeeping(app, deps) {
     return null;
   }
   async function linkTeam(t, m, who, how) {
-    await dbRun("UPDATE bk_transactions SET team_id = ?, vendor_id = COALESCE(?, vendor_id), vendor_by = CASE WHEN ? IS NULL THEN vendor_by ELSE 'team' END, vendor_score = 1, suggest_vendor_id = NULL, suggest_score = NULL, category = COALESCE(?, category), category_source = CASE WHEN ? IS NULL THEN category_source ELSE 'team' END, status = CASE WHEN ? IS NULL THEN status ELSE 'categorized' END, updated_at = datetime('now') WHERE id = ?",
+    await dbRun("UPDATE bk_transactions SET no_auto = 0, team_id = ?, vendor_id = COALESCE(?, vendor_id), vendor_by = CASE WHEN ? IS NULL THEN vendor_by ELSE 'team' END, vendor_score = 1, suggest_vendor_id = NULL, suggest_score = NULL, category = COALESCE(?, category), category_source = CASE WHEN ? IS NULL THEN category_source ELSE 'team' END, status = CASE WHEN ? IS NULL THEN status ELSE 'categorized' END, updated_at = datetime('now') WHERE id = ?",
       [m.id, m.vendor_id, m.vendor_id, m.category, m.category, m.category, t.id]);
     if (m.category) await dbRun("UPDATE bk_proposals SET status = 'edited' WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [t.id]);
     await audit(who || 'nova', 'txn.team', t.id, { team_id: m.id, how: how || 'auto', category: m.category });
@@ -1494,7 +1497,7 @@ module.exports = function mountBookkeeping(app, deps) {
   async function applyTeam() {
     const members = await teamMembers(); if (!members.length) return 0;
     let n = 0;
-    for (const t of await dbAll("SELECT * FROM bk_transactions WHERE status IN ('new', 'pending') AND team_id IS NULL AND amount > 0 AND (name LIKE '%wise%' OR merchant LIKE '%wise%') ORDER BY date DESC LIMIT 400")) {
+    for (const t of await dbAll("SELECT * FROM bk_transactions WHERE status IN ('new', 'pending') AND IFNULL(no_auto, 0) = 0 AND team_id IS NULL AND amount > 0 AND (name LIKE '%wise%' OR merchant LIKE '%wise%') ORDER BY date DESC LIMIT 400")) {
       const hit = teamMatch(members, t); if (!hit || !hit.member) continue;
       await linkTeam(t, hit.member, 'nova', hit.how); n++;
     }
@@ -1504,7 +1507,7 @@ module.exports = function mountBookkeeping(app, deps) {
     rules = rules || await dbAll('SELECT * FROM bk_rules WHERE active = 1 ORDER BY kind DESC, id');
     let n = 0;
     if (!rules.length) { try { n += await applyTeam(); } catch (e) { errlog('team sweep', e.message); } try { n += await applyLoans(); } catch (e) { errlog('loan sweep', e.message); } return n; }
-    for (const t of await dbAll("SELECT t.*, v.name AS vendor_name FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id WHERE t.status IN ('new', 'pending') AND (t.category IS NULL OR t.category = '') ORDER BY t.date DESC LIMIT 800")) {
+    for (const t of await dbAll("SELECT t.*, v.name AS vendor_name FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id WHERE t.status IN ('new', 'pending') AND IFNULL(t.no_auto, 0) = 0 AND (t.category IS NULL OR t.category = '') ORDER BY t.date DESC LIMIT 800")) {
       const r = ruleMatch(rules, t); if (!r) continue;
       await dbRun("UPDATE bk_transactions SET category = ?, category_source = 'rule', rule_id = ?, status = 'categorized', updated_at = datetime('now') WHERE id = ?", [r.category, r.id, t.id]);
       await dbRun("UPDATE bk_proposals SET status = 'edited' WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [t.id]);
@@ -2310,9 +2313,20 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!category) return res.json({ ok: false, error: 'No category' });
     // 1.19.72: a picked suggestion keeps where it came from (vendor's usual / history / ai); a hand pick is 'manual'
     const src = ['vendor', 'history', 'ai'].indexOf(String(req.body.source || '')) > -1 ? String(req.body.source) : 'manual';
-    await dbRun("UPDATE bk_transactions SET category = ?, category_source = ?, status = 'categorized', updated_at = datetime('now') WHERE id = ?", [category, src, id]);
+    await dbRun("UPDATE bk_transactions SET category = ?, category_source = ?, status = 'categorized', no_auto = 0, updated_at = datetime('now') WHERE id = ?", [category, src, id]);
     await dbRun("UPDATE bk_proposals SET status = 'edited', decided_by = ?, decided_at = ? WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [userId(req), nowIso(), id]);
     await audit(userId(req), 'category.manual', id, category);
+    res.json({ ok: true });
+  });
+  // 1.19.149: send a categorized line back to Pending — the category, its source and the rule tie are cleared, links a
+  // category came with (team member, loan, transfer, refund) are undone too, and no_auto keeps the sweeps off it.
+  app.post('/api/bookkeeping/transactions/:id/uncategorize', ...guard, async (req, res) => {
+    const id = parseInt(req.params.id), t = await dbGet('SELECT * FROM bk_transactions WHERE id = ?', [id]);
+    if (!t) return res.json({ ok: false, error: 'No such line.' });
+    if (t.status !== 'categorized') return res.json({ ok: false, error: 'This line is not categorized.' });
+    if (t.transfer_of) await dbRun("UPDATE bk_transactions SET transfer_of = NULL, category = CASE WHEN category_source = 'transfer' THEN NULL ELSE category END, category_source = CASE WHEN category_source = 'transfer' THEN NULL ELSE category_source END, status = CASE WHEN category_source = 'transfer' THEN 'pending' ELSE status END WHERE id = ?", [t.transfer_of]);
+    await dbRun("UPDATE bk_transactions SET category = NULL, category_source = NULL, rule_id = NULL, team_id = NULL, loan_id = NULL, transfer_of = NULL, refund_of = NULL, status = 'pending', no_auto = 1, updated_at = datetime('now') WHERE id = ?", [id]);
+    await audit(userId(req), 'category.reset', id, { was: t.category, source: t.category_source });
     res.json({ ok: true });
   });
   // 1.19.77: "Create a rule" on a categorized bank line — a vendor rule (the linked company's name, else the merchant) with the
@@ -2966,7 +2980,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const t = await dbGet('SELECT * FROM bk_transactions WHERE id = ?', [txnId]); const l = await dbGet('SELECT * FROM bk_loans WHERE id = ?', [loanId]);
     if (!t || !l) return { ok: false, error: 'No such line or loan' };
     const names = chartOf(await settings()).map(c => c.name), cat = ['Loan Payment (Principal)', 'Loan Payment'].find(n => names.indexOf(n) > -1) || null;
-    await dbRun("UPDATE bk_transactions SET loan_id = ?, updated_at = datetime('now')" + (cat ? ", category = ?, category_source = ?, status = 'categorized'" : '') + ' WHERE id = ?', cat ? [loanId, cat, source === 'loan' ? 'loan' : 'manual', txnId] : [loanId, txnId]);
+    await dbRun("UPDATE bk_transactions SET no_auto = 0, loan_id = ?, updated_at = datetime('now')" + (cat ? ", category = ?, category_source = ?, status = 'categorized'" : '') + ' WHERE id = ?', cat ? [loanId, cat, source === 'loan' ? 'loan' : 'manual', txnId] : [loanId, txnId]);
     await dbRun("UPDATE bk_proposals SET status = 'edited' WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [txnId]).catch(() => {});
     let vid = l.vendor_id || null, made = null;
     if (!vid && source !== 'loan') {
@@ -2995,7 +3009,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const loans = (await dbAll("SELECT * FROM bk_loans WHERE status = 'active' AND vendor_id IS NOT NULL")).map(l => Object.assign(l, { _m: loanMath(l) })).filter(l => l._m.payment > 0 || l._m.monthly > 0);
     if (!loans.length) return 0;
     let n = 0;
-    for (const t of await dbAll("SELECT id, vendor_id, amount, name FROM bk_transactions WHERE loan_id IS NULL AND vendor_id IS NOT NULL AND amount > 0 AND status IN ('new', 'pending') AND transfer_of IS NULL AND refund_of IS NULL AND (category IS NULL OR category = '')")) {
+    for (const t of await dbAll("SELECT id, vendor_id, amount, name FROM bk_transactions WHERE loan_id IS NULL AND vendor_id IS NOT NULL AND amount > 0 AND status IN ('new', 'pending') AND IFNULL(no_auto, 0) = 0 AND transfer_of IS NULL AND refund_of IS NULL AND (category IS NULL OR category = '')")) {
       const amt = Number(t.amount);
       const l = loans.find(x => x.vendor_id === t.vendor_id && [x._m.payment, x._m.monthly].some(m => m > 0 && Math.abs(m - amt) <= Math.max(1, m * 0.02)));
       if (!l) continue;
@@ -3030,6 +3044,7 @@ module.exports = function mountBookkeeping(app, deps) {
   // the start date and whether the account is active (status 10). Cached 10 minutes. Passwords, tokens and hashes are never read.
   const TEAM_OF = [[/graphic design|creative|prepress|pre-press|cad/i, 'design'], [/website|web dev|it and web|ux/i, 'web'], [/customer|email support|client success|front desk|account manager|onboarding/i, 'csr']];
   const crmStaffCache = { at: 0, rows: [] };
+  const staffPhoto = (ph) => !ph ? null : /^https?:\/\//.test(ph) ? ph : 'https://axiomprint.s3.us-west-1.amazonaws.com/MemberImages/' + String(ph).replace(/^\/+/, '');   // user.memberimage is an S3 key
   async function crmStaff(force) {
     if (!runQuery) return [];
     if (!force && Date.now() - crmStaffCache.at < 10 * 60000) return crmStaffCache.rows;
@@ -3042,7 +3057,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const dept = (TEAM_OF.find(([re]) => re.test(blob)) || [null, 'other'])[1];
       const iso = String(u.personal_phone_iso || '').toUpperCase(), iso2 = String(u.phone_country_iso || '').toUpperCase();
       const country = COUNTRIES[iso] ? iso : COUNTRIES[iso2] ? iso2 : 'other';
-      return { user_id: u.id, name: [u.name, u.last_name].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim(), title: u.title || '', teams: tn, crm_team: tn.join(', '), department: dept, country, start_date: u.started || null, active: Number(u.status) === 10 && !u.blocked_at, photo: u.memberimage || null };
+      return { user_id: u.id, name: [u.name, u.last_name].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim(), title: u.title || '', teams: tn, crm_team: tn.join(', '), department: dept, country, start_date: u.started || null, active: Number(u.status) === 10 && !u.blocked_at, photo: staffPhoto(u.memberimage) };
     });
     crmStaffCache.at = Date.now(); crmStaffCache.rows = rows; return rows;
   }
@@ -3061,7 +3076,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const u = byId[m.crm_user_id]; if (!u) continue;
       const f = crmFields(u), ch = CRM_TEAM_F.filter(k => (f[k] || null) !== (m[k] || null)); if (!ch.length) continue;
       await dbRun('UPDATE bk_team SET ' + ch.map(k => k + ' = ?').join(', ') + ', updated_at = ? WHERE id = ?', ch.map(k => f[k]).concat([nowIso(), m.id]));
-      if (ch.indexOf('name') > -1 || ch.indexOf('department') > -1) await ensureTeamVendor(Object.assign({}, m, f), 'crm-sync');
+      if (ch.indexOf('name') > -1 || ch.indexOf('department') > -1 || ch.indexOf('photo') > -1) await ensureTeamVendor(Object.assign({}, m, f), 'crm-sync');
       n++;
     }
     return n;
@@ -3103,10 +3118,10 @@ module.exports = function mountBookkeeping(app, deps) {
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   async function ensureTeamVendor(m, who) {
-    if (m.vendor_id) { await dbRun('UPDATE bk_vendors SET name = ?, specialty = ?, default_category = ? WHERE id = ? AND source = ?', [m.name, (DEPTS[m.department] || 'Team') + ' · overseas team', m.category || null, m.vendor_id, 'nova']); dirCache.at = 0; return m.vendor_id; }
+    if (m.vendor_id) { await dbRun('UPDATE bk_vendors SET name = ?, specialty = ?, default_category = ?, photo = COALESCE(?, photo) WHERE id = ? AND source = ?', [m.name, (DEPTS[m.department] || 'Team') + ' · overseas team', m.category || null, m.photo || null, m.vendor_id, 'nova']); dirCache.at = 0; return m.vendor_id; }   // 1.19.149: the CRM photo goes on the vendor too (Bank feed cell)
     const dup = await dbGet('SELECT id FROM bk_vendors WHERE lower(name) = lower(?) AND source = ?', [m.name, 'nova']);
-    if (dup) { dirCache.at = 0; return dup.id; }
-    const r = await dbRun('INSERT INTO bk_vendors (name, source, kind, approved, approved_by, approved_at, default_category, specialty, notes) VALUES (?,?,?,?,?,?,?,?,?)', [m.name, 'nova', 'team', 1, who, nowIso(), m.category || null, (DEPTS[m.department] || 'Team') + ' · overseas team', 'Overseas team member (paid through Wise). Made by the Overseas Team tab.']);
+    if (dup) { if (m.photo) await dbRun('UPDATE bk_vendors SET photo = COALESCE(photo, ?) WHERE id = ?', [m.photo, dup.id]); dirCache.at = 0; return dup.id; }
+    const r = await dbRun('INSERT INTO bk_vendors (name, source, kind, approved, approved_by, approved_at, default_category, specialty, notes, photo) VALUES (?,?,?,?,?,?,?,?,?,?)', [m.name, 'nova', 'team', 1, who, nowIso(), m.category || null, (DEPTS[m.department] || 'Team') + ' · overseas team', 'Overseas team member (paid through Wise). Made by the Overseas Team tab.', m.photo || null]);
     dirCache.at = 0; return r.lastID;
   }
   app.post('/api/bookkeeping/team', ...guard, async (req, res) => {
