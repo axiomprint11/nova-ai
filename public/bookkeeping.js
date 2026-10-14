@@ -1003,8 +1003,29 @@
     thFilterBind(v, FO, (key, val) => { if (key === 'date') { AF.period = val.period || 'all'; AF.from = val.from || ''; AF.to = val.to || ''; if (!AF.from && !AF.to && AF.period === 'custom') AF.period = 'all'; } else if (key === 'amount') { AF.min = val.from || ''; AF.max = val.to || ''; } else if (key === 'mdate') { AF.mperiod = val.period || '30'; AF.mfrom = val.from || ''; AF.mto = val.to || ''; if (!AF.mfrom && !AF.mto && AF.mperiod === 'custom') AF.mperiod = '30'; } save(); });
     const cl = $('afClear'); if (cl) cl.onclick = () => { AF = { period: 'all', from: '', to: '', min: '', max: '', mperiod: '30', mfrom: '', mto: '' }; save(); };
     const fr = $('arFresh'); if (fr) fr.onclick = async (e) => { e.preventDefault(); await api('/api/bookkeeping/ar?status=open&fresh=1'); loadAr(arSt); };
-    const doMatch = async (id, ids, cust, cid, kind) => { const r = await post('/api/bookkeeping/ar/' + id + '/match', { invoice_ids: ids, customer: cust, customer_id: cid, kind: kind || 'match' }); if (!r.ok) { alert(r.error || 'Could not save.'); return; } const tr = v.querySelector('tr[data-ar="' + id + '"]'); if (tr) tr.classList.add('saved');
-      toast((kind === 'pair' ? 'Paired with INV' : kind === 'manual' ? 'Recorded by hand: INV' : 'Matched to INV') + ids.join(', INV') + (r.pay ? (r.pay.sent ? ' · CRM told' : ' · ' + (r.pay.error || 'CRM not told')) : '')); setTimeout(() => { loadAr(arSt); overview(); }, 350); };
+    // 1.20.11: a matched row does not vanish — it turns green with a "✓ Matched to INV…" line, fades, and the rows below
+    // slide up into its place (FLIP), so the eye follows what moved; the tiles and badge are updated in place, no reload
+    const leaveRow = (tr, label) => new Promise(done => {
+      tr.classList.add('ar-leaving'); const first = tr.querySelector('td'); if (first && label) first.insertAdjacentHTML('afterbegin', '<div class="ar-donemark">' + label + '</div>');
+      setTimeout(() => { tr.classList.add('ar-fade'); }, 1100);
+      setTimeout(() => {
+        const after = []; let n = tr.nextElementSibling; while (n) { after.push([n, n.getBoundingClientRect().top]); n = n.nextElementSibling; }
+        tr.remove();
+        after.forEach(([el, top]) => { const d = top - el.getBoundingClientRect().top; if (!d) return; el.style.transition = 'none'; el.style.transform = 'translateY(' + d + 'px)'; });
+        requestAnimationFrame(() => requestAnimationFrame(() => { after.forEach(([el]) => { el.style.transition = 'transform .45s ease'; el.style.transform = ''; }); setTimeout(() => after.forEach(([el]) => { el.style.transition = ''; }), 500); }));
+        done();
+      }, 1650);
+    });
+    const dropRow = async (id, label) => { const tr = v.querySelector('tr[data-ar="' + id + '"]'); const row = j.rows.find(x => String(x.id) === String(id));
+      if (tr) await leaveRow(tr, label);
+      if (row && arSt === 'open') { j.counts.open = Math.max(0, (j.counts.open || 1) - 1); j.counts.open_total = Math.round(((j.counts.open_total || 0) - Number(row.amount)) * 100) / 100; j.counts.done = (j.counts.done || 0) + 1;
+        $('nArOpen').textContent = j.counts.open || ''; $('nArDone').textContent = j.counts.done || ''; $('nAr').textContent = j.counts.open || '';
+        const tile = v.querySelector('.ar-tile b'); if (tile) tile.textContent = usd(j.counts.open_total); const tl = v.querySelector('.ar-tile .bk-muted'); if (tl) tl.textContent = j.counts.open + ' payment' + (j.counts.open === 1 ? '' : 's') + ' to match'; const sh = v.querySelector('h2 .bk-muted'); if (sh) sh.textContent = (v.querySelectorAll('.ar-table tbody tr').length) + ' shown';
+        if (!v.querySelector('.ar-table tbody tr')) loadAr(arSt); }
+      overview(); };
+    const doMatch = async (id, ids, cust, cid, kind) => { const r = await post('/api/bookkeeping/ar/' + id + '/match', { invoice_ids: ids, customer: cust, customer_id: cid, kind: kind || 'match' }); if (!r.ok) { alert(r.error || 'Could not save.'); return; }
+      const what = (kind === 'pair' ? 'Paired with INV' : kind === 'manual' ? 'Recorded by hand: INV' : 'Matched to INV') + ids.join(', INV');
+      toast(what + (r.pay ? (r.pay.sent ? ' · CRM told' : ' · ' + (r.pay.error || 'CRM not told')) : '')); dropRow(id, '✓ ' + esc(what)); };
     // 1.20.10: the bulk-payment basket — several invoices paid with one deposit, typed in by hand. "Save match" records them
     // (kind manual) and tells the CRM nothing; the Matched tab shows "manual".
     const baskets = {};
@@ -1021,7 +1042,7 @@
     const bind = (scope) => {
     scope.querySelectorAll('[data-more]').forEach(a => a.onclick = (e) => { e.preventDefault(); const cell = a.closest('.ar-sg'); const open = cell.classList.toggle('open'); a.textContent = open ? 'See less' : 'See ' + cell.querySelectorAll('.ar-more').length + ' more'; });
     scope.querySelectorAll('[data-match]').forEach(b => b.onclick = () => doMatch(b.dataset.match, b.dataset.inv.split(',').map(Number), b.dataset.cust, b.dataset.cid, b.dataset.kind));
-    scope.querySelectorAll('[data-skip]').forEach(a => a.onclick = async (e) => { e.preventDefault(); const note = await askText('Why is this not a customer payment to match? (optional)', { title: 'Skip this payment', ok: 'Skip', optional: true }); if (note === null) return; const r = await post('/api/bookkeeping/ar/' + a.dataset.skip + '/skip', { note }); if (!r.ok) { alert(r.error); return; } loadAr(arSt); overview(); });
+    scope.querySelectorAll('[data-skip]').forEach(a => a.onclick = async (e) => { e.preventDefault(); const note = await askText('Why is this not a customer payment to match? (optional)', { title: 'Skip this payment', ok: 'Skip', optional: true }); if (note === null) return; const r = await post('/api/bookkeeping/ar/' + a.dataset.skip + '/skip', { note }); if (!r.ok) { alert(r.error); return; } dropRow(a.dataset.skip, 'Skipped'); });
     v.querySelectorAll('[data-undo]').forEach(a => a.onclick = async (e) => { e.preventDefault(); await post('/api/bookkeeping/ar/' + a.dataset.undo + '/undo', {}); loadAr(arSt); overview(); });
     // "Other invoice…": type a number, a customer or a PO → a list of open invoices → click = Matched
     v.querySelectorAll('[data-arq]').forEach(inp => { let t = null, pick = null;

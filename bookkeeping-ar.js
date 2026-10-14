@@ -250,7 +250,8 @@ module.exports = function mountAr(ctx) {
       if (req.query.fresh === '1') { try { invoices = await openInvoices(true); crm_error = null; } catch (e) { crm_error = e.message; } }
       const out = [];
       for (const r of rows) {
-        const t = tx[r.txn_id] || {}; const row = Object.assign({}, r, { txn: t });
+        if (!tx[r.txn_id]) { if (r.status === 'open') dbRun("UPDATE bk_ar SET status = 'void', updated_at = ? WHERE id = ?", [nowIso(), r.id]).catch(() => {}); continue; }   // 1.20.11: a bank line that is gone leaves no empty row
+        const t = tx[r.txn_id]; const row = Object.assign({}, r, { txn: t });
         if (q && [t.name, t.merchant, t.orig_desc, r.customer_name, r.invoice_ids, r.note, String(r.amount)].filter(Boolean).join(' ').toLowerCase().indexOf(q) < 0) continue;
         if (st === 'open') { const ck = r.txn_id + ':' + inv.at; row.suggestions = sugCache.has(ck) ? sugCache.get(ck) : null; }   // null = the page asks /ar/:id/suggest for it (1.19.159: the list never waits on the matching)
         else {   // 1.20.6: from the local snapshot taken at match time; older rows fall back to the warm cache (never a CRM call)
