@@ -18,7 +18,9 @@ Production and development are the same machine and the same files. There is no 
 
 ```bash
 pm2 reload axiom-ai       # after ANY server.js / mcp.js change — zero-downtime (cluster mode, ecosystem.config.js, 1.19.34);
-                          # scripts/deploy.sh does it: trial boot on port 3101 first, then reload, then checks the new version answers
+                          # scripts/deploy.sh does it: trial boot on port 3101 first, then reload, then checks the new version answers.
+                          # Since 1.20.7 it copies every tracked .js/.html/.css that differs from the live copy (GitHub is the source) —
+                          # before, a module not on its fixed list (bookkeeping-ar.js) was copied once as "new" and never updated again
 pm2 logs axiom-ai         # runtime errors, "Schema loaded: N tables", MCP mount line
 pm2 list                  # axiom-ai is process 0 (design-tool is an unrelated app)
 

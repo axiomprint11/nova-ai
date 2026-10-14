@@ -16,13 +16,15 @@ if [ ${#FILES[@]} -eq 0 ]; then
          public/client-bot-admin.js public/client-bot.html public/axiom-shared.css docs/CLIENT_BOT.md CLAUDE.md
          talk-ai.js public/talk-ai.html public/talk-ai.js docs/TALK_AI.md
          usage-stats.js public/nova-stats.js public/index.html public/chatbot.html public/chatbot.js public/nova-nav.js closed-days.js talk-handoff.js docs/TALKAI_CRM_WEBHOOK.md artwork-specs.js team-directory.js office-hours.js bookkeeping.js public/bookkeeping.html public/bookkeeping.js docs/BOOKKEEPING_AI.md
-         shipping.js public/nova-date.js)
+         shipping.js public/nova-date.js bookkeeping-ar.js docs/NOVA_AR_PAY_WEBHOOK.md)
   # 1.19.143: any tracked code / page file that does not exist in the live copy yet is new — take it along, so a new
   # module (shipping.js, nova-date.js) never leaves server.js unable to start.
+  # 1.20.7: and any tracked code / page file that DIFFERS from the live copy — bookkeeping-ar.js was deployed once as a
+  # new file and then never again, so three weeks of AR server changes reached only the page. GitHub is the source.
   if git -C "$SRC" rev-parse >/dev/null 2>&1; then
     while IFS= read -r nf; do
       case "$nf" in scripts/*|node_modules/*|*.md) continue ;; esac
-      [ -f "$LIVE/$nf" ] && continue
+      [ -f "$LIVE/$nf" ] && cmp -s "$SRC/$nf" "$LIVE/$nf" && continue
       skip=0; for f in "${FILES[@]}"; do [ "$f" = "$nf" ] && skip=1 && break; done
       [ $skip -eq 1 ] || FILES+=("$nf")
     done < <(git -C "$SRC" ls-files | grep -E '^(public/)?[^/]+\.(js|html|css)$')
