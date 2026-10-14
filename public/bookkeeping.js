@@ -377,7 +377,7 @@
       sec('Questions', qs) +
       sec('Suggestions', cats.concat(bills), cats.length + bills.length ? '<button class="bk-btn sm ok" id="approveAll">Approve all</button>' : '') +
       '<div class="bk-card"><h2>Payments</h2><div class="bk-muted">Not connected yet — paying through BILL comes in a later phase.</div></div>' +
-      '<div class="bk-card"><h2>Talk to BookkeeperAI<span class="sp"></span><span class="bk-muted">the same conversation as Google Chat</span></h2><div class="bk-chat"><div class="bk-msgs" id="msgs"></div><div class="bk-input"><input id="chatIn" placeholder="e.g. approve #12, Q3: that was the new cutter, what did we spend on paper?"><button class="bk-btn p" id="chatSend">Send</button></div></div></div>' +
+      '<div class="bk-card"><h2>Talk to BookkeeperAI<span class="sp"></span><span class="bk-muted">the same conversation as Google Chat</span></h2><div class="bk-chat"><div class="bk-msgs" id="msgs"></div><div class="bk-input"><textarea id="chatIn" rows="1" placeholder="e.g. approve #12, Q3: that was the new cutter, what did we spend on paper? (Enter sends, Shift+Enter = new line)"></textarea><button class="bk-btn p" id="chatSend">Send</button></div></div></div>' +
       (ov.brief ? '<div class="bk-card"><h2>Today’s brief as posted</h2><pre class="bk-brief">' + esc(ov.brief.text) + '</pre></div>' : '');
     const refresh = () => loadBrief();
     v.querySelectorAll('[data-approve]').forEach(b => b.onclick = async () => {
@@ -400,7 +400,7 @@
     $('runNow').onclick = async () => { $('runNow').disabled = true; $('runMsg').textContent = 'Running — syncing banks, scanning the inbox, categorizing…'; const r = await post('/api/bookkeeping/run', { post: false }); $('runMsg').textContent = r.ok ? r.summary : (r.error || 'Failed'); $('runNow').disabled = false; loadBrief(); };
     $('postBrief').onclick = async () => { $('postBrief').disabled = true; const r = await post('/api/bookkeeping/brief', { post: true }); $('runMsg').textContent = r.posted && !r.posted.error ? 'Posted to Google Chat.' : 'Not posted: ' + ((r.posted && r.posted.error) || 'unknown'); $('postBrief').disabled = false; };
     loadChat();
-    $('chatSend').onclick = sendChat; $('chatIn').onkeydown = (e) => { if (e.key === 'Enter') sendChat(); };
+    $('chatSend').onclick = sendChat; growBox($('chatIn'), sendChat);   // 1.19.150: Enter / Ctrl+Enter send, Shift+Enter = new line, the box grows
   }
   async function openFile(id) {
     const r = await fetch('/api/bookkeeping/bills/' + id + '/file', { headers: { 'Authorization': 'Bearer ' + token } });
@@ -424,6 +424,14 @@
   }
 
   // ---------------------------------------------------------------- the BookkeeperAI bubble (1.19.73): bottom-right on every tab
+  // 1.19.150: a chat composer that grows with the message. Enter or Ctrl/Cmd+Enter sends, Shift+Enter adds a line.
+  function growBox(ta, send) {
+    if (!ta) return;
+    const fit = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight + 2, parseInt(getComputedStyle(ta).maxHeight) || 200) + 'px'; };
+    ta.addEventListener('input', fit);
+    ta.addEventListener('keydown', (e) => { if (e.key !== 'Enter' || e.isComposing) return; if (e.shiftKey && !(e.ctrlKey || e.metaKey)) return; e.preventDefault(); send(); setTimeout(fit, 0); });
+    fit();
+  }
   (function bubble() {
     const btn = $('bkBub'), panel = $('bkBubPanel'); if (!btn || !panel) return;
     let open = false, loaded = false;
@@ -445,16 +453,19 @@
     const toggle = (on) => { open = on == null ? !open : on; panel.hidden = !open; btn.classList.toggle('on', open); if (open) { if (!loaded) load(); setTimeout(() => $('bubIn').focus(), 50); } };
     btn.onclick = () => toggle(); $('bkBubClose').onclick = () => toggle(false);
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && open) toggle(false); });
+    // 1.19.150: a click anywhere outside the panel closes it (pickers and modals that float above it do not count)
+    document.addEventListener('mousedown', (e) => { if (!open) return; if (panel.contains(e.target) || btn.contains(e.target) || e.target.closest('.ckp-pop, .bk-modal, .nd-pop, .thf-pop, .bk-toast')) return; toggle(false); });
     const send = async (text) => {
       text = String(text || '').trim(); if (!text) return;
       const box = $('bubMsgs'); box.insertAdjacentHTML('beforeend', '<div class="bk-msg in">' + esc(text) + '</div><div class="bk-msg out bk-muted" id="bubWait">…</div>'); box.scrollTop = box.scrollHeight;
-      $('bubIn').value = ''; $('bubSend').disabled = true;
+      $('bubIn').value = ''; $('bubIn').style.height = ''; $('bubSend').disabled = true;
       const r = await post('/api/bookkeeping/chat', { text });
       $('bubSend').disabled = false;
       if (!r.ok) { const w = $('bubWait'); if (w) w.textContent = r.error || 'No answer'; return; }
       await load(); if ($('msgs')) loadChat();   // the Daily Brief tab shows the same thread
     };
     $('bubForm').onsubmit = (e) => { e.preventDefault(); send($('bubIn').value); };
+    growBox($('bubIn'), () => send($('bubIn').value));
     $('bubHint').querySelectorAll('[data-ask]').forEach(a => a.onclick = (e) => { e.preventDefault(); send(a.dataset.ask); });
   })();
 
@@ -2128,7 +2139,7 @@
     };
     const row = (l) => { const sch = l.schedule || {}, total = (sch.months_done || 0) + (sch.months_left || 0), pct = total ? Math.round(100 * (sch.months_done || 0) / total) : 0;
       return '<tr' + (l.status === 'paid' ? ' class="off"' : '') + '><td>' + pic(l) + '</td>' +
-        '<td><b>' + esc(l.name) + '</b> <span class="ln-kind ' + esc(l.kind) + '">' + esc(KIND[l.kind] || l.kind) + '</span>' + (l.source === 'equipment' ? '<div class="bk-dim">financing from the Equipment tab</div>' : l.equipment_name ? '<div class="bk-dim">for ' + esc(l.equipment_name) + '</div>' : '') + (l.source === 'loan' ? '<div class="bk-dim"><a href="#" data-ldocs="' + l.id + '">' + (l.files ? l.files + ' document' + (l.files === 1 ? '' : 's') : 'add documents') + '</a></div>' : '') + (l.status === 'paid' ? '<div class="bk-dim">paid off</div>' : '') + '</td>' +
+        '<td><b>' + esc(l.name) + '</b> <span class="ln-kind ' + esc(l.kind) + '">' + esc(KIND[l.kind] || l.kind) + '</span>' + (l.source === 'equipment' ? '<div class="bk-dim">financing from the Equipment tab</div>' : l.equipment_name ? '<div class="bk-dim">for ' + esc(l.equipment_name) + '</div>' : '') + (l.source === 'loan' ? '<div class="bk-dim ln-docs-l"><a href="#" data-ldocs="' + l.id + '" title="' + (l.files ? 'Open the documents on this loan' : 'Add the signed contract, loan terms…') + '">' + (l.files ? l.files + ' doc' + (l.files === 1 ? '' : 's') : 'Add docs') + '</a></div>' : '') + (l.status === 'paid' ? '<div class="bk-dim">paid off</div>' : '') + '</td>' +
         '<td>' + esc(l.vendor_name || l.lender || '—') + '</td>' +
         '<td>' + (l.principal != null ? '<b>' + usd(l.principal) + '</b>' : '<span class="bk-dim">—</span>') + '<div class="bk-dim">' + esc(dateS(l.start_date)) + (l.math && l.math.down ? ' · ' + usd(l.math.down) + ' down' : '') + (l.term_months ? ' · ' + l.term_months + ' mo' : '') + (l.math && l.math.deferred ? ' after ' + l.math.deferred + ' skipped' : '') + (l.math && l.math.apr != null && l.kind !== 'lease' ? ' · ' + l.math.apr + '% APR' + (l.math.apr_given ? '' : ' (effective)') : l.apr != null && l.apr !== '' ? ' · ' + l.apr + '% APR' : '') + '</div>' + (l.math && l.math.total_payback ? '<div class="bk-dim">' + usd(l.math.total_payback) + ' back in all</div>' : '') + (l.math && l.math.sales_tax ? '<div class="bk-dim">' + usd(l.math.sales_tax) + ' sales tax ' + (l.math.tax_in ? 'financed' : 'paid separately') + '</div>' : '') + '</td>' +
         '<td class="num">' + (sch.monthly ? '<b>' + usd(sch.monthly) + '</b>' : '—') + (l.math && l.math.property_tax ? '<div class="bk-dim">+ ' + usd(l.math.property_tax) + ' property tax = ' + usd(l.math.payment) + '</div>' : '') + ((l.calendar && l.calendar.next_due) ? '<div class="bk-dim">next ' + esc(dateS(l.calendar.next_due)) + '</div>' : sch.next ? '<div class="bk-dim">next ' + esc(dateS(sch.next)) + '</div>' : '') + '</td>' +
