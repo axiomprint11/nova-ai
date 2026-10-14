@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.19.159';
-const NOVA_BUILT = '10-14-2026 12:25am';
+const NOVA_VERSION = '1.20.1';
+const NOVA_BUILT = '10-14-2026 9:05am';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.

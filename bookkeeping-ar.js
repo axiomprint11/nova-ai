@@ -126,11 +126,40 @@ module.exports = function mountAr(ctx) {
   }
   const usd = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+  // 1.20.1: Credit card / ACH / Check / Zelle / Wire / Mobile deposit / Online — from the bank wording first, Plaid's channel second
+  function payMethod(r) {
+    let raw = null; try { raw = r.raw ? JSON.parse(r.raw) : null; } catch (e) {}
+    const w = [r.name, r.merchant, raw && raw.original_description].filter(Boolean).join(' ').toLowerCase();
+    const cn = raw ? realCheckNo(raw, r) : null;
+    if (/\bzelle\b/.test(w)) return 'Zelle';
+    if (/\bvenmo\b/.test(w)) return 'Venmo';
+    if (/\bpaypal\b/.test(w)) return 'PayPal';
+    if (/\bwire\b|\bfedwire\b|\bwt fed\b|\bintl wire\b/.test(w)) return 'Wire';
+    if (/mobile deposit|remote deposit|\brdc\b/.test(w)) return 'Mobile deposit (check)';
+    if (cn || /\bcheck\b|\bchk\b|deposited check|check deposit/.test(w)) return 'Check' + (cn ? ' #' + cn : '');
+    if (/merchant account|merch dep|merchant dep|bankcard|bnkcrd|\bstripe\b|\bsquare\b|\bauthnet\b|authorize\.net|\bclover\b|\bpaymentech\b|\bamex\b|\bvisa\b|\bmastercard\b|\bcard\b/.test(w)) return 'Credit card';
+    if (/\bach\b|\bintachtrn\b|bill\.com|\bppd\b|\bccd\b|\bb2b\b|business to business|\beft\b|direct dep|\bdeposit\b.*\bref\b/.test(w)) return 'ACH';
+    if (raw && raw.payment_channel === 'in store') return 'In branch';
+    if (raw && raw.payment_channel === 'online') return 'Online';
+    if (/\bdeposit\b/.test(w)) return 'Deposit';
+    return '';
+  }
   const txFields = async (ids) => {
     if (!ids.length) return {};
-    const rows = await dbAll('SELECT t.id, t.date, t.created_at, t.name, t.merchant, t.amount, t.raw, t.account_name, t.account_ref, t.category, t.vendor_id, v.name AS vendor_name, v.photo AS vendor_photo, ba.institution, ba.logo AS bank_logo, ba.color AS bank_color, ba.accounts AS bank_accounts FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id WHERE t.id IN (' + ids.map(() => '?').join(',') + ')', ids);
+    const rows = await dbAll('SELECT t.id, t.date, t.created_at, t.updated_at, t.name, t.merchant, t.amount, t.raw, t.account_name, t.account_ref, t.category, t.category_source, t.category_by, t.rule_id, t.vendor_id, v.name AS vendor_name, v.photo AS vendor_photo, ba.institution, ba.logo AS bank_logo, ba.color AS bank_color, ba.accounts AS bank_accounts, ru.kind AS rule_kind, ru.pattern AS rule_pattern FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id LEFT JOIN bk_rules ru ON ru.id = t.rule_id WHERE t.id IN (' + ids.map(() => '?').join(',') + ')', ids);
+    // who filed the line as a customer payment, for lines categorized before category_by existed: the audit trail
+    const audits = {}; try { (await dbAll("SELECT ref, who FROM bk_audit WHERE action IN ('category.manual', 'category.apply') AND ref IN (" + ids.map(() => '?').join(',') + ') ORDER BY id', ids.map(String))).forEach(a => { audits[a.ref] = a.who; }); } catch (e) {}
     const m = {};
     for (const r of rows) {
+      // 1.20.1: how the money came in, from the wording and Plaid's channel
+      r.how = payMethod(r); r.synced_at = r.created_at;
+      // 1.20.1: who / what filed it as a customer payment
+      const src = r.category_source || '';
+      r.filed = src === 'rule' ? { kind: 'rule', label: 'Auto rule', detail: r.rule_pattern ? (r.rule_kind === 'keyword' ? 'contains "' + r.rule_pattern + '"' : 'vendor is ' + r.rule_pattern) : '' }
+        : src === 'approved' || src === 'ai' ? { kind: 'person', label: 'AI, approved by', who: r.category_by || audits[String(r.id)] || '' }
+        : src === 'manual' || src === 'vendor' || src === 'history' ? { kind: 'person', label: 'Manually by', who: r.category_by || audits[String(r.id)] || '' }
+        : src === 'refund' ? { kind: 'rule', label: 'Refund match', detail: '' } : { kind: 'rule', label: src ? src.charAt(0).toUpperCase() + src.slice(1) : 'Auto', detail: '' };
+      r.filed_at = r.updated_at || null;
       let accts = []; try { accts = JSON.parse(r.bank_accounts || '[]'); } catch (e) {}
       const a = accts.find(x => x.account_id === r.account_ref); r.mask = a && a.mask ? a.mask : null; delete r.bank_accounts;
       let raw = null; try { raw = r.raw ? JSON.parse(r.raw) : null; } catch (e) {} delete r.raw;
@@ -151,12 +180,12 @@ module.exports = function mountAr(ctx) {
       await syncQueue();
       const st = req.query.status === 'done' ? 'done' : 'open';
       const where = [st === 'open' ? "q.status = 'open'" : "q.status IN ('matched', 'skipped')"], p = [];
-      if (req.query.from) { where.push('t.date >= ?'); p.push(String(req.query.from)); }
-      if (req.query.to) { where.push('t.date <= ?'); p.push(String(req.query.to)); }
+      if (req.query.from) { where.push('date(t.created_at) >= ?'); p.push(String(req.query.from)); }   // 1.20.1: the Synced column is the date filter
+      if (req.query.to) { where.push('date(t.created_at) <= ?'); p.push(String(req.query.to)); }
       if (req.query.min !== undefined && req.query.min !== '') { where.push('q.amount >= ?'); p.push(Number(req.query.min) || 0); }
       if (req.query.max !== undefined && req.query.max !== '') { where.push('q.amount <= ?'); p.push(Number(req.query.max) || 0); }
       const q = String(req.query.q || '').trim().toLowerCase();
-      const rows = await dbAll('SELECT q.*, t.date FROM bk_ar q JOIN bk_transactions t ON t.id = q.txn_id WHERE ' + where.join(' AND ') + ' ORDER BY ' + (st === 'open' ? 't.date DESC' : 'q.matched_at DESC') + ' LIMIT 500', p);
+      const rows = await dbAll('SELECT q.*, t.date FROM bk_ar q JOIN bk_transactions t ON t.id = q.txn_id WHERE ' + where.join(' AND ') + ' ORDER BY ' + (st === 'open' ? 't.created_at DESC, t.date DESC' : 'q.matched_at DESC') + ' LIMIT 500', p);
       const tx = await txFields(rows.map(r => r.txn_id));
       // 1.19.159: the list itself never touches the CRM — the invoices are read when the first row asks for its suggestions
       // (or here when the cache is warm / a refresh was asked), so the page shows the queue at once

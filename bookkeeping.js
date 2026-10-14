@@ -126,6 +126,7 @@ module.exports = function mountBookkeeping(app, deps) {
     // 1.19.149: a line a person sent back to Pending ("Uncategorize" in the Categorized view) — the rule / team / loan
     // sweeps leave it alone until someone files it again
     db.run('ALTER TABLE bk_transactions ADD COLUMN no_auto INTEGER DEFAULT 0', () => {});
+    db.run('ALTER TABLE bk_transactions ADD COLUMN category_by TEXT', () => {});   // 1.20.1: who filed it by hand / approved it (rules and sweeps leave it NULL)
     db.run('ALTER TABLE bk_bills ADD COLUMN merged_into INTEGER', () => {});
     // How bill lines were linked by hand: vendor + the line's wording → material / machine. The next bill from that
     // vendor with the same wording links by itself (1.19.15).
@@ -1690,7 +1691,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const category = String(opts.category || payload.category || '').trim();
       if (!category) return { ok: false, error: 'No category.' };
       const edited = category !== payload.category;
-      await dbRun("UPDATE bk_transactions SET category = ?, category_source = 'approved', status = 'categorized', updated_at = datetime('now') WHERE id = ?", [category, p.ref_id]);
+      await dbRun("UPDATE bk_transactions SET category = ?, category_source = 'approved', category_by = ?, status = 'categorized', updated_at = datetime('now') WHERE id = ?", [category, who, p.ref_id]);
       let rule = null;
       if (opts.remember !== false) {
         const vendor = String(opts.vendor || payload.vendor || '').trim();
@@ -2381,7 +2382,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!category) return res.json({ ok: false, error: 'No category' });
     // 1.19.72: a picked suggestion keeps where it came from (vendor's usual / history / ai); a hand pick is 'manual'
     const src = ['vendor', 'history', 'ai'].indexOf(String(req.body.source || '')) > -1 ? String(req.body.source) : 'manual';
-    await dbRun("UPDATE bk_transactions SET category = ?, category_source = ?, status = 'categorized', no_auto = 0, updated_at = datetime('now') WHERE id = ?", [category, src, id]);
+    await dbRun("UPDATE bk_transactions SET category = ?, category_source = ?, category_by = ?, status = 'categorized', no_auto = 0, updated_at = datetime('now') WHERE id = ?", [category, src, userId(req), id]);
     await dbRun("UPDATE bk_proposals SET status = 'edited', decided_by = ?, decided_at = ? WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [userId(req), nowIso(), id]);
     await audit(userId(req), 'category.manual', id, category);
     res.json({ ok: true });
@@ -2393,7 +2394,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!t) return res.json({ ok: false, error: 'No such line.' });
     if (t.status !== 'categorized') return res.json({ ok: false, error: 'This line is not categorized.' });
     if (t.transfer_of) await dbRun("UPDATE bk_transactions SET transfer_of = NULL, category = CASE WHEN category_source = 'transfer' THEN NULL ELSE category END, category_source = CASE WHEN category_source = 'transfer' THEN NULL ELSE category_source END, status = CASE WHEN category_source = 'transfer' THEN 'pending' ELSE status END WHERE id = ?", [t.transfer_of]);
-    await dbRun("UPDATE bk_transactions SET category = NULL, category_source = NULL, rule_id = NULL, team_id = NULL, loan_id = NULL, transfer_of = NULL, refund_of = NULL, status = 'pending', no_auto = 1, updated_at = datetime('now') WHERE id = ?", [id]);
+    await dbRun("UPDATE bk_transactions SET category = NULL, category_source = NULL, category_by = NULL, rule_id = NULL, team_id = NULL, loan_id = NULL, transfer_of = NULL, refund_of = NULL, status = 'pending', no_auto = 1, updated_at = datetime('now') WHERE id = ?", [id]);
     await audit(userId(req), 'category.reset', id, { was: t.category, source: t.category_source });
     res.json({ ok: true });
   });
