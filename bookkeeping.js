@@ -3329,7 +3329,10 @@ module.exports = function mountBookkeeping(app, deps) {
 
       if (!isOwnName(text)) await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = 'auto', vendor_score = 1, suggest_vendor_id = NULL, suggest_score = NULL WHERE id <> ? AND (vendor_id IS NULL OR vendor_by = 'auto') AND LOWER(COALESCE(merchant, name)) = LOWER(?)", [vid, id, text]); }
       // 1.19.91: and every line whose wording differs only by a per-payment code (Stripe transfer ids, check / ref numbers)
-      const ns = genericWording(lineText(t)) ? '' : stableV(lineText(t)); if (ns.length >= 6) {   // 1.19.157: never through our own name or bank boilerplate const open = await dbAll("SELECT id, name, merchant, raw FROM bk_transactions WHERE id <> ? AND vendor_id IS NULL AND status NOT IN ('removed', 'excluded')", [id]);
+      // 1.19.157: never through our own name or bank boilerplate (1.20.13: the `const open` below had been swallowed by this comment
+      // since 1.19.157 — every hand link of a vendor with a distinctive wording threw "open is not defined")
+      const ns = genericWording(lineText(t)) ? '' : stableV(lineText(t)); if (ns.length >= 6) {
+        const open = await dbAll("SELECT id, name, merchant, raw FROM bk_transactions WHERE id <> ? AND vendor_id IS NULL AND status NOT IN ('removed', 'excluded')", [id]);
         for (const o of open) if (stableV(lineText(o)) === ns) await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = 'auto', vendor_score = 1, suggest_vendor_id = NULL, suggest_score = NULL WHERE id = ? AND vendor_id IS NULL", [vid, o.id]); }
     // Remember the bank line as an alias of that vendor, so the next one matches by itself.
     if (vid && req.body.alias) { const v = await dbGet('SELECT aliases FROM bk_vendors WHERE id = ?', [vid]); const al = String(v && v.aliases || '').split('\n').filter(Boolean); if (al.indexOf(req.body.alias) < 0) { al.push(String(req.body.alias).slice(0, 120)); await dbRun('UPDATE bk_vendors SET aliases = ? WHERE id = ?', [al.join('\n'), vid]); dirCache.at = 0; } }
