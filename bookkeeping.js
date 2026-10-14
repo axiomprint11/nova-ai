@@ -2003,7 +2003,7 @@ module.exports = function mountBookkeeping(app, deps) {
   // debits). Drop those aliases, unlink the machine-made links on own-name lines, and send their rule-made categories back
   // to Pending; the next Bank feed load re-links them from the real wording.
   db.run('CREATE TABLE IF NOT EXISTS bk_migrations (key TEXT PRIMARY KEY, at TEXT)', () => {
-    db.get("SELECT key FROM bk_migrations WHERE key = 'own_alias_157'", [], async (e, row) => {
+    db.get("SELECT key FROM bk_migrations WHERE key = 'own_alias_158'", [], async (e, row) => {
       if (e || row) return;
       try {
         let fixedV = 0, unlinked = 0, reset = 0;
@@ -2011,15 +2011,16 @@ module.exports = function mountBookkeeping(app, deps) {
           const al = String(v.aliases).split('\n').filter(Boolean), keep = al.filter(a => !genericWording(a));
           if (keep.length !== al.length) { await dbRun('UPDATE bk_vendors SET aliases = ? WHERE id = ?', [keep.join('\n'), v.id]); fixedV++; }
         }
-        for (const t of await dbAll("SELECT id, name, merchant, raw, vendor_id, category_source FROM bk_transactions WHERE vendor_id IS NOT NULL AND vendor_by = 'auto' AND status NOT IN ('removed', 'excluded')")) {
-          if (!isOwnName(t.merchant || t.name)) continue;
+        // every machine-made exact link is re-checked against the cleaned directory: a line the wording no longer ties to its
+        // vendor (it got there through "axiom print" inside the wording — "VIBAC CANADA … AXIOM PRINT" → USPS) is unlinked
+        for (const t of await dbAll("SELECT id, name, merchant, raw, vendor_id, category_source FROM bk_transactions WHERE vendor_id IS NOT NULL AND vendor_by = 'auto' AND IFNULL(vendor_score, 1) >= 1 AND status NOT IN ('removed', 'excluded')")) {
           const real = await matchVendor(lineText(t)).catch(() => null);
           if (real && real.id === t.vendor_id) continue;   // the wording itself names this vendor — the link is right
           await dbRun('UPDATE bk_transactions SET vendor_id = NULL, vendor_by = NULL, vendor_score = NULL WHERE id = ?', [t.id]); unlinked++;
           if (t.category_source === 'rule') { await dbRun("UPDATE bk_transactions SET category = NULL, category_source = NULL, rule_id = NULL, status = 'pending', updated_at = datetime('now') WHERE id = ?", [t.id]); reset++; }
         }
         dirCache.at = 0;
-        await dbRun("INSERT OR REPLACE INTO bk_migrations (key, at) VALUES ('own_alias_157', datetime('now'))");
+        await dbRun("INSERT OR REPLACE INTO bk_migrations (key, at) VALUES ('own_alias_158', datetime('now'))");
         await audit('system', 'repair.own_alias', null, { vendors: fixedV, unlinked, reset });
         console.log('BOOKKEEPER repair own-name aliases: vendors ' + fixedV + ', unlinked ' + unlinked + ', categories reset ' + reset);
       } catch (err) { errlog('repair own_alias', err.message); }
