@@ -42,14 +42,18 @@ module.exports = function mountAr(ctx) {
   }
 
   // ---- open invoices from the production DB (read-only), cached 5 minutes
-  const inv = { at: 0, rows: [] }, sugCache = new Map();
+  const inv = { at: 0, rows: [], error: null }, sugCache = new Map();
   async function openInvoices(force) {
     if (!runQuery) return [];
     if (!force && Date.now() - inv.at < 5 * 60000) return inv.rows;
     // open invoices, plus the ones marked paid in the last 90 days (AR often marks the CRM before the bank posts — shown as "already paid in the CRM")
-    const rows = await runQuery("SELECT i.id, i.invoice_total_payment AS total, i.invoice_total_payment_done AS done, i.payment_status, i.invoice_creation_date AS created, i.payment_due_date AS due, i.PO_number AS po, i.invoice_clientid AS customer_id, i.updated_at, " +
-      "c.company_name, c.name, c.last_name, c.email FROM invoice i LEFT JOIN customer c ON c.id = i.invoice_clientid " +
-      "WHERE i.invoice_type = 'invoice' AND i.invoice_total_payment > 0 AND (i.payment_status IN ('unpaid', 'partial') OR (i.payment_status = 'paid' AND i.updated_at >= DATE_SUB(NOW(), INTERVAL 90 DAY))) ORDER BY i.id DESC LIMIT 30000");
+    // two queries, each on an index (payment_status; id range for the recent paid ones) — one OR over both made MySQL scan the table
+    const SEL = "SELECT i.id, i.invoice_total_payment AS total, i.invoice_total_payment_done AS done, i.payment_status, i.invoice_creation_date AS created, i.payment_due_date AS due, i.PO_number AS po, i.invoice_clientid AS customer_id, i.updated_at, " +
+      "c.company_name, c.name, c.last_name, c.email FROM invoice i LEFT JOIN customer c ON c.id = i.invoice_clientid WHERE i.invoice_type = 'invoice' AND i.invoice_total_payment > 0 AND ";
+    const open = await runQuery(SEL + "i.payment_status IN ('unpaid', 'partial') ORDER BY i.id DESC LIMIT 20000");
+    const maxId = (await runQuery('SELECT MAX(id) AS m FROM invoice'))[0].m || 0;
+    const paid = await runQuery(SEL + "i.payment_status = 'paid' AND i.id > " + (Number(maxId) - 6000) + " AND i.invoice_creation_date >= DATE_SUB(NOW(), INTERVAL 120 DAY) ORDER BY i.id DESC LIMIT 6000");   // the last ~6k invoices cover several months
+    const rows = open.concat(paid);
     inv.rows = rows.map(r => ({ id: r.id, no: 'INV' + r.id, total: Number(r.total) || 0, done: Number(r.done) || 0, balance: r.payment_status === 'paid' ? Number(r.total) || 0 : Math.round(((Number(r.total) || 0) - (Number(r.done) || 0)) * 100) / 100, status: r.payment_status, created: r.created, due: r.due, po: r.po || null, paid_at: r.payment_status === 'paid' ? r.updated_at : null,
       customer_id: r.customer_id, company: r.company_name || '', person: [r.name, r.last_name].filter(Boolean).join(' '), email: r.email || '' }));
     inv.rows.forEach(r => { r.customer = r.company || r.person || ('Customer #' + r.customer_id); r._k = keyWords(r.company + ' ' + r.person + ' ' + (r.email || '').split('@')[0]); });
@@ -138,7 +142,7 @@ module.exports = function mountAr(ctx) {
 
   // GET /api/bookkeeping/ar/me — what the AR-only page needs instead of the full Bookkeeping overview (1.19.153)
   app.get('/api/bookkeeping/ar/me', ...guard, async (req, res) => {
-    try { res.json({ ok: true, me: userId(req), people: people ? await people.list() : [], open: (await dbGet("SELECT COUNT(*) n FROM bk_ar WHERE status = 'open'")).n }); }
+    try { let pl = []; try { pl = people ? await people.list() : []; } catch (e) {} res.json({ ok: true, me: userId(req), people: pl, open: (await dbGet("SELECT COUNT(*) n FROM bk_ar WHERE status = 'open'")).n }); }
     catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // GET /api/bookkeeping/ar?status=open|done&from&to&min&max&q
@@ -154,19 +158,31 @@ module.exports = function mountAr(ctx) {
       const q = String(req.query.q || '').trim().toLowerCase();
       const rows = await dbAll('SELECT q.*, t.date FROM bk_ar q JOIN bk_transactions t ON t.id = q.txn_id WHERE ' + where.join(' AND ') + ' ORDER BY ' + (st === 'open' ? 't.date DESC' : 'q.matched_at DESC') + ' LIMIT 500', p);
       const tx = await txFields(rows.map(r => r.txn_id));
-      let invoices = []; let crm_error = null;
-      try { invoices = await openInvoices(req.query.fresh === '1'); } catch (e) { crm_error = e.message; }
+      // 1.19.159: the list itself never touches the CRM — the invoices are read when the first row asks for its suggestions
+      // (or here when the cache is warm / a refresh was asked), so the page shows the queue at once
+      let invoices = inv.rows; let crm_error = inv.error || null;
+      if (req.query.fresh === '1') { try { invoices = await openInvoices(true); crm_error = null; } catch (e) { crm_error = e.message; } }
       const out = [];
       for (const r of rows) {
         const t = tx[r.txn_id] || {}; const row = Object.assign({}, r, { txn: t });
         if (q && [t.name, t.merchant, t.orig_desc, r.customer_name, r.invoice_ids, r.note, String(r.amount)].filter(Boolean).join(' ').toLowerCase().indexOf(q) < 0) continue;
-        if (st === 'open') { const ck = r.txn_id + ':' + inv.at; if (!sugCache.has(ck)) { if (sugCache.size > 2000) sugCache.clear(); sugCache.set(ck, invoices.length ? suggest(t, invoices) : []); } row.suggestions = sugCache.get(ck); }   // suggestions are stable until the invoice list is re-read
+        if (st === 'open') { const ck = r.txn_id + ':' + inv.at; row.suggestions = sugCache.has(ck) ? sugCache.get(ck) : null; }   // null = the page asks /ar/:id/suggest for it (1.19.159: the list never waits on the matching)
         else { const ids = String(r.invoice_ids || '').split(',').filter(Boolean).map(Number); row.invoices = ids.map(id => { const x = invoices.find(i => i.id === id); return x ? { id, no: x.no, total: x.total, balance: x.balance, status: x.status, customer: x.customer } : { id, no: 'INV' + id }; }); }
         out.push(row);
       }
       const counts = await dbGet("SELECT SUM(status = 'open') AS open, SUM(status IN ('matched', 'skipped')) AS done, SUM(CASE WHEN status = 'open' THEN amount ELSE 0 END) AS open_total FROM bk_ar");
       res.json({ ok: true, rows: out, counts: { open: counts.open || 0, done: counts.done || 0, open_total: Math.round((counts.open_total || 0) * 100) / 100 }, invoices_open: invoices.length, invoices_at: inv.at, crm_error });
     } catch (e) { errlog('ar list', e.message); res.json({ ok: false, error: e.message }); }
+  });
+  // GET /api/bookkeeping/ar/:id/suggest — the suggestions for one payment (the page asks row by row, a few at a time)
+  app.get('/api/bookkeeping/ar/:id/suggest', ...guard, async (req, res) => {
+    try {
+      const q = await dbGet('SELECT * FROM bk_ar WHERE id = ?', [parseInt(req.params.id)]); if (!q) return res.json({ ok: false, error: 'No such payment' });
+      let invoices; try { invoices = await openInvoices(); inv.error = null; } catch (e) { inv.error = e.message; return res.json({ ok: false, error: 'CRM not reachable: ' + e.message, crm_error: e.message }); }
+      const ck = q.txn_id + ':' + inv.at;
+      if (!sugCache.has(ck)) { const t = (await txFields([q.txn_id]))[q.txn_id] || {}; if (sugCache.size > 2000) sugCache.clear(); sugCache.set(ck, invoices.length ? suggest(t, invoices) : []); }
+      res.json({ ok: true, suggestions: sugCache.get(ck), invoices_open: invoices.length, invoices_at: inv.at });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
   });
 
   // GET /api/bookkeeping/ar/invoices?q= — look an invoice up by number, customer, company or PO for "Other invoice…"
