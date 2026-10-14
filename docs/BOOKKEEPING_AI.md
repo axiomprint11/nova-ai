@@ -594,6 +594,7 @@ and can be typed as 10/1/26).
 ### Rule amount conditions and "No rule" (1.19.112)
 
 - A rule can be limited to lines **over**, **under** or **exactly** an amount (the line's absolute amount, money in or out). Blank = any amount, so existing rules are unchanged. When a vendor has both a plain rule and an amount rule, the amount rule is tried first.
+- **Money side** (1.19.146, `bk_rules.side`): a rule can be limited to **Received** (deposits, money in) or **Paid** (charges, money out); **Any** (the default, and what every older rule has) matches both. The Rules form and the Edit row have the Any | Received | Paid select before the amount, and the table shows it in a Money column. A rule with a side or an amount is tried before a plain rule for the same vendor, so "Stripe · Received → Customer Payment" beats "Stripe → Merchant Fees" on a deposit. Rules made from the Bank feed's "Make it a rule?" start as Any.
 - **No rule for vendor** (`bk_rules.kind = 'none'`): the vendor is never filed by rule and Nova stops offering "Make it a rule?" / "Create a rule" for it (eBay, where every purchase is different). Set it from Accounts → Rules, from the "Never for <vendor>" button on the Make-it-a-rule question, or the "· no rule" link beside Create a rule. Remove it under Accounts → Rules.
 
 ### Overseas Team (1.19.119)

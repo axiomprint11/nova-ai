@@ -144,6 +144,10 @@
   .bk-view { display: none; max-width: none; margin: 0; padding: 18px 0; }
   .bk-view { max-width: 1120px; }   /* left aligned, brief-width; the Inbox split view keeps the full width */
   .bk-view[data-v=bank] { max-width: 1480px; }   /* 1.19.61: the Bank feed has seven columns — let it breathe */
+  #vNova .bk-card { width: 1232px; max-width: none; }   /* 1.19.146: the Nova vendors table 10% wider than the view */
+  .nv-table .nv-rowacts { white-space: nowrap; text-align: right; } .nv-table .nv-rowacts .bk-btn { margin: 0 0 0 4px; padding-left: 8px; padding-right: 8px; }
+  .nv-table td.nv-catc .cat-short { white-space: normal; align-items: flex-start; } .nv-table td.nv-catc .cat-short .coa-ic { flex: none; margin-top: 1px; } .nv-table td.nv-catc .cat-short b { line-height: 1.25; }   /* the category wraps to two lines in its narrower column */
+  #vNova h2 { display: flex; align-items: center; gap: 8px; } #vNova h2 .bk { height: 34px; box-sizing: border-box; } #vNova h2 .bk-btn { height: 34px; display: inline-flex; align-items: center; white-space: nowrap; }   /* Search and + New vendor on one line, same height */
   .bk-view[data-v=inbox] { max-width: none; }   /* full width, left aligned */
   .bk-view[data-v=activity] table.bk td:first-child, .bk-view[data-v=activity] table.bk th:first-child { white-space: nowrap; }
   .bk-sub .sp { flex: 1; } .bk-sub .ib-chips { display: flex; gap: 6px; flex-wrap: wrap; } .bk-sub input.sub-q { flex: 0 0 300px; margin: 0; padding: 7px 10px; font: inherit; font-size: 13px; font-weight: 400; border: 1px solid var(--line); border-radius: 8px; background: #fff; align-self: flex-start; }   /* 1.19.25: search on the sub-tab line */
