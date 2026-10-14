@@ -324,10 +324,7 @@ route, `/api/me` returns `ar`, nova-nav shows the item for `who: 'ar'`. Inside t
 is put in SQLite `bk_ar` by `syncQueue()` (on every overview and AR load; a line re-filed elsewhere goes `void`, back to
 `open` if it returns). It replaces the manual email to payments@ — "Notify Accounts Receivable" stays as an extra. Open
 invoices come read-only from the production DB (`openInvoices()`: `invoice` unpaid / partial, type invoice, total > 0,
-joined to `customer`; cached 5 min, `?fresh=1` re-reads) and `suggest(t, invoices)` scores each deposit: invoice number
-typed in the memo (6-digit 1xxxxx, +70), balance due to the cent (+55) or invoice total to the cent (+40), payer words in
-the bank wording against company / person / email (`keyWords`, `NOISE` list; +18..40), and two or three open invoices of
-one customer adding up (+50/+45, +30 with the name); ≥ 40 shown, top 5, 70+ highlighted green. Row: Date / Amount / Payer
+joined to `customer`; cached 5 min, `?fresh=1` re-reads) plus invoices marked paid in the last 90 days, flagged "paid in CRM" and scored × 0.8 — AR often marks the CRM before the bank posts) and `suggest(t, invoices)` scores each deposit in the AR team's order (1.19.154): **1. amount** — balance due to the cent (60) or invoice total (50); **2. date** — invoice created within 30 days before the payment +25, within 60 days +12, older 0; **3. client** — payer words in the bank wording against company / person / email (`keyWords`, `NOISE` list) +10; an invoice number in the memo (`invoiceNos`: `INV129964`, `#135244`, `Inv 135244` — no word boundary needed) +30; two or three open invoices of one customer adding up 50 + the date points + 10 for the name; a known client with no amount fit shows low as "partial payment?" (30, deposit below their balance) or "payer name only" (15). Top 5, ≥ 15 shown, 70+ highlighted green. Invoices are shown as **INV135244** (`no`). Row: Date / Amount / Payer
 (merchant, original description, bank ••mask, check #) / **Nova suggests** (score pill, invoice #, customer, total, date,
 PO, why, **Matched** button) + "Other invoice # or customer…" (`GET /api/bookkeeping/ar/invoices?q=` by number prefix,
 customer, person, PO, email → click = Matched) + **Skip** (note optional, kept in history). `GET /api/bookkeeping/ar
