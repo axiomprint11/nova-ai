@@ -19,7 +19,7 @@ module.exports = function mountAr(ctx) {
       created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
     // 1.20.2: kind = 'match' (an open invoice — Match & Pay) or 'pair' (an invoice the CRM already shows as paid); pay_* = the
     // Dev team's pay webhook result once AR_PAY_WEBHOOK_URL is set
-    ['kind TEXT', 'pay_status TEXT', 'pay_at TEXT', 'pay_ref TEXT'].forEach(c => ctx.db.run('ALTER TABLE bk_ar ADD COLUMN ' + c, () => {}));
+    ['kind TEXT', 'pay_status TEXT', 'pay_at TEXT', 'pay_ref TEXT', 'inv_json TEXT'].forEach(c => ctx.db.run('ALTER TABLE bk_ar ADD COLUMN ' + c, () => {}));
   });
   const crypto = require('crypto');
   const env = (k) => String(process.env[k] || '').trim();
@@ -228,7 +228,13 @@ module.exports = function mountAr(ctx) {
         const t = tx[r.txn_id] || {}; const row = Object.assign({}, r, { txn: t });
         if (q && [t.name, t.merchant, t.orig_desc, r.customer_name, r.invoice_ids, r.note, String(r.amount)].filter(Boolean).join(' ').toLowerCase().indexOf(q) < 0) continue;
         if (st === 'open') { const ck = r.txn_id + ':' + inv.at; row.suggestions = sugCache.has(ck) ? sugCache.get(ck) : null; }   // null = the page asks /ar/:id/suggest for it (1.19.159: the list never waits on the matching)
-        else { const ids = String(r.invoice_ids || '').split(',').filter(Boolean).map(Number); row.invoices = ids.map(id => { const x = invoices.find(i => i.id === id); return x ? { id, no: x.no, total: x.total, balance: x.balance, status: x.status, customer: x.customer } : { id, no: 'INV' + id }; }); }
+        else {   // 1.20.6: from the local snapshot taken at match time; older rows fall back to the warm cache (never a CRM call)
+          let snap = null; try { snap = r.inv_json ? JSON.parse(r.inv_json) : null; } catch (e) {}
+          const ids = String(r.invoice_ids || '').split(',').filter(Boolean).map(Number);
+          row.invoices = ids.map(id => { const s = snap && snap.find(x => x.id === id); if (s) return s; const x = inv.byId ? inv.byId.get(id) : null; return x ? pick(x) : { id, no: 'INV' + id }; });
+          if (!snap && ids.length && row.invoices.every(i => i.customer_id !== undefined)) dbRun('UPDATE bk_ar SET inv_json = ? WHERE id = ?', [JSON.stringify(row.invoices), r.id]).catch(() => {});   // older matches: keep the snapshot once the cache has it
+          delete row.inv_json;
+        }
         out.push(row);
       }
       const counts = await dbGet("SELECT SUM(status = 'open') AS open, SUM(status IN ('matched', 'skipped')) AS done, SUM(CASE WHEN status = 'open' THEN amount ELSE 0 END) AS open_total FROM bk_ar");
@@ -271,11 +277,13 @@ module.exports = function mountAr(ctx) {
       const id = parseInt(req.params.id), q = await dbGet('SELECT * FROM bk_ar WHERE id = ?', [id]); if (!q) return res.json({ ok: false, error: 'No such payment' });
       const ids = (Array.isArray(req.body.invoice_ids) ? req.body.invoice_ids : [req.body.invoice_id]).map(x => parseInt(x)).filter(Boolean);
       if (!ids.length) return res.json({ ok: false, error: 'Which invoice?' });
-      let invoices = []; try { invoices = await openInvoices(); } catch (e) {}   // the CRM being down must not block a match the person typed
-      const first = invoices.find(r => r.id === ids[0]);
+      // 1.20.6: the matched invoices are snapshotted into bk_ar.inv_json — from the warm cache, else one read per id — so the
+      // Matched tab never asks the CRM again (and a cold cache never makes the click wait on the 15k-invoice load)
+      const snap = await snapshotInvoices(ids);
+      const first = snap[0] && snap[0].customer_id != null ? snap[0] : null;
       const customer = String(req.body.customer || (first ? first.customer : '')).slice(0, 160), cid = parseInt(req.body.customer_id) || (first ? first.customer_id : null);
       const kind = req.body.kind === 'pair' ? 'pair' : 'match';
-      await dbRun("UPDATE bk_ar SET status = 'matched', kind = ?, invoice_ids = ?, customer_id = ?, customer_name = ?, note = ?, matched_by = ?, matched_at = ?, updated_at = ? WHERE id = ?", [kind, ids.join(','), cid, customer, String(req.body.note || '').slice(0, 500) || null, userId(req), nowIso(), nowIso(), id]);
+      await dbRun("UPDATE bk_ar SET status = 'matched', kind = ?, invoice_ids = ?, inv_json = ?, customer_id = ?, customer_name = ?, note = ?, matched_by = ?, matched_at = ?, updated_at = ? WHERE id = ?", [kind, ids.join(','), JSON.stringify(snap), cid, customer, String(req.body.note || '').slice(0, 500) || null, userId(req), nowIso(), nowIso(), id]);
       await audit(userId(req), kind === 'pair' ? 'ar.pair' : 'ar.match', id, { txn_id: q.txn_id, amount: q.amount, invoice_ids: ids, customer });
       // 1.20.2: Match & Pay tells the CRM to record the payment — once the Dev team's endpoint exists (AR_PAY_WEBHOOK_URL in .env).
       // A pair never pays: the CRM already has it.
@@ -287,6 +295,16 @@ module.exports = function mountAr(ctx) {
   // POST {AR_PAY_WEBHOOK_URL} {event: 'ar.payment', payment: {...}, invoices: [ids], amount, paid_on, method, bank_line, matched_by},
   // signed like the TalkAi webhook (X-Nova-Signature t=…,v1=HMAC-SHA256(secret, t + '.' + body), secret AR_PAY_WEBHOOK_SECRET
   // else TALKAI_WEBHOOK_SECRET). Nothing is sent while the URL is not set — the match is still kept here.
+  const pick = (x) => ({ id: x.id, no: x.no, total: x.total, balance: x.balance, status: x.status, created: x.created, customer: x.customer, company: x.company || '', person: x.person || '', customer_id: x.customer_id == null ? null : x.customer_id });
+  async function snapshotInvoices(ids) {
+    const out = [];
+    for (const id of ids) {
+      let x = inv.byId ? inv.byId.get(id) : null;
+      if (!x) { try { const r = await runQuery(SEL_ONE + ' WHERE i.id = ' + Math.floor(id)); if (r && r[0]) x = shapeInvoice(r[0]); } catch (e) { errlog('ar snapshot', e.message); } }
+      out.push(x ? pick(x) : { id, no: 'INV' + id });
+    }
+    return out;
+  }
   async function payHook(arId) {
     const url = env('AR_PAY_WEBHOOK_URL'), secret = env('AR_PAY_WEBHOOK_SECRET') || env('TALKAI_WEBHOOK_SECRET');
     const q = await dbGet('SELECT * FROM bk_ar WHERE id = ?', [arId]); if (!q) return { sent: false, error: 'No such payment' };
