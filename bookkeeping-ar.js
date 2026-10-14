@@ -42,7 +42,7 @@ module.exports = function mountAr(ctx) {
   }
 
   // ---- open invoices from the production DB (read-only), cached 5 minutes
-  const inv = { at: 0, rows: [] };
+  const inv = { at: 0, rows: [] }, sugCache = new Map();
   async function openInvoices(force) {
     if (!runQuery) return [];
     if (!force && Date.now() - inv.at < 5 * 60000) return inv.rows;
@@ -53,6 +53,11 @@ module.exports = function mountAr(ctx) {
     inv.rows = rows.map(r => ({ id: r.id, no: 'INV' + r.id, total: Number(r.total) || 0, done: Number(r.done) || 0, balance: r.payment_status === 'paid' ? Number(r.total) || 0 : Math.round(((Number(r.total) || 0) - (Number(r.done) || 0)) * 100) / 100, status: r.payment_status, created: r.created, due: r.due, po: r.po || null, paid_at: r.payment_status === 'paid' ? r.updated_at : null,
       customer_id: r.customer_id, company: r.company_name || '', person: [r.name, r.last_name].filter(Boolean).join(' '), email: r.email || '' }));
     inv.rows.forEach(r => { r.customer = r.company || r.person || ('Customer #' + r.customer_id); r._k = keyWords(r.company + ' ' + r.person + ' ' + (r.email || '').split('@')[0]); });
+    // words shared by many customers ("designs", "events", "church") say nothing about who paid — drop them from the keys
+    const df = {}; const seen = {}; inv.rows.forEach(r => { if (seen[r.customer_id]) return; seen[r.customer_id] = 1; r._k.forEach(w => { df[w] = (df[w] || 0) + 1; }); });
+    const common = new Set(Object.keys(df).filter(w => df[w] > 25));
+    inv.rows.forEach(r => { r._k = r._k.filter(w => !common.has(w)); });
+    inv.byId = new Map(inv.rows.map(r => [r.id, r]));
     inv.at = Date.now(); return inv.rows;
   }
 
@@ -79,9 +84,9 @@ module.exports = function mountAr(ctx) {
     const paidOn = new Date(String(t.tx_date || t.date || '').slice(0, 10) + 'T12:00:00Z').getTime();
     const ageDays = (r) => { const c = r.created ? new Date(r.created).getTime() : NaN; return isNaN(c) || isNaN(paidOn) ? null : Math.round((paidOn - c) / DAY); };
     const datePts = (r) => { const d = ageDays(r); if (d == null) return [0, null]; if (d >= -3 && d <= 30) return [25, 'invoiced ' + d + ' day' + (d === 1 ? '' : 's') + ' before']; if (d > 30 && d <= 60) return [12, 'invoiced ' + d + ' days before']; return [0, d > 60 ? 'invoiced ' + d + ' days before' : 'invoiced after the payment']; };
-    const out = [];
-    const push = (ids, score, why, cust) => { const key = ids.slice().sort().join(','); if (out.some(o => o.key === key)) return; out.push({ key, invoice_ids: ids, score, why, customer: cust }); };
-    const nameHit = (r) => words.filter(w => r._k.some(k => k === w || (w.length >= 5 && k.length >= 5 && (k.indexOf(w) === 0 || w.indexOf(k) === 0)))).length;
+    const out = [], keys = new Set();
+    const push = (ids, score, why, cust) => { const key = ids.length > 1 ? ids.slice().sort().join(',') : null; if (key) { if (keys.has(key)) return; keys.add(key); } out.push({ invoice_ids: ids, score, why, customer: cust }); };
+    const nameHit = (r) => { if (!words.length || !r._k.length) return 0; let n = 0; for (const w of words) for (const k of r._k) if (k === w || (w.length >= 5 && k.length >= 5 && (k.indexOf(w) === 0 || w.indexOf(k) === 0))) { n++; break; } return n; };
     for (const r of invoices) {
       const exactBal = Math.abs(r.balance - amt) < 0.005, exactTot = !exactBal && Math.abs(r.total - amt) < 0.005;
       const nh = nameHit(r), memo = nos.indexOf(r.id) > -1;
@@ -111,9 +116,9 @@ module.exports = function mountAr(ctx) {
       }
     }
     out.sort((a, b) => b.score - a.score || b.invoice_ids[0] - a.invoice_ids[0]);
-    const top = out.slice(0, 5);
+    const top = out.slice(0, 5), byId = inv.byId || new Map(invoices.map(r => [r.id, r]));
     return top.map(o => ({ score: o.score, why: o.why, customer: o.customer.customer, customer_id: o.customer.customer_id,
-      invoices: o.invoice_ids.map(id => { const r = invoices.find(x => x.id === id); return r ? { id: r.id, no: r.no, total: r.total, balance: r.balance, status: r.status, created: r.created, due: r.due, po: r.po, customer: r.customer, paid_at: r.paid_at } : { id, no: 'INV' + id }; }) }));
+      invoices: o.invoice_ids.map(id => { const r = byId.get(id); return r ? { id: r.id, no: r.no, total: r.total, balance: r.balance, status: r.status, created: r.created, due: r.due, po: r.po, customer: r.customer, paid_at: r.paid_at } : { id, no: 'INV' + id }; }) }));
   }
   const usd = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -155,7 +160,7 @@ module.exports = function mountAr(ctx) {
       for (const r of rows) {
         const t = tx[r.txn_id] || {}; const row = Object.assign({}, r, { txn: t });
         if (q && [t.name, t.merchant, t.orig_desc, r.customer_name, r.invoice_ids, r.note, String(r.amount)].filter(Boolean).join(' ').toLowerCase().indexOf(q) < 0) continue;
-        if (st === 'open') row.suggestions = invoices.length ? suggest(t, invoices) : [];
+        if (st === 'open') { const ck = r.txn_id + ':' + inv.at; if (!sugCache.has(ck)) { if (sugCache.size > 2000) sugCache.clear(); sugCache.set(ck, invoices.length ? suggest(t, invoices) : []); } row.suggestions = sugCache.get(ck); }   // suggestions are stable until the invoice list is re-read
         else { const ids = String(r.invoice_ids || '').split(',').filter(Boolean).map(Number); row.invoices = ids.map(id => { const x = invoices.find(i => i.id === id); return x ? { id, no: x.no, total: x.total, balance: x.balance, status: x.status, customer: x.customer } : { id, no: 'INV' + id }; }); }
         out.push(row);
       }
