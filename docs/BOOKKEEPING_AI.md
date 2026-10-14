@@ -558,6 +558,20 @@ behind it. **Status** is two things: the money (awaiting bank / awaiting payment
 Partially received → Received* for goods (the purchase is *paid* until it is received, then *closed*). Picking *Partially
 received* asks what came.
 
+### Loan payments connect themselves (1.19.144)
+
+The first payment is the only click. In the Bank feed a line from the lender for the loan's monthly amount shows **Loan
+payment? → Match**; matching it files the line under Loan Payment (Principal) and — when the loan has no lender yet — makes
+the lender a Nova vendor from the bank line (Highland Capital, with the statement wording as its alias) and sets it on the
+loan. From then on every line from that lender for the monthly amount (within 2%) links to the loan by itself, no click,
+and the earlier ones are picked up at once. A loan with no lender never auto-links.
+
+Each loan has a **payment calendar** in the Loans & Leases table, credit-report style: one square per contract month
+(hatched = no payment due yet, green = paid, red = missed, amber = due this week, white = upcoming), "64 of 72 paid",
+hover a square for the month, the due date and the bank line. Payments only mark the calendar — the balance stays the
+contract's amortization. A month that passes its due day by a week with no payment seen at the bank is emailed to the
+alerts address the next morning, once per loan-month.
+
 ### Loans from the agreement (1.19.135)
 
 A loan can be entered the way the agreement reads: amount financed, **down payment / advance**, **months with no payment

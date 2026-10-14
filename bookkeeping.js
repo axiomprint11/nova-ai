@@ -724,9 +724,24 @@ module.exports = function mountBookkeeping(app, deps) {
     }
     return out;
   }
+  // 1.19.144: a loan month past its due day + 7 days with no linked payment → one email per loan-month to alert_to
+  async function loanAlerts(who) {
+    const s = await settings(); if (!sendMail) return { sent: 0, n: 0 };
+    let seen = {}; try { seen = JSON.parse(s.loan_alerted || '{}'); } catch (e) {}
+    const rows = (await loanRows()).filter(l => l.source === 'loan' && l.status === 'active' && l.calendar && l.calendar.missed);
+    const due = [];
+    for (const l of rows) for (const mth of l.calendar.missed_months) { const k = l.id + ':' + mth; if (!seen[k]) due.push({ l, mth, k }); }
+    if (!due.length) return { sent: 0, n: 0 };
+    const text = 'BookkeeperAI — loan payments not seen at the bank\n\n' + due.map(d => '• ' + d.l.name + (d.l.vendor_name ? ' (' + d.l.vendor_name + ')' : '') + ' — ' + d.mth + ': no payment of $' + Number(d.l.math.payment || d.l.math.monthly).toFixed(2) + ' linked (due on the ' + d.l.calendar.due_day + ')').join('\n') +
+      '\n\nIf it was paid, link the bank line to the loan in the Bank feed (Loan payment? → Match). Open Loans & Leases: ' + NOVA_URL + '/bookkeeping?tab=accounts&sub=loans';
+    try { await sendMail({ to: s.alert_to, subject: 'BookkeeperAI: ' + due.length + ' loan payment' + (due.length === 1 ? '' : 's') + ' not seen', text }); } catch (e) { errlog('loan alert mail', e.message); return { sent: 0, n: due.length, error: e.message }; }
+    due.forEach(d => { seen[d.k] = nowIso(); }); await setSetting('loan_alerted', JSON.stringify(seen), who || 'clock');
+    await audit(who || 'clock', 'loan.alert', null, { n: due.length }); return { sent: 1, n: due.length };
+  }
   // The 30-day email: everything still waiting for the bank or not received, once a day, to alert_to.
   async function alertOverdue(who) {
     const s = await settings();
+    try { await loanAlerts(who); } catch (e) { errlog('loan alerts', e.message); }
     const rows = (await purchaseRows('all', '')).filter(r => r.late);
     if (!rows.length || !sendMail) return { sent: 0, n: 0 };
     const line = (r) => '• ' + (r.vendor || '?') + ' — ' + (r.amount != null ? '$' + Number(r.amount).toFixed(2) : 'no amount') + (r.order_no ? ' · #' + r.order_no : '') + ' · ' + r.date + ' · ' + r.status + ' for ' + r.days + ' days';
@@ -1133,15 +1148,40 @@ module.exports = function mountBookkeeping(app, deps) {
       sales_tax: tax, tax_in: taxIn, property_tax: propTax, payment: Math.round((monthly + propTax) * 100) / 100,   // payment = what leaves the bank each month
       total_cost: Math.round((total + (tax && !taxIn ? tax : 0) + propTax * term) * 100) / 100 };   // everything paid over the term: payback + separate tax + property tax
   }
+  // 1.19.144: the payment calendar — one slot per contract month from start_date: the deferred months (no payment due),
+  // then `term` payment months. A slot is `paid` when a linked bank line falls in it (the nearest unused line within ±20 days
+  // of the due day), `missed` when its due day + 7 days of grace has passed with no line, `due` inside the grace window,
+  // `upcoming` after today. Payments mark the calendar only — the balance stays the contract's amortization.
+  function loanCalendar(l, m, lines) {
+    if (!l.start_date || !(m.term > 0)) return null;
+    const start = new Date(String(l.start_date).slice(0, 10) + 'T12:00:00Z'); if (isNaN(start)) return null;
+    const dueDay = start.getUTCDate(); const today = new Date(); const used = new Set(); const slots = [];
+    const at = (i) => { const d = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + i, 1)); const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate(); d.setUTCDate(Math.min(dueDay, last)); return d; };
+    const total = m.deferred + m.term;
+    for (let i = 0; i < total; i++) {
+      const due = at(i), ym = due.toISOString().slice(0, 7);
+      if (i < m.deferred) { slots.push({ n: i + 1, month: ym, due: due.toISOString().slice(0, 10), state: 'skip' }); continue; }
+      let best = null, bestGap = 1e9;
+      for (const ln of lines) { if (used.has(ln.id)) continue; const gap = Math.abs((new Date(ln.date + 'T12:00:00Z') - due) / 86400000); if (gap <= 20 && gap < bestGap) { best = ln; bestGap = gap; } }
+      if (best) { used.add(best.id); slots.push({ n: i + 1, month: ym, due: due.toISOString().slice(0, 10), state: 'paid', date: best.date, amount: Math.abs(Number(best.amount)), txn_id: best.id }); continue; }
+      const daysPast = (today - due) / 86400000;
+      slots.push({ n: i + 1, month: ym, due: due.toISOString().slice(0, 10), state: daysPast > 7 ? 'missed' : daysPast >= 0 ? 'due' : 'upcoming' });
+    }
+    const extra = lines.filter(ln => !used.has(ln.id)).map(ln => ({ date: ln.date, amount: Math.abs(Number(ln.amount)), txn_id: ln.id }));   // payments that fit no slot (extra / double)
+    const paidN = slots.filter(x => x.state === 'paid').length, missed = slots.filter(x => x.state === 'missed');
+    const next = slots.find(x => x.state === 'upcoming' || x.state === 'due');
+    return { slots, paid: paidN, term: m.term, missed: missed.length, missed_months: missed.map(x => x.month), due_day: dueDay, next_due: next ? next.due : null, extra };
+  }
   async function loanRows() {
     const own = await dbAll('SELECT l.*, v.name AS vendor_name, v.photo AS vendor_photo, e.name AS equipment_name, e.photo AS equipment_photo FROM bk_loans l LEFT JOIN bk_vendors v ON v.id = l.vendor_id LEFT JOIN bk_equipment e ON e.id = l.equipment_id ORDER BY l.status, l.start_date DESC, l.id DESC');
     const paid = {}; (await dbAll('SELECT loan_id, COUNT(*) AS n, SUM(ABS(amount)) AS total, MAX(date) AS last FROM bk_transactions WHERE loan_id IS NOT NULL GROUP BY loan_id')).forEach(r => { paid[r.loan_id] = r; });
+    const payLines = {}; (await dbAll('SELECT id, loan_id, date, amount, name FROM bk_transactions WHERE loan_id IS NOT NULL ORDER BY date')).forEach(r => { (payLines[r.loan_id] = payLines[r.loan_id] || []).push(r); });   // 1.19.144: the calendar
     const nFiles = {}; (await dbAll("SELECT ref_id, COUNT(*) AS n FROM bk_files WHERE kind = 'loan' GROUP BY ref_id")).forEach(r => { nFiles[r.ref_id] = r.n; });
     const out = own.map(l => {
       const lm = loanMath(l), done = Math.min((lm.term + lm.deferred) || 9999, monthsSince(l.start_date)), left = Math.max(0, (lm.term + lm.deferred) - done);
       const a = l.kind === 'lease' ? { monthly: Number(l.monthly) || 0, balance: Math.round(left * (Number(l.monthly) || 0) * 100) / 100, interest_paid: 0, principal_paid: Math.round(done * (Number(l.monthly) || 0) * 100) / 100, total_interest: null } : (() => { const m = loanMath(l); const r = amort(m.financed, m.apr, m.term, m.monthly, Math.max(0, done - m.deferred)); r.monthly = m.monthly; r.total_interest = m.total_interest; return r; })();   // 1.19.135: down payment, deferred months, solved APR
       const p = paid[l.id] || { n: 0, total: 0, last: null };
-      return Object.assign({}, l, { source: 'loan', files: nFiles[l.id] || 0, math: loanMath(l), schedule: { start: l.start_date, end: lm.term ? addMonths(l.start_date, lm.term + lm.deferred) : null, months_done: done, months_left: left, monthly: a.monthly, next: l.status === 'active' && left ? addMonths(l.start_date, done + 1) : null },
+      return Object.assign({}, l, { source: 'loan', files: nFiles[l.id] || 0, math: loanMath(l), calendar: loanCalendar(l, lm, payLines[l.id] || []), schedule: { start: l.start_date, end: lm.term ? addMonths(l.start_date, lm.term + lm.deferred) : null, months_done: done, months_left: left, monthly: a.monthly, next: l.status === 'active' && left ? addMonths(l.start_date, done + 1) : null },
         balance: a.balance, interest_paid: a.interest_paid, principal_paid: a.principal_paid, total_interest: a.total_interest, payments: { n: p.n, total: Math.round((p.total || 0) * 100) / 100, last: p.last } });
     });
     // machines financed through the Equipment tab appear here too, read-only (edit them under Equipment)
@@ -1455,7 +1495,7 @@ module.exports = function mountBookkeeping(app, deps) {
   async function applyRules(rules) {
     rules = rules || await dbAll('SELECT * FROM bk_rules WHERE active = 1 ORDER BY kind DESC, id');
     let n = 0;
-    if (!rules.length) { try { n += await applyTeam(); } catch (e) { errlog('team sweep', e.message); } return n; }
+    if (!rules.length) { try { n += await applyTeam(); } catch (e) { errlog('team sweep', e.message); } try { n += await applyLoans(); } catch (e) { errlog('loan sweep', e.message); } return n; }
     for (const t of await dbAll("SELECT t.*, v.name AS vendor_name FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id WHERE t.status IN ('new', 'pending') AND (t.category IS NULL OR t.category = '') ORDER BY t.date DESC LIMIT 800")) {
       const r = ruleMatch(rules, t); if (!r) continue;
       await dbRun("UPDATE bk_transactions SET category = ?, category_source = 'rule', rule_id = ?, status = 'categorized', updated_at = datetime('now') WHERE id = ?", [r.category, r.id, t.id]);
@@ -1463,6 +1503,7 @@ module.exports = function mountBookkeeping(app, deps) {
       await dbRun('UPDATE bk_rules SET hits = hits + 1 WHERE id = ?', [r.id]); n++;
     }
     try { n += await applyTeam(); } catch (e) { errlog('team sweep', e.message); }   // 1.19.119
+    try { n += await applyLoans(); } catch (e) { errlog('loan sweep', e.message); }   // 1.19.144
     return n;
   }
   let rulesSweptAt = 0;
@@ -2909,14 +2950,56 @@ module.exports = function mountBookkeeping(app, deps) {
     await dbRun('UPDATE bk_files SET name = ?, label = ? WHERE id = ?', [String(req.body.name || f.name).slice(0, 160), req.body.label == null ? f.label : String(req.body.label).slice(0, 80) || null, f.id]); res.json({ ok: true });
   });
   // a bank line is a payment on a loan: link it and file it under the chart's Loan Payment (Principal) when that exists
+  // 1.19.144: one place that ties a bank line to a loan. `source` manual (the Match button) or 'loan' (the sweep).
+  // A hand match also settles the lender: a loan with no company gets a Nova vendor made from the line (name = the
+  // merchant, alias = the bank wording), and the line is linked to it — from then on every payment auto-links.
+  async function linkLoan(txnId, loanId, who, source) {
+    const t = await dbGet('SELECT * FROM bk_transactions WHERE id = ?', [txnId]); const l = await dbGet('SELECT * FROM bk_loans WHERE id = ?', [loanId]);
+    if (!t || !l) return { ok: false, error: 'No such line or loan' };
+    const names = chartOf(await settings()).map(c => c.name), cat = ['Loan Payment (Principal)', 'Loan Payment'].find(n => names.indexOf(n) > -1) || null;
+    await dbRun("UPDATE bk_transactions SET loan_id = ?, updated_at = datetime('now')" + (cat ? ", category = ?, category_source = ?, status = 'categorized'" : '') + ' WHERE id = ?', cat ? [loanId, cat, source === 'loan' ? 'loan' : 'manual', txnId] : [loanId, txnId]);
+    await dbRun("UPDATE bk_proposals SET status = 'edited' WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [txnId]).catch(() => {});
+    let vid = l.vendor_id || null, made = null;
+    if (!vid && source !== 'loan') {
+      if (t.vendor_id) vid = t.vendor_id;
+      else {
+        const name = String(t.merchant || t.name || l.lender || l.name).replace(/\s+/g, ' ').trim().slice(0, 120);
+        const dup = await dbGet('SELECT id FROM bk_vendors WHERE lower(name) = lower(?)', [name]);
+        if (dup) vid = dup.id;
+        else { const r = await dbRun('INSERT INTO bk_vendors (name, source, kind, approved, approved_by, approved_at, default_category, specialty, aliases, notes) VALUES (?,?,?,?,?,?,?,?,?,?)', [name, 'nova', 'lender', 1, who, nowIso(), cat, 'Lender · ' + l.name, String(t.name || '').slice(0, 120) || null, 'Made from a loan payment (' + l.name + ')']); vid = r.lastID; made = name; dirCache.at = 0; }
+      }
+      if (vid) await dbRun("UPDATE bk_loans SET vendor_id = ?, updated_at = datetime('now') WHERE id = ?", [vid, loanId]);
+    }
+    if (vid) {
+      await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = COALESCE(vendor_by, 'auto'), vendor_score = COALESCE(vendor_score, 1) WHERE id = ? AND vendor_id IS NULL", [vid, txnId]);
+      // remember the lender's own words from the bank line so the next payment links by itself
+      const v = await dbGet('SELECT name, aliases FROM bk_vendors WHERE id = ?', [vid]);
+      if (v && t.name) { const ph = vendorPhrase(v.name, t.name) || String(t.merchant || '').trim(); const al = String(v.aliases || '').split('\n').filter(Boolean); if (ph && al.indexOf(ph) < 0 && normV(ph) !== normV(v.name)) { al.push(ph.slice(0, 120)); await dbRun('UPDATE bk_vendors SET aliases = ? WHERE id = ?', [al.join('\n').slice(0, 1000), vid]); dirCache.at = 0; } }
+    }
+    await audit(who, 'txn.loan', txnId, { loan_id: loanId, category: cat, source: source || 'manual', vendor_id: vid, vendor_made: made });
+    return { ok: true, category: cat, vendor_id: vid, vendor_made: made };
+  }
+  // the sweep: an uncategorized money-out line from a loan's lender for the loan's monthly payment (± 2%, or ± $1) is a
+  // payment on that loan — linked with no click; a loan with no lender never auto-links (no guessing)
+  async function applyLoans() {
+    const loans = (await dbAll("SELECT * FROM bk_loans WHERE status = 'active' AND vendor_id IS NOT NULL")).map(l => Object.assign(l, { _m: loanMath(l) })).filter(l => l._m.payment > 0 || l._m.monthly > 0);
+    if (!loans.length) return 0;
+    let n = 0;
+    for (const t of await dbAll("SELECT id, vendor_id, amount, name FROM bk_transactions WHERE loan_id IS NULL AND vendor_id IS NOT NULL AND amount > 0 AND status IN ('new', 'pending') AND transfer_of IS NULL AND refund_of IS NULL AND (category IS NULL OR category = '')")) {
+      const amt = Number(t.amount);
+      const l = loans.find(x => x.vendor_id === t.vendor_id && [x._m.payment, x._m.monthly].some(m => m > 0 && Math.abs(m - amt) <= Math.max(1, m * 0.02)));
+      if (!l) continue;
+      const r = await linkLoan(t.id, l.id, 'system', 'loan'); if (r.ok) n++;
+    }
+    return n;
+  }
   app.post('/api/bookkeeping/transactions/:id/loan', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), lid = req.body.loan_id == null ? null : parseInt(req.body.loan_id);
-    if (!lid) { await dbRun('UPDATE bk_transactions SET loan_id = NULL WHERE id = ?', [id]); await audit(userId(req), 'txn.loan', id, { loan_id: null }); return res.json({ ok: true }); }
-    const l = await dbGet('SELECT * FROM bk_loans WHERE id = ?', [lid]); if (!l) return res.json({ ok: false, error: 'No such loan' });
-    const names = chartOf(await settings()).map(c => c.name), cat = ['Loan Payment (Principal)', 'Loan Payment'].find(n => names.indexOf(n) > -1) || null;
-    await dbRun("UPDATE bk_transactions SET loan_id = ?, updated_at = datetime('now')" + (cat ? ", category = ?, category_source = 'manual', status = 'categorized'" : '') + ' WHERE id = ?', cat ? [lid, cat, id] : [lid, id]);
-    if (l.vendor_id) await dbRun('UPDATE bk_transactions SET vendor_id = ?, vendor_by = COALESCE(vendor_by, ?) WHERE id = ? AND vendor_id IS NULL', [l.vendor_id, 'auto', id]);
-    await audit(userId(req), 'txn.loan', id, { loan_id: lid, category: cat }); res.json({ ok: true, category: cat });
+    if (!lid) { await dbRun("UPDATE bk_transactions SET loan_id = NULL, updated_at = datetime('now') WHERE id = ?", [id]); await audit(userId(req), 'txn.loan', id, { loan_id: null }); return res.json({ ok: true }); }
+    const r = await linkLoan(id, lid, userId(req), 'manual');
+    if (!r.ok) return res.json(r);
+    let swept = 0; try { if (r.vendor_id) await relinkVendor(r.vendor_id); swept = await applyLoans(); } catch (e) {}   // the lender is known now — link its other lines, then the payments
+    res.json(Object.assign(r, { swept }));
   });
   // 1.19.119: overseas team endpoints
   const TEAM_F = ['name', 'country', 'department', 'pay', 'period', 'category', 'category_alt', 'wise_ref', 'start_date', 'end_date', 'status', 'notes'];

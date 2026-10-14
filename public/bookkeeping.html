@@ -65,6 +65,10 @@
   .nd-d.out { color: #c3c3d2; } .nd-d.we:not(.out) { color: var(--ink-soft); } .nd-d.today { box-shadow: inset 0 0 0 1.5px #c7d2fe; font-weight: 700; } .nd-d.sel, .nd-d.sel:hover { background: var(--indigo); color: #fff; font-weight: 700; }
   .nd-foot { display: flex; align-items: center; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); } .nd-sp { flex: 1; }
   .nd-lnk { border: 0; background: none; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--indigo-dark); padding: 6px 6px; border-radius: 6px; cursor: pointer; } .nd-lnk:hover { background: #eef2ff; }
+  /* 1.19.144: loan payment calendar */
+  .ln-cal { display: grid; grid-template-columns: repeat(12, 9px); gap: 2px; margin: 4px 0 3px; }   /* one year per row */ .ln-sq { display: block; width: 9px; height: 9px; border-radius: 2px; background: #fff; border: 1px solid #d6d6e4; box-sizing: border-box; }
+  .ln-sq.paid { background: #22c55e; border-color: #16a34a; } .ln-sq.missed { background: #ef4444; border-color: #dc2626; } .ln-sq.due { background: #f59e0b; border-color: #d97706; } .ln-sq.skip { background: repeating-linear-gradient(135deg, #e5e5ef 0 2px, #fff 2px 4px); border-color: #d6d6e4; }
+  .ln-miss { color: #b91c1c; font-weight: 700; }
   /* 1.19.136: documents on a loan */
   .ln-docs { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
   .ln-drop { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1.5px dashed #c7c7d6; border-radius: 10px; background: #fafafd; color: var(--ink-soft); font-size: 12.5px; cursor: pointer; } .ln-drop svg { width: 22px; height: 22px; flex: none; color: var(--indigo); } .ln-drop:hover, .ln-drop.over { border-color: var(--indigo); background: #eef2ff; } .ln-drop:focus { outline: 2px solid #c7d2fe; }
