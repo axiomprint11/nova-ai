@@ -17,7 +17,12 @@ module.exports = function mountAr(ctx) {
     ctx.db.run(`CREATE TABLE IF NOT EXISTS bk_ar (id INTEGER PRIMARY KEY AUTOINCREMENT, txn_id INTEGER UNIQUE, status TEXT DEFAULT 'open',
       amount REAL, invoice_ids TEXT, customer_id INTEGER, customer_name TEXT, note TEXT, matched_by TEXT, matched_at TEXT,
       created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
+    // 1.20.2: kind = 'match' (an open invoice — Match & Pay) or 'pair' (an invoice the CRM already shows as paid); pay_* = the
+    // Dev team's pay webhook result once AR_PAY_WEBHOOK_URL is set
+    ['kind TEXT', 'pay_status TEXT', 'pay_at TEXT', 'pay_ref TEXT'].forEach(c => ctx.db.run('ALTER TABLE bk_ar ADD COLUMN ' + c, () => {}));
   });
+  const crypto = require('crypto');
+  const env = (k) => String(process.env[k] || '').trim();
 
   // Which categories mean "a customer paid us": the chart's Customer Payment(s) / Client Payment(s) — name based, so a
   // renamed sub category keeps working as long as the words stay.
@@ -105,7 +110,7 @@ module.exports = function mountAr(ctx) {
         if (r.status !== 'paid' && amt < r.balance - 0.005) { score = 30; why.push('partial payment? ' + usd(amt) + ' of ' + usd(r.balance)); }
         else score = 15, why.push('payer name only');
       }
-      if (r.status === 'paid') { score = Math.round(score * 0.8); why.push('already marked paid in the CRM'); }
+      if (r.status === 'paid') why.push('already paid in the CRM — pair it');   // 1.20.2: full score; the button becomes Pair
       if (score >= 15) push([r.id], Math.min(100, score), why, r);
     }
     // 2–3 invoices of one customer adding up to the deposit
@@ -121,7 +126,7 @@ module.exports = function mountAr(ctx) {
     }
     out.sort((a, b) => b.score - a.score || b.invoice_ids[0] - a.invoice_ids[0]);
     const top = out.slice(0, 5), byId = inv.byId || new Map(invoices.map(r => [r.id, r]));
-    return top.map(o => ({ score: o.score, why: o.why, customer: o.customer.customer, customer_id: o.customer.customer_id,
+    return top.map(o => ({ score: o.score, why: o.why, customer: o.customer.customer, customer_id: o.customer.customer_id, kind: o.invoice_ids.every(id => { const r = byId.get(id); return r && r.status === 'paid'; }) ? 'pair' : 'match',
       invoices: o.invoice_ids.map(id => { const r = byId.get(id); return r ? { id: r.id, no: r.no, total: r.total, balance: r.balance, status: r.status, created: r.created, due: r.due, po: r.po, customer: r.customer, paid_at: r.paid_at } : { id, no: 'INV' + id }; }) }));
   }
   const usd = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -234,10 +239,42 @@ module.exports = function mountAr(ctx) {
       let invoices = []; try { invoices = await openInvoices(); } catch (e) {}   // the CRM being down must not block a match the person typed
       const first = invoices.find(r => r.id === ids[0]);
       const customer = String(req.body.customer || (first ? first.customer : '')).slice(0, 160), cid = parseInt(req.body.customer_id) || (first ? first.customer_id : null);
-      await dbRun("UPDATE bk_ar SET status = 'matched', invoice_ids = ?, customer_id = ?, customer_name = ?, note = ?, matched_by = ?, matched_at = ?, updated_at = ? WHERE id = ?", [ids.join(','), cid, customer, String(req.body.note || '').slice(0, 500) || null, userId(req), nowIso(), nowIso(), id]);
-      await audit(userId(req), 'ar.match', id, { txn_id: q.txn_id, amount: q.amount, invoice_ids: ids, customer });
-      res.json({ ok: true });
+      const kind = req.body.kind === 'pair' ? 'pair' : 'match';
+      await dbRun("UPDATE bk_ar SET status = 'matched', kind = ?, invoice_ids = ?, customer_id = ?, customer_name = ?, note = ?, matched_by = ?, matched_at = ?, updated_at = ? WHERE id = ?", [kind, ids.join(','), cid, customer, String(req.body.note || '').slice(0, 500) || null, userId(req), nowIso(), nowIso(), id]);
+      await audit(userId(req), kind === 'pair' ? 'ar.pair' : 'ar.match', id, { txn_id: q.txn_id, amount: q.amount, invoice_ids: ids, customer });
+      // 1.20.2: Match & Pay tells the CRM to record the payment — once the Dev team's endpoint exists (AR_PAY_WEBHOOK_URL in .env).
+      // A pair never pays: the CRM already has it.
+      let pay = null;
+      if (kind === 'match') pay = await payHook(id).catch(e => ({ sent: false, error: e.message }));
+      res.json({ ok: true, kind, pay });
     } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  // POST {AR_PAY_WEBHOOK_URL} {event: 'ar.payment', payment: {...}, invoices: [ids], amount, paid_on, method, bank_line, matched_by},
+  // signed like the TalkAi webhook (X-Nova-Signature t=…,v1=HMAC-SHA256(secret, t + '.' + body), secret AR_PAY_WEBHOOK_SECRET
+  // else TALKAI_WEBHOOK_SECRET). Nothing is sent while the URL is not set — the match is still kept here.
+  async function payHook(arId) {
+    const url = env('AR_PAY_WEBHOOK_URL'), secret = env('AR_PAY_WEBHOOK_SECRET') || env('TALKAI_WEBHOOK_SECRET');
+    const q = await dbGet('SELECT * FROM bk_ar WHERE id = ?', [arId]); if (!q) return { sent: false, error: 'No such payment' };
+    if (!url) { await dbRun("UPDATE bk_ar SET pay_status = 'not configured' WHERE id = ?", [arId]); return { sent: false, error: 'AR_PAY_WEBHOOK_URL is not set — the CRM was not told' }; }
+    if (!secret) { await dbRun("UPDATE bk_ar SET pay_status = 'no secret' WHERE id = ?", [arId]); return { sent: false, error: 'AR_PAY_WEBHOOK_SECRET is not in .env' }; }
+    const t = (await txFields([q.txn_id]))[q.txn_id] || {};
+    const body = JSON.stringify({ event: 'ar.payment', nova_ar_id: arId, invoice_ids: String(q.invoice_ids || '').split(',').filter(Boolean).map(Number), amount: q.amount, currency: 'USD',
+      paid_on: t.tx_date || t.date || null, method: t.how || null, bank: { institution: t.institution || null, mask: t.mask || null, wording: t.orig_desc || t.name || null, check_no: t.check_no || null }, customer_id: q.customer_id, customer: q.customer_name, matched_by: q.matched_by, matched_at: q.matched_at });
+    const ts = Math.floor(Date.now() / 1000), sig = crypto.createHmac('sha256', secret).update(ts + '.' + body).digest('hex');
+    let status = 0, err = null, ref = null;
+    try {
+      const r = await fetch(url, { method: 'POST', body, signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json', 'User-Agent': 'NovaAI-AR/1', 'X-Nova-Event': 'ar.payment', 'X-Nova-Delivery': 'nova-ar-' + arId, 'X-Nova-Signature': 't=' + ts + ',v1=' + sig } });
+      status = r.status; const txt = await r.text().catch(() => '');
+      if (!r.ok) err = 'HTTP ' + r.status + ' ' + txt.slice(0, 120); else { try { const j = JSON.parse(txt); ref = j.payment_id || j.id || j.ref || null; } catch (e) {} }
+    } catch (e) { err = e.message; }
+    await dbRun("UPDATE bk_ar SET pay_status = ?, pay_at = ?, pay_ref = ? WHERE id = ?", [err ? 'failed: ' + err.slice(0, 160) : 'sent', nowIso(), ref ? String(ref).slice(0, 80) : null, arId]);
+    await audit('system', 'ar.pay_hook', arId, { status, err, ref });
+    return { sent: !err, status, error: err, ref };
+  }
+  // POST /api/bookkeeping/ar/:id/pay — resend the pay webhook for a matched payment (after the URL is set, or a failure)
+  app.post('/api/bookkeeping/ar/:id/pay', ...guard, async (req, res) => {
+    try { const q = await dbGet('SELECT * FROM bk_ar WHERE id = ?', [parseInt(req.params.id)]); if (!q || q.status !== 'matched' || q.kind === 'pair') return res.json({ ok: false, error: 'Only a matched (not paired) payment can be sent.' }); res.json({ ok: true, pay: await payHook(q.id) }); }
+    catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // POST /api/bookkeeping/ar/:id/skip {note} — not a customer payment after all / handled elsewhere; kept in the history
   app.post('/api/bookkeeping/ar/:id/skip', ...guard, async (req, res) => {
@@ -252,7 +289,7 @@ module.exports = function mountAr(ctx) {
   app.post('/api/bookkeeping/ar/:id/undo', ...guard, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      await dbRun("UPDATE bk_ar SET status = 'open', invoice_ids = NULL, customer_id = NULL, customer_name = NULL, matched_by = NULL, matched_at = NULL, updated_at = ? WHERE id = ?", [nowIso(), id]);
+      await dbRun("UPDATE bk_ar SET status = 'open', kind = NULL, pay_status = NULL, pay_at = NULL, pay_ref = NULL, invoice_ids = NULL, customer_id = NULL, customer_name = NULL, matched_by = NULL, matched_at = NULL, updated_at = ? WHERE id = ?", [nowIso(), id]);
       await audit(userId(req), 'ar.undo', id, {}); res.json({ ok: true });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
