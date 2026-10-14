@@ -66,7 +66,7 @@ module.exports = function mountBookkeeping(app, deps) {
       note TEXT, source TEXT, created_by TEXT, hits INTEGER DEFAULT 0, active INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')))`);
     // 1.19.112: an optional amount condition ("over" / "under" $n on the line's absolute amount; blank = any amount), and
     // kind 'none' = "No rule" for a vendor: never file it by rule and never offer "Make it a rule?" / "Create a rule" for it.
-    ['amount_op TEXT', 'amount_val REAL', 'side TEXT'].forEach(c => db.run('ALTER TABLE bk_rules ADD COLUMN ' + c, () => {}));   // 1.19.146: side = 'in' (received) / 'out' (paid) / NULL = any
+    ['amount_op TEXT', 'amount_val REAL', 'side TEXT', 'amount_val2 REAL'].forEach(c => db.run('ALTER TABLE bk_rules ADD COLUMN ' + c, () => {}));   // 1.19.151: amount_op 'between' uses amount_val .. amount_val2   // 1.19.146: side = 'in' (received) / 'out' (paid) / NULL = any
     db.run(`CREATE TABLE IF NOT EXISTS bk_vendors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, approved INTEGER DEFAULT 0, email TEXT,
       default_category TEXT, notes TEXT, created_at TEXT DEFAULT (datetime('now')), approved_by TEXT, approved_at TEXT)`);
     // 1.15.3 made bk_vendors.name UNIQUE; a company can be both a supplier and a vendor in the CRM, so the first
@@ -1428,7 +1428,7 @@ module.exports = function mountBookkeeping(app, deps) {
     // 1.19.112: an amount condition narrows a rule ("Vendor is Amazon over $500 → Equipment"); a rule with one is tried before
     // the same vendor's plain rule, so the specific one wins. Kind 'none' ("No rule") never categorizes — see noRuleFor().
     const amt = Math.abs(Number(t.amount) || 0);
-    const amountOk = (r) => !r.amount_op || r.amount_val == null ? true : r.amount_op === 'over' ? amt > Number(r.amount_val) : r.amount_op === 'under' ? amt < Number(r.amount_val) : r.amount_op === 'equal' ? Math.abs(amt - Number(r.amount_val)) < 0.005 : true;   // 1.19.114: 'equal' = exactly this amount (a fixed monthly fee)
+    const amountOk = (r) => !r.amount_op || r.amount_val == null ? true : r.amount_op === 'over' ? amt > Number(r.amount_val) : r.amount_op === 'under' ? amt < Number(r.amount_val) : r.amount_op === 'equal' ? Math.abs(amt - Number(r.amount_val)) < 0.005 : r.amount_op === 'between' ? amt >= Number(r.amount_val) - 0.005 && amt <= Number(r.amount_val2 == null ? r.amount_val : r.amount_val2) + 0.005 : true;   // 1.19.114: 'equal' = exactly this amount; 1.19.151: 'between' = from .. to inclusive
     // 1.19.146: a money-side condition — 'in' = received (Plaid amount < 0), 'out' = paid; blank = any. A sided rule is tried before a plain one.
     const side = Number(t.amount) < 0 ? 'in' : 'out';
     const sideOk = (r) => !r.side || r.side === side;
@@ -1439,11 +1439,16 @@ module.exports = function mountBookkeeping(app, deps) {
   }
   // 1.19.112: read an amount condition from a form: {amount_op: 'over'|'under'|'', amount_val: n}; blank = none
   const amountCond = (b) => {
-    const op = String(b.amount_op || '').trim(), val = b.amount_val === '' || b.amount_val == null ? null : Number(b.amount_val);
-    if (!op) return { op: null, val: null };
-    if (op !== 'over' && op !== 'under' && op !== 'equal') return { error: 'Amount condition must be over, under or equal.' };
+    const op = String(b.amount_op || '').trim(), val = b.amount_val === '' || b.amount_val == null ? null : Number(b.amount_val), val2 = b.amount_val2 === '' || b.amount_val2 == null ? null : Number(b.amount_val2);
+    if (!op) return { op: null, val: null, val2: null };
+    if (op !== 'over' && op !== 'under' && op !== 'equal' && op !== 'between') return { error: 'Amount condition must be over, under, exactly or between.' };
     if (val == null || !isFinite(val) || val < 0) return { error: 'Give the amount for "' + op + '".' };
-    return { op, val: Math.round(val * 100) / 100 };
+    if (op === 'between') {
+      if (val2 == null || !isFinite(val2) || val2 < 0) return { error: 'Give both ends of the range.' };
+      const lo = Math.min(val, val2), hi = Math.max(val, val2);
+      return { op, val: Math.round(lo * 100) / 100, val2: Math.round(hi * 100) / 100 };
+    }
+    return { op, val: Math.round(val * 100) / 100, val2: null };
   };
   const sideCond = (b) => { const v = String(b.side || '').trim().toLowerCase(); return v === 'in' || v === 'out' ? v : null; };   // 1.19.146
   // 1.19.112: the "No rule" entry for this line's vendor, if one exists (kind 'none', matched like a vendor rule)
@@ -2835,7 +2840,7 @@ module.exports = function mountBookkeeping(app, deps) {
     }
     if (!b.pattern || !b.category) return res.json({ ok: false, error: 'Pattern and category are needed.' });
     const am = amountCond(b); if (am.error) return res.json({ ok: false, error: am.error });
-    const r = await dbRun('INSERT INTO bk_rules (kind, pattern, category, vendor, note, source, created_by, amount_op, amount_val, side) VALUES (?,?,?,?,?,?,?,?,?,?)', [b.kind === 'keyword' ? 'keyword' : 'vendor', String(b.pattern).slice(0, 120), String(b.category).slice(0, 80), b.kind === 'keyword' ? null : String(b.pattern).slice(0, 120), String(b.note || '').slice(0, 300), 'manual', userId(req), am.op, am.val, sideCond(b)]);
+    const r = await dbRun('INSERT INTO bk_rules (kind, pattern, category, vendor, note, source, created_by, amount_op, amount_val, side, amount_val2) VALUES (?,?,?,?,?,?,?,?,?,?,?)', [b.kind === 'keyword' ? 'keyword' : 'vendor', String(b.pattern).slice(0, 120), String(b.category).slice(0, 80), b.kind === 'keyword' ? null : String(b.pattern).slice(0, 120), String(b.note || '').slice(0, 300), 'manual', userId(req), am.op, am.val, sideCond(b), am.val2 == null ? null : am.val2]);
     const applied = await applyRules();
     await audit(userId(req), 'rule.add', r.lastID, Object.assign({ applied }, b));
     res.json({ ok: true, id: r.lastID, applied });
@@ -2857,16 +2862,16 @@ module.exports = function mountBookkeeping(app, deps) {
     const kind = b.kind === 'keyword' ? 'keyword' : b.kind === 'none' ? 'none' : 'vendor', pattern = String(b.pattern || r.pattern).trim().slice(0, 120), category = kind === 'none' ? null : String(b.category || r.category || '').trim().slice(0, 80);
     if (!pattern || (kind !== 'none' && !category)) return res.json({ ok: false, error: 'Pattern and category are needed.' });
     if (category && !chartOf(await settings()).some(c => c.name === category)) return res.json({ ok: false, error: 'Not a category in the chart of accounts: ' + category });
-    const am = kind === 'none' ? { op: null, val: null } : amountCond(b); if (am.error) return res.json({ ok: false, error: am.error });
+    const am = kind === 'none' ? { op: null, val: null, val2: null } : amountCond(b); if (am.error) return res.json({ ok: false, error: am.error });
     const side = kind === 'none' ? null : sideCond(b);
-    await dbRun('UPDATE bk_rules SET kind = ?, pattern = ?, category = ?, vendor = ?, amount_op = ?, amount_val = ?, side = ? WHERE id = ?', [kind, pattern, category, kind === 'keyword' ? null : pattern, am.op, am.val, side, id]);
+    await dbRun('UPDATE bk_rules SET kind = ?, pattern = ?, category = ?, vendor = ?, amount_op = ?, amount_val = ?, side = ?, amount_val2 = ? WHERE id = ?', [kind, pattern, category, kind === 'keyword' ? null : pattern, am.op, am.val, side, am.val2 == null ? null : am.val2, id]);
     let applied = 0;
     if (b.apply && category && category !== r.category) {
       const u = await dbRun("UPDATE bk_transactions SET category = ?, updated_at = datetime('now') WHERE rule_id = ? AND category_source = 'rule' AND status = 'categorized'", [category, id]);
       applied = u.changes || 0;
     }
     applied += await applyRules();
-    await audit(userId(req), 'rule.edit', id, { from: { kind: r.kind, pattern: r.pattern, category: r.category, amount_op: r.amount_op, amount_val: r.amount_val, side: r.side }, to: { kind, pattern, category, amount_op: am.op, amount_val: am.val, side }, applied });
+    await audit(userId(req), 'rule.edit', id, { from: { kind: r.kind, pattern: r.pattern, category: r.category, amount_op: r.amount_op, amount_val: r.amount_val, side: r.side }, to: { kind, pattern, category, amount_op: am.op, amount_val: am.val, amount_val2: am.val2, side }, applied });
     res.json({ ok: true, applied });
   });
   app.delete('/api/bookkeeping/rules/:id', ...guard, async (req, res) => { await dbRun('UPDATE bk_rules SET active = 0 WHERE id = ?', [parseInt(req.params.id)]); await audit(userId(req), 'rule.remove', req.params.id); res.json({ ok: true }); });
