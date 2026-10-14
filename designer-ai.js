@@ -19,6 +19,8 @@ module.exports = function mountDesignerAi(app, deps) {
       skills TEXT, notes TEXT, max_active INTEGER DEFAULT 25, tier2 INTEGER DEFAULT 0, updated_at TEXT)`);
     db.run(`CREATE TABLE IF NOT EXISTS da_assign (id INTEGER PRIMARY KEY AUTOINCREMENT, estimate_id INTEGER, user_id INTEGER, score INTEGER, reason TEXT, picked_by TEXT, at TEXT, status TEXT DEFAULT 'assigned')`);
     db.run('CREATE INDEX IF NOT EXISTS da_assign_est ON da_assign(estimate_id)');
+    // 1.20.17: how hard / how creative a job a designer can take (0–10), and their hours (until the hours table exists)
+    ['hard_level INTEGER DEFAULT 5', 'creative_level INTEGER DEFAULT 5', 'shift_start TEXT', 'shift_end TEXT', 'work_days TEXT'].forEach(c => db.run('ALTER TABLE da_designers ADD COLUMN ' + c, () => {}));
   });
 
   // the placeholder users the CRM parks a job on until a designer takes it
@@ -48,7 +50,8 @@ module.exports = function mountDesignerAi(app, deps) {
       (await runQuery("SELECT m.user_id, COUNT(DISTINCT e.id) n FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id WHERE m.user_id IN (" + TEAM.join(',') + ") AND e.prepress_status = 'approved' AND e.created >= DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY m.user_id")).forEach(r => { done[r.user_id] = Number(r.n); });
     } catch (e) { errlog('load', e.message); }
     const nova = {}; (await dbAll("SELECT user_id, COUNT(*) n FROM da_assign WHERE status = 'assigned' AND at >= datetime('now', '-14 days') GROUP BY user_id")).forEach(r => { nova[r.user_id] = r.n; });
-    return rows.map(r => Object.assign({}, r, { skills: r.skills || '', skill_list: skillList(r.skills), active_jobs: load[r.user_id] || 0, waiting_client: waiting[r.user_id] || 0, done_30: done[r.user_id] || 0, nova_assigned: nova[r.user_id] || 0 }));
+    let total = {}; try { (await runQuery("SELECT m.user_id, COUNT(DISTINCT m.estimate_id) n FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id WHERE m.user_id IN (" + TEAM.join(',') + ") AND e.created >= DATE_SUB(NOW(), INTERVAL 180 DAY) GROUP BY m.user_id")).forEach(r => { total[r.user_id] = Number(r.n); }); } catch (e) {}
+    return rows.map(r => Object.assign({}, r, { skills: r.skills || '', skill_list: skillList(r.skills), hard_level: r.hard_level == null ? 5 : r.hard_level, creative_level: r.creative_level == null ? 5 : r.creative_level, active_jobs: load[r.user_id] || 0, waiting_client: waiting[r.user_id] || 0, done_30: done[r.user_id] || 0, nova_assigned: nova[r.user_id] || 0, jobs_180: total[r.user_id] || 0, is_new: (total[r.user_id] || 0) < 60, on_shift: onShift(r) }));
   }
   const skillList = (s) => String(s || '').split(/[,;\n]+/).map(x => x.trim().toLowerCase()).filter(Boolean);
 
@@ -57,13 +60,15 @@ module.exports = function mountDesignerAi(app, deps) {
   async function queue(tier, all) {
     const tu = TIER_USERS[tier] || TIER_USERS[1];
     const rows = await runQuery(
-      "SELECT e.id, e.estimate_name, e.created, e.complete_by, e.prepress_status, e.estimate_invoiceid inv, e.estimate_productid product_id, p.title product, p.image product_image, pc.title category, " +
+      "SELECT e.id, e.estimate_name, e.created, e.complete_by, e.prepress_status, e.estimate_invoiceid inv, e.estimate_productid product_id, e.design_price, e.prepress_notes, e.prepress_internal_notes, p.title product, p.image product_image, pc.title category, pc.id category_id, " +
       "s.estimate_stage stage, s.estimate_substage substage, s.stage_in_date, c.company_name, c.name cname, c.last_name clname, " +
       "(SELECT GROUP_CONCAT(DISTINCT u.name ORDER BY u.name SEPARATOR ', ') FROM estimate_team_members m2 JOIN user u ON u.id = m2.user_id WHERE m2.estimate_id = e.id AND m2.user_id NOT IN (239, 331)) others, " +
       "(SELECT GROUP_CONCAT(DISTINCT m3.user_id) FROM estimate_team_members m3 WHERE m3.estimate_id = e.id AND m3.user_id IN (" + TEAM.join(',') + ")) designer_ids, " +
       "(SELECT dd.design_type FROM estimate_design_details dd WHERE dd.estimate_id = e.id AND dd.design_type LIKE '%Proof%' ORDER BY dd.id DESC LIMIT 1) proof_type, " +
       "(SELECT dd.design_type FROM estimate_design_details dd WHERE dd.estimate_id = e.id AND dd.design_type NOT LIKE '%Proof%' ORDER BY dd.id DESC LIMIT 1) files_type, " +
-      "(SELECT dd.service_type FROM estimate_design_details dd WHERE dd.estimate_id = e.id AND dd.service_type IS NOT NULL ORDER BY dd.id DESC LIMIT 1) service " +
+      "(SELECT dd.service_type FROM estimate_design_details dd WHERE dd.estimate_id = e.id AND dd.service_type IS NOT NULL ORDER BY dd.id DESC LIMIT 1) service, " +
+      "(SELECT dd.notes FROM estimate_design_details dd WHERE dd.estimate_id = e.id AND dd.notes IS NOT NULL AND dd.notes <> '' ORDER BY dd.id DESC LIMIT 1) design_notes, " +
+      "(SELECT COUNT(*) FROM estimate e2 WHERE e2.estimate_productid = e.estimate_productid AND e2.created >= DATE_SUB(NOW(), INTERVAL 180 DAY)) product_180 " +
       "FROM estimate e JOIN estimate_team_members m ON m.estimate_id = e.id AND m.user_id = " + tu + " JOIN estimate_stage s ON s.estimate_id = e.id " +
       "LEFT JOIN product p ON p.id = e.estimate_productid LEFT JOIN productcategory pc ON pc.id = p.product_category_id LEFT JOIN customer c ON c.id = e.estimate_clientid " +
       "WHERE s.estimate_stage = 'prepress' AND s.estimate_substage <> 'canceled'" + (all ? '' : ' AND e.estimate_invoiceid > 0') + " ORDER BY e.created DESC LIMIT 300");
@@ -74,8 +79,41 @@ module.exports = function mountDesignerAi(app, deps) {
       product_id: r.product_id, product: r.product || '', product_image: r.product_image || null, category: r.category || '', stage: r.stage, substage: r.substage, stage_in: r.stage_in_date,
       status: r.prepress_status, status_label: PROOF_LABEL[r.prepress_status] || r.prepress_status || '', proof_type: r.proof_type || (r.substage === 'tier_2' ? 'Tier 2' : r.substage === 'tier_1' ? 'Tier 1' : ''), files_type: r.files_type || '', service: r.service || '',
       tier, customer: r.company_name || [r.cname, r.clname].filter(Boolean).join(' ') || '', others: r.others || '', designer_ids: r.designer_ids ? String(r.designer_ids).split(',').map(Number) : [],
+      design_fee: Number(r.design_price) || 0, notes: [r.design_notes, r.prepress_notes, r.prepress_internal_notes].filter(Boolean).join('\n').slice(0, 1200), product_180: Number(r.product_180) || 0, category_id: r.category_id,
       nova: mine[r.id] || null
-    }));
+    })).map(j => Object.assign(j, { hard: jobHard(j), creative: jobCreative(j), common: j.product_180 >= 40 }));
+  }
+  // 1.20.17: how hard and how creative a job is, 0–10 — from the category, the proof tier, the design fee and the notes
+  const HARD_BY_CAT = { 'Folding Cartons': 8, 'Rigid Boxes': 9, 'Corrugated Boxes': 8, 'Sleeves and Inserts': 7, 'Catalogs & Books': 7, 'Trade Show Displays': 6, 'Standing Displays': 6, 'Custom': 8, 'Services': 7, 'Roll Labels': 5, 'Adhesive Products': 5, 'Stickers on Sheet': 4, 'Individual Stickers': 4, 'Rigid Boards': 4, 'Signs': 4, 'Real Estate Signs': 3, 'Banners / Posters': 3, 'Banner Stands': 3, 'Flags': 4, 'Standard Business Cards': 2, 'Luxury Business Cards': 4, 'Plastic Business Cards': 3, 'Special Shape Business Cards': 6, 'Marketing Materials': 3, 'Brochures / Flyers': 3, 'Menus': 4, 'Invitations': 5, 'Event & Invitations': 5, 'Calendars': 5, 'Promo Products': 4, 'Wall Art': 5, 'Mailing & EDDM': 4, 'Holders / Folders': 5 };
+  function jobHard(j) {
+    let h = HARD_BY_CAT[j.category] != null ? HARD_BY_CAT[j.category] : 5;
+    const t = (j.product + ' ' + j.name).toLowerCase();
+    if (/die ?cut|custom shape|cutout|contour/.test(t)) h += 2;
+    if (/wrap|vehicle|van|fleet/.test(t)) h += 3;
+    if (/variable|vdp|numbering/.test(t)) h += 1;
+    if (j.tier === 2 || /tier ?2/i.test(j.proof_type || '')) h += 2;
+    if (j.service === 'expedite') h += 1;
+    return Math.max(0, Math.min(10, h));
+  }
+  function jobCreative(j) {
+    let c = 1;
+    if (j.design_fee > 0) c = 5 + Math.min(4, Math.round(j.design_fee / 50));
+    if (/Work with Our Designers/i.test(j.files_type || '')) c = Math.max(c, 7);
+    if (/design|create|layout|mock ?up|logo|artwork from scratch|make it look/i.test(j.notes || '')) c += 1;
+    if (/Print Ready|Use Existing Files/i.test(j.files_type || '') && j.design_fee === 0) c = Math.min(c, 2);
+    return Math.max(0, Math.min(10, c));
+  }
+  // 1.20.17: the designer's hours — "09:00".."14:00" on work_days (1–7, Mon=1), Los Angeles time; until the hours table exists
+  const laNow = () => { const f = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', hour: '2-digit', minute: '2-digit', weekday: 'short' }); const o = {}; f.formatToParts(new Date()).forEach(x => { o[x.type] = x.value; }); return { min: Number(o.hour) * 60 + Number(o.minute), day: ({ Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 })[o.weekday] || 1 }; };
+  const toMin = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || '').trim()); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+  const fmtT = (t) => { const m = toMin(t); if (m == null) return ''; const h = Math.floor(m / 60), mm = m % 60; return (h % 12 || 12) + (mm ? ':' + String(mm).padStart(2, '0') : '') + (h < 12 ? ' AM' : ' PM'); };
+  function onShift(d) {
+    const st = toMin(d.shift_start), en = toMin(d.shift_end); if (st == null || en == null) return { known: false };
+    const now = laNow(); const days = String(d.work_days || '1,2,3,4,5').split(',').map(Number);
+    if (days.indexOf(now.day) < 0) return { known: true, on: false, why: 'day off' };
+    if (now.min < st) return { known: true, on: false, why: 'starts at ' + fmtT(d.shift_start) };
+    if (now.min >= en) return { known: true, on: false, why: 'left at ' + fmtT(d.shift_end) };
+    return { known: true, on: true, left: en - now.min, ends: fmtT(d.shift_end) };
   }
 
   // ---- the matcher: who should take this job
@@ -96,18 +134,34 @@ module.exports = function mountDesignerAi(app, deps) {
     const minLoad = team.length ? Math.min(...team.map(d => d.active_jobs)) : 0;
     const jobText = [job.product, job.category, job.proof_type, job.name, job.files_type].join(' ').toLowerCase();
     const isT2 = /tier ?2|tier_2/i.test(job.proof_type + ' ' + job.substage);
+    // 1.20.17: every reason carries its points, so the pick can be read: "did 39 × Classic Business Cards (+30) · 2 active jobs (−3)"
+    const pts = (n) => ' (' + (n > 0 ? '+' : '') + n + ')';
     const out = team.map(d => {
       let score = 50; const why = [];
+      const add = (n, text) => { score += n; why.push(text + (n ? pts(n) : '')); };
       const h = hist[d.user_id] || { product: 0, cat: 0 };
-      if (h.product) { const p = Math.min(30, h.product * 5); score += p; why.push('did ' + h.product + ' × ' + (job.product || 'this product') + ' in 180 days'); }
-      else if (h.cat) { const p = Math.min(15, h.cat * 2); score += p; why.push(h.cat + ' ' + (job.category || 'same category') + ' jobs in 180 days'); }
+      if (h.product) add(Math.min(30, h.product * 5), 'did ' + h.product + ' × ' + (job.product || 'this product') + ' in 180 days');
+      else if (h.cat) add(Math.min(15, h.cat * 2), h.cat + ' ' + (job.category || 'same category') + ' jobs in 180 days');
       const hits = d.skill_list.filter(sk => sk && jobText.indexOf(sk) > -1);
-      if (hits.length) { score += Math.min(36, hits.length * 12); why.push('strong side: ' + hits.join(', ')); }
-      if (isT2) { if (d.tier2) { score += 15; why.push('Tier 2 designer'); } else { score -= 20; why.push('not marked Tier 2'); } }
-      const over = d.active_jobs - minLoad; if (over > 0) { score -= Math.min(30, over * 3); }
-      why.push(d.active_jobs + ' active job' + (d.active_jobs === 1 ? '' : 's') + (over === 0 ? ' — lightest load' : ''));
-      if (d.max_active && d.active_jobs >= d.max_active) { score -= 40; why.push('at max (' + d.max_active + ')'); }
-      if (recent[d.user_id]) { score -= recent[d.user_id] * 4; why.push('picked ' + recent[d.user_id] + '× in the last 2 h'); }
+      if (hits.length) add(Math.min(36, hits.length * 12), 'strong side: ' + hits.join(', '));
+      if (isT2) { if (d.tier2) add(15, 'Tier 2 designer'); else add(-20, 'not marked Tier 2'); }
+      // how hard the job is against what they can take (0–10): each point over their level costs 6
+      const hardOver = job.hard - d.hard_level;
+      if (hardOver > 0) add(-Math.min(40, hardOver * 6), 'job hardness ' + job.hard + '/10 is over their ' + d.hard_level);
+      else if (job.hard >= 7) add(6, 'hard job (' + job.hard + '/10) within their ' + d.hard_level);
+      // a creative job (design fee, "Work with Our Designers", design notes) goes to the creative ones
+      if (job.creative >= 6) { const diff = d.creative_level - 5; add(diff * 3, 'creative job ' + job.creative + '/10 · their creative level ' + d.creative_level); if (d.creative_level < job.creative - 2) add(-15, 'below the creativity this job asks'); }
+      // newer designers: common, easy products are theirs to learn on; the hard / creative ones are not
+      if (d.is_new) { if (job.common && job.hard <= 4 && job.creative < 6) add(15, 'newer designer (' + d.jobs_180 + ' jobs in 180 d) — a common, easy product'); else if (job.hard >= 7 || job.creative >= 7) add(-10, 'newer designer — not a hard / creative one'); }
+      // hours: off shift is out; leaving within the hour should not start something new
+      const sh = d.on_shift;
+      if (sh.known && !sh.on) add(-45, sh.why);
+      else if (sh.known && sh.left <= 60) add(-25, 'leaves at ' + sh.ends);
+      else if (sh.known && sh.left <= 90 && job.hard >= 6) add(-15, 'only ' + sh.left + ' min left today for a hard job');
+      const over = d.active_jobs - minLoad;
+      add(over > 0 ? -Math.min(30, over * 3) : 0, d.active_jobs + ' active job' + (d.active_jobs === 1 ? '' : 's') + (over === 0 ? ' — lightest load' : ''));
+      if (d.max_active && d.active_jobs >= d.max_active) add(-40, 'at max (' + d.max_active + ')');
+      if (recent[d.user_id]) add(-recent[d.user_id] * 4, 'picked ' + recent[d.user_id] + '× in the last 2 h');
       return { user_id: d.user_id, name: d.name, last_name: d.last_name, photo: d.photo, score: Math.max(0, Math.min(100, Math.round(score))), why, active_jobs: d.active_jobs };
     }).sort((a, b) => b.score - a.score || a.active_jobs - b.active_jobs);
     return out;
@@ -120,8 +174,11 @@ module.exports = function mountDesignerAi(app, deps) {
     try {
       const id = parseInt(req.params.id), b = req.body || {};
       const cur = await dbGet('SELECT * FROM da_designers WHERE user_id = ?', [id]); if (!cur) return res.json({ ok: false, error: 'No such designer' });
-      await dbRun('UPDATE da_designers SET skills = ?, notes = ?, max_active = ?, tier2 = ?, active = ?, updated_at = ? WHERE user_id = ?',
-        [String(b.skills != null ? b.skills : cur.skills || '').slice(0, 600), String(b.notes != null ? b.notes : cur.notes || '').slice(0, 1000), Math.max(1, parseInt(b.max_active) || cur.max_active || 25), b.tier2 != null ? (b.tier2 ? 1 : 0) : cur.tier2, b.active != null ? (b.active ? 1 : 0) : cur.active, nowIso(), id]);
+      const lvl = (v, cur) => v == null || v === '' ? (cur == null ? 5 : cur) : Math.max(0, Math.min(10, parseInt(v) || 0));
+      const tm = (v, cur) => v == null ? cur : (/^\d{1,2}:\d{2}$/.test(String(v).trim()) ? String(v).trim() : null);
+      await dbRun('UPDATE da_designers SET skills = ?, notes = ?, max_active = ?, tier2 = ?, active = ?, hard_level = ?, creative_level = ?, shift_start = ?, shift_end = ?, work_days = ?, updated_at = ? WHERE user_id = ?',
+        [String(b.skills != null ? b.skills : cur.skills || '').slice(0, 600), String(b.notes != null ? b.notes : cur.notes || '').slice(0, 1000), Math.max(1, parseInt(b.max_active) || cur.max_active || 25), b.tier2 != null ? (b.tier2 ? 1 : 0) : cur.tier2, b.active != null ? (b.active ? 1 : 0) : cur.active,
+          lvl(b.hard_level, cur.hard_level), lvl(b.creative_level, cur.creative_level), tm(b.shift_start, cur.shift_start), tm(b.shift_end, cur.shift_end), b.work_days != null ? String(b.work_days).split(',').map(x => parseInt(x)).filter(x => x >= 1 && x <= 7).join(',') || null : cur.work_days, nowIso(), id]);
       res.json({ ok: true });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });

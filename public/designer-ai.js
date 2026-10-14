@@ -24,25 +24,34 @@
   async function loadTeam() {
     const j = await api('/api/designer/designers'); if (!j.ok) { $('daTeam').innerHTML = '<div class="da-muted">' + esc(j.error) + '</div>'; return; }
     team = j.designers; $('daTeamN').textContent = team.filter(d => d.active).length;
-    $('daTeam').innerHTML = '<table class="da-tt"><thead><tr><th>Designer</th><th>Active jobs</th><th>Waiting on client</th><th>Approved · 30 d</th><th>Picked here</th><th>Tier 2</th><th>Max active</th><th>Strong sides</th><th>Notes</th><th></th></tr></thead><tbody>' +
+    $('daTeam').innerHTML = '<table class="da-tt"><thead><tr><th>Designer</th><th>Active jobs</th><th>Waiting on client</th><th>Approved · 30 d</th><th>Picked here</th><th>Tier 2</th><th>Hard jobs</th><th>Creative</th><th>Hours</th><th>Max active</th><th>Strong sides</th><th>Notes</th><th></th></tr></thead><tbody>' +
       team.map(d => '<tr data-d="' + d.user_id + '"' + (d.active ? '' : ' class="off"') + '><td><div class="da-who">' + av(d) + '<div><b>' + esc(d.name + ' ' + (d.last_name || '')) + '</b><div class="t">' + esc(d.title || 'Designer') + (d.active ? '' : ' · not taking jobs') + '</div></div></div></td>' +
         '<td><span class="da-num" title="Proof Checking / edits on the desk — what the CRM board counts">' + d.active_jobs + '</span></td><td><span class="da-num" title="Proof Sent / waiting for files">' + d.waiting_client + '</span></td><td><span class="da-num">' + d.done_30 + '</span></td><td><span class="da-num">' + (d.nova_assigned || 0) + '</span></td>' +
-        '<td>' + (d.tier2 ? '<span class="da-sk"><span class="t2">Tier 2</span></span>' : '<span class="da-muted">—</span>') + '</td><td>' + (d.max_active || 25) + '</td>' +
+        '<td>' + (d.tier2 ? '<span class="da-sk"><span class="t2">Tier 2</span></span>' : '<span class="da-muted">—</span>') + '</td>' +
+        '<td>' + lvl(d.hard_level, '#b45309') + '</td><td>' + lvl(d.creative_level, '#7c3aed') + '</td>' +
+        '<td>' + (d.shift_start && d.shift_end ? '<span class="' + (d.on_shift && d.on_shift.on ? 'da-on' : 'da-off') + '">' + esc(fmtT(d.shift_start) + '–' + fmtT(d.shift_end)) + '</span><div class="da-muted" style="font-size:10.5px">' + esc(d.on_shift && d.on_shift.known ? (d.on_shift.on ? 'on shift · ' + d.on_shift.left + ' min left' : d.on_shift.why) : '') + (d.is_new ? ' · newer (' + d.jobs_180 + ' jobs/180 d)' : '') + '</div>' : '<span class="da-muted">not set</span>' + (d.is_new ? '<div class="da-muted" style="font-size:10.5px">newer (' + d.jobs_180 + ' jobs/180 d)</div>' : '')) + '</td>' +
+        '<td>' + (d.max_active || 25) + '</td>' +
         '<td><div class="da-sk">' + (d.skill_list.length ? d.skill_list.map(s => '<span>' + esc(s) + '</span>').join('') : '<span style="background:#fff7ed;color:#c2410c">none yet</span>') + '</div></td>' +
         '<td class="da-muted" style="max-width:220px">' + esc(d.notes || '') + '</td><td><button class="bk-btn sm" data-edit="' + d.user_id + '">Edit</button></td></tr>').join('') + '</tbody></table>';
     $('daTeam').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => editDesigner(Number(b.dataset.edit)));
   }
+  const lvl = (n, color) => { n = n == null ? 5 : n; return '<span class="da-lvl" title="' + n + ' of 10"><i style="width:' + (n * 10) + '%;background:' + color + '"></i></span> <b>' + n + '</b>'; };
+  const fmtT = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || '')); if (!m) return ''; const h = Number(m[1]), mm = m[2]; return (h % 12 || 12) + (mm !== '00' ? ':' + mm : '') + (h < 12 ? 'am' : 'pm'); };
   function editDesigner(id) {
     const d = team.find(x => x.user_id === id); const tr = $('daTeam').querySelector('tr[data-d="' + id + '"]'); if (!d || !tr) return;
     const old = tr.nextElementSibling; if (old && old.classList.contains('da-formrow')) { old.remove(); return; }
     const fr = document.createElement('tr'); fr.className = 'da-formrow';
-    fr.innerHTML = '<td colspan="10"><div class="da-form" style="max-width:760px"><label>Strong sides — comma separated; matched against the product, its category, the proof type and the job name (e.g. packaging, die cut, large format, business cards, labels, booklets, vehicle wrap, variable data)</label><textarea rows="2" class="sk">' + esc(d.skills) + '</textarea>' +
+    fr.innerHTML = '<td colspan="13"><div class="da-form" style="max-width:760px"><label>Strong sides — comma separated; matched against the product, its category, the proof type and the job name (e.g. packaging, die cut, large format, business cards, labels, booklets, vehicle wrap, variable data)</label><textarea rows="2" class="sk">' + esc(d.skills) + '</textarea>' +
       '<div class="row"><label><input type="checkbox" class="t2"' + (d.tier2 ? ' checked' : '') + '> Tier 2 designer</label><label>max active <input type="number" class="mx" min="1" value="' + (d.max_active || 25) + '"></label><label><input type="checkbox" class="ac"' + (d.active ? ' checked' : '') + '> takes jobs</label></div>' +
+      '<div class="row"><label title="0 = only the simplest jobs · 10 = packaging, die cuts, wraps, anything">Hard jobs <input type="range" class="hl" min="0" max="10" value="' + (d.hard_level == null ? 5 : d.hard_level) + '" oninput="this.nextElementSibling.textContent=this.value"><b>' + (d.hard_level == null ? 5 : d.hard_level) + '</b>/10</label>' +
+      '<label title="0 = production only · 10 = designs from scratch, branding, layouts">Creative jobs <input type="range" class="cl" min="0" max="10" value="' + (d.creative_level == null ? 5 : d.creative_level) + '" oninput="this.nextElementSibling.textContent=this.value"><b>' + (d.creative_level == null ? 5 : d.creative_level) + '</b>/10</label></div>' +
+      '<div class="row"><label>Hours (LA) <input type="time" class="ss" value="' + esc(d.shift_start || '') + '"> to <input type="time" class="se" value="' + esc(d.shift_end || '') + '"></label><label>Days ' + [1, 2, 3, 4, 5, 6, 7].map(n => '<label style="margin:0 2px"><input type="checkbox" class="wd" value="' + n + '"' + ((d.work_days || '1,2,3,4,5').split(',').map(Number).indexOf(n) > -1 ? ' checked' : '') + '>' + ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'][n - 1] + '</label>').join('') + '</label><span class="da-muted">A job is never suggested off shift, and not within the last hour of the day (soon from the hours table).</span></div>' +
       '<label>Notes</label><input class="nt" value="' + esc(d.notes || '') + '">' +
       '<div class="row"><button class="bk-btn pri sm sv">Save</button><button class="bk-btn sm cx">Cancel</button></div></div></td>';
     tr.after(fr);
     fr.querySelector('.cx').onclick = () => fr.remove();
-    fr.querySelector('.sv').onclick = async () => { const r = await api('/api/designer/designers/' + id, { skills: fr.querySelector('.sk').value, tier2: fr.querySelector('.t2').checked, max_active: fr.querySelector('.mx').value, active: fr.querySelector('.ac').checked, notes: fr.querySelector('.nt').value }); if (!r.ok) { alert(r.error); return; } toast('Saved'); loadTeam(); };
+    fr.querySelector('.sv').onclick = async () => { const r = await api('/api/designer/designers/' + id, { skills: fr.querySelector('.sk').value, tier2: fr.querySelector('.t2').checked, max_active: fr.querySelector('.mx').value, active: fr.querySelector('.ac').checked, notes: fr.querySelector('.nt').value,
+      hard_level: fr.querySelector('.hl').value, creative_level: fr.querySelector('.cl').value, shift_start: fr.querySelector('.ss').value, shift_end: fr.querySelector('.se').value, work_days: Array.from(fr.querySelectorAll('.wd:checked')).map(x => x.value).join(',') }); if (!r.ok) { alert(r.error); return; } toast('Saved'); loadTeam(); };
   }
 
   // ---- queue (both tiers in one table, 1.20.15)
@@ -59,7 +68,8 @@
     bind();
   }
   const row = (j) => '<tr data-job="' + j.id + '"><td><span class="da-e">' + esc(j.e) + '</span>' + (j.invoiced ? '' : ' <span class="da-tag quote">quote</span>') + '<div class="da-sub">' + esc(j.name || '') + '</div><div class="da-sub">' + esc(j.customer) + '</div></td>' +
-    '<td>' + (j.product_image ? '<img class="da-pimg" src="' + esc(j.product_image) + '" alt="" onerror="this.remove()">' : '') + '<b>' + esc(j.product) + '</b><div class="da-sub">' + esc(j.category) + (j.files_type ? ' · ' + esc(j.files_type) : '') + (j.service === 'expedite' ? ' · <b style="color:#b91c1c">expedite</b>' : '') + '</div></td>' +
+    '<td>' + (j.product_image ? '<img class="da-pimg" src="' + esc(j.product_image) + '" alt="" onerror="this.remove()">' : '') + '<b>' + esc(j.product) + '</b><div class="da-sub">' + esc(j.category) + (j.files_type ? ' · ' + esc(j.files_type) : '') + (j.service === 'expedite' ? ' · <b style="color:#b91c1c">expedite</b>' : '') + '</div>' +
+      '<div class="da-sub da-jl"><span title="How hard Nova rates this job, 0–10 (category, die cut / wrap / variable data, Tier 2, expedite)">hard <b>' + j.hard + '</b></span> · <span title="How creative, 0–10 (design fee, Work with Our Designers, design notes)">creative <b>' + j.creative + '</b></span>' + (j.design_fee ? ' · <b style="color:#7c3aed">$' + j.design_fee + ' design</b>' : '') + (j.common ? ' · common product' : '') + (j.notes ? ' · <a href="#" class="da-notes" data-notes="' + esc(j.notes) + '">notes</a>' : '') + '</div></td>' +
     '<td>' + esc(usD(j.created)) + '<div class="da-sub">' + esc(ago(j.created)) + (j.complete_by ? '<br>due ' + esc(usD(j.complete_by)) : '') + '</div></td>' +
     '<td>' + tierTag(j) + '</td><td>' + proofTag(j) + '</td><td><span class="da-tag st">' + esc(j.status_label) + '</span><div class="da-sub">' + esc(j.substage || '') + '</div></td>' +
     '<td class="da-sub">' + esc(j.others || '—') + '</td>' +
@@ -71,6 +81,7 @@
     return '<button class="bk-btn pri sm" data-match="' + j.id + '">Match</button> <span class="da-sub">who should take it</span>';
   };
   function bind() {
+    $('daQueue').querySelectorAll('[data-notes]').forEach(a => a.onclick = (e) => { e.preventDefault(); let p = a.nextElementSibling; if (p && p.classList.contains('da-notebox')) { p.remove(); return; } p = document.createElement('pre'); p.className = 'da-notebox'; p.textContent = a.dataset.notes; a.after(p); });
     $('daQueue').querySelectorAll('[data-match]').forEach(b => b.onclick = () => runMatch(Number(b.dataset.match), b));
     $('daQueue').querySelectorAll('[data-unassign]').forEach(a => a.onclick = async (e) => { e.preventDefault(); await api('/api/designer/unassign', { estimate_id: Number(a.dataset.unassign) }); loadQueue(); loadTeam(); });
   }
