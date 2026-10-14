@@ -52,21 +52,27 @@ module.exports = function mountAr(ctx) {
   }
 
   // ---- open invoices from the production DB (read-only), cached 5 minutes
+  const SEL_ONE = "SELECT i.id, i.invoice_type AS type, i.invoice_total_payment AS total, i.invoice_total_payment_done AS done, i.payment_status, i.invoice_creation_date AS created, i.payment_due_date AS due, i.PO_number AS po, i.invoice_clientid AS customer_id, i.updated_at, " +
+    "c.company_name, c.name, c.last_name, c.email FROM invoice i LEFT JOIN customer c ON c.id = i.invoice_clientid";
+  function shapeInvoice(r) {
+    const o = { id: r.id, no: 'INV' + r.id, type: r.type || 'invoice', total: Number(r.total) || 0, done: Number(r.done) || 0, balance: r.payment_status === 'paid' ? Number(r.total) || 0 : Math.round(((Number(r.total) || 0) - (Number(r.done) || 0)) * 100) / 100, status: r.payment_status, created: r.created, due: r.due, po: r.po || null, paid_at: r.payment_status === 'paid' ? r.updated_at : null,
+      customer_id: r.customer_id, company: r.company_name || '', person: [r.name, r.last_name].filter(Boolean).join(' '), email: r.email || '' };
+    o.customer = o.company || o.person || (o.customer_id ? 'Customer #' + o.customer_id : 'No customer on the invoice');
+    o._k = keyWords(o.company + ' ' + o.person + ' ' + (o.email || '').split('@')[0]);
+    return o;
+  }
   const inv = { at: 0, rows: [], error: null }, sugCache = new Map();
   async function openInvoices(force) {
     if (!runQuery) return [];
     if (!force && Date.now() - inv.at < 5 * 60000) return inv.rows;
     // open invoices, plus the ones marked paid in the last 90 days (AR often marks the CRM before the bank posts — shown as "already paid in the CRM")
     // two queries, each on an index (payment_status; id range for the recent paid ones) — one OR over both made MySQL scan the table
-    const SEL = "SELECT i.id, i.invoice_total_payment AS total, i.invoice_total_payment_done AS done, i.payment_status, i.invoice_creation_date AS created, i.payment_due_date AS due, i.PO_number AS po, i.invoice_clientid AS customer_id, i.updated_at, " +
-      "c.company_name, c.name, c.last_name, c.email FROM invoice i LEFT JOIN customer c ON c.id = i.invoice_clientid WHERE i.invoice_type = 'invoice' AND i.invoice_total_payment > 0 AND ";
+    const SEL = SEL_ONE + " WHERE i.invoice_type = 'invoice' AND i.invoice_total_payment > 0 AND ";
     const open = await runQuery(SEL + "i.payment_status IN ('unpaid', 'partial') ORDER BY i.id DESC LIMIT 20000");
     const maxId = (await runQuery('SELECT MAX(id) AS m FROM invoice'))[0].m || 0;
     const paid = await runQuery(SEL + "i.payment_status = 'paid' AND i.id > " + (Number(maxId) - 6000) + " AND i.invoice_creation_date >= DATE_SUB(NOW(), INTERVAL 120 DAY) ORDER BY i.id DESC LIMIT 6000");   // the last ~6k invoices cover several months
     const rows = open.concat(paid);
-    inv.rows = rows.map(r => ({ id: r.id, no: 'INV' + r.id, total: Number(r.total) || 0, done: Number(r.done) || 0, balance: r.payment_status === 'paid' ? Number(r.total) || 0 : Math.round(((Number(r.total) || 0) - (Number(r.done) || 0)) * 100) / 100, status: r.payment_status, created: r.created, due: r.due, po: r.po || null, paid_at: r.payment_status === 'paid' ? r.updated_at : null,
-      customer_id: r.customer_id, company: r.company_name || '', person: [r.name, r.last_name].filter(Boolean).join(' '), email: r.email || '' }));
-    inv.rows.forEach(r => { r.customer = r.company || r.person || ('Customer #' + r.customer_id); r._k = keyWords(r.company + ' ' + r.person + ' ' + (r.email || '').split('@')[0]); });
+    inv.rows = rows.map(shapeInvoice);
     // words shared by many customers ("designs", "events", "church") say nothing about who paid — drop them from the keys
     const df = {}; const seen = {}; inv.rows.forEach(r => { if (seen[r.customer_id]) return; seen[r.customer_id] = 1; r._k.forEach(w => { df[w] = (df[w] || 0) + 1; }); });
     const common = new Set(Object.keys(df).filter(w => df[w] > 25));
@@ -103,6 +109,7 @@ module.exports = function mountAr(ctx) {
     const push = (ids, score, why, cust) => { const key = ids.length > 1 ? ids.slice().sort().join(',') : null; if (key) { if (keys.has(key)) return; keys.add(key); } out.push({ invoice_ids: ids, score, why, customer: cust }); };
     const nameHit = (r) => { if (!words.length || !r._k.length) return 0; let n = 0; for (const w of words) for (const k of r._k) if (k === w || (w.length >= 5 && k.length >= 5 && (k.indexOf(w) === 0 || w.indexOf(k) === 0))) { n++; break; } return n; };
     for (const r of invoices) {
+      const age = ageDays(r); if (age != null && age > 730) continue;   // 1.20.4: an invoice open for over two years is not what a fresh deposit pays
       const exactBal = Math.abs(r.balance - amt) < 0.005, exactTot = !exactBal && Math.abs(r.total - amt) < 0.005;
       const nh = nameHit(r), memo = nos.indexOf(r.id) > -1;
       let score = 0; const why = [];
@@ -120,7 +127,7 @@ module.exports = function mountAr(ctx) {
       if (score >= 15) push([r.id], Math.min(100, score), why, r);
     }
     // 2–3 invoices of one customer adding up to the deposit
-    const byCust = {}; invoices.forEach(r => { if (r.status !== 'paid') (byCust[r.customer_id] = byCust[r.customer_id] || []).push(r); });
+    const byCust = {}; invoices.forEach(r => { if (r.status !== 'paid' && r.customer_id && (ageDays(r) == null || ageDays(r) <= 365)) (byCust[r.customer_id] = byCust[r.customer_id] || []).push(r); });
     for (const cid of Object.keys(byCust)) {
       const list = byCust[cid].slice(0, 12); if (list.length < 2) continue;
       const nh = nameHit(list[0]);
@@ -231,8 +238,16 @@ module.exports = function mountAr(ctx) {
       const q = String(req.query.q || '').trim().toLowerCase(); if (!q) return res.json({ ok: true, invoices: [] });
       const invoices = await openInvoices();
       const n = Number(q.replace(/^#/, '').replace(/^inv\s*/i, ''));
-      const hits = invoices.filter(r => (n && String(r.id).indexOf(String(n)) === 0) || r.customer.toLowerCase().indexOf(q) > -1 || r.person.toLowerCase().indexOf(q) > -1 || (r.po && String(r.po).toLowerCase().indexOf(q) > -1) || (r.email && r.email.toLowerCase().indexOf(q) > -1)).slice(0, 25);
-      res.json({ ok: true, invoices: hits.map(r => ({ id: r.id, no: r.no, total: r.total, balance: r.balance, status: r.status, created: r.created, due: r.due, po: r.po, customer: r.customer, customer_id: r.customer_id, paid_at: r.paid_at })) });
+      let hits = invoices.filter(r => (n && String(r.id).indexOf(String(n)) === 0) || r.customer.toLowerCase().indexOf(q) > -1 || r.person.toLowerCase().indexOf(q) > -1 || (r.po && String(r.po).toLowerCase().indexOf(q) > -1) || (r.email && r.email.toLowerCase().indexOf(q) > -1)).slice(0, 25);
+      let note = null;
+      // 1.20.4: a full invoice number Nova's set does not hold is read from the CRM on the spot — and the reply says why the
+      // matcher never saw it (paid long ago, void, an estimate…), which is the diagnosis when a match "should have" happened
+      if (n >= 100000 && !hits.some(r => r.id === n) && runQuery) {
+        const rows = await runQuery(SEL_ONE + ' WHERE i.id = ' + Math.floor(n));
+        if (rows.length) { const r = shapeInvoice(rows[0]); hits = [r].concat(hits); note = 'INV' + r.id + ' is in the CRM as ' + r.status + (r.type !== 'invoice' ? ' (type ' + r.type + ')' : '') + ', created ' + String(r.created || '').slice(0, 10) + ' — not in Nova\'s matching set (' + (r.type !== 'invoice' ? 'not an invoice' : r.status === 'paid' ? 'paid invoices are read only for the last ~6,000 numbers created within 120 days' : r.status === 'void' ? 'void' : 'outside the set') + ')'; }
+        else note = 'INV' + n + ' is not in the CRM.';
+      }
+      res.json({ ok: true, invoices: hits.map(r => ({ id: r.id, no: r.no, total: r.total, balance: r.balance, status: r.status, created: r.created, due: r.due, po: r.po, customer: r.customer, customer_id: r.customer_id, paid_at: r.paid_at })), note });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
 
