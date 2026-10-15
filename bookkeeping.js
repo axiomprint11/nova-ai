@@ -1001,7 +1001,9 @@ module.exports = function mountBookkeeping(app, deps) {
   const FREE_MAIL = /^(gmail|yahoo|hotmail|outlook|aol|icloud|me|live|msn)\./;
   // The CRM lists that make up the directory. Each table is a type (suppliers → Supplier, vendors → Vendor); a new
   // list in the CRM is added with BOOKKEEPER_CRM_LISTS=suppliers,vendors,contractors — same columns expected.
-  const CRM_LISTS = String(env('BOOKKEEPER_CRM_LISTS') || 'suppliers,vendors').split(',').map(x => x.trim().toLowerCase().replace(/[^a-z0-9_]/g, '')).filter(Boolean);
+  const CRM_LISTS_ENV = String(env('BOOKKEEPER_CRM_LISTS') || '').trim();   // set → those tables only (the `sellers` table is not tried)
+  const CRM_LISTS = (CRM_LISTS_ENV || 'suppliers,vendors').split(',').map(x => x.trim().toLowerCase().replace(/[^a-z0-9_]/g, '')).filter(Boolean);
+  const SELLER_COLS = 'SELECT id, type, company_name, contact_name, email, phone, specialty, address, unit, city, state, zip, hours, country_iso, photo_url';
   const kindOf = (t) => t === 'suppliers' ? 'supplier' : t === 'vendors' ? 'vendor' : t === 'bill' ? 'bill' : t === 'nova' ? 'nova' : String(t || '').replace(/s$/, '') || 'other';
   let dirSync = { at: 0, running: null, error: null };
   async function syncDirectory(who) {
@@ -1009,20 +1011,36 @@ module.exports = function mountBookkeeping(app, deps) {
     if (dirSync.running) return dirSync.running;                        // one at a time (the tab, the clock and the daily run may ask together)
     dirSync.running = (async () => {
     let n = 0, errors = [];
-    for (const t of CRM_LISTS) {
-      let rows = [];
-      try { rows = await runQuery('SELECT id, company_name, contact_name, email, phone, specialty, address, unit, city, state, zip, hours, country_iso, photo_url FROM ' + t + ' ORDER BY id'); }
-      catch (e) { errors.push(t + ': ' + e.message); continue; }
+    // 1.20.65: the CRM's Suppliers & Vendors page writes to ONE table now — `sellers` (`type` supplier / vendor); the old
+    // `suppliers` / `vendors` tables stopped at ids 37 / 54 (B&R Moll, added 10/14, was only in `sellers`). When `sellers`
+    // answers, it is the whole directory: each row keeps its old source name ('suppliers' / 'vendors', so every filter and
+    // kind stays as it was) with `details.list = 'sellers'` and crm_id = the sellers id (a different numbering — never
+    // matched against an old-table id). The old tables are read only when `sellers` is missing.
+    const lists = [];
+    if (!CRM_LISTS_ENV) {
+      try { const rows = await runQuery(SELLER_COLS + ' FROM sellers ORDER BY id'); lists.push({ t: 'sellers', rows }); }
+      catch (e) { if (!/doesn't exist|ER_NO_SUCH_TABLE/i.test(e.message)) errors.push('sellers: ' + e.message); }
+    }
+    if (!lists.length) for (const t of CRM_LISTS) {
+      try { lists.push({ t, rows: await runQuery(SELLER_COLS.replace('id, type,', 'id,') + ' FROM ' + t + ' ORDER BY id') }); }   // the old tables have no `type`
+      catch (e) { errors.push(t + ': ' + e.message); }
+    }
+    for (const { t: list, rows } of lists) {
       for (const r of rows) {
         const name = String(r.company_name || r.contact_name || '').trim().slice(0, 120);
         if (!name) continue;
+        const fromSellers = list === 'sellers';
+        const t = fromSellers ? (String(r.type || '').toLowerCase() === 'vendor' ? 'vendors' : 'suppliers') : list;
         try {
         const addr = [r.address, r.unit, r.city, r.state, r.zip].filter(Boolean).join(', ').slice(0, 200);
         // Everything else the CRM knows, for the details popup (no bank or payment details exist in the CRM; none are ever stored here).
-        const details = JSON.stringify({ address: r.address || '', unit: r.unit || '', city: r.city || '', state: r.state || '', zip: r.zip || '', country: r.country_iso || '', hours: r.hours || '', list: t, crm_id: r.id });
+        const details = JSON.stringify({ address: r.address || '', unit: r.unit || '', city: r.city || '', state: r.state || '', zip: r.zip || '', country: r.country_iso || '', hours: r.hours || '', list, crm_id: r.id });
         const photo = /^https?:\/\//.test(String(r.photo_url || '')) ? String(r.photo_url).slice(0, 300) : null;
         // The same CRM row again, or a vendor first seen on a bill that this CRM row is; never another CRM row.
-        const ex = await dbGet('SELECT id FROM bk_vendors WHERE (source = ? AND crm_id = ?) OR (LOWER(name) = LOWER(?) AND (source IS NULL OR source = ?))', [t, r.id, name, 'bill']);
+        // A sellers row also claims the old-table row of the same name (the CRM moved it there), re-keyed to the sellers id.
+        const ex = fromSellers
+          ? await dbGet("SELECT id FROM bk_vendors WHERE (source IN ('suppliers', 'vendors') AND crm_id = ? AND details LIKE '%\"list\":\"sellers\"%') OR (LOWER(name) = LOWER(?) AND (source IS NULL OR source IN ('bill', 'suppliers', 'vendors'))) ORDER BY CASE WHEN details LIKE '%\"list\":\"sellers\"%' THEN 0 ELSE 1 END, id", [r.id, name])
+          : await dbGet('SELECT id FROM bk_vendors WHERE (source = ? AND crm_id = ?) OR (LOWER(name) = LOWER(?) AND (source IS NULL OR source = ?))', [t, r.id, name, 'bill']);
         // kind (the Type column) is the CRM list the row is in — read-only here, the CRM decides.
         const kind = kindOf(t);
         if (ex) await dbRun("UPDATE bk_vendors SET name = ?, source = ?, crm_id = ?, email = ?, phone = ?, specialty = ?, contact = ?, address = ?, photo = ?, kind = ?, details = ?, approved = 1, synced_at = datetime('now') WHERE id = ?",

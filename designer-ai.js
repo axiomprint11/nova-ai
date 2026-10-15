@@ -225,6 +225,11 @@ module.exports = function mountDesignerAi(app, deps) {
       if (hardOver > 0) add(-Math.min(40, hardOver * 6), 'job hardness ' + job.hard + '/10' + fw + ' is over their ' + d.hard_level);
       else if (job.hard >= 7) add(6, 'hard job (' + job.hard + '/10' + fw + ') within their ' + d.hard_level);
       else if (job.files && job.files.hard >= 3 && d.hard_level >= 7) add(4, 'skilled for ' + job.files.labels.join(' / ') + ' files (level ' + d.hard_level + ')');
+      // 1.20.65: the fit the other way — a simple job (≤ 4) is wasted on a level-9 designer (−3 a level beyond hard + 2, up to −15:
+      // George at 9 on a hard-4 postcard −9), and the designers whose level sits at the job's hardness or up to 2 above it are
+      // the right ones for it (+4) — so Max at 5–6 beats George on the everyday postcard, and George stays free for the die lines.
+      else if (job.hard <= 4 && d.hard_level >= 7) add(-Math.min(15, (d.hard_level - job.hard - 2) * 3), 'too simple for a level-' + d.hard_level + ' designer — keep them for hard jobs');
+      else if (d.hard_level >= job.hard && d.hard_level <= job.hard + 2) add(4, 'the right level (' + d.hard_level + ') for a ' + job.hard + '/10 job');
       // a creative job (design fee, "Work with Our Designers", design notes) goes to the creative ones
       if (job.creative >= 6 || job.design_fee > 0) { const c = (d.comm_level == null ? 5 : d.comm_level) - 5; if (c) add(c * 2, 'client communication ' + (c + 5) + '/10 on a job with client back-and-forth'); }
       langs.forEach(l => { if ((d.language_list || []).indexOf(l) > -1) add(12, 'speaks ' + l + ' — the job mentions it'); });
