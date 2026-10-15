@@ -176,9 +176,9 @@
   .tk-chip.warn { background: #fffbeb; border-color: #fde68a; color: #92400e; }
   .tk-hd .who { margin-top: 6px; color: var(--ink-soft); }
   .tk-hd .who i { font-style: normal; color: var(--muted); }
-  .tk-audio { margin-top: 10px; display: flex; align-items: center; gap: 10px; }
-  .tk-audio audio { width: 100%; max-width: 520px; height: 36px; }
-  .tk-audio { flex-wrap: wrap; }
+  /* 1.20.76: one row — the player gives way so 1.5× and the download sit beside it, never below */
+  .tk-audio { margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+  .tk-audio audio { flex: 1 1 auto; min-width: 0; width: auto; max-width: 520px; height: 36px; }
   .tk-speed { flex: none; min-width: 52px; height: 32px; padding: 0 10px; border: 0; border-radius: 9px; background: #f1f2f8; color: var(--ink-soft);
     font: 700 13px/1 inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
   .tk-speed:hover { background: #e8eaf4; }
@@ -292,8 +292,8 @@
   .tk-card textarea:focus, .tk-card input:focus { border-color: var(--indigo); }
   .tk-card input[type=text] { margin: 0; padding: 9px 11px; font-size: 13px; }
   .tk-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .tk-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
-  .tk-fields label small { font-weight: 400; }
+  .tk-fields label, .tk-fields .tk-fl { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .tk-fields label small, .tk-fields .tk-fl small { font-weight: 400; }
   .tk-check { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
   .tk-check input { width: auto; margin: 0; }
   .tk-mode { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -467,6 +467,12 @@
   .tk-q .tk-tip { display: none; position: absolute; left: 24px; top: -6px; width: 360px; background: #1f2937; color: #fff; font-size: 12.5px; font-weight: 400; line-height: 1.45; padding: 10px 12px; border-radius: 8px; z-index: 20; }
   .tk-q:hover .tk-tip, .tk-q:focus .tk-tip { display: block; }
   .tk-form-slim .row2 > label, .tk-form-slim .row2 > .tk-flabel { min-width: 0; }   /* Account manager 50% · Email 50% */
+  /* 1.20.76: on / off switches beside a Setup field (same look as Admin → Emails) */
+  .tk-lt { display: flex; align-items: center; gap: 10px; }
+  .em-switch { position: relative; width: 34px; height: 19px; flex: none; cursor: pointer; display: inline-block; } .em-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .em-switch span { position: absolute; inset: 0; border-radius: 999px; background: #d1d5db; transition: background .15s; } .em-switch span::after { content: ''; position: absolute; top: 2.5px; left: 2.5px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+  .em-switch input:checked + span { background: #22c55e; } .em-switch input:checked + span::after { transform: translateX(15px); }
+  .tk-fields h3 .tk-q, h3 .tk-q { vertical-align: middle; }
   .tk-form input.tk-locked { background: #f3f4f6; color: #4b5563; cursor: not-allowed; }
   .tk-step h3 { font-size: 14px; margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
   .tk-step h3 i { font-style: normal; width: 22px; height: 22px; border-radius: 50%; background: var(--indigo-light); color: var(--indigo-dark); display: inline-flex;
@@ -660,15 +666,12 @@
             <div class="tk-fields">
               <label>Transfer to <small>When a caller asks for a person (Dialpad main line or an extension's number). Empty = NovaAI takes a message instead.</small>
                 <input type="text" id="sTransfer" placeholder="e.g. 818 555 1234"></label>
-              <label>Forward number <small>Used by "Forward to the team", and as the fallback when NovaAI can't answer.</small>
-                <input type="text" id="sForward" placeholder="e.g. 818 555 1234"></label>
-              <label>Messages go to <small>Messages NovaAI takes and call summaries (comma for several).</small>
-                <input type="text" id="sNotify" placeholder="gary@axiomprint.com"></label>
-              <label>Copy of every email to callers (BCC) <small>Quotes NovaAI emails to callers, for quality checks. Empty = no copy.</small>
-                <input type="text" id="sBcc" placeholder="gary@axiomprint.com"></label>
+              <div class="tk-fl"><span class="tk-lt">Messages go to <label class="em-switch" title="On / off — the same switch as Admin → Emails"><input type="checkbox" id="sNotifyOn" data-kind="talk.message"><span></span></label></span><small>The message NovaAI takes on a call (caller, call-back number, topic, message) — emailed the moment the call ends. Comma for several.</small>
+                <input type="text" id="sNotify" placeholder="gary@axiomprint.com"></div>
+              <div class="tk-fl"><span class="tk-lt">Copy of every quote emailed to a caller <label class="em-switch" title="On / off — the same switch as Admin → Emails"><input type="checkbox" id="sBccOn" data-kind="talk.quote_bcc"><span></span></label></span><small>When a caller asks NovaAI to email them a quote, this address gets a BCC of that email — for quality checks. Empty = no copy.</small>
+                <input type="text" id="sBcc" placeholder="gary@axiomprint.com"></div>
             </div>
-            <h3 style="margin-top:16px">After every call NovaAI answers</h3>
-            <p class="sub">Dialpad still shows these calls as <b>missed</b>. NovaAI writes a short AI summary (and whether someone should call back) and tells the team, so nobody calls the client twice.</p>
+            <h3 style="margin-top:16px">After every call NovaAI answers <span class="tk-q" tabindex="0">?<span class="tk-tip">Dialpad still shows these calls as missed. NovaAI writes a short AI summary (and whether someone should call back) and tells the team, so nobody calls the client twice.</span></span></h3>
             <div class="tk-fields">
               <label>Axiom main line (Dialpad) <small>The number clients call. Shown in the steps above and sent to the CRM.</small>
                 <input type="text" id="sMainLine" placeholder="747 888 7777"></label>

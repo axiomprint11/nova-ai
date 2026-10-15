@@ -829,7 +829,6 @@
     paintHours(s.hours); paintNow(j); paintMode();
     $('sRules').value = s.rules || '';
     $('sTransfer').value = s.transfer_number ? phone(s.transfer_number) : '';
-    $('sForward').value = s.forward_number ? phone(s.forward_number) : '';
     $('sNotify').value = s.notify_to || '';
     $('sBcc').value = s.email_bcc || '';
     $('sReturningShort').checked = !!s.returning_short;
@@ -837,6 +836,9 @@
     $('sMissedState').innerHTML = s.missed_number ? 'Calls to ' + esc(phone(s.missed_number)) + ' get this setup. Make sure it shows <b>Connected</b> under Account managers → Twilio numbers.'
       : 'No number yet: buy one in Twilio, connect it under Account managers → Twilio numbers, then enter it here.';
     $('sSummary').checked = !!s.summary_mail;
+    // 1.20.76: the on / off switches are Admin → Emails' (notify_prefs) — read them here, save on the spot
+    api('/api/admin/notifications').then(n => { if (!n.ok) return; document.querySelectorAll('#vTrain input[data-kind], #vSetup input[data-kind]').forEach(cb => { const k = (n.kinds || []).find(x => x.kind === cb.dataset.kind); if (k) cb.checked = !!k.enabled;
+      cb.onchange = async () => { const r = await api('/api/admin/notifications/' + encodeURIComponent(cb.dataset.kind), { method: 'POST', body: JSON.stringify({ enabled: cb.checked }) }); if (!r.ok) { alert(r.error || 'Could not save'); cb.checked = !cb.checked; } }; }); }).catch(() => {});
     $('sMainLine').value = s.main_line ? phone(s.main_line) : '';
     $('sCsrTo').value = s.csr_to || '';
     $('sHook').value = s.webhook_url || '';
@@ -851,7 +853,7 @@
     Object.keys(modes || {}).forEach(k => { modes[k].answer = 'ai'; });     // every setup is NovaAI (no "Who answers" choice)
     const j = await api('/api/admin/talk/settings', { method: 'POST', body: JSON.stringify({ hours: readHours(), modes: modes, rules: $('sRules').value,
       languages: langState ? langState.on.filter(k => k !== 'en') : undefined, lang_greetings: langState ? langState.greet : undefined,
-      transfer_number: $('sTransfer').value, forward_number: $('sForward').value, notify_to: $('sNotify').value, email_bcc: $('sBcc').value, returning_short: $('sReturningShort').checked, missed_number: $('sMissedNum').value, summary_mail: $('sSummary').checked,
+      transfer_number: $('sTransfer').value, notify_to: $('sNotify').value, email_bcc: $('sBcc').value, returning_short: $('sReturningShort').checked, missed_number: $('sMissedNum').value, summary_mail: $('sSummary').checked,
       main_line: $('sMainLine').value, csr_to: $('sCsrTo').value, webhook_url: $('sHook').value,
       closed_message: $('sClosed').value }) });
     if (!j.ok) { m.className = 'tk-msg err'; m.textContent = j.error || 'Could not save.'; return; }

@@ -1496,7 +1496,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const name = String(input.name || '').trim().slice(0, 40) || (ctx.who.customer && (ctx.who.customer.first || String(ctx.who.customer.name || '').split(' ')[0])) || '';
     const mail = { to: to, subject: 'Your AxiomPrint quote' + (quotes.length === 1 ? ' — ' + quotes[0].product : ''),
       text: quoteEmailText(quotes, name, pageUrl), html: quoteEmailHtml(quotes, name, pageUrl),
-      bcc: ctx.call.source === 'try' ? undefined : (ctx.s.email_bcc || undefined) };
+      bcc: ctx.call.source === 'try' || (deps.Notify && !deps.Notify.on('talk.quote_bcc')) ? undefined : ((deps.Notify ? deps.Notify.to('talk.quote_bcc', ctx.s.email_bcc) : ctx.s.email_bcc) || undefined) };   // 1.20.76: the switch under Setup / Admin → Emails
     try {
       await deps.sendMail(mail);
       await saveEmail(ctx.call.id, 'quote', mail, null);
@@ -1921,7 +1921,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
   }
   // 1.20.74: Admin → Emails — what each TalkAi email kind goes to by default (the Setup fields), for the list and the switches
   const N = deps.Notify;
-  if (N) { N.register('talk.summary', async () => (await settings()).notify_to); N.register('talk.message', async () => (await settings()).notify_to); N.register('talk.csr', async () => (await settings()).csr_to); N.register('talk.relay', () => 'the person the caller asked for'); }
+  if (N) { N.register('talk.summary', async () => (await settings()).notify_to); N.register('talk.message', async () => (await settings()).notify_to); N.register('talk.csr', async () => (await settings()).csr_to); N.register('talk.quote_bcc', async () => (await settings()).email_bcc); N.register('talk.relay', () => 'the person the caller asked for'); }
   const handoff = require('./talk-handoff')({ app, deps, dbGet, dbAll, dbRun, settings, env, hit, NOVA_URL, AUDIO_DIR, callLink, htmlEsc, usd2,
     fetchAudio, auth, adminOnly, team });
   function fetchAudioSoon(callId) {

@@ -246,7 +246,7 @@ buckets timestamps by Los Angeles day / Monday week / month.
 `notifications.js` (`Notify = require('./notifications')({ app, db, auth, adminOnly })` in server.js, passed to client-bot, talk-ai,
 bookkeeping and backups as `Notify`) is the one list of every email Nova sends the **team**: `KINDS` — `talk.summary` (Setup's
 "email a summary of every call"), `talk.message`, `talk.csr`, `talk.relay` (fixed recipient), `client.escalate`, `client.quote_bcc`,
-`bk.alerts`, `bk.loans`, `bk.ar`, `backup`. SQLite `notify_prefs` (kind, enabled, recipients, updated_at/by); the sending code asks
+`talk.quote_bcc` (1.20.76: the BCC of every quote NovaAI emails a caller, Setup's "Copy of every quote"), `bk.alerts`, `bk.loans`, `bk.ar`, `backup`. **TalkAi Training → Numbers and messages** (1.20.76) shows the on / off switch of `talk.message` beside "Messages go to" and of `talk.quote_bcc` beside the BCC field (`input[data-kind]` → the same `POST /api/admin/notifications/:kind`); the **Forward number** field is gone from the page (`forward_number` stays in `talk_settings`, untouched by Save — the forward / fallback path still reads it); the "After every call" paragraph is a (?) on its heading. The recording row is one line — the player shrinks so 1.5× and the download sit beside it. SQLite `notify_prefs` (kind, enabled, recipients, updated_at/by); the sending code asks
 `Notify.on(kind)` before composing (a switched-off kind is never sent and never recorded as sent — the escalation row says "switched
 off", the CSR / relay / alert functions return `{ off: true }`) and `Notify.to(kind, fallback)` for the address (an override replaces the
 configured one); each module `Notify.register(kind, () => default address)` so the page can show where the default comes from.
