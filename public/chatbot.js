@@ -2087,7 +2087,7 @@ function renderCard(box, j) {
     case 'job_card': {
       // 1.20.38: on wide screens the job card lives in the pane's Jobs tab — the chat gets a one-line marker
       const jc = buildJobCard(j.data || {});
-      if (usePane()) { box.appendChild(jobMarker(j.data || {}, jc)); showJobsInPane(); }
+      if (usePane()) { jobMarker(j.data || {}, jc); showJobsInPane(); }   // 1.20.39: nothing in the chat — the card is in the pane's Jobs tab
       else box.appendChild(jc);
       break;
     }

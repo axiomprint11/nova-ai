@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.38';
-const NOVA_BUILT = '10-14-2026 10:30pm';
+const NOVA_VERSION = '1.20.39';
+const NOVA_BUILT = '10-14-2026 10:45pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -9118,7 +9118,8 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
               const bsj = boardStatus(j.substage);
               if (bsj) { stage = bsj.stage; headline = bsj.headline; }
 
-              await sendProductCards(j.product_id ? [j.product_id] : []);
+              // 1.20.39: no product thumbnail card with a job look-up — the job card in the pane carries the product
+              if (j.product_id) shownProducts.add(Number(j.product_id));
               if (j.client_id) await pinClient(j.client_id, j.company_name ? (j.client + ' (' + j.company_name + ')') : j.client);
               const jDisc = await discountFor(j.client_id, j.product_id);
               send({ type: 'job_card', data: {

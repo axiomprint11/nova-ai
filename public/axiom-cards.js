@@ -146,7 +146,7 @@ function buildProductCards(products, opts) {
             'things I never mentioned.');
       };
     }
-    if (p.image) attachPreview(a, p.image, p.name);
+    // 1.20.39: no hover pop-up on the product card — the thumbnail is enough
 
     // Card and its website link share a row. They used to be siblings of the
     // column container, so the arrow dropped onto its own line.
