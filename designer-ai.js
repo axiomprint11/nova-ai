@@ -21,7 +21,7 @@ module.exports = function mountDesignerAi(app, deps) {
     db.run('CREATE INDEX IF NOT EXISTS da_assign_est ON da_assign(estimate_id)');
     db.run('CREATE TABLE IF NOT EXISTS da_settings (key TEXT PRIMARY KEY, value TEXT, updated_by TEXT, updated_at TEXT)');   // 1.20.18: match_logic — the owner's rules in words
     // 1.20.17: how hard / how creative a job a designer can take (0–10), and their hours (until the hours table exists)
-    ['hard_level INTEGER DEFAULT 5', 'creative_level INTEGER DEFAULT 5', 'shift_start TEXT', 'shift_end TEXT', 'work_days TEXT'].forEach(c => db.run('ALTER TABLE da_designers ADD COLUMN ' + c, () => {}));
+    ['hard_level INTEGER DEFAULT 5', 'creative_level INTEGER DEFAULT 5', 'shift_start TEXT', 'shift_end TEXT', 'work_days TEXT', 'comm_level INTEGER DEFAULT 5', 'languages TEXT'].forEach(c => db.run('ALTER TABLE da_designers ADD COLUMN ' + c, () => {}));
   });
 
   // the placeholder users the CRM parks a job on until a designer takes it
@@ -52,7 +52,7 @@ module.exports = function mountDesignerAi(app, deps) {
     } catch (e) { errlog('load', e.message); }
     const nova = {}; (await dbAll("SELECT user_id, COUNT(*) n FROM da_assign WHERE status = 'assigned' AND at >= datetime('now', '-14 days') GROUP BY user_id")).forEach(r => { nova[r.user_id] = r.n; });
     let total = {}; try { (await runQuery("SELECT m.user_id, COUNT(DISTINCT m.estimate_id) n FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id WHERE m.user_id IN (" + TEAM.join(',') + ") AND e.created >= DATE_SUB(NOW(), INTERVAL 180 DAY) GROUP BY m.user_id")).forEach(r => { total[r.user_id] = Number(r.n); }); } catch (e) {}
-    return rows.map(r => Object.assign({}, r, { skills: r.skills || '', skill_list: skillList(r.skills), hard_level: r.hard_level == null ? 5 : r.hard_level, creative_level: r.creative_level == null ? 5 : r.creative_level, active_jobs: load[r.user_id] || 0, waiting_client: waiting[r.user_id] || 0, done_30: done[r.user_id] || 0, nova_assigned: nova[r.user_id] || 0, jobs_180: total[r.user_id] || 0, is_new: (total[r.user_id] || 0) < 60, on_shift: onShift(r) }));
+    return rows.map(r => Object.assign({}, r, { skills: r.skills || '', skill_list: skillList(r.skills), hard_level: r.hard_level == null ? 5 : r.hard_level, creative_level: r.creative_level == null ? 5 : r.creative_level, comm_level: r.comm_level == null ? 5 : r.comm_level, languages: r.languages || '', language_list: skillList(r.languages), active_jobs: load[r.user_id] || 0, waiting_client: waiting[r.user_id] || 0, done_30: done[r.user_id] || 0, nova_assigned: nova[r.user_id] || 0, jobs_180: total[r.user_id] || 0, is_new: (total[r.user_id] || 0) < 60, on_shift: onShift(r) }));
   }
   const skillList = (s) => String(s || '').split(/[,;\n]+/).map(x => x.trim().toLowerCase()).filter(Boolean);
 
@@ -106,6 +106,12 @@ module.exports = function mountDesignerAi(app, deps) {
     if (/Print Ready|Use Existing Files/i.test(j.files_type || '') && j.design_fee === 0) c = Math.min(c, 2);
     return Math.max(0, Math.min(10, c));
   }
+  // 1.20.21: client communication (0–10) and the languages a designer speaks — a job that needs talking to the client
+  // ("Work with Our Designers", a design fee, notes) favours the communicators; a language named in the job's notes /
+  // customer name favours a speaker of it
+  const LANGS = ['English', 'Armenian', 'Russian', 'Spanish', 'Filipino', 'Mandarin'];
+  const LANG_HINT = { Armenian: /\barmenian\b|\bhayeren\b|[\u0530-\u058F]/i, Russian: /\brussian\b|[\u0400-\u04FF]/i, Spanish: /\bspanish\b|\bespa[nñ]ol\b|\bhabla\b/i, Filipino: /\bfilipino\b|\btagalog\b/i, Mandarin: /\bmandarin\b|\bchinese\b|[\u4E00-\u9FFF]/i };
+  const jobLangs = (job) => { const txt = [job.notes, job.name, job.customer].filter(Boolean).join(' '); return LANGS.filter(l => LANG_HINT[l] && LANG_HINT[l].test(txt)); };
   // 1.20.17: the designer's hours — "09:00".."14:00" on work_days (1–7, Mon=1), Los Angeles time; until the hours table exists
   const laNow = () => { const f = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', hour: '2-digit', minute: '2-digit', weekday: 'short' }); const o = {}; f.formatToParts(new Date()).forEach(x => { o[x.type] = x.value; }); return { min: Number(o.hour) * 60 + Number(o.minute), day: ({ Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 })[o.weekday] || 1 }; };
   const toMin = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || '').trim()); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
@@ -135,6 +141,7 @@ module.exports = function mountDesignerAi(app, deps) {
     } catch (e) { errlog('history', e.message); }
     const recent = {}; (await dbAll("SELECT user_id, COUNT(*) n FROM da_assign WHERE status = 'assigned' AND at >= datetime('now', '-2 hours') GROUP BY user_id")).forEach(r => { recent[r.user_id] = r.n; });
     const minLoad = team.length ? Math.min(...team.map(d => d.active_jobs)) : 0;
+    const langs = jobLangs(job);
     const jobText = [job.product, job.category, job.proof_type, job.name, job.files_type].join(' ').toLowerCase();
     const isT2 = /tier ?2|tier_2/i.test(job.proof_type + ' ' + job.substage);
     // 1.20.17: every reason carries its points, so the pick can be read: "did 39 × Classic Business Cards (+30) · 2 active jobs (−3)"
@@ -153,6 +160,8 @@ module.exports = function mountDesignerAi(app, deps) {
       if (hardOver > 0) add(-Math.min(40, hardOver * 6), 'job hardness ' + job.hard + '/10 is over their ' + d.hard_level);
       else if (job.hard >= 7) add(6, 'hard job (' + job.hard + '/10) within their ' + d.hard_level);
       // a creative job (design fee, "Work with Our Designers", design notes) goes to the creative ones
+      if (job.creative >= 6 || job.design_fee > 0) { const c = (d.comm_level == null ? 5 : d.comm_level) - 5; if (c) add(c * 2, 'client communication ' + (c + 5) + '/10 on a job with client back-and-forth'); }
+      langs.forEach(l => { if ((d.language_list || []).indexOf(l) > -1) add(12, 'speaks ' + l + ' — the job mentions it'); });
       if (job.creative >= 6) { const diff = d.creative_level - 5; add(diff * 3, 'creative job ' + job.creative + '/10 · their creative level ' + d.creative_level); if (d.creative_level < job.creative - 2) add(-15, 'below the creativity this job asks'); }
       // newer designers: common, easy products are theirs to learn on; the hard / creative ones are not
       if (d.is_new) { if (job.common && job.hard <= 4 && job.creative < 6) add(15, 'newer designer (' + d.jobs_180 + ' jobs in 180 d) — a common, easy product'); else if (job.hard >= 7 || job.creative >= 7) add(-10, 'newer designer — not a hard / creative one'); }
@@ -179,9 +188,9 @@ module.exports = function mountDesignerAi(app, deps) {
       const cur = await dbGet('SELECT * FROM da_designers WHERE user_id = ?', [id]); if (!cur) return res.json({ ok: false, error: 'No such designer' });
       const lvl = (v, cur) => v == null || v === '' ? (cur == null ? 5 : cur) : Math.max(0, Math.min(10, parseInt(v) || 0));
       const tm = (v, cur) => v == null ? cur : (/^\d{1,2}:\d{2}$/.test(String(v).trim()) ? String(v).trim() : null);
-      await dbRun('UPDATE da_designers SET skills = ?, notes = ?, max_active = ?, tier2 = ?, active = ?, hard_level = ?, creative_level = ?, shift_start = ?, shift_end = ?, work_days = ?, updated_at = ? WHERE user_id = ?',
+      await dbRun('UPDATE da_designers SET skills = ?, notes = ?, max_active = ?, tier2 = ?, active = ?, hard_level = ?, creative_level = ?, shift_start = ?, shift_end = ?, work_days = ?, comm_level = ?, languages = ?, updated_at = ? WHERE user_id = ?',
         [String(b.skills != null ? b.skills : cur.skills || '').slice(0, 600), String(b.notes != null ? b.notes : cur.notes || '').slice(0, 1000), Math.max(1, parseInt(b.max_active) || cur.max_active || 25), b.tier2 != null ? (b.tier2 ? 1 : 0) : cur.tier2, b.active != null ? (b.active ? 1 : 0) : cur.active,
-          lvl(b.hard_level, cur.hard_level), lvl(b.creative_level, cur.creative_level), tm(b.shift_start, cur.shift_start), tm(b.shift_end, cur.shift_end), b.work_days != null ? String(b.work_days).split(',').map(x => parseInt(x)).filter(x => x >= 1 && x <= 7).join(',') || null : cur.work_days, nowIso(), id]);
+          lvl(b.hard_level, cur.hard_level), lvl(b.creative_level, cur.creative_level), tm(b.shift_start, cur.shift_start), tm(b.shift_end, cur.shift_end), b.work_days != null ? String(b.work_days).split(',').map(x => parseInt(x)).filter(x => x >= 1 && x <= 7).join(',') || null : cur.work_days, lvl(b.comm_level, cur.comm_level), b.languages != null ? String(b.languages).split(',').map(x => x.trim()).filter(x => LANGS.indexOf(x) > -1).join(',') : cur.languages, nowIso(), id]);
       res.json({ ok: true });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
@@ -203,7 +212,7 @@ module.exports = function mountDesignerAi(app, deps) {
     if (!anthropic || !logic.trim()) return { picks, ai: false };
     const cand = picks.map(p => ({ user_id: p.user_id, name: p.name + ' ' + (p.last_name || ''), score: p.score, reasons: p.why, active_jobs: p.active_jobs }));
     const team = await designers();
-    const prof = team.filter(d => d.active).map(d => ({ user_id: d.user_id, name: d.name + ' ' + (d.last_name || ''), title: d.title, strong_sides: d.skill_list, tier2: !!d.tier2, hard_level: d.hard_level, creative_level: d.creative_level, notes: d.notes || '', active_jobs: d.active_jobs, waiting_on_client: d.waiting_client, approved_30d: d.done_30, jobs_180d: d.jobs_180, hours: d.shift_start ? d.shift_start + '-' + d.shift_end + ' days ' + (d.work_days || '1-5') : 'unknown', on_shift: d.on_shift }));
+    const prof = team.filter(d => d.active).map(d => ({ user_id: d.user_id, name: d.name + ' ' + (d.last_name || ''), title: d.title, strong_sides: d.skill_list, tier2: !!d.tier2, hard_level: d.hard_level, creative_level: d.creative_level, client_communication: d.comm_level, languages: d.language_list, notes: d.notes || '', active_jobs: d.active_jobs, waiting_on_client: d.waiting_client, approved_30d: d.done_30, jobs_180d: d.jobs_180, hours: d.shift_start ? d.shift_start + '-' + d.shift_end + ' days ' + (d.work_days || '1-5') : 'unknown', on_shift: d.on_shift }));
     const sys = 'You assign print jobs to designers at AxiomPrint. Nova has already scored every designer with its built-in rules (history, strong sides, hardness, creativity, load, hours). The OWNER\'S RULES below take priority over those scores wherever they apply. Return ONLY JSON: {"picks":[{"user_id":n,"score":0-100,"note":"short reason citing the owner rule, or empty"}]} — every candidate once, scores changed only where a rule applies, note only when you changed something.';
     const user = 'OWNER\'S RULES:\n' + logic.trim().slice(0, 4000) + '\n\nJOB:\n' + JSON.stringify({ e: job.e, name: job.name, customer: job.customer, product: job.product, category: job.category, tier: job.tier, proof_type: job.proof_type, status: job.status_label, hard: job.hard, creative: job.creative, design_fee: job.design_fee, expedite: job.service === 'expedite', due: job.complete_by, created: job.created, notes: (job.notes || '').slice(0, 600), team_on_it: job.others }) +
       '\n\nDESIGNERS:\n' + JSON.stringify(prof) + '\n\nNOVA\'S SCORES:\n' + JSON.stringify(cand) + '\n\nTime now (Los Angeles): ' + new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
