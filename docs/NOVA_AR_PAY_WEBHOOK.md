@@ -55,7 +55,9 @@ Nova **never writes to the production database**. The only path into the CRM is 
   },
   "customer_id": 1187,
   "customer": "PAX (Peace & Haight)",
-  "matched_by": "member:karen@axiomprint.com",
+  "matched_by": "karen@axiomprint.com",
+  "matched_by_name": "Karen Ohanyan",
+  "matched_by_crm_user_id": 118,
   "matched_at": "2026-10-14T13:27:04.000Z"
 }
 ```
@@ -70,8 +72,24 @@ Nova **never writes to the production database**. The only path into the CRM is 
 | `bank.wording` | The statement line, as the bank sent it. Put it in the payment note / activity — it is what AR looks for when a customer disputes. |
 | `bank.check_no` | Only when the wording names a check; else `null`. |
 | `customer_id` / `customer` | The CRM customer the invoice(s) belong to, as Nova saw them when matching. Treat it as a cross-check: if the invoice's customer differs, record the payment anyway and flag it in the note. |
-| `matched_by` | Who clicked, as Nova's user key (`member:<email>` = CRM staff member, `user:<name>` = a Nova-local admin). Use the email part for "recorded by". |
+| `matched_by` | **Who clicked Match & Pay** — the email the person signed in to Nova with. See *Who did the match* below. |
+| `matched_by_name` | Their display name, from Nova's member list or the CRM `user` table. `null` only if neither knows them. |
+| `matched_by_crm_user_id` | Their `user.id` in the CRM when the email belongs to a CRM staff member; `null` for a Nova-local admin account (e.g. `novaai`). |
 | `matched_at` | When they clicked, UTC ISO. |
+
+### Who did the match (the audit trail)
+
+Every Match & Pay is done by a signed-in person; nothing is matched automatically. Nova signs people in against the CRM's
+own `user` table (same email + password as the CRM), so for the AR team `matched_by` is a CRM staff email and
+`matched_by_crm_user_id` is that person's CRM id. **Record the payment under that user** — the payment's "created by /
+recorded by", and the activity line, should name them exactly as if they had pressed Pay in the CRM themselves. That is
+the log you keep: who approved which payment, when (`matched_at`), from which deposit (`nova_ar_id`, `bank.wording`).
+
+Nova keeps the same facts on its side (`bk_ar.matched_by / matched_at` + an audit row `ar.match`), so the two logs can be
+compared by `nova_ar_id`.
+
+When `matched_by_crm_user_id` is `null` (a Nova-only admin login), record the payment under a system user named **NovaAI**
+and put `matched_by` (the email / login name) in the note so the person is still identifiable.
 
 ## What the CRM should do
 
@@ -86,7 +104,7 @@ For each id in `invoice_ids`:
    - amount = this invoice's share (see split below)
    - payment type = mapped `method`
    - reference / note = `Nova AR #<nova_ar_id> · <bank.wording> · <bank.institution> ••<bank.mask>` (+ `check #` when set)
-   - recorded by = `matched_by`'s email if that person is a CRM user, else a system user named **NovaAI**
+   - recorded by = the CRM user `matched_by_crm_user_id` (see *Who did the match*); a system user **NovaAI** only when it is `null`
 3. Write an **activity-log line** on the invoice, in the feed the screenshot shows: *"Payment received — $2,495.00 by ACH on
    10/14/2026 · matched in Nova AR by Karen"*.
 4. **Do not** email the customer a receipt automatically. If the Pay button normally offers "Email Invoice" / a receipt,
@@ -173,7 +191,7 @@ to the same URL; say so and it ships with the next release.
 
 - The CRM `invoice.id` is what Nova sends. Confirm that is what the Pay flow keys on (not the INV number).
 - Which payment-type values exist on your side, so we map `method` to them exactly.
-- Who should the payment be "recorded by" when the Nova user is a local admin with no CRM account — a **NovaAI** system user is our suggestion.
+- For the rare Nova-only admin login (no CRM user id) — a **NovaAI** system user with the login in the note is our suggestion; confirm.
 - Do you want the `ar.payment.void` event for Undo now, or later.
 
 Contact: Gary (gary@axiomprint.com). Nova's side of this is `bookkeeping-ar.js` → `payHook()`.

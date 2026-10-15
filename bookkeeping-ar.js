@@ -349,8 +349,18 @@ module.exports = function mountAr(ctx) {
     if (!url) { await dbRun("UPDATE bk_ar SET pay_status = 'not configured' WHERE id = ?", [arId]); return { sent: false, error: 'AR_PAY_WEBHOOK_URL is not set — the CRM was not told' }; }
     if (!secret) { await dbRun("UPDATE bk_ar SET pay_status = 'no secret' WHERE id = ?", [arId]); return { sent: false, error: 'AR_PAY_WEBHOOK_SECRET is not in .env' }; }
     const t = (await txFields([q.txn_id]))[q.txn_id] || {};
+    // Who clicked Match & Pay — the signed-in person's email, their name, and their CRM user id when they are a CRM staff member
+    // (the CRM keeps the payment's "recorded by" on it). A Nova-local admin account has no CRM id.
+    const who = { email: q.matched_by || null, name: null, crm_user_id: null };
+    if (who.email && who.email.indexOf('@') > 0) {
+      const m = await dbGet('SELECT display_name FROM members WHERE LOWER(email) = ?', [who.email]).catch(() => null);
+      if (m && m.display_name) who.name = m.display_name;
+      const u = await runQuery('SELECT id, name, last_name FROM user WHERE LOWER(email) = ' + mysql.escape(who.email) + ' LIMIT 1').catch(() => []);
+      if (u[0]) { who.crm_user_id = Number(u[0].id); if (!who.name) who.name = [u[0].name, u[0].last_name].filter(Boolean).join(' ').trim() || null; }
+    } else if (who.email) who.name = who.email;
     const body = JSON.stringify({ event: 'ar.payment', nova_ar_id: arId, invoice_ids: String(q.invoice_ids || '').split(',').filter(Boolean).map(Number), amount: q.amount, currency: 'USD',
-      paid_on: t.tx_date || t.date || null, method: t.how || null, bank: { institution: t.institution || null, mask: t.mask || null, wording: t.orig_desc || t.name || null, check_no: t.check_no || null }, customer_id: q.customer_id, customer: q.customer_name, matched_by: q.matched_by, matched_at: q.matched_at });
+      paid_on: t.tx_date || t.date || null, method: t.how || null, bank: { institution: t.institution || null, mask: t.mask || null, wording: t.orig_desc || t.name || null, check_no: t.check_no || null }, customer_id: q.customer_id, customer: q.customer_name,
+      matched_by: who.email, matched_by_name: who.name, matched_by_crm_user_id: who.crm_user_id, matched_at: q.matched_at });
     const ts = Math.floor(Date.now() / 1000), sig = crypto.createHmac('sha256', secret).update(ts + '.' + body).digest('hex');
     let status = 0, err = null, ref = null;
     try {
