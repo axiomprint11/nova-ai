@@ -8,7 +8,7 @@
 (Wells Fargo, through Plaid) shows up as a row; Nova reads the bank wording, the amount and the date, looks at the open
 invoices in the CRM and suggests the invoice it pays. The AR team clicks **Match & Pay Invoice**.
 
-Today that click only records the match in Nova. The AR person then has to open the invoice in the CRM and press **Pay**
+Since Nova 1.20.83 that is a two-step click: **Match** (Nova shows what each invoice gets — paid / balance open — for review) and then **Match & Pay**, which is when the request below is sent. Today that second click only records the match in Nova. The AR person then has to open the invoice in the CRM and press **Pay**
 by hand (Payment → Now → Invoice), which is the step in the screenshot. We want the Matched click to do that for them.
 
 **Ask:** one endpoint in the CRM that Nova calls when a payment is matched. It records the payment on the invoice(s) the

@@ -92,6 +92,30 @@
   .ar-basket:not(:empty) { margin-top: 8px; padding: 8px 10px; border: 1px dashed #c7c7f5; border-radius: 8px; background: #fafaff; }
   .ar-bk-l { font-size: 12px; font-weight: 600; color: #4f46e5; margin-bottom: 4px; } .ar-chip { display: inline-block; font-size: 12px; background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px; margin: 0 6px 4px 0; } .ar-chip i { color: #5b21b6; font-style: normal; font-size: 11px; } .ar-chip a { color: #999; text-decoration: none; margin-left: 4px; }
   .ar-bk-sum { font-size: 12px; color: #92400e; margin: 4px 0 6px; } .ar-bk-sum.ok { color: #047857; } .bk-btn.ar-manual { background: #374151; border-color: #374151; color: #fff; } .bk-btn.ar-manual:hover { background: #1f2937; }
+  /* 1.20.83: the review card (matched, before Match & Pay) */
+  .ar-review { border: 1.5px solid #6ee7b7; background: #ecfdf5; border-radius: 10px; padding: 8px 12px; }
+  .ar-rv-h { font-size: 12px; font-weight: 600; color: #065f46; margin-bottom: 6px; } .ar-rv-h .bk-dim { font-weight: 400; }
+  .ar-rv-inv { padding: 6px 0; border-top: 1px dashed #a7f3d0; } .ar-rv-inv b { font-size: 13px; } .ar-rv-inv .bk-dim { font-size: 11.5px; }
+  .ar-rv-line { margin-top: 3px; font-size: 12.5px; } .ar-rv-ok { color: #065f46; font-weight: 600; } .ar-rv-part { color: #92400e; } .ar-rv-part b { color: #92400e; }
+  .ar-rv-over { margin-top: 6px; font-size: 12px; color: #b91c1c; font-weight: 600; }
+  .ar-rv-acts { display: flex; align-items: center; gap: 12px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #a7f3d0; }
+  .ar-ruletag { font-size: 11.5px; color: #3730a3; background: #e0e7ff; border-radius: 6px; padding: 3px 8px; display: inline-block; margin-bottom: 6px; }
+  /* Rules sub-tab */
+  .ar-rules { width: 100%; } .ar-rules td.pat { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; }
+  .ar-rform { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; position: relative; } .ar-rform input { width: 240px; }
+  .ar-cpick { position: absolute; top: 100%; left: 256px; z-index: 50; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.12); min-width: 320px; max-height: 280px; overflow: auto; }
+  .ar-cpick div { padding: 7px 10px; cursor: pointer; font-size: 13px; border-bottom: 1px solid var(--line); } .ar-cpick div:hover { background: #f3f3fa; } .ar-cpick small { color: var(--muted); margin-left: 6px; }
+  /* Acct Aging */
+  .ag-tiles { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; } .ag-tile { flex: 1; min-width: 130px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; border-top: 3px solid var(--c, #c7d2fe); cursor: pointer; } .ag-tile.on { background: #f5f3ff; border-color: var(--c); }
+  .ag-tile b { display: block; font-size: 18px; } .ag-tile .bk-muted { font-size: 11.5px; }
+  .ag-table { width: 100%; } .ag-table th.num, .ag-table td.num { text-align: right; white-space: nowrap; } .ag-table td.num.z { color: #c3c3d2; }
+  .ag-table tr.ag-c { cursor: pointer; } .ag-table tr.ag-c:hover td { background: #fafafe; } .ag-table tr.ag-c td:first-child { font-weight: 600; }
+  .ag-table tr.ag-c .bk-dim { font-weight: 400; font-size: 11.5px; }
+  .ag-table td.b3, .ag-table th.b3 { color: #991b1b; } .ag-table td.b2, .ag-table th.b2 { color: #b45309; } .ag-table td.b1, .ag-table th.b1 { color: #92400e; }
+  .ag-table tr.ag-d td { background: #fafafe; padding: 6px 12px 10px 28px; }
+  .ag-inv { width: 100%; font-size: 12.5px; } .ag-inv td { padding: 4px 8px; border-bottom: 1px solid var(--line); } .ag-inv td.num { text-align: right; white-space: nowrap; }
+  .ag-age { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: #e0e7ff; color: #3730a3; } .ag-age.b1 { background: #fef3c7; color: #92400e; } .ag-age.b2 { background: #ffedd5; color: #9a3412; } .ag-age.b3 { background: #fee2e2; color: #991b1b; }
+  .ag-table tr.ag-tot td { font-weight: 700; border-top: 2px solid var(--ink); }
   .ar-done .bk-tag.ok { background: #d1fae5; color: #065f46; } .ar-tiles { display: flex; gap: 10px; margin: 0 0 12px; flex-wrap: wrap; } .ar-tile { border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; min-width: 150px; } .ar-tile b { display: block; font-size: 18px; } .ar-tile .bk-muted { font-size: 11.5px; }
   .ln-docs-l { white-space: nowrap; }   /* 1.19.150: "Add docs" / "3 docs" on one line */
   .ln-cal { display: grid; grid-template-columns: repeat(12, 9px); gap: 2px; margin: 4px 0 3px; }   /* one year per row */ .ln-sq { display: block; width: 9px; height: 9px; border-radius: 2px; background: #fff; border: 1px solid #d6d6e4; box-sizing: border-box; }
@@ -472,6 +496,7 @@
     <button data-v="bank">Bank feed<span class="n" id="nTxns"></span></button>
     <button data-v="bills">Bills<span class="n" id="nBills"></span></button>
     <button data-v="ar">Nova AR<span class="n" id="nAr"></span></button>
+    <button data-v="aging">Acct Aging<span class="n grey" id="nAging"></span></button>
     <button data-v="inbox">Inbox<span class="n" id="nInbox"></span></button>
     <button data-v="accounts">Accounts</button>
   </div>
@@ -509,9 +534,22 @@
     <div class="bk-sub" id="subAr">
       <button data-s="open">Unmatched<span class="n" id="nArOpen"></span></button>
       <button data-s="done">Matched<span class="n grey" id="nArDone"></span></button>
+      <button data-s="rules">Rules<span class="n grey" id="nArRules"></span></button>
       <span class="sp"></span><input id="arQ" class="bk sub-q" placeholder="Search payer, amount, invoice" autocomplete="off">
     </div>
     <div class="bk-subview on" data-s="list" id="vArList"></div>
+  </section>
+  <!-- 1.20.83: Acct Aging — every open invoice in the CRM by age, per customer -->
+  <section class="bk-view" data-v="aging" id="vAging">
+    <div class="bk-sub" id="subAging">
+      <button data-s="all">All open</button>
+      <button data-s="b0">0–30 days</button>
+      <button data-s="b1">31–60</button>
+      <button data-s="b2">61–90</button>
+      <button data-s="b3">90+</button>
+      <span class="sp"></span><input id="agQ" class="bk sub-q" placeholder="Search customer, invoice, AM" autocomplete="off">
+    </div>
+    <div class="bk-subview on" data-s="list" id="vAgingList"></div>
   </section>
   <section class="bk-view" data-v="bills" id="vBillsTab">
     <div class="bk-sub" id="subBills">

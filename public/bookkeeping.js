@@ -21,12 +21,12 @@
     document.title = 'Nova AR · NovaAI';
     document.body.classList.add('ar-only');
     const h1 = document.querySelector('.bk-top h1'); if (h1) { const svg = h1.querySelector('svg'); h1.textContent = ' Nova AR'; if (svg) h1.prepend(svg); }
-    document.querySelectorAll('.bk-tabs.main button').forEach(b => { if (b.dataset.v !== 'ar') b.remove(); });
+    document.querySelectorAll('.bk-tabs.main button').forEach(b => { if (b.dataset.v !== 'ar' && b.dataset.v !== 'aging') b.remove(); });   // 1.20.83: Nova AR · Acct Aging
     const t2 = document.getElementById('tabs2'); if (t2) t2.remove();
     const rs = document.getElementById('runState'); if (rs) rs.remove();
     const bub = document.getElementById('bkBub'); if (bub) bub.remove(); const bp = document.getElementById('bkBubPanel'); if (bp) bp.remove();
   }
-  else { const t = document.querySelector('.bk-tabs.main button[data-v="ar"]'); if (t) t.remove(); }   // Nova AR lives in the left menu, not among the Bookkeeping tabs
+  else { document.querySelectorAll('.bk-tabs.main button[data-v="ar"], .bk-tabs.main button[data-v="aging"]').forEach(t => t.remove()); }   // Nova AR lives in the left menu, not among the Bookkeeping tabs
 
   let ov = null, categories = [], chart = [];
   document.querySelectorAll('.bk-tabs button').forEach(b => b.onclick = () => show(b.dataset.v));
@@ -37,12 +37,15 @@
   const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, equipment: loadEquipment, loans: loadLoans, team: loadTeam, chart: loadChart, rules: loadRules, materials: loadMaterials, nova: loadNovaVendors }, first: 'vendors' },
     purchases: { bar: 'subPurchases', subs: { list: () => loadPurchases('list'), waiting: () => loadPurchases('waiting'), notreceived: () => loadPurchases('notreceived') }, first: 'list' },
     bank: { bar: 'subBank', subs: { all: () => loadTxns(''), new: () => loadTxns('new'), pending: () => loadTxns('pending'), old: () => loadTxns('old'), categorized: () => loadTxns('categorized'), auto: () => loadTxns('auto'), stats: () => loadTxns('stats') }, first: 'pending' },   // 1.19.54: Bank feed is a top tab
-    ar: { bar: 'subAr', subs: { open: () => loadAr('open'), done: () => loadAr('done') }, first: 'open' },   // 1.19.152: Nova AR
+    ar: { bar: 'subAr', subs: { open: () => loadAr('open'), done: () => loadAr('done'), rules: () => loadArRules() }, first: 'open' },   // 1.19.152: Nova AR
+    aging: { bar: 'subAging', subs: { all: () => loadAging('all'), b0: () => loadAging('0-30'), b1: () => loadAging('31-60'), b2: () => loadAging('61-90'), b3: () => loadAging('90+') }, first: 'all' },   // 1.20.83: Acct Aging
     bills: { bar: 'subBills', subs: { all: () => loadBills('all'), pending: () => loadBills('pending'), approved: () => loadBills('approved'), scheduled: () => loadBills('scheduled'), paid: () => loadBills('paid'), rejected: () => loadBills('rejected') }, first: 'pending' } };
   // sub tabs as chips with an icon each (same look as the Inbox baskets)
-  const SUB_ICON = { open: 'clock', done: 'check', nova: 'sparkles', all: 'landmark', new: 'sparkles', categorized: 'check', auto: 'zap', stats: 'trendup', pending: 'clock', old: 'calendar', approved: 'check', scheduled: 'calendar', paid: 'dollar', rejected: 'x', list: 'cart', bank: 'landmark', waiting: 'clock', notreceived: 'package', vendors: 'users', equipment: 'printer', chart: 'layers', rules: 'target', materials: 'box' };
+  const SUB_ICON = { rules: 'sparkles', b0: 'calendar', b1: 'calendar', b2: 'calendar', b3: 'calendar', open: 'clock', done: 'check', nova: 'sparkles', all: 'landmark', new: 'sparkles', categorized: 'check', auto: 'zap', stats: 'trendup', pending: 'clock', old: 'calendar', approved: 'check', scheduled: 'calendar', paid: 'dollar', rejected: 'x', list: 'cart', bank: 'landmark', waiting: 'clock', notreceived: 'package', vendors: 'users', equipment: 'printer', chart: 'layers', rules: 'target', materials: 'box' };
   document.querySelectorAll('.bk-sub button').forEach(b => { b.onclick = () => show(b.closest('.bk-view').dataset.v, b.dataset.s); });
-  $('puQ').onkeydown = (e) => { if (e.key === 'Enter') loadPurchases(lastSub.purchases); };   // 1.19.29: one search for every Purchases view
+  $('puQ').onkeydown = (e) => { if (e.key === 'Enter') loadPurchases(lastSub.purchases); };
+  { let arT = null; const arRun = () => show('ar', lastSub.ar || 'open'); $('arQ').oninput = () => { clearTimeout(arT); arT = setTimeout(arRun, 350); }; $('arQ').onkeydown = (e) => { if (e.key === 'Enter') { clearTimeout(arT); arRun(); } }; }
+  { let agT = null; const agRun = () => { const b = lastSub.aging || 'all'; show('aging', b); }; $('agQ').oninput = () => { clearTimeout(agT); agT = setTimeout(agRun, 300); }; $('agQ').onkeydown = (e) => { if (e.key === 'Enter') agRun(); }; }   // 1.19.29: one search for every Purchases view
   $('txQ').onkeydown = (e) => { if (e.key === 'Enter') loadTxns(); if (e.key === 'Escape') { $('txQ').value = ''; loadTxns(); } };
   // 1.19.128: emptying the box (Backspace, the field's ×) goes back to the full list on its own; typing searches after a pause
   let txQT = null, txQLast = '';
@@ -58,7 +61,7 @@
     if (T) {
       sub = T.subs[sub] ? sub : lastSub[v]; lastSub[v] = sub; try { localStorage.setItem('bk_sub_' + v, sub); } catch (e) {}
       document.querySelectorAll('#' + T.bar + ' button').forEach(b => b.classList.toggle('on', b.dataset.s === sub));
-      if (v !== 'bills' && v !== 'bank' && v !== 'ar') document.querySelectorAll('.bk-view[data-v="' + v + '"] .bk-subview').forEach(s => s.classList.toggle('on', s.dataset.s === sub));
+      if (v !== 'bills' && v !== 'bank' && v !== 'ar' && v !== 'aging') document.querySelectorAll('.bk-view[data-v="' + v + '"] .bk-subview').forEach(s => s.classList.toggle('on', s.dataset.s === sub));
       T.subs[sub]();
       try { history.replaceState(null, '', (AR_ONLY ? '/nova-ar?tab=' : '/bookkeeping?tab=') + v + '&sub=' + sub); } catch (e) {}
       return;
@@ -1043,7 +1046,7 @@
       return (l2 ? '<div class="ar-dco">' + esc(l2) + '</div>' : '') + (l3 ? '<div class="bk-dim ar-dpe">' + esc(l3) + '</div>' : ''); };
     const howTag = (t) => t.how ? '<span class="ar-how">' + esc(t.how) + '</span>' : '';
     const invLine = (i) => '<b>' + esc(i.no || ('INV' + i.id)) + '</b> ' + (i.customer ? esc(i.customer) : '') + (i.status === 'paid' ? ' <span class="bk-tag pair" title="The CRM already shows this invoice as paid">paid in CRM</span>' : '') + '<div class="bk-dim">' + (i.total != null ? usd(i.total) + (i.status === 'partial' ? ' · ' + usd(i.balance) + ' due' : '') : '') + (i.created ? ' · ' + esc(usD(String(i.created).slice(0, 10))) : '') + (i.po ? ' · PO ' + esc(i.po) : '') + '</div>';
-    const sugg = (r) => r.suggestions === null ? '<div class="bk-dim ar-wait" style="padding:4px 0">Matching against the CRM…</div>' : (r.suggestions || []).length ? r.suggestions.map((s, i) => '<div class="ar-s' + (i === 0 && s.score >= 70 ? ' top' : '') + (i > 0 ? ' ar-more' : '') + '"><span class="ar-pct" title="How sure Nova is">' + s.score + '%</span><div class="ar-inv">' + s.invoices.map(invLine).join('<div style="height:3px"></div>') + '<div class="ar-why">' + esc(s.why.join(' · ')) + '</div></div><button class="bk-btn sm ' + (s.kind === 'pair' ? 'ar-pair' : 'ar-paybtn') + '" data-match="' + r.id + '" data-kind="' + (s.kind === 'pair' ? 'pair' : 'match') + '" data-inv="' + esc(s.invoices.map(x => x.id).join(',')) + '" data-cust="' + esc(s.customer || '') + '" data-cid="' + (s.customer_id || '') + '" title="' + (s.kind === 'pair' ? 'The CRM already shows this invoice as paid — pair the deposit with it, nothing is sent' : 'Record the match and tell the CRM to mark the invoice paid') + '">' + (s.kind === 'pair' ? 'Pair' : 'Match &amp; Pay Invoice') + '</button></div>').join('') + (r.suggestions.length > 1 ? '<a href="#" class="ar-seemore bk-dim" data-more="' + r.id + '">See ' + (r.suggestions.length - 1) + ' more</a>' : '') : '<div class="bk-dim" style="padding:4px 0">No invoice fits the amount — look one up below.</div>';
+    const sugg = (r) => r.suggestions === null ? '<div class="bk-dim ar-wait" style="padding:4px 0">Matching against the CRM…</div>' : (r.suggestions || []).length ? r.suggestions.map((s, i) => '<div class="ar-s' + (i === 0 && s.score >= 70 ? ' top' : '') + (i > 0 ? ' ar-more' : '') + '"><span class="ar-pct" title="How sure Nova is">' + s.score + '%</span><div class="ar-inv">' + s.invoices.map(invLine).join('<div style="height:3px"></div>') + '<div class="ar-why">' + esc(s.why.join(' · ')) + '</div></div><button class="bk-btn sm ' + (s.kind === 'pair' ? 'ar-pair' : 'ar-paybtn') + '" data-match="' + r.id + '" data-kind="' + (s.kind === 'pair' ? 'pair' : 'match') + '" data-inv="' + esc(s.invoices.map(x => x.id).join(',')) + '" data-cust="' + esc(s.customer || '') + '" data-cid="' + (s.customer_id || '') + '" title="' + (s.kind === 'pair' ? 'The CRM already shows this invoice as paid — pair the deposit with it, nothing is sent' : 'Match this deposit to the invoice — you review paid / balance open before anything is sent to the CRM') + '">' + (s.kind === 'pair' ? 'Pair' : 'Match') + '</button></div>').join('') + (r.suggestions.length > 1 ? '<a href="#" class="ar-seemore bk-dim" data-more="' + r.id + '">See ' + (r.suggestions.length - 1) + ' more</a>' : '') : '<div class="bk-dim" style="padding:4px 0">No invoice fits the amount — look one up below.</div>';
     const row = (r) => { const t = r.txn || {}; return '<tr data-ar="' + r.id + '"><td><div title="When the line reached Nova from the bank">' + esc(usD(String(t.synced_at || t.created_at || '').slice(0, 10))) + '</div><div class="bk-dim">' + esc(laTime(t.synced_at || t.created_at)) + '</div>' + filedBy(t) + '</td>' +
       '<td class="ar-amt">' + usd(r.amount) + '</td><td>' + payer(t) + '</td>' +
       '<td class="ar-paid"><div title="The bank\'s transaction date">' + esc(usD(t.tx_date || t.date || '')) + '</div>' + howTag(t) + '</td>' +
@@ -1053,7 +1056,16 @@
           // 1.20.6: line 2 the company, line 3 the contact person — from the snapshot kept at match time, nothing read from the CRM
           (r.status !== 'skipped' ? doneClient(r) : '') +
           (r.kind === 'match' && r.pay_status ? '<div class="bk-dim ar-paystat" title="' + esc(r.pay_status) + '">' + (r.pay_status === 'sent' ? 'CRM told' + (r.pay_ref ? ' (' + esc(r.pay_ref) + ')' : '') : r.pay_status === 'not configured' ? 'CRM not told yet' : 'CRM: ' + esc(r.pay_status.slice(0, 40))) + '</div>' : '') + (r.note ? '<div class="bk-dim">' + esc(r.note) + '</div>' : '') + '</td><td class="ar-when"><div title="When the match was made">' + esc(usD(laDay(r.matched_at))) + '</div><div class="bk-dim">' + esc(laTime(r.matched_at)) + '</div><div class="bk-dim">' + whoHtml(r.matched_by) + ' <span class="ar-who">' + esc(whoName(r.matched_by)) + '</span> · <a href="#" data-undo="' + r.id + '">Undo</a></div></td>') + '</tr>'; };
-    const sgCell = (r) => '<div class="ar-sg">' + sugg(r) + '<div class="ar-acts"><span class="ar-other"><input class="bk sm" placeholder="Other INV number(s) or customer…" title="One invoice, or several numbers for a bulk payment: 125839, 125840" data-arq="' + r.id + '"></span><span class="sp"></span><a href="#" class="bk-dim" data-skip="' + r.id + '" title="Not a customer payment / handled elsewhere — keep it in the history">Skip</a></div><div class="ar-basket" data-basket="' + r.id + '"></div></div>';
+    // 1.20.83: the review card — a matched deposit before Match & Pay: what each invoice gets, paid / balance open, then confirm
+    const reviewCell = (r) => { const invs = r.invoices || []; let left = Math.round(Number(r.amount) * 100) / 100;
+      const lines = invs.slice().sort((a, b) => String(a.created || '').localeCompare(String(b.created || ''))).map(i => { const due = i.status === 'paid' ? 0 : Math.round((Number(i.balance != null ? i.balance : i.total) || 0) * 100) / 100; const pay = Math.min(left, due); left = Math.round((left - pay) * 100) / 100; const open = Math.round((due - pay) * 100) / 100;
+        return '<div class="ar-rv-inv"><b>' + esc(i.no || 'INV' + i.id) + '</b> ' + esc(i.customer || '') + '<div class="bk-dim">' + (i.total != null ? 'invoice ' + usd(i.total) : '') + (i.status === 'partial' ? ' · ' + usd(i.balance) + ' was due' : '') + (i.created ? ' · ' + esc(usD(String(i.created).slice(0, 10))) : '') + '</div>' +
+          '<div class="ar-rv-line">' + (i.total == null ? '<span class="bk-dim">invoice details could not be read from the CRM</span>' : i.status === 'paid' ? '<span class="bk-tag pair">already paid in the CRM</span>' : open <= 0.005 ? '<span class="ar-rv-ok">Pays in full — ' + usd(pay) + '</span>' : '<span class="ar-rv-part">Paid ' + usd(pay) + ' · <b>Balance open ' + usd(open) + '</b></span>') + '</div></div>'; }).join('');
+      return '<div class="ar-review"><div class="ar-rv-h"><span class="bk-tag ok">matched</span> review before paying' + (r.matched_by ? ' <span class="bk-dim">· by ' + esc(whoName(r.matched_by)) + '</span>' : '') + '</div>' + lines +
+        (left > 0.005 && invs.every(i => i.total != null) ? '<div class="ar-rv-over">' + usd(left) + ' of this deposit is not covered by the invoice' + (invs.length > 1 ? 's' : '') + '</div>' : '') +
+        '<div class="ar-rv-acts"><button class="bk-btn sm ar-paybtn" data-payok="' + r.id + '" title="Final: record the payment in the CRM on these invoices">Match &amp; Pay' + (invs.length > 1 ? ' (' + invs.length + ')' : '') + '</button><a href="#" class="bk-dim" data-undo="' + r.id + '">Undo</a></div></div>'; };
+    const ruleTag = (r) => r.rule ? '<div class="ar-ruletag" title="A payer rule from a past match: this bank wording (' + esc(r.rule.pattern || '') + ') is ' + esc(r.rule.customer || '') + ' — Nova looked only at their invoices">Known payer: <b>' + esc(r.rule.customer || '') + '</b></div>' : '';
+    const sgCell = (r) => r.status === 'review' ? reviewCell(r) : '<div class="ar-sg">' + ruleTag(r) + sugg(r) + '<div class="ar-acts"><span class="ar-other"><input class="bk sm" placeholder="Other INV number(s) or customer…" title="One invoice, or several numbers for a bulk payment: 125839, 125840" data-arq="' + r.id + '"></span><span class="sp"></span><a href="#" class="bk-dim" data-skip="' + r.id + '" title="Not a customer payment / handled elsewhere — keep it in the history">Skip</a></div><div class="ar-basket" data-basket="' + r.id + '"></div></div>';
     v.innerHTML = '<div class="bk-card">' +
       '<div class="ar-tiles"><div class="ar-tile"><b>' + usd(j.counts.open_total) + '</b><span class="bk-muted">' + j.counts.open + ' payment' + (j.counts.open === 1 ? '' : 's') + ' to match</span></div><div class="ar-tile"><b id="arInvN">' + (j.invoices_open || '…') + '</b><span class="bk-muted">open invoices in the CRM' + (j.invoices_at ? ' · read ' + esc(when(new Date(j.invoices_at).toISOString())) : '') + ' <a href="#" id="arFresh">refresh</a></span></div>' + (j.crm_error ? '<div class="ar-tile" style="border-color:#fca5a5"><b style="font-size:13px;color:#b91c1c">CRM not reachable</b><span class="bk-muted">' + esc(j.crm_error) + '</span></div>' : '') + '</div>' +
       '<h2>' + (arSt === 'open' ? 'Unmatched customer payments' : 'Matched — history') + (j.from ? ' <span class="bk-dim" style="font-weight:400;font-size:12px" title="Older deposits were handled by email before Nova AR">from ' + esc(usD(j.from)) + '</span>' : '') + ' ' + qHelp('ar', 'Nova AR', 'Every bank deposit filed as a customer payment waits here. Nova reads the open invoices from the CRM and suggests the one(s) the money pays — by amount to the cent, by the payer\'s name on the bank line, by an invoice number typed in the memo, or by a few invoices of one customer adding up. Click Matched on the right one, or look another up; Skip keeps a line that is not a customer payment in the history. Nothing is changed in the CRM from here.') + '<span class="sp"></span>' + (anyF ? '<button class="bk-btn sm" id="afClear">× Clear filters</button>' : '') + '<span class="bk-muted">' + j.rows.length + ' shown</span></h2>' +
@@ -1084,8 +1096,15 @@
         if (!v.querySelector('.ar-table tbody tr')) loadAr(arSt); }
       overview(); };
     const doMatch = async (id, ids, cust, cid, kind) => { const r = await post('/api/bookkeeping/ar/' + id + '/match', { invoice_ids: ids, customer: cust, customer_id: cid, kind: kind || 'match' }); if (!r.ok) { alert(r.error || 'Could not save.'); return; }
+      if (r.status === 'review') {   // 1.20.83: the row stays — it now shows the review card (paid / balance open) with Match & Pay
+        const row = j.rows.find(x => String(x.id) === String(id)); if (row) { row.status = 'review'; row.invoices = r.invoices || []; row.matched_by = ov && ov.me; }
+        const td = v.querySelector('td[data-arrow="' + id + '"]'); if (td && row) { td.innerHTML = sgCell(row); bind(td); }
+        toast('Matched to INV' + ids.join(', INV') + ' — review, then Match & Pay' + (r.learned ? ' · payer rule saved: "' + r.learned + '"' : '')); return; }
       const what = (kind === 'pair' ? 'Paired with INV' : kind === 'manual' ? 'Recorded by hand: INV' : 'Matched to INV') + ids.join(', INV');
-      toast(what + (r.pay ? (r.pay.sent ? ' · CRM told' : ' · ' + (r.pay.error || 'CRM not told')) : '')); dropRow(id, '✓ ' + esc(what)); };
+      toast(what + (r.learned ? ' · payer rule saved' : '')); dropRow(id, '✓ ' + esc(what)); };
+    const doPay = async (id) => { const r = await post('/api/bookkeeping/ar/' + id + '/pay-confirm', {}); if (!r.ok) { alert(r.error || 'Could not save.'); return; }
+      const row = j.rows.find(x => String(x.id) === String(id)); const ids = row && row.invoices ? row.invoices.map(i => i.no || 'INV' + i.id) : [];
+      const what = 'Matched & paid: ' + ids.join(', '); toast(what + (r.pay ? (r.pay.sent ? ' · CRM told' : ' · ' + (r.pay.error || 'CRM not told')) : '')); dropRow(id, '✓ ' + esc(what)); };
     // 1.20.10: the bulk-payment basket — several invoices paid with one deposit, typed in by hand. "Save match" records them
     // (kind manual) and tells the CRM nothing; the Matched tab shows "manual".
     const baskets = {};
@@ -1102,6 +1121,8 @@
     const bind = (scope) => {
     scope.querySelectorAll('[data-more]').forEach(a => a.onclick = (e) => { e.preventDefault(); const cell = a.closest('.ar-sg'); const open = cell.classList.toggle('open'); a.textContent = open ? 'See less' : 'See ' + cell.querySelectorAll('.ar-more').length + ' more'; });
     scope.querySelectorAll('[data-match]').forEach(b => b.onclick = () => doMatch(b.dataset.match, b.dataset.inv.split(',').map(Number), b.dataset.cust, b.dataset.cid, b.dataset.kind));
+    scope.querySelectorAll('[data-payok]').forEach(b => b.onclick = () => doPay(b.dataset.payok));
+    scope.querySelectorAll('.ar-review [data-undo]').forEach(a => a.onclick = async (e) => { e.preventDefault(); await post('/api/bookkeeping/ar/' + a.dataset.undo + '/undo', {}); const row = j.rows.find(x => String(x.id) === String(a.dataset.undo)); if (row) { row.status = 'open'; row.suggestions = null; } loadAr(arSt); });
     scope.querySelectorAll('[data-skip]').forEach(a => a.onclick = async (e) => { e.preventDefault(); const note = await askText('Why is this not a customer payment to match? (optional)', { title: 'Skip this payment', ok: 'Skip', optional: true }); if (note === null) return; const r = await post('/api/bookkeeping/ar/' + a.dataset.skip + '/skip', { note }); if (!r.ok) { alert(r.error); return; } dropRow(a.dataset.skip, 'Skipped'); });
     v.querySelectorAll('[data-undo]').forEach(a => a.onclick = async (e) => { e.preventDefault(); await post('/api/bookkeeping/ar/' + a.dataset.undo + '/undo', {}); loadAr(arSt); overview(); });
     // "Other invoice…": type a number, a customer or a PO → a list of open invoices → click = Matched
@@ -1110,7 +1131,7 @@
       const run = async () => { const q = inp.value.trim(); closePick(); if (q.length < 2) return; const r = await api('/api/bookkeeping/ar/invoices?q=' + encodeURIComponent(q)); if (!r.ok || inp.value.trim() !== q) return;
         pick = document.createElement('div'); pick.className = 'ar-pick'; const b = inp.getBoundingClientRect(); pick.style.left = Math.min(b.left, window.innerWidth - 436) + 'px'; pick.style.top = (b.bottom + 4 + window.scrollY) + 'px';
         if (r.many) { (r.invoices || []).forEach(i => basketAdd(inp.dataset.arq, i)); inp.value = ''; if (r.note) toast(r.note); return; }   // 1.20.10: several numbers typed → straight into the basket
-        pick.innerHTML = (r.note ? '<div class="bk-dim" style="padding:8px 10px;border-bottom:1px solid var(--line);font-size:11.5px">' + esc(r.note) + '</div>' : '') + ((r.invoices || []).length ? r.invoices.map(i => '<div class="ar-s" data-pid="' + i.id + '" data-pkind="' + (i.status === 'paid' ? 'pair' : 'match') + '" data-pc="' + esc(i.customer || '') + '" data-pcid="' + (i.customer_id || '') + '"><div class="ar-inv">' + invLine(i) + '</div><a href="#" class="ar-addb" data-padd="' + i.id + '" title="Add to a bulk match — several invoices paid with one payment">+ Add</a><span class="bk-btn sm ' + (i.status === 'paid' ? 'ar-pair' : 'ar-paybtn') + '">' + (i.status === 'paid' ? 'Pair' : 'Match &amp; Pay') + '</span></div>').join('') : '<div class="bk-dim" style="padding:10px">No open invoice matches "' + esc(q) + '".</div>');
+        pick.innerHTML = (r.note ? '<div class="bk-dim" style="padding:8px 10px;border-bottom:1px solid var(--line);font-size:11.5px">' + esc(r.note) + '</div>' : '') + ((r.invoices || []).length ? r.invoices.map(i => '<div class="ar-s" data-pid="' + i.id + '" data-pkind="' + (i.status === 'paid' ? 'pair' : 'match') + '" data-pc="' + esc(i.customer || '') + '" data-pcid="' + (i.customer_id || '') + '"><div class="ar-inv">' + invLine(i) + '</div><a href="#" class="ar-addb" data-padd="' + i.id + '" title="Add to a bulk match — several invoices paid with one payment">+ Add</a><span class="bk-btn sm ' + (i.status === 'paid' ? 'ar-pair' : 'ar-paybtn') + '">' + (i.status === 'paid' ? 'Pair' : 'Match') + '</span></div>').join('') : '<div class="bk-dim" style="padding:10px">No open invoice matches "' + esc(q) + '".</div>');
         document.body.appendChild(pick);
         const byId = {}; (r.invoices || []).forEach(i => { byId[i.id] = i; });
         pick.querySelectorAll('[data-padd]').forEach(a => a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); basketAdd(inp.dataset.arq, byId[a.dataset.padd]); closePick(); inp.value = ''; inp.focus(); });
@@ -1121,16 +1142,66 @@
     bind(v);
     // 1.19.159: the queue is on screen; now the suggestions, row by row (three at a time), so a slow CRM never blanks the page
     if (arSt === 'open') {
-      const todo = j.rows.filter(r => r.suggestions === null); let crmShown = false;
+      const todo = j.rows.filter(r => r.suggestions === null && r.status !== 'review'); let crmShown = false;
       const one = async () => { const r = todo.shift(); if (!r) return; const td = v.querySelector('td[data-arrow="' + r.id + '"]'); if (!td) return one();
         const sj = await api('/api/bookkeeping/ar/' + r.id + '/suggest').catch(() => ({ ok: false, error: 'request failed' }));
         if (!td.isConnected) return;   // the list was re-drawn meanwhile
-        if (sj.ok) { r.suggestions = sj.suggestions || []; if (sj.invoices_open != null && !crmShown) { crmShown = true; const tile = v.querySelector('#arInvN'); if (tile) tile.textContent = sj.invoices_open; } }
+        if (sj.ok) { r.suggestions = sj.suggestions || []; r.rule = sj.rule || null; if (sj.invoices_open != null && !crmShown) { crmShown = true; const tile = v.querySelector('#arInvN'); if (tile) tile.textContent = sj.invoices_open; } }
         else { r.suggestions = []; const w = td.querySelector('.ar-wait'); if (w) { w.textContent = sj.error || 'Could not match'; w.style.color = '#b91c1c'; } if (sj.crm_error) todo.length = 0; }
         if (sj.ok) { td.innerHTML = sgCell(r); bind(td); basketDraw(r.id); }
         return one(); };
       one(); one(); one();
     }
+  }
+  // ---- 1.20.83: AR Rules — payer words on the bank line → the customer; learned from every match, editable here
+  async function loadArRules() {
+    arSt = 'rules';
+    const v = $('vArList'); v.innerHTML = '<div class="bk-card bk-muted">Loading…</div>';
+    try { if (!ov) await overview(); } catch (e) { ov = { me: '', people: [], counts: {}, settings: {}, chart: [] }; }
+    const j = await api('/api/bookkeeping/ar/rules'); if (!j.ok) { v.innerHTML = '<div class="bk-card">' + esc(j.error || 'Could not load') + '</div>'; return; }
+    $('nArRules').textContent = j.rules.length || '';
+    const q = $('arQ').value.trim().toLowerCase();
+    const rules = j.rules.filter(r => !q || (r.pattern + ' ' + (r.customer_name || '')).toLowerCase().indexOf(q) > -1);
+    v.innerHTML = '<div class="bk-card"><h2>Payer rules ' + qHelp('arrules', 'AR rules', 'A rule says: when the bank line carries these words, the payer is this customer — Nova then looks only at that customer\'s invoices (plus any invoice number in the memo) and lifts them in the suggestions.<br><br>Rules are <b>learned from every Match, Pair and hand entry</b> the AR team makes (the payer words of that deposit → the customer chosen), and you can add or remove them here. A rule <b>never pairs by itself</b> — it only makes the suggestion better; a person still clicks Match, reviews, and Match &amp; Pay.') + ' <span class="bk-muted">' + rules.length + '</span></h2>' +
+      '<div class="ar-rform"><input class="bk" id="arRPat" placeholder="Payer words on the bank line, e.g. peace haight"><input class="bk" id="arRCust" placeholder="Customer in the CRM… (type to search)" autocomplete="off"><input type="hidden" id="arRCid"><button class="bk-btn sm" id="arRAdd">Add rule</button><span class="bk-dim" id="arRMsg"></span></div>' +
+      (rules.length ? '<table class="bk ar-rules"><thead><tr><th>Bank line says</th><th>Customer</th><th>How</th><th>Used</th><th>Made by</th><th></th></tr></thead><tbody>' +
+        rules.map(r => '<tr><td class="pat">' + esc(r.pattern) + '</td><td><b>' + esc(r.customer_name || ('Customer #' + r.customer_id)) + '</b> <span class="bk-dim">#' + r.customer_id + '</span></td><td>' + (r.source === 'manual' ? '<span class="bk-tag">typed in</span>' : '<span class="bk-tag ok">learned from a match</span>') + '</td><td>' + (r.hits ? r.hits + '× · last ' + esc(usD(String(r.last_hit_at || '').slice(0, 10))) : '<span class="bk-dim">not yet</span>') + '</td><td>' + (r.made_by ? whoHtml(r.made_by) + ' ' + esc(r.made_by.split('@')[0]) : '') + ' <span class="bk-dim">' + esc(usD(String(r.updated_at || r.created_at || '').slice(0, 10))) + '</span></td><td><a href="#" class="bk-dim" data-rdel="' + r.id + '" title="Remove this rule">×</a></td></tr>').join('') + '</tbody></table>'
+        : '<div class="bk-muted" style="padding:14px 0">No rules yet — every Match or Pair you make adds one.</div>') + '</div>';
+    v.querySelectorAll('[data-rdel]').forEach(a => a.onclick = async (e) => { e.preventDefault(); if (!await ask('Remove this payer rule?', { ok: 'Remove' })) return; await post('/api/bookkeeping/ar/rules/' + a.dataset.rdel + '/delete', {}); loadArRules(); });
+    // the customer picker
+    const inp = $('arRCust'); let t = null, pick = null; const closePick = () => { if (pick) { pick.remove(); pick = null; } };
+    inp.oninput = () => { $('arRCid').value = ''; clearTimeout(t); t = setTimeout(async () => { const qq = inp.value.trim(); closePick(); if (qq.length < 2) return; const r = await api('/api/bookkeeping/ar/customers?q=' + encodeURIComponent(qq)); if (!r.ok || inp.value.trim() !== qq) return;
+      pick = document.createElement('div'); pick.className = 'ar-cpick'; pick.innerHTML = (r.customers || []).length ? r.customers.map(c => '<div data-cid="' + c.id + '" data-cname="' + esc(c.name) + '"><b>' + esc(c.name) + '</b>' + (c.person && c.person !== c.name ? '<small>' + esc(c.person) + '</small>' : '') + '<small>#' + c.id + '</small></div>').join('') : '<div class="bk-dim">No customer matches.</div>';
+      inp.parentElement.appendChild(pick); pick.querySelectorAll('[data-cid]').forEach(d => d.onclick = () => { inp.value = d.dataset.cname; $('arRCid').value = d.dataset.cid; closePick(); });
+      setTimeout(() => document.addEventListener('mousedown', function away(ev) { if (pick && !pick.contains(ev.target) && ev.target !== inp) { closePick(); document.removeEventListener('mousedown', away); } }), 0); }, 300); };
+    $('arRAdd').onclick = async () => { const r = await post('/api/bookkeeping/ar/rules', { pattern: $('arRPat').value, customer: inp.value, customer_id: $('arRCid').value }); $('arRMsg').textContent = r.ok ? 'Saved as "' + r.pattern + '"' : (r.error || 'Could not save'); if (r.ok) setTimeout(loadArRules, 600); };
+  }
+  // ---- 1.20.83: Acct Aging — the open invoices in the CRM by age (0–30 / 31–60 / 61–90 / 90+), per customer, expandable
+  let agingData = null, agingOpen = {};
+  async function loadAging(bucket) {
+    const v = $('vAgingList'); if (!agingData) v.innerHTML = '<div class="bk-card bk-muted">Reading the open invoices from the CRM…</div>';
+    try { if (!ov) await overview(); } catch (e) { ov = { me: '', people: [], counts: {}, settings: {}, chart: [] }; }
+    if (!agingData) { const j = await api('/api/bookkeeping/ar/aging'); if (!j.ok) { v.innerHTML = '<div class="bk-card"><div style="color:#b91c1c;font-weight:600">Could not read the invoices</div><div class="bk-muted">' + esc(j.error || '') + '</div><button class="bk-btn sm" style="margin-top:10px" onclick="location.reload()">Reload</button></div>'; return; } agingData = j; }
+    const j = agingData; const B = ['0-30', '31-60', '61-90', '90+'], BL = { '0-30': '0–30 days', '31-60': '31–60 days', '61-90': '61–90 days', '90+': 'Over 90 days' }, BC = { '0-30': '#a7f3d0', '31-60': '#fde68a', '61-90': '#fdba74', '90+': '#fca5a5' }, BK = { '0-30': 'b0', '31-60': 'b1', '61-90': 'b2', '90+': 'b3' };
+    const q = $('agQ').value.trim().toLowerCase();
+    const rows = j.rows.filter(g => (bucket === 'all' || g.buckets[bucket] > 0.005) && (!q || (g.customer + ' ' + g.person + ' ' + g.am + ' ' + g.invoices.map(i => i.no).join(' ')).toLowerCase().indexOf(q) > -1));
+    $('nAging').textContent = j.totals.n || '';
+    const tile = (k, val, n, label) => '<div class="ag-tile' + (bucket === k ? ' on' : '') + '" data-agb="' + k + '" style="--c:' + (BC[k] || '#c7d2fe') + '"><b>' + usd(val) + '</b><span class="bk-muted">' + esc(label) + (n != null ? ' · ' + n + ' inv' : '') + '</span></div>';
+    const invRows = (g) => '<table class="ag-inv"><tbody>' + g.invoices.filter(i => bucket === 'all' || i.bucket === bucket).map(i => '<tr><td><b>' + esc(i.no) + '</b>' + (i.po ? ' <span class="bk-dim">PO ' + esc(i.po) + '</span>' : '') + '</td><td>' + esc(usD(String(i.created || '').slice(0, 10))) + (i.due ? ' <span class="bk-dim">due ' + esc(usD(String(i.due).slice(0, 10))) + '</span>' : '') + '</td><td><span class="ag-age ' + BK[i.bucket] + '">' + (i.age == null ? '?' : i.age + ' d') + '</span></td><td class="num">' + usd(i.total) + '</td><td class="num">' + (i.done ? 'paid ' + usd(i.done) : '<span class="bk-dim">unpaid</span>') + '</td><td class="num"><b>' + usd(i.balance) + '</b></td></tr>').join('') + '</tbody></table>';
+    const num = (x, k) => '<td class="num ' + (k || '') + (x > 0.005 ? '' : ' z') + '">' + (x > 0.005 ? usd(x) : '—') + '</td>';
+    const tot = { '0-30': 0, '31-60': 0, '61-90': 0, '90+': 0, total: 0 }; rows.forEach(g => { B.forEach(k => { tot[k] += g.buckets[k]; }); tot.total += g.total; });
+    v.innerHTML = '<div class="bk-card">' +
+      '<div class="ag-tiles">' + tile('all', j.totals.total, j.totals.n, 'All open · ' + j.totals.customers + ' customers') + B.map(k => tile(k, j.totals[k], null, BL[k])).join('') + '</div>' +
+      '<h2>Accounts receivable aging ' + qHelp('aging', 'Acct Aging', 'Every invoice the CRM shows as <b>unpaid or partial</b> (type invoice, total above zero), grouped by customer and aged from the invoice date: 0–30, 31–60, 61–90 and over 90 days. The balance is total − paid. Click a customer to see the invoices; the bucket chips and tiles narrow the list; search by customer, invoice number or account manager. Read from the CRM, refreshed every 5 minutes (<a href="#" id="agFresh">refresh now</a>). Nothing here writes to the CRM.') + ' <span class="bk-muted">' + rows.length + ' customer' + (rows.length === 1 ? '' : 's') + (bucket !== 'all' ? ' · ' + esc(BL[bucket]) : '') + ' · read ' + esc(new Date(j.at || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) + ' <a href="#" id="agFresh2">refresh</a></span></h2>' +
+      (rows.length ? '<table class="bk ag-table"><thead><tr><th>Customer</th><th>AM</th><th class="num">0–30</th><th class="num b1">31–60</th><th class="num b2">61–90</th><th class="num b3">90+</th><th class="num">Total due</th><th class="num">Inv</th></tr></thead><tbody>' +
+        rows.map(g => '<tr class="ag-c" data-agc="' + esc(String(g.customer_id || 'none')) + '"><td>' + esc(g.customer) + (g.person && g.person !== g.customer ? '<div class="bk-dim">' + esc(g.person) + (g.email ? ' · ' + esc(g.email) : '') + '</div>' : (g.email ? '<div class="bk-dim">' + esc(g.email) + '</div>' : '')) + '</td><td>' + esc(g.am || '—') + '</td>' + num(g.buckets['0-30']) + num(g.buckets['31-60'], 'b1') + num(g.buckets['61-90'], 'b2') + num(g.buckets['90+'], 'b3') + '<td class="num"><b>' + usd(g.total) + '</b></td><td class="num">' + g.n + (g.oldest > 90 ? ' <span class="ag-age b3" title="Oldest open invoice">' + g.oldest + ' d</span>' : '') + '</td></tr>' +
+          '<tr class="ag-d" data-agd="' + esc(String(g.customer_id || 'none')) + '"' + (agingOpen[g.customer_id || 'none'] ? '' : ' hidden') + '><td colspan="8">' + invRows(g) + '</td></tr>').join('') +
+        '<tr class="ag-tot"><td>Total</td><td></td>' + num(tot['0-30']) + num(tot['31-60'], 'b1') + num(tot['61-90'], 'b2') + num(tot['90+'], 'b3') + '<td class="num">' + usd(tot.total) + '</td><td></td></tr></tbody></table>'
+        : '<div class="bk-muted" style="padding:16px 0">Nothing open' + (bucket !== 'all' ? ' in ' + esc(BL[bucket]) : '') + (q ? ' for "' + esc(q) + '"' : '') + '.</div>') + '</div>';
+    v.querySelectorAll('[data-agb]').forEach(t => t.onclick = () => show('aging', t.dataset.agb === 'all' ? 'all' : BK[t.dataset.agb]));
+    v.querySelectorAll('tr.ag-c').forEach(tr => tr.onclick = () => { const d = v.querySelector('tr.ag-d[data-agd="' + tr.dataset.agc + '"]'); if (!d) return; d.hidden = !d.hidden; agingOpen[tr.dataset.agc] = !d.hidden; });
+    const fresh = async (e) => { e.preventDefault(); agingData = null; const j2 = await api('/api/bookkeeping/ar/aging?fresh=1'); if (j2.ok) agingData = j2; loadAging(bucket); };
+    ['agFresh', 'agFresh2'].forEach(id => { const a = $(id); if (a) a.onclick = fresh; });
   }
   async function loadBills(sub) {
     billSub = BILL_SUBS[sub] ? sub : billSub;
@@ -2608,7 +2679,7 @@
   if (/\/bookkeeping\/plaid-oauth/.test(location.pathname) && /oauth_state_id=/.test(location.search)) { window.__plaidReturn = location.href; history.replaceState(null, '', '/bookkeeping?tab=conn'); }
   const qs = new URLSearchParams(location.search), want = qs.get('tab');
   document.querySelectorAll('.bk-sub button').forEach(b => { const ic = SUB_ICON[b.dataset.s]; if (ic && iconKey(ic) && !b.querySelector('svg')) b.insertAdjacentHTML('afterbegin', iconSvg(ic)); });   // icons once the icon table exists
-  if (AR_ONLY) { show('ar', qs.get('sub') === 'done' ? 'done' : 'open'); return; }
+  if (AR_ONLY) { if (qs.get('tab') === 'aging') show('aging', qs.get('sub') || 'all'); else show('ar', ['done', 'rules'].indexOf(qs.get('sub')) > -1 ? qs.get('sub') : 'open'); return; }   /* 1.20.83: Acct Aging + Rules reachable by URL */
   if (want === 'ar') { location.replace('/nova-ar' + (qs.get('sub') ? '?sub=' + qs.get('sub') : '')); return; }
   show(['brief', 'purchases', 'list', 'bank', 'waiting', 'notreceived', 'bills', 'ar', 'inbox', 'accounts', 'vendors', 'chart', 'rules', 'materials', 'conn', 'activity'].indexOf(want) > -1 ? (want === 'txns' ? 'purchases' : want === 'purchases' && qs.get('sub') === 'bank' ? 'bank' : want) : 'brief', qs.get('sub') === 'bank' ? 'pending' : qs.get('sub'));
 })();

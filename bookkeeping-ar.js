@@ -20,6 +20,11 @@ module.exports = function mountAr(ctx) {
     // 1.20.2: kind = 'match' (an open invoice — Match & Pay) or 'pair' (an invoice the CRM already shows as paid); pay_* = the
     // Dev team's pay webhook result once AR_PAY_WEBHOOK_URL is set
     ['kind TEXT', 'pay_status TEXT', 'pay_at TEXT', 'pay_ref TEXT', 'inv_json TEXT'].forEach(c => ctx.db.run('ALTER TABLE bk_ar ADD COLUMN ' + c, () => {}));
+    // 1.20.83: AR rules — the payer words of a bank line → a CRM customer. Learned from every match / pair the AR team makes
+    // (and typed by hand under Rules). A rule only narrows the matching to that customer's invoices; it never pairs by itself.
+    ctx.db.run(`CREATE TABLE IF NOT EXISTS bk_ar_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, pattern TEXT, customer_id INTEGER, customer_name TEXT,
+      source TEXT DEFAULT 'learned', made_by TEXT, hits INTEGER DEFAULT 0, last_hit_at TEXT, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
+    ctx.db.run('CREATE UNIQUE INDEX IF NOT EXISTS bk_ar_rules_pat ON bk_ar_rules(pattern)', () => {});
   });
   const crypto = require('crypto');
   const env = (k) => String(process.env[k] || '').trim();
@@ -63,10 +68,10 @@ module.exports = function mountAr(ctx) {
 
   // ---- open invoices from the production DB (read-only), cached 5 minutes
   const SEL_ONE = "SELECT i.id, i.invoice_type AS type, i.invoice_total_payment AS total, i.invoice_total_payment_done AS done, i.payment_status, i.invoice_creation_date AS created, i.payment_due_date AS due, i.PO_number AS po, i.invoice_clientid AS customer_id, i.updated_at, " +
-    "c.company_name, c.name, c.last_name, c.email FROM invoice i LEFT JOIN customer c ON c.id = i.invoice_clientid";
+    "c.company_name, c.name, c.last_name, c.email, c.manager_id FROM invoice i LEFT JOIN customer c ON c.id = i.invoice_clientid";
   function shapeInvoice(r) {
     const o = { id: r.id, no: 'INV' + r.id, type: r.type || 'invoice', total: Number(r.total) || 0, done: Number(r.done) || 0, balance: r.payment_status === 'paid' ? Number(r.total) || 0 : Math.round(((Number(r.total) || 0) - (Number(r.done) || 0)) * 100) / 100, status: r.payment_status, created: r.created, due: r.due, po: r.po || null, paid_at: r.payment_status === 'paid' ? r.updated_at : null,
-      customer_id: r.customer_id, company: r.company_name || '', person: [r.name, r.last_name].filter(Boolean).join(' '), email: r.email || '' };
+      customer_id: r.customer_id, company: r.company_name || '', person: [r.name, r.last_name].filter(Boolean).join(' '), email: r.email || '', manager_id: r.manager_id || null };
     o.customer = o.company || o.person || (o.customer_id ? 'Customer #' + o.customer_id : 'No customer on the invoice');
     o._k = keyWords(o.company + ' ' + o.person + ' ' + (o.email || '').split('@')[0]);
     o._c = compact(o.company); if (o._c.length < 5) o._c = '';   // 1.20.10: "4Over" against "4 OVER, LLC PAYMENTS…", "WILD WEST SOCIAL" against "Wild West Social House"
@@ -123,6 +128,29 @@ module.exports = function mountAr(ctx) {
   // numbers in the wording that look like one of our invoice ids (6 digits, 1xxxxx) — a customer who typed the invoice number into the memo
   const invoiceNos = (s) => { const out = new Set(); const re = /(?:^|[^0-9])(1\d{5})(?![0-9])/g; let m; const str = String(s || ''); while ((m = re.exec(str))) out.add(Number(m[1])); return Array.from(out); };   // "INV129964", "#135244", "Inv 135244" — INV glued to the digits is no word boundary
 
+  // ---- 1.20.83: AR rules. pattern = the payer words of the bank wording (keyWords: no numbers, no bank / payment noise), so
+  // "PEACE & HAIGHT I PAYMENT 261014 20261014AC" → "peace haight". A deposit matches a rule when every word of the rule is in it.
+  const payerPattern = (t) => keyWords([t.name, t.merchant, t.orig_desc].filter(Boolean).join(' ')).filter(w => !/\d/.test(w)).slice(0, 5).join(' ');   // no reference codes (996pvahlt1cant3) — only the payer's words
+  let rulesCache = { at: 0, rows: [] };
+  async function arRules(force) {
+    if (force || Date.now() - rulesCache.at > 60000) { rulesCache = { at: Date.now(), rows: await dbAll('SELECT * FROM bk_ar_rules ORDER BY LENGTH(pattern) DESC, id') }; }
+    return rulesCache.rows;
+  }
+  async function ruleFor(t) {
+    const words = new Set(keyWords([t.name, t.merchant, t.orig_desc].filter(Boolean).join(' ')));
+    if (!words.size) return null;
+    for (const r of await arRules()) { const w = String(r.pattern || '').split(' ').filter(Boolean); if (w.length && w.every(x => words.has(x))) return r; }
+    return null;
+  }
+  // learned on every match / pair / manual entry: the payer words of this deposit → the customer the AR team chose
+  async function learnRule(t, customerId, customerName, who) {
+    const pat = payerPattern(t); if (!pat || !customerId) return null;
+    if (pat.split(' ').length < 1 || pat.length < 4) return null;
+    const cur = await dbGet('SELECT * FROM bk_ar_rules WHERE pattern = ?', [pat]);
+    if (cur) { if (Number(cur.customer_id) !== Number(customerId)) await dbRun('UPDATE bk_ar_rules SET customer_id = ?, customer_name = ?, made_by = ?, updated_at = ? WHERE id = ?', [customerId, customerName || null, who, nowIso(), cur.id]); }
+    else await dbRun('INSERT INTO bk_ar_rules (pattern, customer_id, customer_name, source, made_by, updated_at) VALUES (?,?,?,?,?,?)', [pat, customerId, customerName || null, 'learned', who, nowIso()]);
+    rulesCache.at = 0; return pat;
+  }
   // the suggestions for one deposit (1.19.154 — the AR team's order of proof):
   //   1. the amount: the invoice's balance due (or its total) to the cent — the base of every real match (60)
   //   2. the date: an invoice created within 30 days before the payment (+25), within 60 days (+12), older (+0)
@@ -131,10 +159,23 @@ module.exports = function mountAr(ctx) {
   //   a payer we recognise but no amount fits is shown low ("payer name only" 15, or "partial payment" 30 when the deposit is
   //   smaller than their balance) so Karen still has a lead. An invoice already marked paid in the CRM is shown as such.
   const DAY = 864e5;
-  function suggest(t, invoices) {
+  function suggest(t, invoices, rule) {
     const amt = Math.round(Math.abs(Number(t.amount)) * 100) / 100;
     const text = [t.name, t.merchant, t.orig_desc].filter(Boolean).join(' ');
     const words = keyWords(text), nos = invoiceNos(text), ctext = compact(text);
+    // 1.20.83: a payer rule narrows the field to that customer's invoices (+ any invoice number typed in the memo) and lifts them;
+    // with nothing of theirs open the general matching runs as before. Never a pair by itself — the person still clicks.
+    if (rule) {
+      const mine = invoices.filter(r => Number(r.customer_id) === Number(rule.customer_id) || nos.indexOf(r.id) > -1);
+      if (mine.length) {
+        const out = suggest(t, mine, null).map(s => Object.assign({}, s, { score: Math.min(100, s.score + (Number(s.customer_id) === Number(rule.customer_id) ? 20 : 0)), why: (Number(s.customer_id) === Number(rule.customer_id) ? ['payer rule: ' + (rule.customer_name || s.customer)] : []).concat(s.why), rule: true }));
+        // a known payer with no amount fit: still show their open invoices so the AR person can pick (partial / bulk)
+        if (!out.length) { const open = mine.filter(r => r.status !== 'paid').sort((a, b) => String(b.created || '').localeCompare(String(a.created || ''))).slice(0, 3);
+          open.forEach(r => out.push({ score: 35, why: ['payer rule: ' + (rule.customer_name || r.customer), amt < r.balance - 0.005 ? 'partial payment? ' + usd(amt) + ' of ' + usd(r.balance) : 'amount does not fit this invoice'], customer: r.customer, customer_id: r.customer_id, kind: 'match', rule: true,
+            invoices: [{ id: r.id, no: r.no, total: r.total, balance: r.balance, status: r.status, created: r.created, due: r.due, po: r.po, customer: r.customer, paid_at: r.paid_at }] })); }
+        if (out.length) return out.slice(0, 5);
+      }
+    }
     const paidOn = new Date(String(t.tx_date || t.date || '').slice(0, 10) + 'T12:00:00Z').getTime();
     const ageDays = (r) => { const c = r.created ? new Date(r.created).getTime() : NaN; return isNaN(c) || isNaN(paidOn) ? null : Math.round((paidOn - c) / DAY); };
     // 1.20.3: fresh = within 30 days (+25); 31–60 days 10 points less (+15); older nothing
@@ -224,19 +265,19 @@ module.exports = function mountAr(ctx) {
 
   // GET /api/bookkeeping/ar/me — what the AR-only page needs instead of the full Bookkeeping overview (1.19.153)
   app.get('/api/bookkeeping/ar/me', ...guard, async (req, res) => {
-    try { let pl = []; try { pl = people ? await people.list() : []; } catch (e) {} res.json({ ok: true, me: userId(req), people: pl, open: (await dbGet("SELECT COUNT(*) n FROM bk_ar WHERE status = 'open'")).n }); }
+    try { let pl = []; try { pl = people ? await people.list() : []; } catch (e) {} res.json({ ok: true, me: userId(req), people: pl, open: (await dbGet("SELECT COUNT(*) n FROM bk_ar WHERE status IN ('open', 'review')")).n }); }
     catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // 1.20.14: the left menu's badge — the open queue (synced first, so a fresh customer payment counts at once)
   app.get('/api/bookkeeping/ar/unread-count', ...guard, async (req, res) => {
-    try { await syncQueue(); res.json({ ok: true, unread: (await dbGet("SELECT COUNT(*) n FROM bk_ar WHERE status = 'open'")).n }); } catch (e) { res.json({ ok: false, error: e.message }); }
+    try { await syncQueue(); res.json({ ok: true, unread: (await dbGet("SELECT COUNT(*) n FROM bk_ar WHERE status IN ('open', 'review')")).n }); } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // GET /api/bookkeeping/ar?status=open|done&from&to&min&max&q
   app.get('/api/bookkeeping/ar', ...guard, async (req, res) => {
     try {
       await syncQueue();
       const st = req.query.status === 'done' ? 'done' : 'open';
-      const where = [st === 'open' ? "q.status = 'open'" : "q.status IN ('matched', 'skipped')"], p = [];
+      const where = [st === 'open' ? "q.status IN ('open', 'review')" : "q.status IN ('matched', 'skipped')"], p = [];   // 1.20.83: review = matched, waiting for Match & Pay
       if (req.query.from) { where.push('date(t.created_at) >= ?'); p.push(String(req.query.from)); }   // 1.20.1: the Synced column is the date filter
       if (req.query.to) { where.push('date(t.created_at) <= ?'); p.push(String(req.query.to)); }
       if (st === 'done') {   // 1.20.5: the Matched tab is filtered on when the match was made (LA calendar days; default last 30 on the page)
@@ -257,7 +298,7 @@ module.exports = function mountAr(ctx) {
         if (!tx[r.txn_id]) { if (r.status === 'open') dbRun("UPDATE bk_ar SET status = 'void', updated_at = ? WHERE id = ?", [nowIso(), r.id]).catch(() => {}); continue; }   // 1.20.11: a bank line that is gone leaves no empty row
         const t = tx[r.txn_id]; const row = Object.assign({}, r, { txn: t });
         if (q && [t.name, t.merchant, t.orig_desc, r.customer_name, r.invoice_ids, r.note, String(r.amount)].filter(Boolean).join(' ').toLowerCase().indexOf(q) < 0) continue;
-        if (st === 'open') { const ck = r.txn_id + ':' + inv.at; row.suggestions = sugCache.has(ck) ? sugCache.get(ck) : null; }   // null = the page asks /ar/:id/suggest for it (1.19.159: the list never waits on the matching)
+        if (st === 'open') { row.suggestions = null; if (r.status === 'review') { try { row.invoices = r.inv_json ? JSON.parse(r.inv_json) : []; } catch (e) { row.invoices = []; } delete row.inv_json; } }   // null = the page asks /ar/:id/suggest for it (1.19.159: the list never waits on the matching; 1.20.83: the cache key carries the rule, so the row route decides)
         else {   // 1.20.6: from the local snapshot taken at match time; older rows fall back to the warm cache (never a CRM call)
           let snap = null; try { snap = r.inv_json ? JSON.parse(r.inv_json) : null; } catch (e) {}
           const ids = String(r.invoice_ids || '').split(',').filter(Boolean).map(Number);
@@ -267,8 +308,8 @@ module.exports = function mountAr(ctx) {
         }
         out.push(row);
       }
-      const counts = await dbGet("SELECT SUM(status = 'open') AS open, SUM(status IN ('matched', 'skipped')) AS done, SUM(CASE WHEN status = 'open' THEN amount ELSE 0 END) AS open_total FROM bk_ar");
-      res.json({ ok: true, rows: out, counts: { open: counts.open || 0, done: counts.done || 0, open_total: Math.round((counts.open_total || 0) * 100) / 100 }, invoices_open: invoices.length, invoices_at: inv.at, crm_error, from: AR_FROM });
+      const counts = await dbGet("SELECT SUM(status IN ('open', 'review')) AS open, SUM(status = 'review') AS review, SUM(status IN ('matched', 'skipped')) AS done, SUM(CASE WHEN status IN ('open', 'review') THEN amount ELSE 0 END) AS open_total FROM bk_ar");
+      res.json({ ok: true, rows: out, counts: { open: counts.open || 0, review: counts.review || 0, done: counts.done || 0, open_total: Math.round((counts.open_total || 0) * 100) / 100 }, invoices_open: invoices.length, invoices_at: inv.at, crm_error, from: AR_FROM });
     } catch (e) { errlog('ar list', e.message); res.json({ ok: false, error: e.message }); }
   });
   // GET /api/bookkeeping/ar/:id/suggest — the suggestions for one payment (the page asks row by row, a few at a time)
@@ -277,8 +318,10 @@ module.exports = function mountAr(ctx) {
       const q = await dbGet('SELECT * FROM bk_ar WHERE id = ?', [parseInt(req.params.id)]); if (!q) return res.json({ ok: false, error: 'No such payment' });
       let invoices; try { invoices = await openInvoices(); inv.error = null; } catch (e) { inv.error = e.message; return res.json({ ok: false, error: 'CRM not reachable: ' + e.message, crm_error: e.message }); }
       const ck = q.txn_id + ':' + inv.at;
-      if (!sugCache.has(ck)) { const t = (await txFields([q.txn_id]))[q.txn_id] || {}; if (sugCache.size > 2000) sugCache.clear(); const extra = await extraFor(t, invoices); sugCache.set(ck, invoices.length || extra.length ? suggest(t, invoices.concat(extra)) : []); }
-      res.json({ ok: true, suggestions: sugCache.get(ck), invoices_open: invoices.length, invoices_at: inv.at });
+      const t0 = (await txFields([q.txn_id]))[q.txn_id] || {}; const rule = await ruleFor(t0);
+      const ck2 = ck + ':' + (rule ? rule.id + '.' + (rule.updated_at || '') : '0');
+      if (!sugCache.has(ck2)) { if (sugCache.size > 2000) sugCache.clear(); const extra = await extraFor(t0, invoices); sugCache.set(ck2, invoices.length || extra.length ? suggest(t0, invoices.concat(extra), rule) : []); if (rule) dbRun("UPDATE bk_ar_rules SET hits = hits + 1, last_hit_at = ? WHERE id = ?", [nowIso(), rule.id]).catch(() => {}); }
+      res.json({ ok: true, suggestions: sugCache.get(ck2), rule: rule ? { id: rule.id, customer: rule.customer_name, customer_id: rule.customer_id, pattern: rule.pattern } : null, invoices_open: invoices.length, invoices_at: inv.at });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
 
@@ -321,13 +364,82 @@ module.exports = function mountAr(ctx) {
       const first = snap[0] && snap[0].customer_id != null ? snap[0] : null;
       const customer = String(req.body.customer || (first ? first.customer : '')).slice(0, 160), cid = parseInt(req.body.customer_id) || (first ? first.customer_id : null);
       const kind = req.body.kind === 'pair' ? 'pair' : req.body.kind === 'manual' ? 'manual' : 'match';   // 1.20.10: manual = typed in by hand (a bulk payment) — recorded only, the CRM is not told
-      await dbRun("UPDATE bk_ar SET status = 'matched', kind = ?, invoice_ids = ?, inv_json = ?, customer_id = ?, customer_name = ?, note = ?, matched_by = ?, matched_at = ?, updated_at = ? WHERE id = ?", [kind, ids.join(','), JSON.stringify(snap), cid, customer, String(req.body.note || '').slice(0, 500) || null, userId(req), nowIso(), nowIso(), id]);
-      await audit(userId(req), kind === 'pair' ? 'ar.pair' : 'ar.match', id, { txn_id: q.txn_id, amount: q.amount, invoice_ids: ids, customer });
-      // 1.20.2: Match & Pay tells the CRM to record the payment — once the Dev team's endpoint exists (AR_PAY_WEBHOOK_URL in .env).
-      // A pair never pays: the CRM already has it.
-      let pay = null;
-      if (kind === 'match') pay = await payHook(id).catch(e => ({ sent: false, error: e.message }));
-      res.json({ ok: true, kind, pay });
+      // 1.20.83: a match is a two-step: Match (status 'review' — the row shows paid / balance open per invoice) then Match & Pay
+      // (/pay-confirm → status 'matched' + the CRM webhook). Pair and manual go straight to matched, nothing is sent.
+      const status = kind === 'match' ? 'review' : 'matched';
+      await dbRun("UPDATE bk_ar SET status = ?, kind = ?, invoice_ids = ?, inv_json = ?, customer_id = ?, customer_name = ?, note = ?, matched_by = ?, matched_at = ?, pay_status = NULL, pay_at = NULL, pay_ref = NULL, updated_at = ? WHERE id = ?", [status, kind, ids.join(','), JSON.stringify(snap), cid, customer, String(req.body.note || '').slice(0, 500) || null, userId(req), nowIso(), nowIso(), id]);
+      await audit(userId(req), kind === 'pair' ? 'ar.pair' : kind === 'match' ? 'ar.review' : 'ar.match', id, { txn_id: q.txn_id, amount: q.amount, invoice_ids: ids, customer });
+      // learn the payer → customer rule from what the AR person chose (never used to pair by itself)
+      let learned = null; try { const t = (await txFields([q.txn_id]))[q.txn_id]; if (t && cid) learned = await learnRule(t, cid, customer, userId(req)); } catch (e) { errlog('ar learn', e.message); }
+      res.json({ ok: true, kind, status, invoices: snap, learned, pay: null });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  // POST /api/bookkeeping/ar/:id/pay-confirm — the second step: the reviewed match is final and the CRM is told (1.20.83)
+  app.post('/api/bookkeeping/ar/:id/pay-confirm', ...guard, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id), q = await dbGet('SELECT * FROM bk_ar WHERE id = ?', [id]); if (!q) return res.json({ ok: false, error: 'No such payment' });
+      if (q.status !== 'review') return res.json({ ok: false, error: 'This payment is not waiting for Match & Pay.' });
+      await dbRun("UPDATE bk_ar SET status = 'matched', matched_by = ?, matched_at = ?, updated_at = ? WHERE id = ?", [userId(req), nowIso(), nowIso(), id]);
+      await audit(userId(req), 'ar.match', id, { txn_id: q.txn_id, amount: q.amount, invoice_ids: String(q.invoice_ids || '').split(',').filter(Boolean).map(Number), customer: q.customer_name });
+      const pay = await payHook(id).catch(e => ({ sent: false, error: e.message }));
+      res.json({ ok: true, pay });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  // ---- 1.20.83: the Rules sub-tab
+  app.get('/api/bookkeeping/ar/rules', ...guard, async (req, res) => {
+    try { res.json({ ok: true, rules: await arRules(true) }); } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  app.post('/api/bookkeeping/ar/rules', ...guard, async (req, res) => {
+    try {
+      const pat = keyWords(String(req.body.pattern || '')).filter(w => !/\d/.test(w)).slice(0, 5).join(' '); const cid = parseInt(req.body.customer_id);
+      if (!pat) return res.json({ ok: false, error: 'Type the payer words as they show on the bank line (e.g. "peace haight").' });
+      if (!cid) return res.json({ ok: false, error: 'Pick the customer.' });
+      const cur = await dbGet('SELECT id FROM bk_ar_rules WHERE pattern = ?', [pat]);
+      if (cur) await dbRun("UPDATE bk_ar_rules SET customer_id = ?, customer_name = ?, source = 'manual', made_by = ?, updated_at = ? WHERE id = ?", [cid, String(req.body.customer || '').slice(0, 160), userId(req), nowIso(), cur.id]);
+      else await dbRun("INSERT INTO bk_ar_rules (pattern, customer_id, customer_name, source, made_by, updated_at) VALUES (?,?,?,'manual',?,?)", [pat, cid, String(req.body.customer || '').slice(0, 160), userId(req), nowIso()]);
+      rulesCache.at = 0; sugCache.clear(); await audit(userId(req), 'ar.rule', cur ? cur.id : 0, { pattern: pat, customer_id: cid });
+      res.json({ ok: true, pattern: pat });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  app.post('/api/bookkeeping/ar/rules/:id/delete', ...guard, async (req, res) => {
+    try { await dbRun('DELETE FROM bk_ar_rules WHERE id = ?', [parseInt(req.params.id)]); rulesCache.at = 0; sugCache.clear(); res.json({ ok: true }); } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  // customers for the rule form (the CRM, read-only)
+  app.get('/api/bookkeeping/ar/customers', ...guard, async (req, res) => {
+    try {
+      const q = String(req.query.q || '').trim(); if (q.length < 2 || !runQuery) return res.json({ ok: true, customers: [] });
+      const like = mysql.escape('%' + q + '%');
+      const rows = await runQuery('SELECT id, company_name, name, last_name, email FROM customer WHERE company_name LIKE ' + like + ' OR name LIKE ' + like + ' OR last_name LIKE ' + like + ' OR email LIKE ' + like + ' ORDER BY id DESC LIMIT 20');
+      res.json({ ok: true, customers: rows.map(r => ({ id: r.id, name: r.company_name || [r.name, r.last_name].filter(Boolean).join(' ') || ('Customer #' + r.id), person: [r.name, r.last_name].filter(Boolean).join(' '), email: r.email || '' })) });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  // ---- 1.20.83: Acct Aging — every open invoice (unpaid / partial, type invoice) bucketed by age, per customer
+  let amCache = { at: 0, by: {} };
+  async function managers() {
+    if (Date.now() - amCache.at < 600000) return amCache.by;
+    const by = {}; try { (await runQuery('SELECT id, name, last_name FROM user WHERE id IN (SELECT DISTINCT manager_id FROM customer WHERE manager_id > 0)')).forEach(r => { by[r.id] = [r.name, r.last_name].filter(Boolean).join(' ').trim(); }); } catch (e) {}
+    amCache = { at: Date.now(), by }; return by;
+  }
+  app.get('/api/bookkeeping/ar/aging', ...guard, async (req, res) => {
+    try {
+      const invoices = await openInvoices(req.query.fresh === '1'); const ams = await managers();
+      const today = Date.now(); const B = ['0-30', '31-60', '61-90', '90+'];
+      const bucket = (d) => d == null ? '0-30' : d <= 30 ? '0-30' : d <= 60 ? '31-60' : d <= 90 ? '61-90' : '90+';
+      const byCust = {};
+      for (const r of invoices) {
+        if (r.status === 'paid' || r.balance <= 0.005) continue;
+        const c = r.created ? new Date(r.created).getTime() : NaN; const age = isNaN(c) ? null : Math.max(0, Math.round((today - c) / DAY));
+        const b = bucket(age);
+        const k = r.customer_id || 'none';
+        const g = byCust[k] = byCust[k] || { customer_id: r.customer_id, customer: r.customer, company: r.company, person: r.person, email: r.email, am: ams[r.manager_id] || '', buckets: { '0-30': 0, '31-60': 0, '61-90': 0, '90+': 0 }, total: 0, n: 0, oldest: 0, invoices: [] };
+        g.buckets[b] += r.balance; g.total += r.balance; g.n++; if (age != null && age > g.oldest) g.oldest = age;
+        g.invoices.push({ id: r.id, no: r.no, created: r.created, due: r.due, total: r.total, done: r.done, balance: r.balance, status: r.status, po: r.po, age, bucket: b });
+      }
+      const rows = Object.values(byCust).map(g => { B.forEach(k => { g.buckets[k] = Math.round(g.buckets[k] * 100) / 100; }); g.total = Math.round(g.total * 100) / 100; g.invoices.sort((a, b) => (b.age || 0) - (a.age || 0)); return g; }).sort((a, b) => b.total - a.total);
+      const totals = { '0-30': 0, '31-60': 0, '61-90': 0, '90+': 0, total: 0, n: 0, customers: rows.length };
+      rows.forEach(g => { B.forEach(k => { totals[k] += g.buckets[k]; }); totals.total += g.total; totals.n += g.n; });
+      Object.keys(totals).forEach(k => { totals[k] = Math.round(totals[k] * 100) / 100; });
+      res.json({ ok: true, rows, totals, at: inv.at, crm_error: inv.error || null });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // POST {AR_PAY_WEBHOOK_URL} {event: 'ar.payment', payment: {...}, invoices: [ids], amount, paid_on, method, bank_line, matched_by},
