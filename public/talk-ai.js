@@ -1025,7 +1025,9 @@
         ' <b>' + esc(h.kind) + '</b></td><td>' + esc(h.note) + '</td></tr>').join('') + '</table>'
         : '<p class="tk-msg" style="margin:0">Nothing yet since Nova last restarted. Each call, answer and webhook shows here, with what went wrong if it did.</p>') + '</details>';
     // the folds stay as the person left them within this visit (closed on first open)
-    $('setupBox').querySelectorAll('details').forEach((d, i) => { const key = 'ta_fold_' + i; d.open = sessionStorage.getItem(key) === '1'; d.addEventListener('toggle', () => { try { sessionStorage.setItem(key, d.open ? '1' : '0'); } catch (e) {} }); });
+    // default view (1.20.70): "Connect the phone" and Recent activity open, the five steps closed; a toggle is remembered for the visit
+    const all = $('setupBox').querySelectorAll('details');
+    all.forEach((d, i) => { const key = 'ta_fold_' + i, saved = sessionStorage.getItem(key); d.open = saved != null ? saved === '1' : (d.classList.contains('tk-fold-top') || i === all.length - 1); d.addEventListener('toggle', () => { try { sessionStorage.setItem(key, d.open ? '1' : '0'); } catch (e) {} }); });
     $('setupBox').querySelectorAll('[data-copy]').forEach(b => {
       b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copied'; setTimeout(() => { b.textContent = 'Copy'; }, 1500); } catch (e) { b.textContent = 'Select it'; } };
     });
