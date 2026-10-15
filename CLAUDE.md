@@ -137,6 +137,10 @@ order-assist.js and index.html), never `'$' + n.toFixed(2)`. The prompts tell th
 - `admin.html` — members, agent training, knowledge docs, connection status
 - `chatbot.html` + `chatbot.js` — the ChatBot page: chat on the left; client, cart, calculator and saved
   items in the right-hand pane
+  **Jobs in the pane** (1.20.38): on wide screens a `job_card` (get_job) no longer sits in the chat — `jobMarker()` leaves a one-line
+  `.pq-moved` marker (E-number · product · client · total · Show) and the card opens in the pane's **Jobs** tab (`paneJobs`, newest
+  first, `showJobsInPane(focusE)`, pane mode `jobs`; the header toggle shows Calculator / Draft / Jobs (n) as each exists,
+  `renderPaneToggle`). Narrow screens keep the card inline.
   The cart is switched off (`CART_ON = false` in chatbot.js): the price card's third button is **Save**,
   which files the product with every quantity quoted for it under **Saved**, at the top of the pane.
   Connecting a client re-prices every quote in the conversation — on screen, saved, and behind chat

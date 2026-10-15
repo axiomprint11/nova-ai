@@ -1471,12 +1471,50 @@ function renderPaneActions() {
 // sending it.
 let paneMode = 'calc';
 
+// The jobs pulled in this chat (get_job) — shown in the pane's Jobs tab, newest first (1.20.38)
+const paneJobs = [];
+function jobMarker(data, card) {
+  const d = document.createElement('div');
+  paneJobs.unshift({ data: data || {}, card: card, marker: d });
+  const total = Number(data && (data.total != null ? data.total : data.price));
+  d.className = 'pq-moved';
+  d.innerHTML = '<b>' + esc((data && data.e_number) || 'Job') + '</b>' +
+    ((data && data.product) ? ' <span class="pq-moved-q">' + esc(data.product) + '</span>' : '') +
+    ((data && data.client) ? ' <span class="pq-moved-q">' + esc(data.client) + '</span>' : '') +
+    (isFinite(total) && total ? ' <span class="pq-moved-p">$' + usd2(total) + '</span>' : '') +
+    '<button type="button" class="pq-moved-show">Show</button>';
+  d.querySelector('.pq-moved-show').onclick = () => { showJobsInPane(data && data.e_number); };
+  return d;
+}
+function showJobsInPane(focusE) {
+  const body = document.getElementById('calcPaneBody');
+  if (!body || !paneJobs.length) return;
+  const pane = document.getElementById('calcPane');
+  if (pane && pane.classList.contains('folded')) togglePaneFold();
+  paneMode = 'jobs';
+  body.innerHTML = '';
+  const old = document.getElementById('paneActions'); if (old) old.remove();
+  paneJobs.forEach(j => {
+    const wrap = document.createElement('div'); wrap.className = 'pane-job';
+    wrap.appendChild(j.card);
+    body.appendChild(wrap);
+    if (focusE && j.data.e_number === focusE) wrap.classList.add('on');
+  });
+  const hd = document.querySelector('.calc-pane-hd span');
+  if (hd) hd.textContent = 'Jobs';
+  renderPaneToggle();
+  body.scrollTop = 0;
+  document.querySelectorAll('.pq-moved.on').forEach(n => n.classList.remove('on'));
+  paneJobs.forEach(j => { if (!focusE || j.data.e_number === focusE) j.marker.classList.add('on'); });
+}
+
 function renderPaneToggle() {
   const hd = document.querySelector('.calc-pane-hd');
   if (!hd) return;
   let wrap = document.getElementById('paneToggle');
   const ladder = quantityLadder();
-  if (!ladder) { if (wrap) wrap.remove(); return; }
+  const hasCalc = !!lastCalcCard, hasJobs = paneJobs.length > 0;
+  if (!ladder && !hasJobs) { if (wrap) wrap.remove(); return; }
   if (!wrap) {
     wrap = document.createElement('div');
     wrap.id = 'paneToggle';
@@ -1484,13 +1522,14 @@ function renderPaneToggle() {
     hd.insertBefore(wrap, hd.querySelector('.calc-pane-x'));
   }
   wrap.innerHTML =
-    '<button type="button" class="' + (paneMode === 'calc' ? 'on' : '') + '" data-m="calc">Calculator</button>' +
-    '<button type="button" class="' + (paneMode === 'draft' ? 'on' : '') + '" data-m="draft">Draft</button>';
+    (hasCalc || ladder ? '<button type="button" class="' + (paneMode === 'calc' ? 'on' : '') + '" data-m="calc">Calculator</button>' : '') +
+    (ladder ? '<button type="button" class="' + (paneMode === 'draft' ? 'on' : '') + '" data-m="draft">Draft</button>' : '') +
+    (hasJobs ? '<button type="button" class="' + (paneMode === 'jobs' ? 'on' : '') + '" data-m="jobs">Jobs' + (paneJobs.length > 1 ? ' <i>' + paneJobs.length + '</i>' : '') + '</button>' : '');
   wrap.querySelectorAll('button').forEach(b => {
     b.onclick = () => {
       paneMode = b.getAttribute('data-m');
       renderPaneToggle();
-      if (paneMode === 'draft') drawDraft(); else restoreCalc();
+      if (paneMode === 'draft') drawDraft(); else if (paneMode === 'jobs') showJobsInPane(); else restoreCalc();
     };
   });
 }
@@ -1502,6 +1541,8 @@ function restoreCalc() {
   paneMode = 'calc';
   body.innerHTML = '';
   body.appendChild(lastCalcCard);
+  const hd = document.querySelector('.calc-pane-hd span');
+  if (hd) hd.textContent = 'Calculator';
   // The action bar belongs to this view, so it comes back with the card.
   // Rebuilding only the card left the pane with no way to save or order until
   // something else forced a repaint.
@@ -2043,9 +2084,13 @@ function renderCard(box, j) {
   box.classList.add('has-cards');
   box.querySelectorAll('.typing-dots').forEach(n => n.remove());
   switch (j.type) {
-    case 'job_card':
-      box.appendChild(buildJobCard(j.data || {}));
+    case 'job_card': {
+      // 1.20.38: on wide screens the job card lives in the pane's Jobs tab — the chat gets a one-line marker
+      const jc = buildJobCard(j.data || {});
+      if (usePane()) { box.appendChild(jobMarker(j.data || {}, jc)); showJobsInPane(); }
+      else box.appendChild(jc);
       break;
+    }
     case 'price_quote': {
       const card = buildPriceCard(Object.assign({ __replace: j.replace }, j.data || {}));
       // Wide screens: the quote lives in the side pane so it stays put while the
