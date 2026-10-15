@@ -27,7 +27,7 @@ const path = require('path');
 const mysql = require('mysql2');   // only for mysql.escape() in the read-only CRM look-ups
 
 module.exports = function mountBookkeeping(app, deps) {
-  const { db, crypto, anthropic, auth, serveVersionedHtml, google, keyPath, runQuery, sendMail } = deps;
+  const { db, crypto, anthropic, auth, serveVersionedHtml, google, keyPath, runQuery, sendMail, Notify } = deps;
   const MODEL = process.env.BOOKKEEPER_MODEL || deps.model;
   const MODEL_LIGHT = process.env.BOOKKEEPER_MODEL_LIGHT || deps.modelLight || MODEL;   // triage: cheap, text only
   const env = (k) => String(process.env[k] || '').trim();
@@ -786,6 +786,7 @@ module.exports = function mountBookkeeping(app, deps) {
     }
     return out;
   }
+  if (Notify) { Notify.register('bk.alerts', async () => (await settings()).alert_to); Notify.register('bk.loans', async () => (await settings()).alert_to); Notify.register('bk.ar', async () => { const s = await settings(); return s.ar_to + (s.ar_cc ? ' (cc ' + s.ar_cc + ')' : ''); }); }   // 1.20.74
   // 1.19.144: a loan month past its due day + 7 days with no linked payment → one email per loan-month to alert_to
   async function loanAlerts(who) {
     const s = await settings(); if (!sendMail) return { sent: 0, n: 0 };
@@ -796,7 +797,8 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!due.length) return { sent: 0, n: 0 };
     const text = 'BookkeeperAI — loan payments not seen at the bank\n\n' + due.map(d => '• ' + d.l.name + (d.l.vendor_name ? ' (' + d.l.vendor_name + ')' : '') + ' — ' + d.mth + ': no payment of $' + Number(d.l.math.payment || d.l.math.monthly).toFixed(2) + ' linked (due on the ' + d.l.calendar.due_day + ')').join('\n') +
       '\n\nIf it was paid, link the bank line to the loan in the Bank feed (Loan payment? → Match). Open Loans & Leases: ' + NOVA_URL + '/bookkeeping?tab=accounts&sub=loans';
-    try { await sendMail({ to: s.alert_to, subject: 'BookkeeperAI: ' + due.length + ' loan payment' + (due.length === 1 ? '' : 's') + ' not seen', text }); } catch (e) { errlog('loan alert mail', e.message); return { sent: 0, n: due.length, error: e.message }; }
+    if (Notify && !Notify.on('bk.loans')) return { sent: 0, n: due.length, off: true };   // 1.20.74: Admin → Emails
+    try { await sendMail({ to: Notify ? Notify.to('bk.loans', s.alert_to) : s.alert_to, subject: 'BookkeeperAI: ' + due.length + ' loan payment' + (due.length === 1 ? '' : 's') + ' not seen', text }); } catch (e) { errlog('loan alert mail', e.message); return { sent: 0, n: due.length, error: e.message }; }
     due.forEach(d => { seen[d.k] = nowIso(); }); await setSetting('loan_alerted', JSON.stringify(seen), who || 'clock');
     await audit(who || 'clock', 'loan.alert', null, { n: due.length }); return { sent: 1, n: due.length };
   }
@@ -823,7 +825,8 @@ module.exports = function mountBookkeeping(app, deps) {
       (notrec.length ? 'NOT RECEIVED (' + notrec.length + ')\n' + notrec.map(line).join('\n') + '\n\n' : '') +
       (rows.length ? 'Open Purchases: ' + NOVA_URL + '/bookkeeping?tab=purchases\n' : '') + 'This email goes out once a day. Change the time or the address under Bookkeeping → Settings → Alerts.';
     const subject = 'BookkeeperAI: ' + [auto.rows.length ? auto.rows.length + ' auto-categorized' : '', rows.length ? rows.length + ' purchase' + (rows.length === 1 ? '' : 's') + ' overdue' : ''].filter(Boolean).join(' · ');
-    try { await sendMail({ to: s.alert_to, subject, text }); } catch (e) { errlog('alert mail', e.message); return { sent: 0, n: rows.length, error: e.message }; }
+    if (Notify && !Notify.on('bk.alerts')) return { sent: 0, n: rows.length, off: true };   // 1.20.74: Admin → Emails
+    try { await sendMail({ to: Notify ? Notify.to('bk.alerts', s.alert_to) : s.alert_to, subject, text }); } catch (e) { errlog('alert mail', e.message); return { sent: 0, n: rows.length, error: e.message }; }
     for (const r of rows) await dbRun("UPDATE bk_purchases SET alerted_at = datetime('now') WHERE id = ?", [r.id]);
     await audit(who || 'clock', 'purchase.alert', null, { n: rows.length, auto: auto.rows.length, to: s.alert_to });
     return { sent: 1, n: rows.length, auto: auto.rows.length };
@@ -2568,7 +2571,8 @@ module.exports = function mountBookkeeping(app, deps) {
     const html = '<div style="font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#111"><p>A customer payment landed in the bank and was filed as <b>' + esc(t.category) + '</b> in BookkeeperAI. Please apply it to the customer\'s open invoices.</p>' +
       '<table style="border-collapse:collapse">' + lines.map(l => '<tr><td style="padding:3px 14px 3px 0;color:#666;white-space:nowrap">' + esc(l[0]) + '</td><td style="padding:3px 0"><b>' + esc(l[1]) + '</b></td></tr>').join('') + '</table>' +
       '<p style="margin-top:14px"><a href="https://nova.axiomprint.com/bookkeeping?tab=bank&sub=categorized">Open the bank feed</a></p></div>';
-    try { await sendMail({ to: s.ar_to, cc: s.ar_cc || undefined, subject: 'Customer payment received: ' + usd(amount) + ' from ' + (t.vendor_name || t.merchant || t.name) + ' (' + t.date + ')', text, html }); }
+    if (Notify && !Notify.on('bk.ar')) return res.json({ ok: false, error: 'Notify Accounts Receivable is switched off under Admin → Emails.' });
+    try { await sendMail({ to: Notify ? Notify.to('bk.ar', s.ar_to) : s.ar_to, cc: s.ar_cc || undefined, subject: 'Customer payment received: ' + usd(amount) + ' from ' + (t.vendor_name || t.merchant || t.name) + ' (' + t.date + ')', text, html }); }
     catch (e) { errlog('ar mail', e.message); return res.json({ ok: false, error: 'Could not send: ' + e.message }); }
     await dbRun('UPDATE bk_transactions SET ar_notified_at = ?, ar_notified_by = ? WHERE id = ?', [nowIso(), who, id]);
     await audit(who, 'ar.notify', id, { to: s.ar_to, cc: s.ar_cc, amount, note });

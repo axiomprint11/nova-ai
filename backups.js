@@ -14,13 +14,15 @@
 const fs = require('fs'), path = require('path'), zlib = require('zlib'), os = require('os');
 
 module.exports = function mountBackups(app, deps) {
-  const { db, auth, adminOnly, sendMail, google, keyPath, gmailUser, dbPath } = deps;
+  const { db, auth, adminOnly, sendMail, google, keyPath, gmailUser, dbPath, Notify } = deps;
   const env = (k, d) => { const v = String(process.env[k] || '').trim(); return v || d; };
   const DIR = env('BACKUP_DIR', path.join(path.dirname(dbPath), 'backups'));
   const KEEP = Math.max(3, parseInt(env('BACKUP_KEEP_DAYS', '30')) || 30);
   const AT = env('BACKUP_AT', '03:15');
   const DRIVE_FOLDER = env('BACKUP_DRIVE_FOLDER', '');
   const ALERT_TO = env('BACKUP_ALERT_TO', 'gary@axiomprint.com');
+  if (Notify) Notify.register('backup', () => ALERT_TO);
+  const mailOn = () => !Notify || Notify.on('backup'); const mailTo = () => Notify ? Notify.to('backup', ALERT_TO) : ALERT_TO;
   const TZ = 'America/Los_Angeles';
   const log = (m) => console.log('BACKUP ' + m), errlog = (m) => console.error('BACKUP ' + m);
   let last = { at: null, ok: null, file: null, size: 0, ms: 0, drive: null, error: null }, running = false;
@@ -75,11 +77,11 @@ module.exports = function mountBackups(app, deps) {
       const pruned = prune();
       last = { at: new Date().toISOString(), ok: true, file: path.basename(file), size, ms: Date.now() - t0, drive, pruned, by: who || 'clock', error: null };
       log('wrote ' + path.basename(file) + ' (' + Math.round(size / 1024) + ' KB, ' + last.ms + ' ms)' + (drive && drive.id ? ' · Drive ok' : drive && drive.skipped ? ' · Drive skipped: ' + drive.skipped : drive && drive.error ? ' · Drive FAILED' : '') + (pruned ? ' · pruned ' + pruned : ''));
-      if (drive && drive.error && sendMail) sendMail({ to: ALERT_TO, subject: 'Nova backup: written on the server, Drive upload failed', text: 'The nightly users.db backup ' + path.basename(file) + ' was written to ' + DIR + ' but could not be uploaded to Google Drive:\n\n' + drive.error + '\n\nIf the message is about scope or permission, add https://www.googleapis.com/auth/drive.file to the service account\'s domain-wide delegation in Google Admin, and share the folder ' + DRIVE_FOLDER + ' with ' + gmailUser + '.' }).catch(() => {});
+      if (drive && drive.error && sendMail && mailOn()) sendMail({ to: mailTo(), subject: 'Nova backup: written on the server, Drive upload failed', text: 'The nightly users.db backup ' + path.basename(file) + ' was written to ' + DIR + ' but could not be uploaded to Google Drive:\n\n' + drive.error + '\n\nIf the message is about scope or permission, add https://www.googleapis.com/auth/drive.file to the service account\'s domain-wide delegation in Google Admin, and share the folder ' + DRIVE_FOLDER + ' with ' + gmailUser + '.' }).catch(() => {});
     } catch (e) {
       last = { at: new Date().toISOString(), ok: false, error: e.message, ms: Date.now() - t0, by: who || 'clock' };
       errlog('FAILED: ' + e.message);
-      if (sendMail) sendMail({ to: ALERT_TO, subject: 'Nova backup FAILED on ' + os.hostname(), text: 'The nightly users.db backup did not run:\n\n' + e.message + '\n\nDirectory: ' + DIR }).catch(() => {});
+      if (sendMail && mailOn()) sendMail({ to: mailTo(), subject: 'Nova backup FAILED on ' + os.hostname(), text: 'The nightly users.db backup did not run:\n\n' + e.message + '\n\nDirectory: ' + DIR }).catch(() => {});
     } finally { running = false; }
     return last;
   }

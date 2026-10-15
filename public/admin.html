@@ -76,6 +76,14 @@ tr:last-child td { border-bottom: none; }
 .agent-soon { display: inline-block; font-size: 11px; font-weight: 600; color: var(--muted); background: var(--bg); border: 1px solid var(--line); padding: 3px 10px; border-radius: 12px; }
 .conn-list { display: flex; flex-direction: column; gap: 12px; max-width: 640px; }
 .conn-row { display: flex; align-items: center; gap: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+/* 1.20.74: Admin → Emails */
+.em-group { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); font-weight: 700; margin: 14px 0 6px; }
+.em-row.off .conn-name, .em-row.off .conn-detail { color: var(--muted); }
+.em-switch { position: relative; width: 40px; height: 22px; flex: none; cursor: pointer; } .em-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.em-switch span { position: absolute; inset: 0; border-radius: 999px; background: #d1d5db; transition: background .15s; } .em-switch span::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+.em-switch input:checked + span { background: #22c55e; } .em-switch input:checked + span::after { transform: translateX(18px); }
+.em-to { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; } .em-to .em-l { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.em-inp { flex: 1; min-width: 240px; max-width: 520px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: 13px/1.3 inherit; } .em-to small { color: var(--muted); font-size: 11.5px; }
 .conn-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .conn-dot.on { background: var(--green); box-shadow: 0 0 0 3px var(--green-light); }
 .conn-dot.off { background: var(--muted); }
@@ -416,6 +424,13 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
           </aside>
         </div>
       </div>
+      <div id="tabEmails" style="display:none">
+        <h2 class="h2">Emails</h2>
+        <p style="color:var(--ink-soft); font-size:14px; max-width:680px; line-height:1.6; margin-bottom:18px;">
+          Every email Nova sends to the team, in one place. Switch a kind off and it is never sent (Nova still records what it would have said). Leave <b>Send to</b> empty to use the address set where that feature is configured, or type your own list.
+        </p>
+        <div id="emailList" class="conn-list"></div>
+      </div>
       <div id="tabConnections" style="display:none">
         <h2 class="h2">Connections</h2>
         <p style="color:var(--ink-soft); font-size:14px; max-width:640px; line-height:1.6; margin-bottom:22px;">
@@ -523,7 +538,7 @@ async function checkAccess() {
     // Landing from the main page (?mine=1): everyone starts on their OWN chats (admins can pick another user).
     if (q.get('mine') === '1' && MY_KEY) pendingHistoryUser = MY_KEY;
     if (want === 'agents' && q.get('agent') && IS_ADMIN) { trainAgent(q.get('agent')); }
-    else if (want && (IS_ADMIN ? ['history', 'users', 'knowledge', 'pricing', 'connections'] : ['history'].concat(MY_KNOWLEDGE_LEVEL !== 'none' ? ['knowledge'] : [])).indexOf(want) > -1) tab(want);
+    else if (want && (IS_ADMIN ? ['history', 'users', 'knowledge', 'pricing', 'connections', 'emails'] : ['history'].concat(MY_KNOWLEDGE_LEVEL !== 'none' ? ['knowledge'] : [])).indexOf(want) > -1) tab(want);
     else tab('history');
   } catch (e) { showGate('Connection error. <a href="/">Back</a>'); }
 }
@@ -548,6 +563,7 @@ function tab(t) {
   document.getElementById('tabAgents').style.display = t === 'agents' ? 'block' : 'none';
   document.getElementById('tabKnowledge').style.display = t === 'knowledge' ? 'block' : 'none';
   document.getElementById('tabConnections').style.display = t === 'connections' ? 'block' : 'none';
+  document.getElementById('tabEmails').style.display = t === 'emails' ? 'block' : 'none';
   document.getElementById('tabPricing').style.display = t === 'pricing' ? 'block' : 'none';
   NovaNav.setActive(t === 'agents' ? 'history' : t);
   if (t === 'users') loadUsers();
@@ -571,6 +587,7 @@ function tab(t) {
     });
   }
   else if (t === 'connections') loadConnections();
+  else if (t === 'emails') loadEmails();
   else if (t === 'pricing') ipLoad();
   else if (t === 'agents') loadAgents();
   else if (t === 'knowledge') dkSwitch(dkActiveTab);
@@ -795,6 +812,32 @@ async function loadBackups(box) {
     document.getElementById('bkNow').onclick = async () => { const b = document.getElementById('bkNow'); b.disabled = true; b.textContent = 'Working…'; await fetch('/api/admin/backups/run', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: '{}' }); paint(); };
   };
   paint().catch(() => row.remove());
+}
+
+// 1.20.74: Admin → Emails — every team-facing email kind: on / off and who gets it (notify_prefs on the server)
+async function loadEmails() {
+  const box = document.getElementById('emailList');
+  box.innerHTML = '<div style="color:var(--muted);font-size:13px">Loading...</div>';
+  const r = await fetch('/api/admin/notifications', { headers: { 'Authorization': 'Bearer ' + token } }); const j = await r.json();
+  if (!j.ok) { box.innerHTML = '<div class="feedback err">' + esc(j.error || 'Error') + '</div>'; return; }
+  box.innerHTML = '';
+  let group = '';
+  j.kinds.forEach(k => {
+    if (k.group !== group) { group = k.group; const h = document.createElement('div'); h.className = 'em-group'; h.textContent = group; box.appendChild(h); }
+    const row = document.createElement('div'); row.className = 'conn-row em-row' + (k.enabled ? '' : ' off'); row.dataset.kind = k.kind;
+    row.innerHTML = '<label class="em-switch" title="' + (k.enabled ? 'On — click to stop these emails' : 'Off — click to send them again') + '"><input type="checkbox"' + (k.enabled ? ' checked' : '') + '><span></span></label>' +
+      '<div class="conn-info"><div class="conn-name">' + esc(k.name) + '</div><div class="conn-detail">' + esc(k.desc) + '</div>' +
+      '<div class="em-to"><span class="em-l">Send to</span>' + (k.fixed_to ? '<span style="font-size:13px">' + esc(k.default_to) + '</span>' : '<input type="text" class="em-inp" value="' + esc(k.recipients || '') + '" placeholder="' + esc(k.default_to || 'the configured address') + '"><button class="btn-mini em-save" hidden>Save</button>') +
+      '<small>' + (k.recipients ? 'your list' : 'from ' + esc(k.where)) + (k.updated_at ? ' · changed ' + esc(new Date(k.updated_at.replace(' ', 'T') + 'Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })) + (k.updated_by ? ' by ' + esc(String(k.updated_by).split('@')[0]) : '') : '') + '</small></div></div>' +
+      '<span class="conn-status ' + (k.enabled ? 'on' : 'off') + '">' + (k.enabled ? 'Sending' : 'Off') + '</span>';
+    const save = async (body) => { const rr = await fetch('/api/admin/notifications/' + encodeURIComponent(k.kind), { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const jj = await rr.json(); if (!jj.ok) { alert(jj.error || 'Could not save'); return false; } return true; };
+    row.querySelector('.em-switch input').onchange = async (e) => { const on = e.target.checked; if (await save({ enabled: on })) loadEmails(); else e.target.checked = !on; };
+    const inp = row.querySelector('.em-inp'), btn = row.querySelector('.em-save');
+    if (inp) inp.oninput = () => { btn.hidden = inp.value.trim() === (k.recipients || ''); };
+    if (btn) btn.onclick = async () => { if (await save({ recipients: inp.value.trim() })) loadEmails(); };
+    if (inp) inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); btn.click(); } };
+    box.appendChild(row);
+  });
 }
 
 async function loadUsers() {

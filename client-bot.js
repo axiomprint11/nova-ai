@@ -1437,6 +1437,7 @@ module.exports = function mountClientBot(app, deps) {
   // ESCALATE_TO (default gary@axiomprint.com) with the job and the customer, at most once a day per
   // job, and an event line in the conversation. NovaAI tells the customer it is past due and escalated.
   const ESCALATE_TO = String(process.env.CLIENT_BOT_ESCALATE_TO || 'gary@axiomprint.com').trim();
+  if (deps.Notify) deps.Notify.register('client.escalate', () => ESCALATE_TO);
   const NOVA_URL = String(process.env.NOVA_PUBLIC_URL || 'https://nova.axiomprint.com').replace(/\/+$/, '');
   const htmlEsc = (t) => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   async function escalatePastDue(projects, who, ctx) {
@@ -1493,7 +1494,8 @@ module.exports = function mountClientBot(app, deps) {
         '<p><a href="' + link + '">' + (ctx.via ? 'Open the call in Nova' : 'Open the conversation in Nova') + '</a></p></div>';
       try {
         if (!deps.sendMail) throw new Error('email sending is not set up');
-        emailId = await deps.sendMail({ to: ESCALATE_TO, subject: subject, text: text, html: html, replyTo: c.email || undefined });
+        if (deps.Notify && !deps.Notify.on('client.escalate')) { ok = false; error = 'switched off under Admin → Emails'; }   // 1.20.74: recorded, not sent
+        else emailId = await deps.sendMail({ to: deps.Notify ? deps.Notify.to('client.escalate', ESCALATE_TO) : ESCALATE_TO, subject: subject, text: text, html: html, replyTo: c.email || undefined });
       } catch (e) {
         ok = false; error = String(e && e.message || e).slice(0, 300);
         console.error('CLIENT_BOT escalation email', error);
@@ -2174,6 +2176,8 @@ module.exports = function mountClientBot(app, deps) {
   const { quotePdf } = require('./quote-pdf');
   const isMail = (e) => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(String(e || ''));
   const MAIL_BCC = String(process.env.CLIENT_BOT_MAIL_BCC || 'gary@axiomprint.com').trim();
+  if (deps.Notify) deps.Notify.register('client.quote_bcc', () => MAIL_BCC);
+  const quoteBcc = () => deps.Notify ? (deps.Notify.on('client.quote_bcc') ? deps.Notify.to('client.quote_bcc', MAIL_BCC) : '') : MAIL_BCC;
   const usdFmt = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const laDate = (d) => new Date(d || Date.now()).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric' });
   // Every price card of a chat, newest version of each (edits replace the earlier card with the same key), in the order first quoted.
@@ -2236,7 +2240,7 @@ module.exports = function mountClientBot(app, deps) {
       intro: (summary ? summary + ' ' : '') + 'Each Order now link opens the product on axiomprint.com with these options preselected.', cards: cards });
     const subject = 'Your AxiomPrint quote' + (cards.length === 1 ? ' — ' + cards[0].product : ' (' + cards.length + ' products)');
     const mail = quoteMail(cards, who1, 'Here ' + (cards.length === 1 ? 'is the quote' : 'are the quotes') + ' from your chat with NovaAI on axiomprint.com, with a short recap of what we covered. Press Order now to add one to your cart with these options.', null, summary);
-    await deps.sendMail({ to: email, subject: subject, text: mail.text, html: mail.html, bcc: chat.source === 'website' && MAIL_BCC ? MAIL_BCC : undefined,
+    await deps.sendMail({ to: email, subject: subject, text: mail.text, html: mail.html, bcc: chat.source === 'website' && quoteBcc() ? quoteBcc() : undefined,
       attachments: [{ filename: 'AxiomPrint-quote-' + chatId + '.pdf', type: 'application/pdf', content: pdf }] });
     if (name || email) await dbRun("UPDATE client_chats SET contact_name = COALESCE(NULLIF(?, ''), contact_name), contact_email = ?, updated_at = datetime('now') WHERE id = ?", [name, email, chatId]).catch(() => {});
     await dbRun('INSERT INTO client_messages (chat_id, role, content, cards) VALUES (?,?,?,?)', [chatId, 'event', 'Quote emailed to ' + email + (name ? ' (' + name + ')' : '') + (by === 'tool' ? ' by NovaAI' : ' — Send to me') + ': ' + cards.map(c => c.product).join(', '),

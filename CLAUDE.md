@@ -241,6 +241,20 @@ the month's outcomes) and a Daily / Weekly / Monthly bar chart: `public/nova-sta
 (phone calls) and `GET /api/admin/client-bot/stats` (website conversations with a message) return. `usage-stats.js`
 buckets timestamps by Los Angeles day / Monday week / month.
 
+## Email notifications (Admin → Emails, 1.20.74)
+
+`notifications.js` (`Notify = require('./notifications')({ app, db, auth, adminOnly })` in server.js, passed to client-bot, talk-ai,
+bookkeeping and backups as `Notify`) is the one list of every email Nova sends the **team**: `KINDS` — `talk.summary` (Setup's
+"email a summary of every call"), `talk.message`, `talk.csr`, `talk.relay` (fixed recipient), `client.escalate`, `client.quote_bcc`,
+`bk.alerts`, `bk.loans`, `bk.ar`, `backup`. SQLite `notify_prefs` (kind, enabled, recipients, updated_at/by); the sending code asks
+`Notify.on(kind)` before composing (a switched-off kind is never sent and never recorded as sent — the escalation row says "switched
+off", the CSR / relay / alert functions return `{ off: true }`) and `Notify.to(kind, fallback)` for the address (an override replaces the
+configured one); each module `Notify.register(kind, () => default address)` so the page can show where the default comes from.
+`GET /api/admin/notifications`, `POST /api/admin/notifications/:kind {enabled, recipients}`. Admin → **Emails** (nova-nav item `emails`,
+`#tabEmails`, `loadEmails()`): a row per kind grouped TalkAi / Website chat / Bookkeeping / System — a switch, the description, **Send to**
+(empty = the configured address, shown as the placeholder, with "from <where>"; a typed list = the override), Sending / Off. Customer-facing
+mail (quotes to callers / customers) is not here. Add a kind there whenever a new team email is added.
+
 ## Nova for clients (customer-facing bot)
 
 `client-bot.js` mounts a **separate** bot for axiomprint.com customers: its own SQLite tables (`client_chats`,

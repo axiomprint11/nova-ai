@@ -18,6 +18,7 @@
     users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
     knowledge: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
     connections: '<path d="M9 7V2"/><path d="M15 7V2"/><path d="M6 7h12v4a6 6 0 0 1-12 0z"/><path d="M12 17v5"/>',
+    emails: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
     signout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
     pricing: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z"/>',
     delivery: '<path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>',
@@ -38,7 +39,8 @@
      ['designer', 'Designer AI', '/designer-ai', 'admin']],
     [['users', 'Users', '/admin?tab=users', 'admin'],
      ['knowledge', 'Domain Knowledge', '/admin?tab=knowledge', 'knowledge'],
-     ['connections', 'Connectors', '/admin?tab=connections', 'admin']],
+     ['connections', 'Connectors', '/admin?tab=connections', 'admin'],
+     ['emails', 'Emails', '/admin?tab=emails', 'admin']],
     [['pricing', 'Installation Pricing', '/admin?tab=pricing', 'admin'],
      ['delivery', 'Delivery Pricing', null, 'admin'],
      ['templates', 'Templates', null, 'admin']]
@@ -50,7 +52,7 @@
     ar: ['/api/bookkeeping/ar/unread-count', 'customer payments waiting to be matched']   // 1.20.14
   };
   // Pages that are their own tab of admin.html (switch in place there, instead of reloading).
-  const ADMIN_TABS = ['history', 'users', 'knowledge', 'connections', 'pricing'];
+  const ADMIN_TABS = ['history', 'users', 'knowledge', 'connections', 'pricing', 'emails'];
 
   const CSS = `
 .nn { width: 224px; flex: none; display: flex; flex-direction: column; min-height: 0; background: #fcfcfe; border-right: 1px solid #ececf3;

@@ -212,11 +212,13 @@ module.exports = function talkHandoff(o) {
     if (!f) return { sent: false, error: 'No such call.' };
     if (f.c.csr_sent_at && !force) return { sent: false, already: f.c.csr_sent_at };
     const m = csrEmail(f);
+    if (deps.Notify && !deps.Notify.on('talk.csr')) return { sent: false, off: true };   // 1.20.74: switched off under Admin → Emails
     // 1.19.45: asked for a person → the summary goes TO that person, the CSR list on Cc (nobody else calls the client first).
     const person = f.staff && f.staff.email ? f.staff.email : null;
-    const to = person || s.csr_to;
-    const cc = person ? s.csr_to.split(/[,;\s]+/).filter(a => a && a.toLowerCase() !== person.toLowerCase()).join(', ') : '';
-    const toLabel = person ? person + (cc ? ' (cc ' + cc + ')' : '') : s.csr_to;
+    const csrTo = deps.Notify ? deps.Notify.to('talk.csr', s.csr_to) : s.csr_to;
+    const to = person || csrTo;
+    const cc = person ? String(csrTo || '').split(/[,;\s]+/).filter(a => a && a.toLowerCase() !== person.toLowerCase()).join(', ') : '';
+    const toLabel = person ? person + (cc ? ' (cc ' + cc + ')' : '') : csrTo;
     try {
       await deps.sendMail({ to: to, cc: cc || undefined, subject: m.subject, html: m.html, text: m.text });
       await dbRun("UPDATE talk_calls SET csr_sent_at = datetime('now'), csr_to = ? WHERE id = ?", [toLabel, callId]);
@@ -279,6 +281,7 @@ module.exports = function talkHandoff(o) {
       if (sm && sm.by !== 'rule') f.c = Object.assign({}, f.c, { ai_summary: sm.summary });
     } else f = (await ensureSummary(callId)) || f;
     const m = relayEmail(f);
+    if (deps.Notify && !deps.Notify.on('talk.relay')) return { sent: false, off: true };   // 1.20.74
     try {
       await deps.sendMail({ to: f.staff.email, subject: m.subject, html: m.html, text: m.text });
       await dbRun("UPDATE talk_calls SET staff_sent_at = datetime('now'), staff_to = ? WHERE id = ?", [f.staff.email, callId]);

@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.73';
-const NOVA_BUILT = '10-15-2026 11:50am';
+const NOVA_VERSION = '1.20.74';
+const NOVA_BUILT = '10-15-2026 12:10pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -9530,21 +9530,23 @@ mountMcp(app, { runQuery, dataDictionary: DATA_DICTIONARY });
 const WebKnowledge = require('./website-knowledge')({ db });
 app.get('/api/website-knowledge/status', auth, (req, res) => res.json(Object.assign({ ok: true }, WebKnowledge.status())));
 app.post('/api/admin/website-knowledge/refresh', auth, adminOnly, async (req, res) => res.json(await WebKnowledge.refresh(!!(req.body && req.body.full))));   // axiomprint.com's words about each product + the blog (1.20.50)
-const clientBot = require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly, Shipping, DesignServices, WebKnowledge,
+// 1.20.74: every email Nova sends the team, on / off + recipients per kind (Admin → Emails); modules ask Notify.on / Notify.to
+const Notify = require('./notifications')({ app, db, auth, adminOnly });
+const clientBot = require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly, Shipping, DesignServices, WebKnowledge, Notify,
   quoteProduct, buildOrderLink, stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming,
   InstallPricing, getInstallPricing: () => installPricing, routeLookup, toTime24, driveFileBytes,
   extractAttachmentText, relatedRules, sendMail, closedDays, officeHours, loadClientTraining, dataDir: __dirname });
 // TalkAi — NovaAI on the phone (Twilio + ElevenLabs), sharing the client bot's tools and rules (talk-ai.js).
 require('./talk-ai')(app, { db, runQuery, mysql, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly, serveVersionedHtml,
-  sendMail, dataDir: __dirname, loadTalkTraining, closedDays, officeHours }, clientBot);
+  sendMail, dataDir: __dirname, loadTalkTraining, closedDays, officeHours, Notify }, clientBot);
 
 // Bookkeeping AI — bank transactions, the accounting inbox, bill drafts, the Daily Brief (bookkeeping.js).
-const bookkeeping = require('./bookkeeping')(app, { db, crypto, jwt, anthropic, model: MODEL_MAIN, modelLight: MODEL_LIGHT, auth, serveVersionedHtml, google, runQuery, sendMail,
+const bookkeeping = require('./bookkeeping')(app, { db, crypto, jwt, anthropic, model: MODEL_MAIN, modelLight: MODEL_LIGHT, auth, serveVersionedHtml, google, runQuery, sendMail, Notify,
   keyPath: '/opt/axiom-ai/gmail-key.json', dataDir: __dirname });
 
 // 1.20.14: Designer AI — AutoAssign Jobs (the prepress tier queues, the designers, the matcher); admins only for now
 require('./designer-ai')(app, { db, auth, adminOnly, serveVersionedHtml, runQuery, anthropic, model: MODEL_MAIN, sendMail });
-require('./backups')(app, { db, auth, adminOnly, sendMail, google, keyPath: '/opt/axiom-ai/gmail-key.json', gmailUser: GMAIL_USER, dbPath: DB_PATH });   // 1.20.68: nightly users.db snapshots
+require('./backups')(app, { db, auth, adminOnly, sendMail, Notify, google, keyPath: '/opt/axiom-ai/gmail-key.json', gmailUser: GMAIL_USER, dbPath: DB_PATH });   // 1.20.68: nightly users.db snapshots
 
 app.get(/^(?!\/api).*/, serveVersionedHtml('index.html'));
 

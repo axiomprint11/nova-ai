@@ -1161,11 +1161,11 @@ module.exports = function mountTalkAi(app, deps, bot) {
     await addTurn(ctx.call.id, 'event', 'Message taken for the team: ' + topic + ' — ' + msg, [{ tool: 'take_message', input: { caller_name: name, callback_number: back, email: email, topic: topic } }]);
     await dbRun("UPDATE talk_calls SET outcome = 'message', updated_at = datetime('now') WHERE id = ?", [ctx.call.id]).catch(() => {});
     let sent = false;
-    if (deps.sendMail && s.notify_to) {
+    if (deps.sendMail && s.notify_to && (!deps.Notify || deps.Notify.on('talk.message'))) {
       const rows = [['For', staff ? (staff.name ? staff.name + ' (' + staff.email + ') — the call summary is relayed to them after the call' : 'Asked for "' + staff.asked + '" — not found on the team list') : ''],
         ['Caller', name || '(no name given)'], ['Call back', back], ['Email', email], ['Customer', c ? (c.name || '') + (c.company ? ' — ' + c.company : '') + ' (verified, #' + c.id + ')' : 'not verified'],
         ['Topic', topic], ['Message', msg]].filter(r => r[1]);
-      const mail = { to: s.notify_to, subject: 'TalkAi message' + (staff && staff.name ? ' for ' + staff.name : s._line ? ' for ' + amFirst(s._line) : '') + ': ' + topic + (name ? ' — ' + name : '') + (back ? ' (' + back + ')' : ''),
+      const mail = { to: deps.Notify ? deps.Notify.to('talk.message', s.notify_to) : s.notify_to, subject: 'TalkAi message' + (staff && staff.name ? ' for ' + staff.name : s._line ? ' for ' + amFirst(s._line) : '') + ': ' + topic + (name ? ' — ' + name : '') + (back ? ' (' + back + ')' : ''),
           text: 'NovaAI took a message on the phone.\n\n' + rows.map(r => r[0] + ': ' + r[1]).join('\n') + '\n\nCall: ' + callLink(ctx.call.id),
           html: '<div style="font:14px/1.5 Arial,sans-serif;color:#1f2937"><p><b>NovaAI took a message on the phone.</b></p><table style="border-collapse:collapse;font-size:13px">' +
             rows.map(r => '<tr><td style="padding:4px 12px 4px 0;color:#6b7280;vertical-align:top">' + r[0] + '</td><td style="padding:4px 0">' + htmlEsc(r[1]) + '</td></tr>').join('') +
@@ -1867,11 +1867,11 @@ module.exports = function mountTalkAi(app, deps, bot) {
     // The CSR team (and the CRM) hear about it: Dialpad still shows this call as missed.
     handoff.afterCall(call.id).catch(e => console.error('TALKAI handoff', e.message));
     const s = await settings();
-    if (s.summary_mail && s.notify_to && deps.sendMail && call.source === 'phone') {
+    if (s.summary_mail && s.notify_to && deps.sendMail && call.source === 'phone' && (!deps.Notify || deps.Notify.on('talk.summary'))) {
       const fresh = await dbGet('SELECT * FROM talk_calls WHERE id = ?', [call.id]);
       const who = fresh.customer_name ? fresh.customer_name + (fresh.company ? ' (' + fresh.company + ')' : '') : (fresh.from_number || 'Unknown caller');
       const lines = transcript.slice(0, 80).map(t => (t.role === 'caller' ? 'Caller: ' : 'NovaAI: ') + t.text);
-      const mail = { to: s.notify_to, subject: 'TalkAi call: ' + who + (fresh.duration_sec ? ' — ' + Math.round(fresh.duration_sec / 60 * 10) / 10 + ' min' : ''),
+      const mail = { to: deps.Notify ? deps.Notify.to('talk.summary', s.notify_to) : s.notify_to, subject: 'TalkAi call: ' + who + (fresh.duration_sec ? ' — ' + Math.round(fresh.duration_sec / 60 * 10) / 10 + ' min' : ''),
         text: (fresh.summary || '') + '\n\n' + lines.join('\n') + '\n\nCall: ' + callLink(call.id),
         html: '<div style="font:14px/1.5 Arial,sans-serif;color:#1f2937"><p><b>' + htmlEsc(who) + '</b> · ' + htmlEsc(fresh.from_number || '') + '</p>' +
           (fresh.summary ? '<p>' + htmlEsc(fresh.summary) + '</p>' : '') + '<p style="color:#6b7280;font-size:13px">' + lines.map(htmlEsc).join('<br>') + '</p>' +
@@ -1919,6 +1919,9 @@ module.exports = function mountTalkAi(app, deps, bot) {
       return { ok: false, error: 'The recording could not be fetched right now.' };
     } finally { audioBusy.delete(c.id); }
   }
+  // 1.20.74: Admin → Emails — what each TalkAi email kind goes to by default (the Setup fields), for the list and the switches
+  const N = deps.Notify;
+  if (N) { N.register('talk.summary', async () => (await settings()).notify_to); N.register('talk.message', async () => (await settings()).notify_to); N.register('talk.csr', async () => (await settings()).csr_to); N.register('talk.relay', () => 'the person the caller asked for'); }
   const handoff = require('./talk-handoff')({ app, deps, dbGet, dbAll, dbRun, settings, env, hit, NOVA_URL, AUDIO_DIR, callLink, htmlEsc, usd2,
     fetchAudio, auth, adminOnly, team });
   function fetchAudioSoon(callId) {
