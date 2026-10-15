@@ -687,7 +687,7 @@
     const cat = st === 'categorized' || st === 'auto';   // 1.20.12: Auto is the Categorized view narrowed to what the system filed by itself
     // 1.19.49: the header filters work in every view (date defaults to the last 30 days); the status is a filter on the Category column.
     let qs = '?status=' + encodeURIComponent(st) + '&q=' + encodeURIComponent(q) + '&lists=1';
-    { const [f, t] = st === 'old' && TF.period !== 'custom' ? ['', ''] : periodRange(TF.period); qs += '&from=' + f + '&to=' + t + ['type', 'category', 'vendor_id', 'vkind', 'source', 'min', 'max', 'account', 'side', 'how'].map(k => TF[k] ? '&' + k + '=' + encodeURIComponent(TF[k]) : '').join(''); }
+    { const [f, t] = (st === 'old' || st === 'auto') && TF.period !== 'custom' ? ['', ''] : periodRange(TF.period);   // 1.20.66: Auto is a review queue — every unreviewed line whatever its bank date (the chip counts them all); a custom range still narrows it qs += '&from=' + f + '&to=' + t + ['type', 'category', 'vendor_id', 'vkind', 'source', 'min', 'max', 'account', 'side', 'how'].map(k => TF[k] ? '&' + k + '=' + encodeURIComponent(TF[k]) : '').join(''); }
     const j = await api('/api/bookkeeping/transactions' + qs);
     const bs = j.by_status || {};
     $('nTxAll').textContent = (bs.new_open != null ? bs.new_open : bs.new || 0) + (bs.pending || 0) + (bs.old || 0) + (bs.categorized || 0); /* 1.19.113: Today also holds filed lines, so All counts only its open ones */ $('nTxNew').textContent = bs.new || 0; $('nTxPending').textContent = bs.pending || 0; $('nTxOld').textContent = bs.old || 0; $('nTxCategorized').textContent = bs.categorized || 0; $('nTxAuto').textContent = bs.auto || 0;   // 1.19.84: the three buckets are disjoint, All is their sum
