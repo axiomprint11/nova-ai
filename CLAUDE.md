@@ -504,6 +504,10 @@ pattern for any new report over a large log table. To add a report, add an entry
   (`SIZE_RE`: a number followed by a unit / quote mark, `a x b` / `a by b`, or "high / wide / tall / long") drops a quantity the
   customer only ever said inside a size (last 4 user messages, the `[PAGE]` note stripped): the default quantity is priced, the
   card shows the yellow quantity box, and `forModel.quantity_note` tells the model why. "5 banners 3x5" keeps the 5.
+  **Page counts are filled from the chat too** (1.20.45): `priceCard` (model calls only) reads the last "48 pages" / "48 pg" in
+  the recent messages and sets the product's `Pages*` field (choice by leading number, or the number field) when the model left it
+  out ("3.5 x 5, 48 pages" had been priced as the 12-page default); `forModel.filled_from_chat` says so, and a count the product
+  does not offer goes to `ignored_options` with the choices.
 - **Plain printing** of pages / sheets / documents (no booklet or other product named) is Document Printing & Copies:
   the client bot's `search_products` adds "document copies" and ranks it first (`PLAIN_PRINT` / `BOUND_PRODUCT`), and
   prompt rule 9d (TalkAi: the EVERYTHING THEY SAID line) says to price with every spec said anywhere in the

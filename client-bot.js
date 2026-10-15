@@ -859,6 +859,21 @@ module.exports = function mountClientBot(app, deps) {
       if (hit) { options[v.title] = hit; if (norm(hit) !== norm(want)) matched.push(v.title.replace(/_/g, ' ') + ' "' + want + '" = ' + hit); }
       else ignored.push(k + ' "' + want + '" (choices: ' + v.choices.slice(0, 12).join(', ') + (v.choices.length > 12 ? '…' : '') + ')');
     });
+    // 1.20.45: a PAGE COUNT the customer said anywhere lately ("48 pages") goes into the product's pages field even
+    // when the model left it out — "3.5 x 5, 48 pages" was priced as a 12-page passport, the default.
+    const filledFromChat = [];
+    if (ctx && ctx.fromModel && ctx.said) {
+      const pm = String(ctx.said).replace(/\[PAGE:[^\]]*\]/g, ' ').match(/(\d{1,4})\s*(?:-\s*)?(?:pages?|pgs?)\b/ig);
+      const pagesVar = pub.vars.find(v => /^pages/.test(norm(v.title)) && !options[v.title]);
+      if (pm && pagesVar) {
+        const n = Number(pm[pm.length - 1].match(/\d+/)[0]);
+        let hit = null;
+        if (pagesVar.type === 'number') hit = String(n);
+        else { const byNum = pagesVar.choices.filter(c => leadNum(c) === n); if (byNum.length === 1) hit = byNum[0]; }
+        if (hit) { options[pagesVar.title] = hit; filledFromChat.push(pagesVar.title.replace(/_/g, ' ') + ' = ' + hit + ' (the customer said "' + pm[pm.length - 1] + '")'); }
+        else ignored.push(pagesVar.title + ' "' + n + ' pages" is not a choice for this product (choices: ' + pagesVar.choices.slice(0, 12).join(', ') + ') — say which page counts exist');
+      }
+    }
     const sz = await sizeFromCustomer(p.id, input, ctx);
     const width = sz.width, height = sz.height;
     // One quote per quantity, same options. Several quantities make one card:
@@ -958,6 +973,7 @@ module.exports = function mountClientBot(app, deps) {
         size_used: sz.said ? sz.said + '. Say the size the way the customer did: "' + sz.spoken + '". If that is not what they meant, re-price with the right size_unit.' : undefined,
         ignored_options: ignored.length ? ignored : undefined,
         matched_options: matched.length ? matched : undefined,
+        filled_from_chat: filledFromChat.length ? filledFromChat.concat(['You had left these out — they were taken from what the customer said earlier. State them as priced.']) : undefined,
         left_on_default: (head.edit.fields || []).filter(f => !head.specs.some(sp => sp.field === f.field && sp.tag === 'specified'))
           .map(f => ({ field: f.field, now: f.value, choices: f.choices.slice(0, 12) })),
         check: 'If the customer asked for any option listed in left_on_default (e.g. round corners, lamination, holes), call price_product AGAIN with it in options before answering.',
