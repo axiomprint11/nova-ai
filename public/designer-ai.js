@@ -132,7 +132,7 @@
       const o = { timeZone: 'America/Los_Angeles' };
       return '<b>' + esc(x.toLocaleDateString('en-US', Object.assign({ month: '2-digit', day: '2-digit', year: 'numeric' }, o))) + '</b><div>' + esc(x.toLocaleTimeString('en-US', Object.assign({ hour: 'numeric', minute: '2-digit' }, o))) + '</div>'; };
     const st = (r) => r.status === 'busy' ? '<span class="da-tag busy">All Busy</span>' : r.status === 'applied' ? '<span class="da-tag applied">applied in CRM</span>' : r.status === 'crm_failed' ? '<span class="da-tag crm_failed">CRM failed</span>' : '<span class="da-tag">' + esc(r.status) + '</span>';
-    $('daHist').innerHTML = '<table class="da-ht"><thead><tr><th>When</th><th>Job</th><th>Product</th><th>Nova picked</th><th>Also considered</th><th>Status</th><th>Source</th></tr></thead><tbody>' + j.rows.map(r => {
+    $('daHist').innerHTML = '<table class="da-ht"><thead><tr><th>When</th><th class="da-ht-job">Job</th><th>Product</th><th>Nova picked</th><th>Also considered</th><th>Status</th><th>Source</th></tr></thead><tbody>' + j.rows.map(r => {
       const others = (r.picks || []).filter(p => p.user_id !== r.picked_user_id).slice(0, 4);
       return '<tr><td>' + when(r.at) + ((r.ms || r.ai) ? '<div class="da-sub">' + [r.ms ? (Math.round(r.ms / 100) / 10) + ' s' : '', r.ai ? '✦ rules' : ''].filter(Boolean).join(' · ') + '</div>' : '') + '</td>' +
         '<td><span class="da-e">' + esc(r.e) + '</span><div class="da-sub">' + esc(r.job_name || '') + '</div><div class="da-sub">' + esc(r.customer || '') + '</div></td>' +
