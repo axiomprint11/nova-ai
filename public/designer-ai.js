@@ -28,7 +28,7 @@
       team.map(d => '<tr data-d="' + d.user_id + '"' + (d.active ? '' : ' class="off"') + '><td><div class="da-who">' + av(d) + '<div><b>' + esc(d.name + ' ' + (d.last_name || '')) + '</b><div class="t" title="' + esc(d.title || 'Designer') + '">' + esc(shortTitle(d.title || 'Designer')) + (d.active ? '' : ' · not taking jobs') + '</div></div></div></td>' +
         '<td><span class="da-num" title="Proof Checking / edits on the desk — what the CRM board counts">' + d.active_jobs + '</span></td><td><span class="da-num" title="Proof Sent / waiting for files">' + d.waiting_client + '</span></td><td class="da-appr"><span><b class="da-num">' + d.done_30 + '</b><i>30 d</i></span><span class="da-muted">/</span><span><b class="da-num">' + (d.done_90 || 0) + '</b><i>90 d</i></span></td><td><span class="da-num">' + (d.nova_assigned || 0) + '</span></td>' +
         '<td><input type="checkbox" class="da-t2" data-t2="' + d.user_id + '"' + (d.tier2 ? ' checked' : '') + ' title="Tier 2 designer"></td>' +
-        '<td>' + lvl(d.hard_level, '#b45309') + '</td><td>' + lvl(d.creative_level, '#7c3aed') + '</td><td>' + lvl(d.comm_level, '#0e7490') + ((d.language_list || []).length ? '<div class="da-muted" style="font-size:10.5px">' + esc(d.language_list.join(', ')) + '</div>' : '') + '</td>' +
+        '<td>' + lvl(d.hard_level, '#b45309') + '</td><td>' + lvl(d.creative_level, '#7c3aed') + '</td><td>' + lvl(d.comm_level, '#0e7490') + ((d.language_list || []).length ? '<div class="da-flags">' + d.language_list.map(lflag).join('') + '</div>' : '') + '</td>' +
         '<td>' + (d.shift_start && d.shift_end ? '<span class="' + (d.on_shift && d.on_shift.on ? 'da-on' : 'da-off') + '">' + esc(fmtT(d.shift_start) + '–' + fmtT(d.shift_end)) + '</span><div class="da-muted" style="font-size:10.5px">' + esc(d.on_shift && d.on_shift.known ? (d.on_shift.on ? 'on shift · ' + d.on_shift.left + ' min left' : d.on_shift.why) : '') + (d.is_new ? ' · newer (' + d.jobs_180 + ' jobs/180 d)' : '') + '</div>' : '<span class="da-muted">not set</span>' + (d.is_new ? '<div class="da-muted" style="font-size:10.5px">newer (' + d.jobs_180 + ' jobs/180 d)</div>' : '')) + '</td>' +
         '<td>' + (d.max_active || 25) + '</td>' +
         '<td class="da-skc" title="' + esc(d.skill_list.join(', ')) + '"><div class="da-sk">' + (d.skill_list.length ? d.skill_list.map(s => '<span>' + esc(s) + '</span>').join('') : '<span style="background:#fff7ed;color:#c2410c">none yet</span>') + '</div></td>' +
@@ -39,6 +39,16 @@
   // long CRM titles are shortened in the table ("Prepress Technician / Graphic Designer" → "Prepress Tech. / Graphic Des."), full on hover
   const shortTitle = (t) => { let x = String(t).replace(/Technician/g, 'Tech.').replace(/Specialist/g, 'Spec.').replace(/Designer/g, 'Des.'); return x.length > 26 ? x.slice(0, 25).replace(/[\s\/]+$/, '') + '…' : x; };
   const LANGS = ['English', 'Armenian', 'Russian', 'Spanish', 'Filipino', 'Mandarin'];
+  // 1.20.29: a flag per language (inline SVG, 18×12) — the US for English, Mexico for Spanish
+  const LFLAG = {
+    English: '<svg viewBox="0 0 18 12"><rect width="18" height="12" fill="#b22234"/><g fill="#fff"><rect y="1.85" width="18" height="1.85"/><rect y="5.54" width="18" height="1.85"/><rect y="9.23" width="18" height="1.85"/></g><rect width="7.6" height="6.46" fill="#3c3b6e"/></svg>',
+    Armenian: '<svg viewBox="0 0 18 12"><rect width="18" height="4" fill="#d90012"/><rect y="4" width="18" height="4" fill="#0033a0"/><rect y="8" width="18" height="4" fill="#f2a800"/></svg>',
+    Russian: '<svg viewBox="0 0 18 12"><rect width="18" height="4" fill="#fff"/><rect y="4" width="18" height="4" fill="#0039a6"/><rect y="8" width="18" height="4" fill="#d52b1e"/></svg>',
+    Spanish: '<svg viewBox="0 0 18 12"><rect width="6" height="12" fill="#006847"/><rect x="6" width="6" height="12" fill="#fff"/><rect x="12" width="6" height="12" fill="#ce1126"/><circle cx="9" cy="6" r="1.6" fill="#8a6a2b"/></svg>',
+    Filipino: '<svg viewBox="0 0 18 12"><rect width="18" height="6" fill="#0038a8"/><rect y="6" width="18" height="6" fill="#ce1126"/><path d="M0 0l8 6-8 6z" fill="#fff"/><circle cx="2.6" cy="6" r="1.1" fill="#fcd116"/></svg>',
+    Mandarin: '<svg viewBox="0 0 18 12"><rect width="18" height="12" fill="#de2910"/><path d="M3 2.2l.7 2.1h2.2L4.1 5.6l.7 2.1L3 6.4 1.2 7.7l.7-2.1L.1 4.3h2.2z" fill="#ffde00"/></svg>'
+  };
+  const lflag = (l) => '<span class="da-flag" title="' + esc(l) + '">' + (LFLAG[l] || '') + '</span>';
   const lvl = (n, color) => { n = n == null ? 5 : n; return '<span class="da-lvl" title="' + n + ' of 10"><i style="width:' + (n * 10) + '%;background:' + color + '"></i></span> <b>' + n + '</b>'; };
   const fmtT = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || '')); if (!m) return ''; const h = Number(m[1]), mm = m[2]; return (h % 12 || 12) + (mm !== '00' ? ':' + mm : '') + (h < 12 ? 'am' : 'pm'); };
   function editDesigner(id) {
@@ -55,13 +65,14 @@
           '<label><input type="checkbox" class="ac"' + (d.active ? ' checked' : '') + '> Takes jobs</label>' +
           '<label>Max active <input type="number" class="mx" min="1" value="' + (d.max_active || 25) + '"></label>' +
         '</div>' +
-        '<div class="da-ef-two">' +
-          '<div class="da-ef-row da-ef-sl"><label>Hard jobs <b>' + L(d.hard_level) + '</b>/10</label><input type="range" class="hl" min="0" max="10" value="' + L(d.hard_level) + '" oninput="this.previousElementSibling.querySelector(\'b\').textContent=this.value"><div class="da-ef-h">0 = the simplest jobs only · 10 = packaging, die cuts, wraps, anything</div></div>' +
-          '<div class="da-ef-row da-ef-sl"><label>Creative jobs <b>' + L(d.creative_level) + '</b>/10</label><input type="range" class="cl" min="0" max="10" value="' + L(d.creative_level) + '" oninput="this.previousElementSibling.querySelector(\'b\').textContent=this.value"><div class="da-ef-h">0 = production only · 10 = designs from scratch, branding, layouts</div></div>' +
+        '<div class="da-ef-three">' +
+          '<div class="da-ef-row da-ef-sl"><label>Hard jobs <b>' + L(d.hard_level) + '</b>/10 <span class="da-q" tabindex="0">?<span class="da-tip">0 = the simplest jobs only · 10 = packaging, die cuts, wraps, anything.</span></span></label><input type="range" class="hl" min="0" max="10" value="' + L(d.hard_level) + '" oninput="this.previousElementSibling.querySelector(\'b\').textContent=this.value"></div>' +
+          '<div class="da-ef-row da-ef-sl"><label>Creative jobs <b>' + L(d.creative_level) + '</b>/10 <span class="da-q" tabindex="0">?<span class="da-tip">0 = production only · 10 = designs from scratch, branding, layouts.</span></span></label><input type="range" class="cl" min="0" max="10" value="' + L(d.creative_level) + '" oninput="this.previousElementSibling.querySelector(\'b\').textContent=this.value"></div>' +
+          '<div class="da-ef-row da-ef-sl"><label>Client communication <b>' + L(d.comm_level) + '</b>/10 <span class="da-q" tabindex="0">?<span class="da-tip">0 = keep away from the client · 10 = runs the back-and-forth on design jobs by themselves.</span></span></label><input type="range" class="cm" min="0" max="10" value="' + L(d.comm_level) + '" oninput="this.previousElementSibling.querySelector(\'b\').textContent=this.value"></div>' +
         '</div>' +
+        '<div class="da-ef-row"><label>Languages</label><div class="da-ef-days da-ef-langs">' + LANGS.map(l => '<label><input type="checkbox" class="lg" value="' + l + '"' + (langs.indexOf(l) > -1 ? ' checked' : '') + '>' + lflag(l) + l + '</label>').join('') + '</div></div>' +
         '<div class="da-ef-row"><label>Hours (LA)</label><div class="da-ef-hours"><div class="da-ef-days">' + [1, 2, 3, 4, 5, 6, 7].map(n => '<label><input type="checkbox" class="wd" value="' + n + '"' + (days.indexOf(n) > -1 ? ' checked' : '') + '>' + ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'][n - 1] + '</label>').join('') + '</div><div class="da-ef-time"><input type="time" class="ss" value="' + esc(d.shift_start || '') + '"> <span>to</span> <input type="time" class="se" value="' + esc(d.shift_end || '') + '"></div></div></div>' +
-        '<div class="da-ef-row da-ef-sl"><label>Client communication <b>' + L(d.comm_level) + '</b>/10</label><input type="range" class="cm" min="0" max="10" value="' + L(d.comm_level) + '" oninput="this.previousElementSibling.querySelector(\'b\').textContent=this.value"><div class="da-ef-h">0 = keep away from the client · 10 = runs the back-and-forth on design jobs by themselves</div></div>' +
-        '<div class="da-ef-row"><label>Languages</label><div class="da-ef-days da-ef-langs">' + LANGS.map(l => '<label><input type="checkbox" class="lg" value="' + l + '"' + (langs.indexOf(l) > -1 ? ' checked' : '') + '>' + l + '</label>').join('') + '</div></div>' +
+      '</div>' +
       '</div>' +
       '<div class="da-ef-foot"><button class="bk-btn pri sv">Save</button><button class="bk-btn cx">Cancel</button></div></div></td>';
     tr.after(fr);
