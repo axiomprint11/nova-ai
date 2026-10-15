@@ -524,7 +524,9 @@ function setHeaderSignedIn(on) {
     const nm = (me && (me.display_name || me.username)) || username || '';
     meEl.style.display = on ? 'inline-flex' : 'none';
     meEl.title = nm + (me && me.email ? ' · ' + me.email : '');
-    meEl.innerHTML = me && me.photo ? '<img src="' + esc(me.photo) + '" alt="">' : esc(String(nm).charAt(0).toUpperCase() || '?');
+    const init = esc(String(nm).charAt(0).toUpperCase() || '?');
+    // members.photo is the S3 key, not a URL — build it as nova-nav does (1.20.42; 1.20.41 showed a broken image)
+    meEl.innerHTML = me && me.photo ? '<img src="' + esc(staffPhotoUrl(me.photo)) + '" alt="" onerror="this.parentNode.textContent=\'' + init + '\'">' : init;
   }
 }
 

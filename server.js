@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.41';
-const NOVA_BUILT = '10-14-2026 10:55pm';
+const NOVA_VERSION = '1.20.42';
+const NOVA_BUILT = '10-14-2026 11:05pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -5760,7 +5760,14 @@ app.get('/api/chats/:id', auth, (req, res) => {
         try { m.cards = m.cards ? JSON.parse(m.cards) : null; } catch (e2) { m.cards = null; }
         try { m.files = m.files ? withFileUrls(JSON.parse(m.files)) : null; } catch (e2) { m.files = null; }
       });
-      res.json({ success: true, chat, messages: msgs || [] });
+      // 1.20.42: who the chat belongs to (name + photo) so the page draws their face on the user rows — the read-only
+      // History view is opened by an admin, whose own photo must not stand in for Marine's
+      const key = String(chat.user_key || '');
+      const done = (owner) => res.json({ success: true, chat: Object.assign({}, chat, { owner }), messages: msgs || [] });
+      if (!key.startsWith('member:')) return done({ name: key.replace(/^user:/, ''), photo: null });
+      db.get('SELECT display_name, username, photo FROM members WHERE email = ?', [key.slice(7)], (e2, m) => {
+        done({ name: (m && (m.display_name || m.username)) || key.slice(7), photo: m && m.photo ? (/^https?:\/\//.test(m.photo) ? m.photo : 'https://axiomprint.s3.us-west-1.amazonaws.com/MemberImages/' + String(m.photo).replace(/^\/+/, '')) : null });
+      });
     });
   });
 });

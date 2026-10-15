@@ -14,6 +14,16 @@ const EMBED = !!window.NOVA_EMBED;
 // here in the page; pricing look-ups, reports, order links and admin training still work.
 const VIEW = !EMBED && new URLSearchParams(location.search).get('view') === '1';
 let viewOwner = '';
+let chatOwner = null;      // {name, photo} of whoever the open chat belongs to (GET /api/chats/:id, 1.20.42)
+// The user row's avatar: the chat owner's photo (the signed-in person on a new chat) with the name on hover, else the initial.
+function userAvatar() {
+  const o = chatOwner || (me && me.photo ? { name: me.display_name || username, photo: staffPhotoUrl(me.photo) } : null);
+  const nm = (o && o.name) || (VIEW && viewOwner) || username || 'U';
+  const init = esc(String(nm).charAt(0).toUpperCase());
+  if (o && o.photo) return '<div class="msg-avatar user" title="' + escA(nm) + '"><img src="' + escA(o.photo) + '" alt="" onerror="this.parentNode.textContent=\'' + init + '\'"></div>';
+  return '<div class="msg-avatar user" title="' + escA(nm) + '">' + init + '</div>';
+}
+function staffPhotoUrl(p) { return !p ? '' : /^https?:\/\//.test(p) ? p : 'https://axiomprint.s3.us-west-1.amazonaws.com/MemberImages/' + String(p).replace(/^\/+/, ''); }
 if (VIEW) {
   document.documentElement.classList.add('cb-view');
   const realFetch = window.fetch.bind(window);
@@ -299,6 +309,7 @@ function greet() {
 function clearChat() {
   chatHistory = [];
   currentChatId = null;
+  chatOwner = null;
   // A new conversation starts unattached — the next client is pinned fresh.
   chatClientId = null;
   chatClientName = null;
@@ -348,6 +359,7 @@ async function openChat(id) {
     currentChatId = id;
     chatHistory = [];
     if (VIEW) viewOwner = String((j.chat && (j.chat.display_name || j.chat.user_key)) || '').replace(/^(member|user):/, '');
+    chatOwner = (j.chat && j.chat.owner) || null;   // 1.20.42: name + photo for the user rows
     loadChatClient();          // whoever this conversation belongs to
     loadCart();
     document.getElementById('suggestions').style.display = 'none';
@@ -480,7 +492,7 @@ function addUserRow(text, files) {
     col.appendChild(bubble);
   }
   row.appendChild(col);
-  row.innerHTML += '<div class="msg-avatar user">' + ((VIEW && viewOwner) || username || 'U').charAt(0).toUpperCase() + '</div>';
+  row.innerHTML += userAvatar();
   document.getElementById('messagesInner').appendChild(row);
   scrollDown();
 }

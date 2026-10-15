@@ -168,6 +168,10 @@ order-assist.js and index.html), never `'$' + n.toFixed(2)`. The prompts tell th
   type checked by magic bytes) and `messages.files`; `GET /api/chats/:id` returns them with signed, 7-day links
   (`/api/chat-files/<ref>?e=&s=`, no bearer needed for `<img>`). The user row shows thumbnails / document chips; on
   reopen the last two messages with files go back to the model as image/document blocks.
+  **User-row avatar** (1.20.42): `GET /api/chats/:id` returns `chat.owner {name, photo}` (from `members`, S3 URL built server-side) and
+  `userAvatar()` draws the owner's photo with the name on hover (a new chat: the signed-in person's `/api/me` photo), else the initial —
+  so CRM Chat → History shows Marine's face on Marine's chat, not the admin's. The widget's `#wgMe` builds the S3 URL the same way
+  (`staffPhotoUrl`, defined in chatbot.js; 1.20.41 used the bare key and showed a broken image).
   **Read-only view** `/chatbot?chat=<id>&view=1` (`VIEW` in chatbot.js): no top bar, sidebar or composer, every
   write to the chat refused in the page (a `fetch` wrapper; pricing look-ups, reports, order links and
   `/api/admin/train-from-chat` still go through), admins get "Use as a good example / Mark as a bad one" under each
