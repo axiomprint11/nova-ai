@@ -174,15 +174,19 @@ module.exports = function mountDesignerAi(app, deps) {
       if (d.is_new) { if (job.common && job.hard <= 4 && job.creative < 6) add(15, 'newer designer (' + d.jobs_180 + ' jobs in 180 d) — a common, easy product'); else if (job.hard >= 7 || job.creative >= 7) add(-10, 'newer designer — not a hard / creative one'); }
       // hours: off shift is out; leaving within the hour should not start something new
       const sh = d.on_shift;
-      if (sh.known && !sh.on) add(-45, sh.why);
-      else if (sh.known && sh.left <= 60) add(-25, 'leaves at ' + sh.ends);
-      else if (sh.known && sh.left <= 90 && job.hard >= 6) add(-15, 'only ' + sh.left + ' min left today for a hard job');
+      if (!sh.known) add(0, 'hours not set — add them on the Designers tab');
+      else if (!sh.on) add(-45, 'OFF SHIFT — ' + sh.why);
+      else if (sh.left <= 60) add(-25, 'leaves at ' + sh.ends);
+      else if (sh.left <= 90 && job.hard >= 6) add(-15, 'only ' + sh.left + ' min left today for a hard job');
       const over = d.active_jobs - minLoad;
       add(over > 0 ? -Math.min(30, over * 3) : 0, d.active_jobs + ' active job' + (d.active_jobs === 1 ? '' : 's') + (over === 0 ? ' — lightest load' : ''));
       if (d.max_active && d.active_jobs >= d.max_active) add(-40, 'at max (' + d.max_active + ')');
       if (recent[d.user_id]) add(-recent[d.user_id] * 4, 'picked ' + recent[d.user_id] + '× in the last 2 h');
-      return { user_id: d.user_id, name: d.name, last_name: d.last_name, photo: d.photo, score: Math.max(0, Math.min(100, Math.round(score))), why, active_jobs: d.active_jobs, at_max: !!(d.max_active && d.active_jobs >= d.max_active), off_shift: !!(sh.known && !sh.on) };
-    }).sort((a, b) => b.score - a.score || a.active_jobs - b.active_jobs);
+      // 1.20.32: hours and the cap are hard limits, not just points — an off-shift designer can never top the list
+      const off = !!(sh.known && !sh.on), atMax = !!(d.max_active && d.active_jobs >= d.max_active);
+      if (off) score = Math.min(score, 15); else if (atMax) score = Math.min(score, 25);
+      return { user_id: d.user_id, name: d.name, last_name: d.last_name, photo: d.photo, score: Math.max(0, Math.min(100, Math.round(score))), why, active_jobs: d.active_jobs, at_max: atMax, off_shift: off, hours_known: !!sh.known };
+    }).sort((a, b) => (a.off_shift - b.off_shift) || (a.at_max - b.at_max) || b.score - a.score || a.active_jobs - b.active_jobs);
     return out;
   }
 
@@ -255,7 +259,7 @@ module.exports = function mountDesignerAi(app, deps) {
       const txt = (r.content || []).filter(c => c.type === 'text').map(c => c.text).join(''); const m = /\{[\s\S]*\}/.exec(txt); if (!m) return { picks, ai: false };
       const out = JSON.parse(m[0]); const by = {}; (out.picks || []).forEach(p => { by[p.user_id] = p; });
       const adj = picks.map(p => { const a = by[p.user_id]; if (!a) return p; const sc = Math.max(0, Math.min(100, Math.round(Number(a.score)))); const changed = !isNaN(sc) && sc !== p.score; return Object.assign({}, p, { score: isNaN(sc) ? p.score : sc, why: changed || a.note ? p.why.concat(['your rule: ' + (a.note || ('score ' + p.score + ' → ' + sc))]) : p.why, ai_changed: changed }); });
-      adj.sort((a, b) => b.score - a.score || a.active_jobs - b.active_jobs);
+      adj.sort((a, b) => (a.off_shift - b.off_shift) || (a.at_max - b.at_max) || b.score - a.score || a.active_jobs - b.active_jobs);
       return { picks: adj, ai: true, busy: out.busy === true, busy_reason: out.busy === true ? String(out.busy_reason || '').slice(0, 300) : '' };
     } catch (e) { errlog('ai adjust', e.message); return { picks, ai: false, ai_error: e.message }; }
   }
