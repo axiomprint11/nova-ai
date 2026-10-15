@@ -28,6 +28,8 @@
     display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex:none;}
   .wg-title{font-weight:700;font-size:14px;line-height:1.2;}
   .wg-sub{font-size:11.5px;opacity:.85;line-height:1.2;}
+  /* 1.20.41: who is signed in — photo or initial, right of Sign out */
+  .wg-me{width:28px;height:28px;border-radius:50%;overflow:hidden;background:rgba(255,255,255,.25);display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:12.5px;color:#fff;flex:none;margin-left:2px;box-shadow:0 0 0 2px rgba(255,255,255,.35);} .wg-me img{width:100%;height:100%;object-fit:cover;display:block;}
   .wg-head .sp{flex:1;}
   .wg-x{display:inline-flex;align-items:center;justify-content:center;gap:5px;
     background:rgba(255,255,255,.16);border:none;color:#fff;height:26px;min-width:26px;
@@ -136,6 +138,7 @@
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
   </button>
   <button class="wg-x" id="wgOut" onclick="signOutClick()" title="Sign out" style="display:none">Sign out</button>
+  <span class="wg-me" id="wgMe" style="display:none" title=""></span>
   <button class="wg-x icon" onclick="closeWidget()" title="Close">✕</button>
 </div>
 

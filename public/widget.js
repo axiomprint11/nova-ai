@@ -519,6 +519,13 @@ function setHeaderSignedIn(on) {
   const sub = document.getElementById('wgSub');
   sub.textContent = on ? '' : 'Sign in required';
   sub.style.display = on ? 'none' : '';
+  const meEl = document.getElementById('wgMe');
+  if (meEl) {
+    const nm = (me && (me.display_name || me.username)) || username || '';
+    meEl.style.display = on ? 'inline-flex' : 'none';
+    meEl.title = nm + (me && me.email ? ' · ' + me.email : '');
+    meEl.innerHTML = me && me.photo ? '<img src="' + esc(me.photo) + '" alt="">' : esc(String(nm).charAt(0).toUpperCase() || '?');
+  }
 }
 
 function showAuth() {
