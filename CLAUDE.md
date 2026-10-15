@@ -168,6 +168,15 @@ order-assist.js and index.html), never `'$' + n.toFixed(2)`. The prompts tell th
   type checked by magic bytes) and `messages.files`; `GET /api/chats/:id` returns them with signed, 7-day links
   (`/api/chat-files/<ref>?e=&s=`, no bearer needed for `<img>`). The user row shows thumbnails / document chips; on
   reopen the last two messages with files go back to the model as image/document blocks.
+  **Draft an Email** (1.20.43): every ChatBot answer carries a **Draft an Email** button at the right of its rating row
+  (`draftEmailButton(answer, question)`, `.rate-draft`; not in the read-only view) → `POST /api/chatbot/draft-email` {question, answer,
+  client_*, sender} turns Nova's answer to the team member (a design estimate, an option's condition…) into the email to the client —
+  subject + body, every figure kept verbatim, internal facts left out, the client's recent inbox tone as draft-reply — rendered by
+  `buildEmailText()` (editable, Copy email / Copy subject) and saved with the chat as an `email_text` card (kept out of the model's
+  history like `email_draft`). **Every drafted email goes to the pane's Draft tab** on wide screens (`placeEmail(box, el, data)` →
+  `paneEmails`, newest first, `showEmailsInPane(entry)`, pane mode `email`; the chat keeps a `.pq-moved` "Email drafted · to … · subject ·
+  Show" marker) — the quote reply from Help to draft email included; narrow screens keep the card inline. The pane header toggle now
+  reads **Calculator · Quote (the price-ladder draft, was "Draft") · Draft (n emails) · Jobs (n)**.
   **User-row avatar** (1.20.42): `GET /api/chats/:id` returns `chat.owner {name, photo}` (from `members`, S3 URL built server-side) and
   `userAvatar()` draws the owner's photo with the name on hover (a new chat: the signed-in person's `/api/me` photo), else the initial —
   so CRM Chat → History shows Marine's face on Marine's chat, not the admin's. The widget's `#wgMe` builds the S3 URL the same way

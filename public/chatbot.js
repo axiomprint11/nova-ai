@@ -310,6 +310,8 @@ function clearChat() {
   chatHistory = [];
   currentChatId = null;
   chatOwner = null;
+  paneEmails.length = 0;
+  paneJobs.length = 0;
   // A new conversation starts unattached — the next client is pinned fresh.
   chatClientId = null;
   chatClientName = null;
@@ -370,8 +372,10 @@ async function openChat(id) {
     const withFiles = j.messages.filter(m => m.role === 'user' && (m.files || []).length);
     const resend = new Set(withFiles.slice(-2).map(m => m.id));
     const pending = [];
+    let prevUserText = '';
     j.messages.forEach(m => {
       if (m.role === 'user') {
+        prevUserText = m.content || '';
         addUserRow(m.content, m.files);
         const names = (m.files || []).map(f => f.name).join(', ');
         const entry = { role: 'user', content: (m.content || '') + (names ? '\n[Attached: ' + names + ']' : '') };
@@ -393,10 +397,11 @@ async function openChat(id) {
         (m.cards || []).forEach(c => {
           try { renderCard(bubble, c); } catch (e) {}
         });
-        const isDraft = (m.cards || []).some(c => c && c.type === 'email_draft');
+        const isDraft = (m.cards || []).some(c => c && (c.type === 'email_draft' || c.type === 'email_text'));
         if (!isDraft) {
           const rt = buildRating(m.id, m.rating);
           if (VIEW) rt.classList.add('ro');
+          if (!VIEW && m.content) rt.appendChild(draftEmailButton(m.content, prevUserText));
           bubble.appendChild(rt);
           if (VIEW && isAdmin && m.id) bubble.appendChild(trainButtons(m.id));
         }
@@ -1520,13 +1525,116 @@ function showJobsInPane(focusE) {
   paneJobs.forEach(j => { if (!focusE || j.data.e_number === focusE) j.marker.classList.add('on'); });
 }
 
+// ===== Drafted emails in the pane's Draft tab (1.20.43) =====
+// Every email Nova drafts — the quote reply (Help to draft email) and "Draft an Email" under an answer — opens in the
+// right pane on wide screens, newest first, and the chat keeps a one-line marker with Show. Narrow screens keep it inline.
+const paneEmails = [];
+function placeEmail(box, el, data) {
+  if (!usePane()) { box.appendChild(el); return; }
+  const d = document.createElement('div');
+  d.className = 'pq-moved';
+  const who = (data && (data.client_name || data.to)) || '';
+  d.innerHTML = '<b>Email drafted</b>' + (who ? ' <span class="pq-moved-q">to ' + esc(who) + '</span>' : '') +
+    (data && data.subject ? ' <span class="pq-moved-q">' + esc(data.subject) + '</span>' : '') +
+    '<button type="button" class="pq-moved-show">Show</button>';
+  const entry = { el: el, marker: d, data: data || {} };
+  paneEmails.unshift(entry);
+  d.querySelector('.pq-moved-show').onclick = () => showEmailsInPane(entry);
+  box.appendChild(d);
+  showEmailsInPane(entry);
+}
+function showEmailsInPane(focus) {
+  const body = document.getElementById('calcPaneBody');
+  if (!body || !paneEmails.length) return;
+  const pane = document.getElementById('calcPane');
+  if (pane && pane.classList.contains('folded')) togglePaneFold();
+  paneMode = 'email';
+  body.innerHTML = '';
+  const old = document.getElementById('paneActions'); if (old) old.remove();
+  paneEmails.forEach(m => {
+    const wrap = document.createElement('div'); wrap.className = 'pane-job pane-mail';
+    wrap.appendChild(m.el);
+    body.appendChild(wrap);
+    if (focus === m) wrap.classList.add('on');
+  });
+  const hd = document.querySelector('.calc-pane-hd span');
+  if (hd) hd.textContent = 'Draft';
+  renderPaneToggle();
+  body.scrollTop = 0;
+  document.querySelectorAll('.pq-moved.on').forEach(n => n.classList.remove('on'));
+  paneEmails.forEach(m => { if (!focus || focus === m) m.marker.classList.add('on'); });
+}
+
+// "Draft an Email" under an answer: the answer's facts become the email to the client (POST /api/chatbot/draft-email).
+function draftEmailButton(answerText, questionText) {
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'rate-draft';
+  b.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>Draft an Email';
+  b.onclick = () => draftEmailFromAnswer(answerText, questionText, b);
+  return b;
+}
+async function draftEmailFromAnswer(answerText, questionText, btn) {
+  if (btn.disabled) return;
+  btn.disabled = true; const label = btn.innerHTML; btn.textContent = 'Drafting…';
+  const who = (chatClientInfo && chatClientInfo.name) || chatClientName || '';
+  let j = {};
+  try {
+    j = await fetch('/api/chatbot/draft-email', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ chat_id: currentChatId, client_id: chatClientId || null, client_name: who,
+        client_email: (chatClientInfo && chatClientInfo.email) || '', company: (chatClientInfo && chatClientInfo.company) || '',
+        question: questionText || '', answer: answerText || '', sender: (me && (me.display_name || me.username)) || username || '' })
+    }).then(r => r.json());
+  } catch (e) { j = { ok: false, error: e.message }; }
+  btn.disabled = false; btn.innerHTML = label;
+  if (!j || !j.ok) { alert((j && j.error) || 'The draft could not be written.'); return; }
+  const card = { type: 'email_text', data: { to: j.to || null, client_name: j.client_name || who || null, subject: j.subject, body: j.body, tone_emails: j.tone_emails || 0 } };
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+  row.innerHTML = '<div class="msg-avatar ai">AI</div>';
+  const col = document.createElement('div'); col.className = 'msg-col';
+  col.innerHTML = '<div class="msg-meta">ChatBot</div>';
+  const bubble = document.createElement('div'); bubble.className = 'bubble ai has-cards';
+  col.appendChild(bubble); row.appendChild(col);
+  document.getElementById('messagesInner').appendChild(row);
+  placeEmail(bubble, buildEmailText(card.data), card.data);
+  scrollDown();
+  if (currentChatId) {
+    fetch('/api/chats/message', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ chat_id: currentChatId, role: 'assistant', content: 'Drafted an email' + (card.data.client_name ? ' to ' + card.data.client_name : '') + '.', cards: [card] }) }).catch(() => {});
+  }
+}
+// A words-only email (subject + body), editable, with Copy email / Copy subject — the same card look as the quote reply.
+function buildEmailText(d) {
+  const el = document.createElement('div');
+  el.className = 'mail-card';
+  const paras = String(d.body || '').split(/\n\s*\n/).map(t => '<p>' + esc(t.trim()).replace(/\n/g, '<br>') + '</p>').join('');
+  el.innerHTML =
+    '<div class="mail-hd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>' +
+      '<b>Draft email</b>' + (d.client_name || d.to ? '<span class="mail-to">to ' + esc(d.client_name || '') + (d.to ? ' &lt;' + esc(d.to) + '&gt;' : '') + '</span>' : '') + '</div>' +
+    '<div class="mail-tone">' + (d.tone_emails ? 'Tone taken from ' + d.tone_emails + ' email' + (d.tone_emails === 1 ? '' : 's') + ' with them in the last 30 days.'
+      : (d.to ? 'No emails with them in the last 30 days — standard tone.' : 'No client connected — standard tone.')) + ' Click any text to edit it.</div>' +
+    '<label class="mail-subj"><span>Subject</span><input type="text" value="' + esc(d.subject || '') + '"></label>' +
+    '<div class="mail-body draft"><div contenteditable="true">' + paras + '</div></div>' +
+    '<div class="mail-acts"><button type="button" class="mail-copy">Copy email</button><button type="button" class="mail-copysubj">Copy subject</button></div>';
+  const cp = el.querySelector('.mail-copy');
+  cp.onclick = () => copyRich(el.querySelector('.mail-body'), cp, 'Copy email');
+  const cs = el.querySelector('.mail-copysubj');
+  cs.onclick = async () => {
+    try { await navigator.clipboard.writeText(el.querySelector('.mail-subj input').value); cs.textContent = 'Copied'; }
+    catch (e) { cs.textContent = 'Could not copy'; }
+    setTimeout(() => { cs.textContent = 'Copy subject'; }, 1600);
+  };
+  return el;
+}
+
 function renderPaneToggle() {
   const hd = document.querySelector('.calc-pane-hd');
   if (!hd) return;
   let wrap = document.getElementById('paneToggle');
   const ladder = quantityLadder();
-  const hasCalc = !!lastCalcCard, hasJobs = paneJobs.length > 0;
-  if (!ladder && !hasJobs) { if (wrap) wrap.remove(); return; }
+  const hasCalc = !!lastCalcCard, hasJobs = paneJobs.length > 0, hasMail = paneEmails.length > 0;
+  if (!ladder && !hasJobs && !hasMail) { if (wrap) wrap.remove(); return; }
   if (!wrap) {
     wrap = document.createElement('div');
     wrap.id = 'paneToggle';
@@ -1535,13 +1643,14 @@ function renderPaneToggle() {
   }
   wrap.innerHTML =
     (hasCalc || ladder ? '<button type="button" class="' + (paneMode === 'calc' ? 'on' : '') + '" data-m="calc">Calculator</button>' : '') +
-    (ladder ? '<button type="button" class="' + (paneMode === 'draft' ? 'on' : '') + '" data-m="draft">Draft</button>' : '') +
+    (ladder ? '<button type="button" class="' + (paneMode === 'draft' ? 'on' : '') + '" data-m="draft">Quote</button>' : '') +
+    (hasMail ? '<button type="button" class="' + (paneMode === 'email' ? 'on' : '') + '" data-m="email">Draft' + (paneEmails.length > 1 ? ' <i>' + paneEmails.length + '</i>' : '') + '</button>' : '') +
     (hasJobs ? '<button type="button" class="' + (paneMode === 'jobs' ? 'on' : '') + '" data-m="jobs">Jobs' + (paneJobs.length > 1 ? ' <i>' + paneJobs.length + '</i>' : '') + '</button>' : '');
   wrap.querySelectorAll('button').forEach(b => {
     b.onclick = () => {
       paneMode = b.getAttribute('data-m');
       renderPaneToggle();
-      if (paneMode === 'draft') drawDraft(); else if (paneMode === 'jobs') showJobsInPane(); else restoreCalc();
+      if (paneMode === 'draft') drawDraft(); else if (paneMode === 'jobs') showJobsInPane(); else if (paneMode === 'email') showEmailsInPane(); else restoreCalc();
     };
   });
 }
@@ -1742,7 +1851,7 @@ async function draftReplyInChat() {
     }
   };
   bubble.innerHTML = '';
-  bubble.appendChild(buildEmailDraft(card.data));
+  placeEmail(bubble, buildEmailDraft(card.data), card.data);
   scrollDown();
   drafting = false;
 
@@ -2166,7 +2275,10 @@ function renderCard(box, j) {
       break;
     }
     case 'email_draft':
-      if (j.data) { box.innerHTML = ''; box.appendChild(buildEmailDraft(j.data)); }
+      if (j.data) { box.innerHTML = ''; placeEmail(box, buildEmailDraft(j.data), j.data); }
+      break;
+    case 'email_text':
+      if (j.data) { box.innerHTML = ''; placeEmail(box, buildEmailText(j.data), j.data); }
       break;
     case 'install_quote': {
       // Installation / local delivery calculator — see install-calc.js.
@@ -2397,7 +2509,11 @@ async function sendMessage() {
       try {
         const r = await fetch('/api/chats/message', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ chat_id: currentChatId, role: 'assistant', content: fullText, cards: turnCards }) });
         const j = await r.json();
-        if (j.success && j.message_id) bubble.appendChild(buildRating(j.message_id, 0));
+        if (j.success && j.message_id) {
+          const rt = buildRating(j.message_id, 0);
+          rt.appendChild(draftEmailButton(fullText, text));
+          bubble.appendChild(rt);
+        }
       } catch (e) {}
     }
   } catch (e) {

@@ -43,6 +43,10 @@ input:focus { border-color: var(--indigo); box-shadow: 0 0 0 3px var(--indigo-li
 .chat-item-date { font-size: 10px; color: var(--muted); margin-top: 2px; }
 /* Rating buttons */
 .rating { display: flex; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.rate-draft { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border: 1px solid #ddd6fe; border-radius: 8px; background: #f5f3ff; color: #5b21b6; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.rate-draft:hover { background: #ede9fe; }
+.rate-draft:disabled { opacity: .6; cursor: default; }
+.pane-mail .mail-card { border: 0; padding: 0; }
 .rate-btn { background: transparent; border: 1px solid var(--line); border-radius: 7px; width: 28px; height: 26px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--muted); transition: all 0.15s; }
 .rate-btn:hover { border-color: var(--indigo); color: var(--indigo); }
 .rate-btn.up.active { background: var(--green-light); border-color: var(--green); color: var(--green); }

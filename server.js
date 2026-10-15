@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.42';
-const NOVA_BUILT = '10-14-2026 11:05pm';
+const NOVA_VERSION = '1.20.43';
+const NOVA_BUILT = '10-14-2026 11:30pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -4082,6 +4082,70 @@ app.post('/api/chatbot/draft-reply', auth, async (req, res) => {
   } catch (e) {
     res.json({ ok: false, error: e.message });
   }
+});
+
+// ===== Draft an Email from an answer (1.20.43) =====
+// The button under a ChatBot answer: turn what Nova just explained to the team member (a design estimate, a turnaround,
+// an option's condition…) into the email they would send the client. Same tone reading as draft-reply (last 30 days of
+// shared-inbox mail with the client). Returns the words only — the page shows them in the pane's Draft tab, editable.
+app.post('/api/chatbot/draft-email', auth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    let clientName = String(b.client_name || '').trim();
+    let clientEmail = String(b.client_email || '').trim().toLowerCase();
+    let company = String(b.company || '').trim();
+    if (parseInt(b.client_id) && (!clientName || !clientEmail)) {
+      try {
+        const r = await runQuery("SELECT name, last_name, company_name, email FROM customer WHERE id = " + parseInt(b.client_id));
+        if (r.length) {
+          if (!clientName) clientName = [r[0].name, r[0].last_name].filter(Boolean).join(' ').trim();
+          if (!clientEmail) clientEmail = String(r[0].email || '').trim().toLowerCase();
+          if (!company) company = String(r[0].company_name || '').trim();
+        }
+      } catch (e) {}
+    }
+    if (/@axiomprint\.com$/i.test(clientEmail)) clientEmail = '';
+    const firstName = (clientName.split(/\s+/)[0] || '').replace(/[^A-Za-z'\-]/g, '');
+    let samples = [];
+    if (clientEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail)) {
+      try {
+        const mails = await gmailSearch('(from:' + clientEmail + ' OR to:' + clientEmail + ') newer_than:30d', 8);
+        samples = mails.reverse().map(m => (String(m.from || '').toLowerCase().indexOf(clientEmail) > -1 ? 'CLIENT' : 'AXIOMPRINT') +
+          ' · ' + (m.date || '') + ' · ' + (m.subject || '') + '\n' + stripQuoted(m.body || m.snippet || '').slice(0, 700));
+      } catch (e) {}
+    }
+    let toneText = samples.join('\n---\n'); if (toneText.length > 5000) toneText = toneText.slice(-5000);
+    const question = String(b.question || '').slice(0, 2500), answer = String(b.answer || '').slice(0, 6000);
+    const sender = String(b.sender || req.user.display_name || req.user.username || '').slice(0, 80);
+    const sys = 'You write emails from AxiomPrint (a print shop in Glendale, CA) to its clients, on behalf of a team member. ' +
+      'The team member asked Nova (the internal assistant) a question and got an answer; turn that answer into the email ' +
+      'the team member would now send the client. Write any price as $1,678.54. ' +
+      'Return STRICT JSON only: {"subject":"...","body":"..."}.\n' +
+      '- body: plain text, paragraphs separated by a blank line. Start with "Hi <first name>," when the first name is known, else "Hi there,". ' +
+      'End with a sign-off ("Best," / "Thanks,") and the team member\'s first name when known.\n' +
+      '- Keep every number, price range, hourly rate, date, option and condition EXACTLY as in the answer — never invent or round. ' +
+      'Leave out anything internal (job hardness, who is assigned, Nova, CRM, system notes). An estimate is an estimate: say so once.\n' +
+      '- Say what the client needs to do next (approve, send files, confirm a quantity) when the answer implies it.\n' +
+      '- subject: short, with the job number when there is one (e.g. "E1161493 — design estimate").\n' +
+      'Match the tone AxiomPrint used with this client in the recent emails; if none, warm and professional. No markdown, no bullet symbols.';
+    const userMsg = 'CLIENT: ' + (clientName || 'unknown') + (company ? ' (' + company + ')' : '') + '\nFIRST NAME: ' + (firstName || 'unknown') +
+      '\nTEAM MEMBER SENDING: ' + (sender || 'unknown') +
+      '\n\nWHAT THE TEAM MEMBER ASKED NOVA:\n' + (question || '(not available)') +
+      '\n\nNOVA\'S ANSWER (the facts for the email):\n' + (answer || '(none)') +
+      (toneText ? '\n\nRECENT EMAILS WITH THIS CLIENT (last 30 days, oldest first — match this tone):\n' + toneText : '');
+    let parsed = {};
+    try {
+      const r = await anthropic.messages.create({ model: MODEL_LIGHT, max_tokens: 900, system: sys, messages: [{ role: 'user', content: userMsg }] });
+      let txt = (r.content.find(x => x.type === 'text') || {}).text || '{}';
+      txt = txt.replace(/```json|```/g, '').trim();
+      const i = txt.indexOf('{'), j = txt.lastIndexOf('}');
+      if (i >= 0 && j > i) txt = txt.slice(i, j + 1);
+      parsed = JSON.parse(txt);
+    } catch (e) { parsed = {}; }
+    if (!parsed.body) return res.json({ ok: false, error: 'The draft could not be written — try again.' });
+    res.json({ ok: true, to: clientEmail || null, client_name: clientName || null, subject: String(parsed.subject || 'From AxiomPrint').slice(0, 200),
+      body: String(parsed.body).slice(0, 6000), tone_emails: samples.length });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
 // ===== Single sign-on from the CRM =====
