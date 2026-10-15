@@ -746,9 +746,13 @@ module.exports = function mountBookkeeping(app, deps) {
     else if (f.type) { const cats = chartOf(s).filter(c => c.parent === f.type || (c.parent && parentOf(s, c.parent) === f.type)).map(c => c.name).concat([f.type]); where.push('p.category IN (' + cats.map(() => '?').join(',') + ')'); args.push(...cats); }
     if (f.vkind === 'none') where.push('p.vendor_id IS NULL');
     else if (f.vkind) { const ids = dir.filter(v => (f.vkind === 'supplier' && v.source === 'suppliers') || (f.vkind === 'vendor' && v.source === 'vendors') || (f.vkind === 'nova' && v.source === 'nova') || (f.vkind === 'bill' && v.source === 'bill')).map(v => v.id); where.push(ids.length ? 'p.vendor_id IN (' + ids.map(() => '?').join(',') + ')' : '0'); args.push(...ids); }
-    if (f.dstatus === 'cancelled') where.push('p.cancelled = 1');
-    else if (f.dstatus === 'bank') where.push("p.txn_ids = '[]' AND p.no_paperwork = 0 AND p.cancelled = 0");
-    else if (f.dstatus === 'na') where.push('COALESCE(p.expects_delivery, 0) = 0 AND p.cancelled = 0');
+    // 1.20.66: Payment and Received are two columns / two filters — pstatus = bank (awaiting bank / payment) / paid (a bank
+    // line is matched, closed included) / cancelled; dstatus = the receiving side only (bank / cancelled still accepted there).
+    const ps = f.pstatus || (f.dstatus === 'bank' || f.dstatus === 'cancelled' ? f.dstatus : '');
+    if (ps === 'cancelled') where.push('p.cancelled = 1');
+    else if (ps === 'bank') where.push("p.txn_ids = '[]' AND p.no_paperwork = 0 AND p.cancelled = 0");
+    else if (ps === 'paid') where.push("p.txn_ids <> '[]' AND p.cancelled = 0");
+    if (f.dstatus === 'na') where.push('COALESCE(p.expects_delivery, 0) = 0 AND p.cancelled = 0');
     else if (['no', 'partial', 'yes'].indexOf(f.dstatus) > -1) { where.push('p.expects_delivery = 1 AND p.received = ? AND p.cancelled = 0'); args.push(f.dstatus); }
     const rows = await dbAll('SELECT p.*, v.name AS vendor_name, v.photo AS vendor_photo, v.source AS vendor_source, v.kind AS vendor_kind FROM bk_purchases p LEFT JOIN bk_vendors v ON v.id = p.vendor_id WHERE ' + where.join(' AND ') + ' ORDER BY p.date DESC, p.id DESC LIMIT 400', args);
     const out = [];
@@ -2865,7 +2869,7 @@ module.exports = function mountBookkeeping(app, deps) {
   // Purchases views + actions.
   app.get('/api/bookkeeping/purchases', ...guard, async (req, res) => { try {
     const view = String(req.query.view || 'all'); const q = String(req.query.q || '').trim();
-    const f = {}; ['from', 'to', 'vendor_id', 'vkind', 'min', 'max', 'type', 'category', 'dstatus'].forEach(k => { if (req.query[k] != null && req.query[k] !== '') f[k] = String(req.query[k]); });
+    const f = {}; ['from', 'to', 'vendor_id', 'vkind', 'min', 'max', 'type', 'category', 'dstatus', 'pstatus'].forEach(k => { if (req.query[k] != null && req.query[k] !== '') f[k] = String(req.query[k]); });
     const filtered = Object.keys(f).length > 0;
     const rows = await purchaseRows(view, q, f);
     const all = view === 'list' && !q && !filtered ? rows : await purchaseRows('list', '');

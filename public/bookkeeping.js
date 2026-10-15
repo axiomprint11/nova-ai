@@ -520,7 +520,7 @@
   const puStatus = (p) => '<span class="pu-st ' + (p.late ? 'late' : p.status === 'closed' ? 'closed' : p.status === 'awaiting bank' ? 'bank' : /received/.test(p.status) ? 'recv' : '') + '">' + esc(p.status) + (p.late ? ' · ' + p.days + ' days' : '') + '</span>';
   // 1.19.141: the Purchases list has the Bank feed's column filters — Date (presets + From / To), Vendor (kind) + Company,
   // Amount (From / To), Category (type / sub category), Status (delivery) — kept in PF / localStorage bk_pu_filters.
-  let PF = { period: 'all', from: '', to: '', vendor_id: '', vendor_name: '', vkind: '', min: '', max: '', type: '', category: '', dstatus: '' };
+  let PF = { period: 'all', from: '', to: '', vendor_id: '', vendor_name: '', vkind: '', min: '', max: '', type: '', category: '', dstatus: '', pstatus: '' };   // 1.20.66: pstatus = the Payment column, dstatus = Received
   try { PF = Object.assign(PF, JSON.parse(localStorage.getItem('bk_pu_filters') || '{}')); } catch (e) {}
   const savePF = () => { try { localStorage.setItem('bk_pu_filters', JSON.stringify(PF)); } catch (e) {} loadPurchases(lastSub.purchases || 'list'); };
   const P_SVG = (d) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
@@ -531,7 +531,7 @@
     if (!ov) await overview();
     const q = ($('puQ') || {}).value || '';
     const [pf, pt] = periodRange(PF.period);
-    const qs = ['from=' + (pf || ''), 'to=' + (pt || '')].concat(['vendor_id', 'vkind', 'min', 'max', 'type', 'category', 'dstatus'].map(k => PF[k] ? k + '=' + encodeURIComponent(PF[k]) : '').filter(Boolean)).join('&');
+    const qs = ['from=' + (pf || ''), 'to=' + (pt || '')].concat(['vendor_id', 'vkind', 'min', 'max', 'type', 'category', 'dstatus', 'pstatus'].map(k => PF[k] ? k + '=' + encodeURIComponent(PF[k]) : '').filter(Boolean)).join('&');
     const j = await api('/api/bookkeeping/purchases?view=' + view + '&q=' + encodeURIComponent(q) + '&' + qs); if (!j.ok) { v.innerHTML = '<div class="bk-card">' + esc(j.error) + '</div>'; return; }
     const rows = j.purchases || [];
     $('nWaiting').textContent = j.counts.waiting || 0; $('nNotReceived').textContent = j.counts.notreceived || 0;
@@ -558,7 +558,7 @@
     // closed = paid and nothing left to receive; paid = the bank line is matched but goods are still on the way
     const statusCell = (p) => { const money = p.cancelled ? '<span class="pu-st">cancelled</span>' : p.status === 'awaiting bank' || p.status === 'awaiting payment' ? puStatus(p) : p.status === 'closed' ? '<span class="pu-st closed">closed</span>' : '<span class="pu-st paid" title="Bank line matched — goods still to receive">paid</span>';
       const sel = p.cancelled ? '' : '<select class="bk sm pu-deliv' + (p.delivery === 'no' ? ' warn' : p.delivery === 'partial' ? ' part' : p.delivery === 'yes' ? ' ok' : '') + '" data-deliv="' + p.id + '" title="Delivery">' + DELIV.map(d => '<option value="' + d[0] + '"' + (p.delivery === d[0] ? ' selected' : '') + ' title="' + esc(d[2]) + '">' + esc(d[1]) + '</option>').join('') + '</select>' + (p.late && /received/.test(p.status) ? '<div class="bk-dim pu-late">' + p.days + ' days</div>' : '') + (p.received_note ? '<div class="bk-dim pu-rnote" title="' + esc(p.received_note) + '">' + esc(p.received_note) + '</div>' : '');
-      return '<td class="pu-status">' + money + sel + '</td>'; };
+      return '<td class="pu-status">' + money + '</td><td class="pu-status pu-recv">' + sel + '</td>'; };   // 1.20.66: Payment and Received are two columns
     const row = (p) => '<tr data-pid="' + p.id + '"><td class="pu-date">' + esc(usD(p.date)) + (tm(p.when) ? '<div class="bk-dim">' + esc(tm(p.when)) + '</div>' : '') + '</td><td>' + vendorCell(p) + '</td>' + amountCell(p) +
       '<td data-pcat="' + p.id + '">' + catSelect(p.category || '', 'pu-cat', 'Choose…', { only: 'expense' }) + '</td><td>' + slots(p) + '</td>' + statusCell(p) +
       '<td class="pu-acts">' + (p.status === 'awaiting bank' && p.suggest ? '<button class="bk-btn sm p" data-sug="' + p.id + '">' + p.suggest + ' bank line' + (p.suggest === 1 ? '' : 's') + ' match</button>' : p.status === 'awaiting bank' ? '<button class="bk-btn sm" data-sug="' + p.id + '">Pick bank line…</button>' : '') +
@@ -571,14 +571,15 @@
       vendor: [{ v: '', l: 'All companies' }, { v: 'none', l: 'Not linked' }].concat((j.vendors || []).map(x => ({ v: String(x.id), l: esc(x.name) })), PF.vendor_id && PF.vendor_id !== 'none' && !(j.vendors || []).some(x => String(x.id) === PF.vendor_id) ? [{ v: PF.vendor_id, l: esc(PF.vendor_name || 'Company') }] : []),
       amount: { type: 'range', kind: 'number', from: PF.min, to: PF.max },
       type: [{ v: '', l: 'All categories' }].concat(chart_types().filter(t => !t.income).map(t => ({ v: 'T:' + t.name, l: tile(t.color, t.icon, 'sm', '') + ' ' + esc(t.name) })), Object.keys(inUse).sort().map(c => ({ v: 'C:' + c, l: catLabel(c), n: inUse[c] }))),
-      dstatus: [{ v: '', l: 'All' }, { v: 'bank', l: 'Awaiting bank / payment', t: 'Awaiting' }].concat(DELIV.map(d => ({ v: d[0], l: d[1] })), [{ v: 'cancelled', l: 'Cancelled' }])
+      pstatus: [{ v: '', l: 'All' }, { v: 'bank', l: 'Awaiting bank / payment', t: 'Awaiting' }, { v: 'paid', l: 'Paid (bank line matched)', t: 'Paid' }, { v: 'cancelled', l: 'Cancelled' }],
+      dstatus: [{ v: '', l: 'All' }].concat(DELIV.map(d => ({ v: d[0], l: d[1] })))
     };
-    const anyF = PF.period !== 'all' || PF.from || PF.to || PF.vendor_id || PF.vkind || PF.min || PF.max || PF.type || PF.category || PF.dstatus;
+    const anyF = PF.period !== 'all' || PF.from || PF.to || PF.vendor_id || PF.vkind || PF.min || PF.max || PF.type || PF.category || PF.dstatus || PF.pstatus;
     const title = view === 'waiting' ? 'Waiting for the bank' : view === 'notreceived' ? 'Not received' : 'Purchases';
     v.innerHTML = '<div class="bk-card"><h2>' + title + ' ' + qHelp('purch_' + view, title, intro) + '<span class="sp"></span>' + (anyF ? '<button class="bk-btn sm" id="pfClear" title="Remove every column filter">× Clear filters</button>' : '') + '<span class="bk-muted">' + rows.length + ' purchase' + (rows.length === 1 ? '' : 's') + '</span></h2>' +
-      '<table class="bk pu-table"><thead><tr><th class="tx-date">' + thFilter('date', 'Date', FO.date) + '</th><th class="tx-vth">' + thFilter('vkind', 'Vendor', FO.vkind, PF.vkind) + thFilter('vendor', 'Company', FO.vendor, PF.vendor_id) + '</th><th class="num">' + thFilter('amount', 'Amount', FO.amount) + '</th><th>' + thFilter('type', 'Category', FO.type, PF.type ? 'T:' + PF.type : PF.category ? 'C:' + PF.category : '') + '</th><th>Paperwork</th><th>' + thFilter('dstatus', 'Status', FO.dstatus, PF.dstatus) + '</th><th></th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table>' +
+      '<table class="bk pu-table"><thead><tr><th class="tx-date">' + thFilter('date', 'Date', FO.date) + '</th><th class="tx-vth">' + thFilter('vkind', 'Vendor', FO.vkind, PF.vkind) + thFilter('vendor', 'Company', FO.vendor, PF.vendor_id) + '</th><th class="num">' + thFilter('amount', 'Amount', FO.amount) + '</th><th>' + thFilter('type', 'Category', FO.type, PF.type ? 'T:' + PF.type : PF.category ? 'C:' + PF.category : '') + '</th><th>Paperwork</th><th>' + thFilter('pstatus', 'Payment', FO.pstatus, PF.pstatus) + '</th><th>' + thFilter('dstatus', 'Received', FO.dstatus, PF.dstatus) + '</th><th></th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table>' +
       (!rows.length ? '<div class="bk-muted" style="padding:14px 0">' + (view === 'list' && !anyF && !q ? 'No purchases yet. They appear when you press Bill, Transaction or Arrival on an email, or when a bank line is categorized.' : 'Nothing matches.') + '</div>' : '') + '</div>';
-    if ($('pfClear')) $('pfClear').onclick = () => { Object.assign(PF, { period: 'all', from: '', to: '', vendor_id: '', vendor_name: '', vkind: '', min: '', max: '', type: '', category: '', dstatus: '' }); savePF(); };
+    if ($('pfClear')) $('pfClear').onclick = () => { Object.assign(PF, { period: 'all', from: '', to: '', vendor_id: '', vendor_name: '', vkind: '', min: '', max: '', type: '', category: '', dstatus: '', pstatus: '' }); savePF(); };
     thFilterBind(v, FO, (key, val) => {
       if (key === 'type') { PF.type = val.startsWith('T:') ? val.slice(2) : ''; PF.category = val.startsWith('C:') ? val.slice(2) : ''; }
       else if (key === 'vendor') { PF.vendor_id = val; const o = FO.vendor.find(x => x.v === val); PF.vendor_name = o && val && val !== 'none' ? o.l : ''; }
@@ -687,7 +688,7 @@
     const cat = st === 'categorized' || st === 'auto';   // 1.20.12: Auto is the Categorized view narrowed to what the system filed by itself
     // 1.19.49: the header filters work in every view (date defaults to the last 30 days); the status is a filter on the Category column.
     let qs = '?status=' + encodeURIComponent(st) + '&q=' + encodeURIComponent(q) + '&lists=1';
-    { const [f, t] = (st === 'old' || st === 'auto') && TF.period !== 'custom' ? ['', ''] : periodRange(TF.period);   // 1.20.66: Auto is a review queue — every unreviewed line whatever its bank date (the chip counts them all); a custom range still narrows it qs += '&from=' + f + '&to=' + t + ['type', 'category', 'vendor_id', 'vkind', 'source', 'min', 'max', 'account', 'side', 'how'].map(k => TF[k] ? '&' + k + '=' + encodeURIComponent(TF[k]) : '').join(''); }
+    { const [f, t] = (st === 'old' || st === 'auto') && TF.period !== 'custom' ? ['', ''] : periodRange(TF.period); /* 1.20.66: Auto is a review queue — every unreviewed line whatever its bank date (the chip counts them all); a custom range still narrows it */ qs += '&from=' + f + '&to=' + t + ['type', 'category', 'vendor_id', 'vkind', 'source', 'min', 'max', 'account', 'side', 'how'].map(k => TF[k] ? '&' + k + '=' + encodeURIComponent(TF[k]) : '').join(''); }
     const j = await api('/api/bookkeeping/transactions' + qs);
     const bs = j.by_status || {};
     $('nTxAll').textContent = (bs.new_open != null ? bs.new_open : bs.new || 0) + (bs.pending || 0) + (bs.old || 0) + (bs.categorized || 0); /* 1.19.113: Today also holds filed lines, so All counts only its open ones */ $('nTxNew').textContent = bs.new || 0; $('nTxPending').textContent = bs.pending || 0; $('nTxOld').textContent = bs.old || 0; $('nTxCategorized').textContent = bs.categorized || 0; $('nTxAuto').textContent = bs.auto || 0;   // 1.19.84: the three buckets are disjoint, All is their sum
