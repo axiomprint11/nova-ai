@@ -187,7 +187,7 @@
       '<td><div class="cl-out">' + (out.join('') || '<span class="tk-tag" style="opacity:.5">—</span>') + '</div></td>' +
       '<td class="cl-dur">' + dd + '</td>' +
       '<td class="cl-rec">' + (c.has_audio ? '<button type="button" data-play="' + c.id + '" title="Open the call and play the recording">' + SYS_ICON.play + '</button>' : '<span class="no">' + SYS_ICON.play + '</span>') + '</td>' +
-      '<td><div class="cl-sum" title="' + esc(sum) + '">' + esc(sum || '—') + '</div></td>' +
+      '<td><div class="cl-sum" title="' + esc(sum) + '">' + esc(sum ? (sum.length > 90 ? sum.slice(0, 88).replace(/\s+\S*$/, '') + '…' : sum) : '—') + '</div></td>' +   // 1.20.72: one short line; the whole summary on the call
       '<td class="cl-eye">' + SYS_ICON.eye + '</td></tr>';
   }
 
