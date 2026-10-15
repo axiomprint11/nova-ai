@@ -230,6 +230,8 @@ function stopCurrentAnswer(reason) {
 
 function showApp() {
   document.getElementById('app').style.display = 'flex';
+  /* 1.20.86: the NovaAI left menu beside the chat (a full page only — not the CRM widget, not the read-only view) */
+  if (!EMBED && !VIEW && window.NovaNav && !document.body.classList.contains('nn-shell')) { try { NovaNav.mount({ current: 'history' }); } catch (e) { console.warn('NovaNav', e); } }
   const lbl = document.getElementById('userLabel');
   if (lbl) lbl.textContent = username || '';
   const av = document.getElementById('avatar');

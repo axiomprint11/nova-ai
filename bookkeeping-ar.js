@@ -40,6 +40,9 @@ module.exports = function mountAr(ctx) {
   // 1.20.3: the queue starts at AR_FROM (bank date; .env, default 2026-10-01) — older deposits were handled by email before Nova AR
   // and only cloud the list. Rows already queued from before the cut-off are set aside as 'old' (never shown, never counted).
   const AR_FROM = /^\d{4}-\d{2}-\d{2}$/.test(env('AR_FROM')) ? env('AR_FROM') : '2026-10-01';
+  // 1.20.86: Acct Aging starts at AR_AGING_FROM (invoice date; default 2025-01-01) — 2024 and older are not chased any more
+  const AR_AGING_FROM = /^\d{4}-\d{2}-\d{2}$/.test(env('AR_AGING_FROM')) ? env('AR_AGING_FROM') : '2025-01-01';
+  const ymdOf = (v) => v instanceof Date ? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(v) : String(v || '').slice(0, 10);
   // 1.20.5: a Los Angeles calendar day as an ISO instant — its start, or (end) the start of the next day; matched_at is UTC ISO
   function laBound(ymd, end) {
     const [y, m, d] = ymd.split('-').map(Number);
@@ -439,9 +442,12 @@ module.exports = function mountAr(ctx) {
       const today = Date.now(); const B = ['0-30', '31-60', '61-90', '90+'];
       const bucket = (d) => d == null ? '0-30' : d <= 30 ? '0-30' : d <= 60 ? '31-60' : d <= 90 ? '61-90' : '90+';
       const byCust = {};
+      /* 1.20.86: invoices before AR_AGING_FROM (default 2025-01-01) are not chased any more — 2024 and older are left out */
+      const floorIso = AR_AGING_FROM; let dropped = 0;
       for (const r of invoices) {
         if (r.status === 'paid' || r.balance <= 0.005) continue;
         const c = r.created ? new Date(r.created).getTime() : NaN; const age = isNaN(c) ? null : Math.max(0, Math.round((today - c) / DAY));
+        if (r.created && ymdOf(r.created) < floorIso) { dropped++; continue; }   /* the LA calendar day — no time-zone slip at midnight */
         const b = bucket(age);
         const k = r.customer_id || 'none';
         const g = byCust[k] = byCust[k] || { customer_id: r.customer_id, customer: r.customer, company: r.company, person: r.person, email: r.email, am: ams[r.manager_id] || '', buckets: { '0-30': 0, '31-60': 0, '61-90': 0, '90+': 0 }, total: 0, n: 0, oldest: 0, invoices: [] };
@@ -452,7 +458,7 @@ module.exports = function mountAr(ctx) {
       const totals = { '0-30': 0, '31-60': 0, '61-90': 0, '90+': 0, total: 0, n: 0, customers: rows.length };
       rows.forEach(g => { B.forEach(k => { totals[k] += g.buckets[k]; }); totals.total += g.total; totals.n += g.n; });
       Object.keys(totals).forEach(k => { totals[k] = Math.round(totals[k] * 100) / 100; });
-      res.json({ ok: true, rows, totals, at: inv.at, crm_error: inv.error || null });
+      res.json({ ok: true, rows, totals, at: inv.at, from: floorIso, dropped, crm_error: inv.error || null });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // POST {AR_PAY_WEBHOOK_URL} {event: 'ar.payment', payment: {...}, invoices: [ids], amount, paid_on, method, bank_line, matched_by},

@@ -8,21 +8,27 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/axiom-shared.css">
+<style>
+/* 1.20.86: the NovaAI left menu is mounted on this page too (NovaNav, not in the widget or the read-only view) —
+   the menu carries History, Admin, who is signed in and Sign out, so the top bar keeps only the title and New chat. */
+body.nn-shell #app { height: auto; flex: 1; min-height: 0; }
+body.nn-shell .topbar .nn-dup { display: none !important; }
+</style>
 </head>
 <body>
 
 <div id="app" style="display:none">
   <div class="topbar">
     <div class="topbar-left">
-      <a href="/admin?tab=history&amp;mine=1" class="btn-ghost" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px" title="My chat history">&larr; History</a>
+      <a href="/admin?tab=history&amp;mine=1" class="btn-ghost nn-dup" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px" title="My chat history">&larr; History</a>
       <div class="agent-title">ChatBot</div>
       <div class="status-pill">Connected</div>
     </div>
     <div class="topbar-right">
-      <div class="user-chip"><span class="avatar" id="avatar">N</span><span id="userLabel"></span></div>
-      <a class="btn-ghost" id="adminBtn" href="/admin" style="text-decoration:none;display:none">Admin</a>
+      <div class="user-chip nn-dup"><span class="avatar" id="avatar">N</span><span id="userLabel"></span></div>
+      <a class="btn-ghost nn-dup" id="adminBtn" href="/admin" style="text-decoration:none;display:none">Admin</a>
       <button class="btn-ghost" onclick="clearChat()">New chat</button>
-      <button class="btn-ghost" onclick="logout()">Sign out</button>
+      <button class="btn-ghost nn-dup" onclick="logout()">Sign out</button>
     </div>
   </div>
 
@@ -116,6 +122,7 @@
   </div>
 </div>
 
+<script src="/nova-nav.js"></script>
 <script src="/axiom-cards.js"></script>
 <script src="/axiom-files.js"></script>
 <script src="/axiom-voice.js"></script>
