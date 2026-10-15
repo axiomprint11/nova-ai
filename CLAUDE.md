@@ -84,6 +84,15 @@ JWT bearer tokens (30d) with two identity sources, resolved in `/api/login` (ser
    table**, its `password_hash` is bcrypt-compared (PHP `$2y$` prefix rewritten to `$2a$`), and the
    person must also exist and be enabled in the local `members` table → token key `member:<email>`.
 
+**Enabled / Disabled follows the website** (1.20.90): `members.enabled` is no longer toggled in Nova — `GET /api/admin/users-activity` reads
+`user.status` / `blocked_at` from the CRM for every member (matched by `axiom_user_id`, else email; `m.crm {status, blocked}`), sets
+`enabled` = status 10 and not blocked, and writes a changed value back; `/api/login` refuses a CRM account that is not active ("disabled in
+the Axiom CRM") and marks the member disabled. Admin → Users (`.us-table`): the two header rows are sticky inside `.content` (it scrolls
+with 26px top padding, so `top: -26px` / `13px`), a filter under every column (`[data-uf]`: name / username / email text, Last login,
+History, Knowledge, Roles, Status — **Enabled by default**, Disabled or All on the picker; `usersCache` + `renderUsers()` / `userPasses()`
+client-side), a "n of m people shown · enabled · disabled" line (`#usCount`), and the on / off toggle column is gone
+(`POST /api/admin/members/toggle` still exists for the API).
+
 `auth` gates every API route; `adminOnly` re-checks the live DB so a just-promoted member does not have
 to re-login; `knowledgeGuard`/`knowledgeAccessLevel` implement the `none`/`own`/`all` Domain Knowledge tiers.
 Per-member agent access is default-allow: no rows in `member_agents` means all active agents.

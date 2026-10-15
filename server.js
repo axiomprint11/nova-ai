@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.89';
-const NOVA_BUILT = '10-15-2026 6:35pm';
+const NOVA_VERSION = '1.20.90';
+const NOVA_BUILT = '10-15-2026 6:50pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -5882,19 +5882,25 @@ app.get('/api/admin/users-activity', auth, adminOnly, (req, res) => {
     if (err) return res.json({ success: false, error: 'members query: ' + err.message });
     members = members || [];
     try {
-      const ids = members.map(m => m.axiom_user_id).filter(Boolean);
-      if (ids.length) {
-        const rows = await runQuery('SELECT id, memberimage, username FROM user WHERE id IN (' + ids.join(',') + ')');
-        const byId = {};
-        rows.forEach(r => { byId[r.id] = r; });
+      const ids = members.map(m => parseInt(m.axiom_user_id)).filter(Boolean);
+      const emails = members.map(m => String(m.email || '').toLowerCase()).filter(Boolean);
+      if (ids.length || emails.length) {
+        /* 1.20.90: status + blocked_at too — Nova's Enabled / Disabled follows the website (status 10 = active); matched by id, else email */
+        const rows = await runQuery('SELECT id, memberimage, username, email, status, blocked_at FROM user WHERE type = \'member\' AND (' + (ids.length ? 'id IN (' + ids.join(',') + ')' : '0') + (emails.length ? ' OR LOWER(email) IN (' + emails.map(e => mysql.escape(e)).join(',') + ')' : '') + ')');
+        const byId = {}, byEmail = {};
+        rows.forEach(r => { byId[r.id] = r; if (r.email) byEmail[String(r.email).toLowerCase()] = r; });
         members.forEach(m => {
-          const u = byId[m.axiom_user_id];
+          const u = byId[m.axiom_user_id] || byEmail[String(m.email || '').toLowerCase()];
           if (u) {
             m.photo = u.memberimage || null;
+            m.crm = { status: Number(u.status), blocked: !!u.blocked_at };
+            const active = Number(u.status) === 10 && !u.blocked_at ? 1 : 0;
+            if (m.enabled !== active) { m.enabled = active; db.run('UPDATE members SET enabled = ? WHERE id = ?', [active, m.id]); }
             if (!m.username && u.username) {
               m.username = u.username;
               db.run('UPDATE members SET username = ? WHERE id = ?', [String(u.username).toLowerCase(), m.id]);
             }
+            if (!m.axiom_user_id) db.run('UPDATE members SET axiom_user_id = ? WHERE id = ?', [u.id, m.id]);
           }
         });
       }
@@ -6476,9 +6482,11 @@ app.post('/api/login', (req, res) => {
     const idLower = id.toLowerCase();
     try {
       // Resolve the Axiom user by username or email first (authoritative identity)
-      const arows = await runQuery('SELECT id, email, username, password_hash FROM user WHERE LOWER(username) = ' + mysql.escape(idLower) + ' OR LOWER(email) = ' + mysql.escape(idLower) + ' LIMIT 1');
+      const arows = await runQuery('SELECT id, email, username, password_hash, status, blocked_at FROM user WHERE LOWER(username) = ' + mysql.escape(idLower) + ' OR LOWER(email) = ' + mysql.escape(idLower) + ' LIMIT 1');
       if (!arows.length) return res.status(401).json({ error: 'Invalid credentials' });
       const au = arows[0];
+      // 1.20.90: Nova follows the website's enable / disable — a CRM account that is not active (status 10) or is blocked cannot sign in
+      if (Number(au.status) !== 10 || au.blocked_at) { db.run('UPDATE members SET enabled = 0 WHERE axiom_user_id = ? OR LOWER(email) = ?', [au.id, (au.email || '').toLowerCase()]); return res.status(403).json({ error: 'This account is disabled in the Axiom CRM.' }); }
       // Is this Axiom user an enabled member? Match by axiom id, email, or username.
       db.get('SELECT * FROM members WHERE axiom_user_id = ? OR LOWER(email) = ? OR LOWER(username) = ?',
         [au.id, (au.email||'').toLowerCase(), (au.username||'').toLowerCase()], async (mErr, member) => {

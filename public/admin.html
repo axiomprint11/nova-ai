@@ -42,6 +42,15 @@ input:focus { border-color: var(--indigo); box-shadow: 0 0 0 3px var(--indigo-li
 .feedback.ok { color: var(--green); }
 table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 th { background: #f7f7fc; text-align: left; padding: 11px 14px; font-weight: 600; color: var(--ink-soft); border-bottom: 1px solid var(--line); }
+/* 1.20.90: Users — the two header rows stay put while the people scroll; a filter under every column */
+#tabUsers .us-wrap { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.us-table { border: 0; border-radius: 0; overflow: visible; }
+.us-table thead th { position: sticky; top: -26px; z-index: 2; box-shadow: 0 1px 0 var(--line); }   /* .content scrolls with 26px top padding */
+.us-table thead tr.us-filt th { top: 13px; padding: 6px 10px 8px; background: #fbfbfe; box-shadow: 0 -2px 0 #fbfbfe, 0 1px 0 var(--line); }
+.us-table th:last-child, .us-table td:last-child { min-width: 112px; }
+.us-filt input, .us-filt select { width: 100%; box-sizing: border-box; border: 1px solid #e3e3ee; border-radius: 7px; padding: 5px 8px; font: inherit; font-size: 12px; background: #fff; color: var(--ink); }
+.us-filt input::placeholder { color: #b0b0c3; }
+.us-count { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 td { padding: 11px 14px; border-bottom: 1px solid var(--line); }
 tr:last-child td { border-bottom: none; }
 .hist-row { cursor: pointer; }
@@ -268,10 +277,27 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
           <button class="btn-solid" onclick="addMember()">Add member</button>
         </div>
         <div id="msg" class="feedback"></div>
-        <table>
-          <thead><tr><th></th><th>Name</th><th>Username</th><th>Email</th><th>Last login</th><th>History</th><th>Knowledge</th><th>Roles</th><th>Status</th><th></th></tr></thead>
+        <!-- 1.20.90: filters on every column; Enabled / Disabled follows the website (CRM user.status) — no toggle here -->
+        <div class="us-count" id="usCount"></div>
+        <div class="us-wrap">
+        <table class="us-table">
+          <thead>
+            <tr><th></th><th>Name</th><th>Username</th><th>Email</th><th>Last login</th><th>History</th><th>Knowledge</th><th>Roles</th><th>Status</th></tr>
+            <tr class="us-filt">
+              <th></th>
+              <th><input data-uf="name" placeholder="Name"></th>
+              <th><input data-uf="username" placeholder="Username"></th>
+              <th><input data-uf="email" placeholder="Email"></th>
+              <th><select data-uf="login"><option value="">Any</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="older">Over 90 days ago</option><option value="never">Never</option></select></th>
+              <th><select data-uf="hist"><option value="">Any</option><option value="7">Chatted this week</option><option value="30">Chatted this month</option><option value="none">No chats</option></select></th>
+              <th><select data-uf="know"><option value="">Any</option><option value="none">No access</option><option value="own">Own area</option><option value="all">See all</option></select></th>
+              <th><select data-uf="role"><option value="">Any</option><option value="is_admin">Admin</option><option value="is_bookkeeper">Bookkeeper</option><option value="is_ar">AR</option><option value="is_aging">Acct Aging</option><option value="none">No roles</option></select></th>
+              <th><select data-uf="status"><option value="1">Enabled</option><option value="0">Disabled</option><option value="">All</option></select></th>
+            </tr>
+          </thead>
           <tbody id="usersBody"></tbody>
         </table>
+        </div>
       </div>
       <div id="tabHistory" style="display:none">
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px">
@@ -843,16 +869,43 @@ async function loadEmails() {
   });
 }
 
+let usersCache = null;
+// 1.20.90: one filter per column (text on name / username / email, pickers on the rest); Status defaults to Enabled.
+function usersFilter() { const f = {}; document.querySelectorAll('#tabUsers [data-uf]').forEach(el => { f[el.dataset.uf] = el.value; }); return f; }
+function userPasses(m, f) {
+  const has = (v, q) => !q || String(v || '').toLowerCase().indexOf(q.toLowerCase()) > -1;
+  if (!has(m.display_name, f.name) || !has(m.username, f.username) || !has(m.email, f.email)) return false;
+  if (f.status !== '' && String(m.enabled ? 1 : 0) !== f.status) return false;
+  if (f.know && (m.knowledge_access || 'none') !== f.know) return false;
+  if (f.role === 'none') { if (m.is_admin || m.is_bookkeeper || m.is_ar || m.is_aging) return false; } else if (f.role && !m[f.role]) return false;
+  if (f.hist === '7' && !(m.chats7 > 0)) return false; if (f.hist === '30' && !(m.chats30 > 0)) return false; if (f.hist === 'none' && m.chatsTotal > 0) return false;
+  if (f.login) {
+    const t = m.last_login ? new Date(m.last_login.replace(' ', 'T') + (/Z|[+-]\d\d:?\d\d$/.test(m.last_login) ? '' : 'Z')).getTime() : NaN, days = isNaN(t) ? null : (Date.now() - t) / 864e5;
+    if (f.login === 'never' ? days != null : f.login === 'older' ? !(days != null && days > 90) : !(days != null && days <= Number(f.login))) return false;
+  }
+  return true;
+}
+document.addEventListener('DOMContentLoaded', () => { document.querySelectorAll('#tabUsers [data-uf]').forEach(el => { el.addEventListener('input', renderUsers); el.addEventListener('change', renderUsers); }); });
 async function loadUsers() {
   const tb = document.getElementById('usersBody');
-  tb.innerHTML = '<tr><td colspan="10" style="color:var(--muted)">Loading...</td></tr>';
+  if (!usersCache) tb.innerHTML = '<tr><td colspan="9" style="color:var(--muted)">Loading...</td></tr>';
   try {
     const res = await fetch('/api/admin/users-activity', { headers: { 'Authorization': 'Bearer ' + token } });
     const j = await res.json();
-    if (!j.success) { tb.innerHTML = '<tr><td colspan="10" class="feedback err">' + (j.error||'Error') + '</td></tr>'; return; }
-    tb.innerHTML = '';
-    if (!j.members.length) { tb.innerHTML = '<tr><td colspan="10" style="color:var(--muted)">No members yet.</td></tr>'; return; }
-    j.members.forEach(m => {
+    if (!j.success) { tb.innerHTML = '<tr><td colspan="9" class="feedback err">' + (j.error||'Error') + '</td></tr>'; return; }
+    usersCache = j.members || [];
+    renderUsers();
+  } catch (e) { tb.innerHTML = '<tr><td colspan="9" class="feedback err">Connection error</td></tr>'; }
+}
+function renderUsers() {
+  const tb = document.getElementById('usersBody'); if (!usersCache) return;
+  const f = usersFilter(); const list = usersCache.filter(m => userPasses(m, f));
+  const en = usersCache.filter(m => m.enabled).length;
+  const cnt = document.getElementById('usCount'); if (cnt) cnt.textContent = list.length + ' of ' + usersCache.length + ' people shown · ' + en + ' enabled · ' + (usersCache.length - en) + ' disabled in the Axiom CRM';
+  tb.innerHTML = '';
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="9" style="color:var(--muted)">' + (usersCache.length ? 'Nobody matches these filters.' : 'No members yet.') + '</td></tr>'; return; }
+  {
+    list.forEach(m => {
       const tr = document.createElement('tr');
       const initial = (m.display_name || m.email || '?').charAt(0).toUpperCase();
       const avatar = m.photo
@@ -885,11 +938,10 @@ async function loadUsers() {
         '<td>' + hist + '</td>' +
         knowCell +
         adminCell +
-        '<td>' + (m.enabled ? '<span class="badge on">Enabled</span>' : '<span class="badge off">Disabled</span>') + '</td>' +
-        '<td class="row-actions"><button class="toggle ' + (m.enabled?'on':'') + '" onclick="toggleMember(' + m.id + ',' + (m.enabled?0:1) + ')"></button></td>';
+        '<td title="' + (m.crm ? 'Axiom CRM status ' + m.crm.status + (m.crm.blocked ? ' · blocked' : '') + ' — enable or disable the account on the website' : 'Not matched to an Axiom CRM user') + '">' + (m.enabled ? '<span class="badge on">Enabled</span>' : '<span class="badge off">Disabled</span>') + '</td>';
       tb.appendChild(tr);
     });
-  } catch (e) { tb.innerHTML = '<tr><td colspan="10" class="feedback err">Connection error</td></tr>'; }
+  }
 }
 
 async function addMember() {
@@ -908,14 +960,6 @@ async function addMember() {
     document.getElementById('newEmail').value = '';
     loadUsers();
   } catch (e) { msg.className = 'feedback err'; msg.textContent = 'Connection error'; }
-}
-
-async function toggleMember(id, enabled) {
-  await fetch('/api/admin/members/toggle', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-    body: JSON.stringify({ id, enabled })
-  });
-  loadUsers();
 }
 
 async function setKnowledgeAccess(id, level) {
