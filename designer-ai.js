@@ -93,7 +93,11 @@ module.exports = function mountDesignerAi(app, deps) {
       "(SELECT dd.design_type FROM estimate_design_details dd WHERE dd.estimate_id = e.id AND dd.design_type NOT LIKE '%Proof%' ORDER BY dd.id DESC LIMIT 1) files_type, " +
       "(SELECT dd.service_type FROM estimate_design_details dd WHERE dd.estimate_id = e.id AND dd.service_type IS NOT NULL ORDER BY dd.id DESC LIMIT 1) service, " +
       "(SELECT dd.notes FROM estimate_design_details dd WHERE dd.estimate_id = e.id AND dd.notes IS NOT NULL AND dd.notes <> '' ORDER BY dd.id DESC LIMIT 1) design_notes, " +
-      "(SELECT COUNT(*) FROM estimate e2 WHERE e2.estimate_productid = e.estimate_productid AND e2.id >= " + f180 + " AND e2.created >= DATE_SUB(NOW(), INTERVAL 180 DAY)) product_180 " +
+      "(SELECT COUNT(*) FROM estimate e2 WHERE e2.estimate_productid = e.estimate_productid AND e2.id >= " + f180 + " AND e2.created >= DATE_SUB(NOW(), INTERVAL 180 DAY)) product_180, " +
+      // 1.20.52: the job's file slots from the CRM Files panel (estimate_prepress_option): print / foil / die_line / cutline / spot_uv /
+      // kisscut / book_cover_* + white-support / VDP flags and how many artwork versions — a die line makes it a harder job
+      "(SELECT GROUP_CONCAT(DISTINCT CONCAT(po.type, IF(po.need_white_support, '+white', ''), IF(po.need_vdp, '+vdp', ''), IF(po.has_cut, '+cut', ''))) FROM estimate_prepress_option po WHERE po.estimate_id = e.id AND po.type <> 'material') file_slots, " +
+      "(SELECT COUNT(DISTINCT IFNULL(po.version_name, '')) FROM estimate_prepress_option po WHERE po.estimate_id = e.id AND po.type = 'print') file_versions " +
       "FROM estimate e JOIN estimate_team_members m ON m.estimate_id = e.id AND m.user_id = " + tu + " JOIN estimate_stage s ON s.estimate_id = e.id " +
       "LEFT JOIN product p ON p.id = e.estimate_productid LEFT JOIN productcategory pc ON pc.id = p.product_category_id LEFT JOIN customer c ON c.id = e.estimate_clientid " +
       "WHERE s.estimate_stage = 'prepress' AND s.estimate_substage <> 'canceled'" + (all ? '' : ' AND e.estimate_invoiceid > 0') + (onlyId ? ' AND e.id = ' + parseInt(onlyId) : '') + " ORDER BY e.created DESC LIMIT 300");
@@ -105,15 +109,34 @@ module.exports = function mountDesignerAi(app, deps) {
       status: r.prepress_status, status_label: PROOF_LABEL[r.prepress_status] || r.prepress_status || '', proof_type: r.proof_type || (r.substage === 'tier_2' ? 'Tier 2' : r.substage === 'tier_1' ? 'Tier 1' : ''), files_type: r.files_type || '', service: r.service || '',
       tier, customer: r.company_name || [r.cname, r.clname].filter(Boolean).join(' ') || '', others: teamOf(r.others).map(t => t.name).join(', '), team: teamOf(r.others), designer_ids: r.designer_ids ? String(r.designer_ids).split(',').map(Number) : [],
       design_fee: Number(r.design_price) || 0, notes: [r.design_notes, r.prepress_notes, r.prepress_internal_notes].filter(Boolean).join('\n').slice(0, 1200), product_180: Number(r.product_180) || 0, category_id: r.category_id,
+      files: jobFiles(r.file_slots, r.file_versions),
       nova: mine[r.id] || null, busy: busy[r.id] ? { at: busy[r.id].at, reason: busy[r.id].reason } : null
     })).map(j => Object.assign(j, { hard: jobHard(j), creative: jobCreative(j), common: j.product_180 >= 40 }));
   }
   // 1.20.17: how hard and how creative a job is, 0–10 — from the category, the proof tier, the design fee and the notes
   const HARD_BY_CAT = { 'Folding Cartons': 8, 'Rigid Boxes': 9, 'Corrugated Boxes': 8, 'Sleeves and Inserts': 7, 'Catalogs & Books': 7, 'Trade Show Displays': 6, 'Standing Displays': 6, 'Custom': 8, 'Services': 7, 'Roll Labels': 5, 'Adhesive Products': 5, 'Stickers on Sheet': 4, 'Individual Stickers': 4, 'Rigid Boards': 4, 'Signs': 4, 'Real Estate Signs': 3, 'Banners / Posters': 3, 'Banner Stands': 3, 'Flags': 4, 'Standard Business Cards': 2, 'Luxury Business Cards': 4, 'Plastic Business Cards': 3, 'Special Shape Business Cards': 6, 'Marketing Materials': 3, 'Brochures / Flyers': 3, 'Menus': 4, 'Invitations': 5, 'Event & Invitations': 5, 'Calendars': 5, 'Promo Products': 4, 'Wall Art': 5, 'Mailing & EDDM': 4, 'Holders / Folders': 5 };
+  // The CRM Files panel → {slots: ['print','foil','die_line'…], white, vdp, cut, versions, labels: ['Die Line','Foil'…], hard: points}
+  const SLOT_LABEL = { print: 'Print', foil: 'Foil', die_line: 'Die Line', cutline: 'Cut Line', spot_uv: 'Spot UV', kisscut: 'Kiss Cut', grommet: 'Grommets', book_cover_print: 'Book Cover', book_cover_foil: 'Cover Foil', book_cover_spot_uv: 'Cover Spot UV' };
+  const SLOT_HARD = { die_line: 3, cutline: 1, kisscut: 1, foil: 1, spot_uv: 1, book_cover_print: 1, book_cover_foil: 1, book_cover_spot_uv: 1 };
+  function jobFiles(slotsCsv, versions) {
+    const out = { slots: [], white: false, vdp: false, cut: false, versions: Number(versions) || 0, labels: [], hard: 0, why: [] };
+    String(slotsCsv || '').split(',').map(x => x.trim()).filter(Boolean).forEach(x => {
+      const parts = x.split('+'); const t = parts[0];
+      if (out.slots.indexOf(t) < 0) { out.slots.push(t); if (SLOT_LABEL[t]) out.labels.push(SLOT_LABEL[t]); }
+      if (parts.indexOf('white') > -1) out.white = true; if (parts.indexOf('vdp') > -1) out.vdp = true; if (parts.indexOf('cut') > -1) out.cut = true;
+    });
+    out.slots.forEach(t => { if (SLOT_HARD[t]) { out.hard += SLOT_HARD[t]; out.why.push(SLOT_LABEL[t] + ' file (+' + SLOT_HARD[t] + ')'); } });
+    if (out.white) { out.hard += 1; out.why.push('white support (+1)'); }
+    if (out.vdp) { out.hard += 1; out.why.push('variable data (+1)'); }
+    if (out.versions > 1) { out.hard += 1; out.why.push(out.versions + ' versions (+1)'); }
+    if (out.white) out.labels.push('White'); if (out.vdp) out.labels.push('VDP'); if (out.versions > 1) out.labels.push(out.versions + ' versions');
+    return out;
+  }
   function jobHard(j) {
     let h = HARD_BY_CAT[j.category] != null ? HARD_BY_CAT[j.category] : 5;
     const t = (j.product + ' ' + j.name).toLowerCase();
-    if (/die ?cut|custom shape|cutout|contour/.test(t)) h += 2;
+    if (j.files && j.files.hard) h += Math.min(5, j.files.hard);   // 1.20.52: a die line / foil / spot UV / cut file is more work
+    if (/die ?cut|custom shape|cutout|contour/.test(t) && !(j.files && j.files.slots.indexOf('die_line') > -1)) h += 2;
     if (/wrap|vehicle|van|fleet/.test(t)) h += 3;
     if (/variable|vdp|numbering/.test(t)) h += 1;
     if (j.tier === 2 || /tier ?2/i.test(j.proof_type || '')) h += 2;
@@ -191,8 +214,10 @@ module.exports = function mountDesignerAi(app, deps) {
       if (isT2) { if (d.tier2) add(15, 'Tier 2 designer'); else add(-20, 'not marked Tier 2'); }
       // how hard the job is against what they can take (0–10): each point over their level costs 6
       const hardOver = job.hard - d.hard_level;
-      if (hardOver > 0) add(-Math.min(40, hardOver * 6), 'job hardness ' + job.hard + '/10 is over their ' + d.hard_level);
-      else if (job.hard >= 7) add(6, 'hard job (' + job.hard + '/10) within their ' + d.hard_level);
+      const fw = job.files && job.files.why.length ? ' [' + job.files.why.join(', ') + ']' : '';
+      if (hardOver > 0) add(-Math.min(40, hardOver * 6), 'job hardness ' + job.hard + '/10' + fw + ' is over their ' + d.hard_level);
+      else if (job.hard >= 7) add(6, 'hard job (' + job.hard + '/10' + fw + ') within their ' + d.hard_level);
+      else if (job.files && job.files.hard >= 3 && d.hard_level >= 7) add(4, 'skilled for ' + job.files.labels.join(' / ') + ' files (level ' + d.hard_level + ')');
       // a creative job (design fee, "Work with Our Designers", design notes) goes to the creative ones
       if (job.creative >= 6 || job.design_fee > 0) { const c = (d.comm_level == null ? 5 : d.comm_level) - 5; if (c) add(c * 2, 'client communication ' + (c + 5) + '/10 on a job with client back-and-forth'); }
       langs.forEach(l => { if ((d.language_list || []).indexOf(l) > -1) add(12, 'speaks ' + l + ' — the job mentions it'); });
@@ -294,7 +319,7 @@ module.exports = function mountDesignerAi(app, deps) {
     const team = await designers();
     const prof = team.filter(d => d.active).map(d => ({ user_id: d.user_id, name: d.name + ' ' + (d.last_name || ''), title: d.title, strong_sides: d.skill_list, tier2: !!d.tier2, hard_level: d.hard_level, creative_level: d.creative_level, client_communication: d.comm_level, languages: d.language_list, notes: d.notes || '', active_jobs: d.active_jobs, waiting_on_client: d.waiting_client, approved_30d: d.done_30, jobs_180d: d.jobs_180, hours: d.shift_start ? d.shift_start + '-' + d.shift_end + ' days ' + (d.work_days || '1-5') : 'unknown', on_shift: d.on_shift }));
     const sys = 'You assign print jobs to designers at AxiomPrint. Nova has already scored every designer with its built-in rules (history, strong sides, hardness, creativity, load, hours). The OWNER\'S RULES below take priority over those scores wherever they apply. Return ONLY JSON: {"picks":[{"user_id":n,"score":0-100,"note":"short reason citing the owner rule, or empty"}],"busy":false,"busy_reason":""} — every candidate once, scores changed only where a rule applies, note only when you changed something. Set busy to true ONLY when the OVERLOAD RULES say nobody should take this job right now (then the job stays in the queue and the team is emailed); give the reason in one sentence.';
-    const user = 'OWNER\'S RULES:\n' + (logic.slice(0, 4000) || '(none)') + '\n\nOVERLOAD RULES (when is everyone busy):\n' + (overload.slice(0, 2000) || '(none)') + '\n\nJOB:\n' + JSON.stringify({ e: job.e, name: job.name, customer: job.customer, product: job.product, category: job.category, tier: job.tier, proof_type: job.proof_type, status: job.status_label, hard: job.hard, creative: job.creative, design_fee: job.design_fee, expedite: job.service === 'expedite', due: job.complete_by, created: job.created, notes: (job.notes || '').slice(0, 600), team_on_it: job.others }) +
+    const user = 'OWNER\'S RULES:\n' + (logic.slice(0, 4000) || '(none)') + '\n\nOVERLOAD RULES (when is everyone busy):\n' + (overload.slice(0, 2000) || '(none)') + '\n\nJOB:\n' + JSON.stringify({ e: job.e, name: job.name, customer: job.customer, product: job.product, category: job.category, tier: job.tier, proof_type: job.proof_type, status: job.status_label, hard: job.hard, files: job.files ? job.files.labels : [], creative: job.creative, design_fee: job.design_fee, expedite: job.service === 'expedite', due: job.complete_by, created: job.created, notes: (job.notes || '').slice(0, 600), team_on_it: job.others }) +
       '\n\nDESIGNERS:\n' + JSON.stringify(prof) + '\n\nNOVA\'S SCORES:\n' + JSON.stringify(cand) + '\n\nTime now (Los Angeles): ' + new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
     try {
       const r = await anthropic.messages.create({ model: model || 'claude-haiku-4-5', max_tokens: 900, system: sys, messages: [{ role: 'user', content: user }] });
