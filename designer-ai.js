@@ -245,7 +245,10 @@ module.exports = function mountDesignerAi(app, deps) {
       const starts = out.map(p => ({ p, n: p.off_shift ? nextStart(p._d) : null })).filter(x => x.n);
       starts.sort((a, b) => a.n.minutes - b.n.minutes);
       const first = starts.length ? starts[0].n.minutes : 0;
-      starts.forEach((x, i) => {
+      let rank = -1, prevMin = null;
+      starts.forEach((x) => {
+        if (x.n.minutes !== prevMin) { rank++; prevMin = x.n.minutes; }   // the same start time shares the rank (and "FIRST IN")
+        const i = rank;
         const bonus = Math.max(0, 12 - i * 3);
         x.p.next_start = x.n.minutes; x.p.next_start_text = x.n.day + ' ' + x.n.at;
         x.p.score = Math.max(0, Math.min(15, x.p.score + bonus));
@@ -296,20 +299,8 @@ module.exports = function mountDesignerAi(app, deps) {
   async function markBusy(job, reason, who) {
     const open = await dbGet("SELECT id, at FROM da_assign WHERE estimate_id = ? AND status = 'busy' ORDER BY id DESC LIMIT 1", [job.id]);
     if (!open) await dbRun("INSERT INTO da_assign (estimate_id, user_id, score, reason, picked_by, at, status) VALUES (?,?,?,?,?,?,'busy')", [job.id, 0, null, String(reason || '').slice(0, 500), who, nowIso()]);
-    // the email, once per job per 24 h
-    const last = await dbGet("SELECT value FROM da_settings WHERE key = ?", ['busy_mailed_' + job.id]);
-    if (last && Date.now() - new Date(last.value).getTime() < 24 * 3600e3) return { emailed: false, emailed_at: last.value };
-    const to = ((await getSetting('overload_to')) || OVERLOAD_TO_DEFAULT).split(/[,;\s]+/).map(x => x.trim()).filter(x => /@/.test(x));
-    if (!sendMail || !to.length) return { emailed: false };
-    try {
-      const line = (k, v) => v ? k + ': ' + v + '\n' : '';
-      await sendMail({ to: to.join(', '), subject: 'Designer AI — everyone is busy, ' + job.e + ' not assigned',
-        text: 'Everyone is busy and AI wasn\'t able to assign this job to anyone. It stays in the queue for now — the designers will pick it up themselves.\n\n' +
-          line('Job', job.e + (job.name ? ' — ' + job.name : '')) + line('Customer', job.customer) + line('Product', job.product + (job.category ? ' (' + job.category + ')' : '')) + line('Tier', 'Tier ' + job.tier + (job.proof_type ? ' · ' + job.proof_type : '')) + line('Due', job.complete_by ? String(job.complete_by).slice(0, 10) : '') + line('Why', reason) +
-          '\nDesigner AI: https://nova.axiomprint.com/designer-ai\n' });
-      await dbRun('INSERT INTO da_settings (key, value, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at', ['busy_mailed_' + job.id, nowIso(), who, nowIso()]);
-      return { emailed: true, to };
-    } catch (e) { errlog('busy mail', e.message); return { emailed: false, error: e.message }; }
+    // 1.20.53: no email any more — History (and the row's "Everyone is busy" tag) is where the team sees it.
+    return { emailed: false, logged: true };
   }
   async function aiAdjust(job, picks, logic, overload) {
     overload = (overload || '').trim(); logic = (logic || '').trim();
