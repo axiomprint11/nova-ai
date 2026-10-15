@@ -7,17 +7,17 @@
 module.exports = function (deps) {
   const { db, auth, adminOnly } = deps;
   const KINDS = [
-    { kind: 'talk.summary', group: 'TalkAi', name: 'Every call — summary + transcript', desc: 'After each real call NovaAI answered: the summary and the transcript. Setup → "email a summary of every call".', where: 'TalkAi Setup → Notification email' },
-    { kind: 'talk.message', group: 'TalkAi', name: 'Message taken', desc: 'NovaAI took a message for the team on a call (caller, call-back number, topic, message).', where: 'TalkAi Setup → Notification email' },
-    { kind: 'talk.csr', group: 'TalkAi', name: 'CSR hand-off after each call', desc: 'The AI summary with call back yes / no, sent to the CSR team (Dialpad shows the call as missed, so the team hears what happened).', where: 'TalkAi Setup → CSR team' },
-    { kind: 'talk.quote_bcc', group: 'TalkAi', name: 'Copy of every quote emailed to a caller', desc: 'When a caller asks NovaAI to email them a quote, a BCC of that email — for quality checks.', where: 'TalkAi Setup → Copy of every quote' },
-    { kind: 'talk.relay', group: 'TalkAi', name: 'Relayed to the person asked for', desc: 'When a caller asked for someone by name, that team member gets the call summary.', where: 'the team directory (the person asked for)', fixed_to: true },
-    { kind: 'client.escalate', group: 'Website chat', name: 'Past-due job escalation', desc: 'A customer asked about a job that is past its deadline and not finished — once per job per day.', where: 'CLIENT_BOT_ESCALATE_TO' },
-    { kind: 'client.quote_bcc', group: 'Website chat', name: 'Copy of quotes emailed to customers', desc: 'A BCC of every quote NovaAI emails a website customer.', where: 'CLIENT_BOT_MAIL_BCC' },
-    { kind: 'bk.alerts', group: 'Bookkeeping', name: 'Daily: overdue purchases + auto-categorized lines', desc: 'Once a day — purchases waiting for the bank / not received, and what Nova filed on its own in the last 24 h.', where: 'Bookkeeping Settings → Alerts' },
-    { kind: 'bk.loans', group: 'Bookkeeping', name: 'Missed loan payment', desc: 'A loan slot with no bank line after its due date (once per loan-month).', where: 'Bookkeeping Settings → Alerts' },
+    { kind: 'talk.summary', group: 'TalkAi', name: 'Call Summary', desc: 'After each real call NovaAI answered: the summary and the transcript. Setup → "email a summary of every call".', where: 'TalkAi Setup → Notification email' },
+    { kind: 'talk.message', group: 'TalkAi', name: 'Message Taken', desc: 'NovaAI took a message for the team on a call (caller, call-back number, topic, message).', where: 'TalkAi Setup → Notification email' },
+    { kind: 'talk.csr', group: 'TalkAi', name: 'CSR Hand-off', desc: 'The AI summary with call back yes / no, sent to the CSR team (Dialpad shows the call as missed, so the team hears what happened).', where: 'TalkAi Setup → CSR team' },
+    { kind: 'talk.quote_bcc', group: 'TalkAi', name: 'Client Quotes BCC', desc: 'A blind copy of every quote email NovaAI sends a caller after a phone call (the "Your AxiomPrint quote" email with the prices and Order now links) — for quality checks. The caller\u2019s own email is not affected by this switch.', where: 'TalkAi Setup → Copy of every quote' },
+    { kind: 'talk.relay', group: 'TalkAi', name: 'Asked-for Person Relay', desc: 'When a caller asked for someone by name, that team member gets the call summary.', where: 'the team directory (the person asked for)', fixed_to: true },
+    { kind: 'client.escalate', group: 'Website chat', name: 'Past-due Job Escalation', desc: 'A customer asked about a job that is past its deadline and not finished — once per job per day.', where: 'CLIENT_BOT_ESCALATE_TO' },
+    { kind: 'client.quote_bcc', group: 'Website chat', name: 'Client Quotes BCC', desc: 'A blind copy of every quote email NovaAI sends a website-chat customer (Send to me / Email Chat) — for quality checks. The customer\u2019s own email is not affected.', where: 'CLIENT_BOT_MAIL_BCC' },
+    { kind: 'bk.alerts', group: 'Bookkeeping', name: 'Daily Purchases Alert', desc: 'Once a day — purchases waiting for the bank / not received, and what Nova filed on its own in the last 24 h.', where: 'Bookkeeping Settings → Alerts' },
+    { kind: 'bk.loans', group: 'Bookkeeping', name: 'Missed Loan Payment', desc: 'A loan slot with no bank line after its due date (once per loan-month).', where: 'Bookkeeping Settings → Alerts' },
     { kind: 'bk.ar', group: 'Bookkeeping', name: 'Notify Accounts Receivable', desc: 'A customer deposit filed under an income category — sent when someone presses "Notify Accounts Receivable".', where: 'Bookkeeping Settings → Alerts (AR to / cc)' },
-    { kind: 'backup', group: 'System', name: 'Backup problems', desc: 'The nightly users.db backup failed, or its Google Drive upload did.', where: 'BACKUP_ALERT_TO' }
+    { kind: 'backup', group: 'System', name: 'Backup Problems', desc: 'The nightly users.db backup failed, or its Google Drive upload did.', where: 'BACKUP_ALERT_TO' }
   ];
   db.run('CREATE TABLE IF NOT EXISTS notify_prefs (kind TEXT PRIMARY KEY, enabled INTEGER DEFAULT 1, recipients TEXT, updated_at TEXT, updated_by TEXT)');
   const prefs = {};                                   // kind → { enabled, recipients }

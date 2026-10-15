@@ -77,6 +77,9 @@ tr:last-child td { border-bottom: none; }
 .conn-list { display: flex; flex-direction: column; gap: 12px; max-width: 640px; }
 .conn-row { display: flex; align-items: center; gap: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
 /* 1.20.74: Admin → Emails */
+.em-q { display: inline-flex; width: 16px; height: 16px; margin-left: 6px; border-radius: 50%; border: 1px solid var(--line, #e5e7eb); color: var(--muted, #6b7280); font-size: 10.5px; font-weight: 600; align-items: center; justify-content: center; position: relative; cursor: help; vertical-align: 1px; }
+.em-q .em-tip { display: none; position: absolute; left: 22px; top: -6px; width: 340px; background: #1f2937; color: #fff; font-size: 12.5px; font-weight: 400; line-height: 1.45; padding: 9px 11px; border-radius: 8px; z-index: 30; text-align: left; }
+.em-q:hover .em-tip, .em-q:focus .em-tip { display: block; }
 .em-group { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); font-weight: 700; margin: 14px 0 6px; }
 .em-row.off .conn-name, .em-row.off .conn-detail { color: var(--muted); }
 .em-switch { position: relative; width: 40px; height: 22px; flex: none; cursor: pointer; } .em-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
@@ -826,7 +829,7 @@ async function loadEmails() {
     if (k.group !== group) { group = k.group; const h = document.createElement('div'); h.className = 'em-group'; h.textContent = group; box.appendChild(h); }
     const row = document.createElement('div'); row.className = 'conn-row em-row' + (k.enabled ? '' : ' off'); row.dataset.kind = k.kind;
     row.innerHTML = '<label class="em-switch" title="' + (k.enabled ? 'On — click to stop these emails' : 'Off — click to send them again') + '"><input type="checkbox"' + (k.enabled ? ' checked' : '') + '><span></span></label>' +
-      '<div class="conn-info"><div class="conn-name">' + esc(k.name) + '</div><div class="conn-detail">' + esc(k.desc) + '</div>' +
+      '<div class="conn-info"><div class="conn-name">' + esc(k.name) + '<span class="em-q" tabindex="0">?<span class="em-tip">' + esc(k.desc) + '</span></span></div>' +
       '<div class="em-to"><span class="em-l">Send to</span>' + (k.fixed_to ? '<span style="font-size:13px">' + esc(k.default_to) + '</span>' : '<input type="text" class="em-inp" value="' + esc(k.recipients || '') + '" placeholder="' + esc(k.default_to || 'the configured address') + '"><button class="btn-mini em-save" hidden>Save</button>') +
       '<small>' + (k.recipients ? 'your list' : 'from ' + esc(k.where)) + (k.updated_at ? ' · changed ' + esc(new Date(k.updated_at.replace(' ', 'T') + 'Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })) + (k.updated_by ? ' by ' + esc(String(k.updated_by).split('@')[0]) : '') : '') + '</small></div></div>' +
       '<span class="conn-status ' + (k.enabled ? 'on' : 'off') + '">' + (k.enabled ? 'Sending' : 'Off') + '</span>';

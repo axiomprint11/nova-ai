@@ -251,7 +251,7 @@ bookkeeping and backups as `Notify`) is the one list of every email Nova sends t
 off", the CSR / relay / alert functions return `{ off: true }`) and `Notify.to(kind, fallback)` for the address (an override replaces the
 configured one); each module `Notify.register(kind, () => default address)` so the page can show where the default comes from.
 `GET /api/admin/notifications`, `POST /api/admin/notifications/:kind {enabled, recipients}`. Admin → **Emails** (nova-nav item `emails`,
-`#tabEmails`, `loadEmails()`): a row per kind grouped TalkAi / Website chat / Bookkeeping / System — a switch, the description, **Send to**
+`#tabEmails`, `loadEmails()`): a row per kind grouped TalkAi / Website chat / Bookkeeping / System — a switch, a short name (1.20.81: Call Summary · Message Taken · CSR Hand-off · **Client Quotes BCC** · Asked-for Person Relay / Past-due Job Escalation · Client Quotes BCC / Daily Purchases Alert · Missed Loan Payment · Notify Accounts Receivable / Backup Problems) with the description behind a (?) (`.em-q` / `.em-tip`), **Send to**
 (empty = the configured address, shown as the placeholder, with "from <where>"; a typed list = the override), Sending / Off. Customer-facing
 mail (quotes to callers / customers) is not here. Add a kind there whenever a new team email is added.
 
