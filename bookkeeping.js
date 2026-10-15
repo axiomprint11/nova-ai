@@ -461,12 +461,19 @@ module.exports = function mountBookkeeping(app, deps) {
     let od = t.orig_desc; if (!od && t.raw) { try { od = JSON.parse(t.raw).original_description; } catch (e) {} }
     return od || t.name || m;
   };
+  // 1.20.62: every wording a line carries — Plaid's merchant guess first ("Over East"), then the bank's own statement text
+  // ("4 OVER INTERNATIONAL"), then the name — so a vendor's bank alias matches the statement even when Plaid guessed wrong.
+  const lineTexts = (t) => {
+    let od = t.orig_desc; if (!od && t.raw) { try { od = JSON.parse(t.raw).original_description; } catch (e) {} }
+    return [lineText(t), od, t.name, t.merchant].map(x => String(x || '').trim()).filter((x, i, a) => x && a.indexOf(x) === i);
+  };
+  async function matchVendorAny(t) { for (const x of lineTexts(t)) { const m = await matchVendor(x); if (m) return m; } return null; }
   async function autoVendor(t) {
     if (t.vendor_id) return;
-    if (t.raw === undefined && t.orig_desc === undefined && isOwnName(t.merchant || t.name)) { const row = await dbGet('SELECT raw FROM bk_transactions WHERE id = ?', [t.id]); if (row) t.raw = row.raw; }
+    if (t.raw === undefined && t.orig_desc === undefined) { const row = await dbGet('SELECT raw FROM bk_transactions WHERE id = ?', [t.id]); if (row) t.raw = row.raw; }
     const text = lineText(t);
     if (isWise(text)) return;   // 1.19.119: a Wise payout is matched to a team member by amount / reference, never by wording
-    const exact = await matchVendor(text);
+    const exact = await matchVendorAny(t);
     if (exact) { await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = 'auto', vendor_score = 1, suggest_vendor_id = NULL, suggest_score = NULL WHERE id = ? AND vendor_id IS NULL", [exact.id, t.id]); return; }
     const near = await suggestVendors(text, null, 1);
     const best = near[0];
@@ -984,7 +991,7 @@ module.exports = function mountBookkeeping(app, deps) {
     dirCache.at = 0; let n = 0;
     for (const o of await dbAll("SELECT id, name, merchant, raw FROM bk_transactions WHERE vendor_id IS NULL AND status NOT IN ('removed', 'excluded') ORDER BY id DESC LIMIT 3000")) {
       const text = lineText(o); if (isWise(text)) continue;
-      const m = await matchVendor(text); if (!m || m.id !== vid) continue;
+      const m = await matchVendorAny(o); if (!m || m.id !== vid) continue;   // 1.20.62: the statement wording too
       await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = 'auto', vendor_score = 1, suggest_vendor_id = NULL, suggest_score = NULL WHERE id = ? AND vendor_id IS NULL", [vid, o.id]); n++;
     }
     return n;
@@ -1287,6 +1294,11 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!n) return null;
     const hits = list.filter(v => v._n.length >= 3 && (n === v._n || (' ' + n + ' ').indexOf(' ' + v._n + ' ') > -1 || v._al.some(a => a.length >= 3 && (' ' + n + ' ').indexOf(' ' + a + ' ') > -1)));
     if (hits.length) return hits.sort((a, b) => b._n.length - a._n.length)[0];
+    // 1.20.62: spacing differences — "4Over" on "4 OVER INTERNATIONAL", "B2 Sign" on "B2SIGN": compare with spaces removed,
+    // the vendor's compact name (or alias) at least 5 characters and starting a word of the line
+    const nc = n.replace(/ /g, ''), starts = n.split(' ').map((w, i, a) => a.slice(i).join(''));
+    const byCompact = list.filter(v => [v._n].concat(v._al || []).some(a => { const c = a.replace(/ /g, ''); return c.length >= 5 && starts.some(st => st.indexOf(c) === 0) && (c.length >= 6 || nc.indexOf(c) === 0); }));
+    if (byCompact.length) return byCompact.sort((a, b) => b._n.length - a._n.length)[0];
     // 1.19.91: an alias whose stable wording (codes dropped) equals, or sits inside, the line's stable wording
     const ns = stableV(text);
     if (ns.length >= 6) { const byStable = list.filter(v => (v._als || []).some(a => a === ns || (' ' + ns + ' ').indexOf(' ' + a + ' ') > -1)); if (byStable.length) return byStable.sort((a, b) => b._n.length - a._n.length)[0]; }
