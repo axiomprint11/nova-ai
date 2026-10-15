@@ -88,7 +88,7 @@
   .tk-detail { flex: 1; min-width: 0; overflow-y: auto; padding: 18px 24px; }
   /* 1.20.71: the calls dashboard */
   #vCalls { flex-direction: column; min-width: 0; }
-  .tk-ctable { table-layout: fixed; } .tk-ctable th:nth-child(1) { width: 92px; } .tk-ctable th:nth-child(2) { width: 120px; } .tk-ctable th:nth-child(3) { width: 200px; } .tk-ctable th:nth-child(4) { width: 150px; } .tk-ctable th:nth-child(5) { width: 190px; } .tk-ctable th:nth-child(6) { width: 110px; } .tk-ctable th:nth-child(7) { width: 70px; } .tk-ctable th:nth-child(8) { width: 44px; } .tk-ctable th:nth-child(10) { width: 36px; }
+  .tk-ctable { table-layout: fixed; } .tk-ctable th:nth-child(1) { width: 132px; } .tk-ctable th:nth-child(2) { width: 120px; } .tk-ctable th:nth-child(3) { width: 180px; } .tk-ctable th:nth-child(4) { width: 150px; } .tk-ctable th:nth-child(5) { width: 190px; } .tk-ctable th:nth-child(6) { width: 110px; } .tk-ctable th:nth-child(7) { width: 70px; } .tk-ctable th:nth-child(8) { width: 44px; } .tk-ctable th:nth-child(10) { width: 36px; }
   .tk-ctable td { overflow: hidden; } .cl-who { min-width: 0; } .cl-who > div { min-width: 0; } .cl-who b, .cl-who small { overflow: hidden; text-overflow: ellipsis; }
   /* 1.20.75: a call opens as a drawer OVER the dashboard — nothing underneath moves; a click outside or the X closes it */
   #vCalls { position: relative; } #vCalls:not(.detail) .tk-detail { display: none; }
@@ -125,6 +125,25 @@
   .tk-pillc { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600; white-space: nowrap; }
   .tk-pillc.ai { background: #dcfce7; color: #166534; } .tk-pillc.test { background: #eef0f4; color: #4b5563; } .tk-pillc.fw { background: #dbeafe; color: #1e40af; } .tk-pillc.msg { background: #f3f4f6; color: #6b7280; }
   .tk-pillc svg { width: 13px; height: 13px; }
+  /* 1.20.82: the Call cell — direction (arrow + word) over the state pill */
+  .cl-call { display: flex; align-items: center; gap: 8px; }
+  .cl-dir { width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  .cl-dir svg { width: 14px; height: 14px; }
+  .cl-dir.in { background: #e0e7ff; color: #3730a3; } .cl-dir.out { background: #dbeafe; color: #1d4ed8; } .cl-dir.test { background: #eef0f4; color: #6b7280; }
+  .cl-call small { display: block; font-size: 10.5px; color: var(--muted); font-weight: 600; letter-spacing: .02em; text-transform: uppercase; margin-bottom: 2px; }
+  .tk-pillc.st-answered, .tk-pillc.st-connected { background: #dcfce7; color: #166534; }
+  .tk-pillc.st-missed { background: #fee2e2; color: #991b1b; }
+  .tk-pillc.st-voicemail { background: #fef3c7; color: #92400e; }
+  .tk-pillc.st-live { background: #e0f2fe; color: #075985; }
+  .tk-pillc.st-test { background: #eef0f4; color: #4b5563; }
+  /* the filter bar */
+  .tk-filt { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 10px; padding: 10px 14px 2px; }
+  .tk-filt label { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .tk-filt select, .tk-filt input { height: 30px; padding: 0 8px; border: 1.5px solid var(--line); border-radius: 8px; font: 12.5px inherit; background: #fff; color: var(--ink); min-width: 104px; max-width: 190px; }
+  .tk-filt select.on, .tk-filt input.on { border-color: var(--indigo); background: #f5f3ff; color: var(--indigo-dark); font-weight: 600; }
+  .tk-filt-range[hidden] { display: none; } .tk-filt-range { display: inline-flex; align-items: center; gap: 4px; align-self: flex-end; } .tk-filt-range i { color: var(--muted); font-style: normal; } .tk-filt-range input { min-width: 0; width: 136px; }
+  .tk-filt-clear { height: 30px; align-self: flex-end; border: none; background: none; color: #b91c1c; font: 600 12px inherit; cursor: pointer; padding: 0 6px; }
+  .tk-filt-clear:hover { text-decoration: underline; }
   .cl-who { display: flex; align-items: center; gap: 10px; } .cl-who .tk-av { flex: none; } .cl-who b { display: block; font-weight: 600; white-space: nowrap; } .cl-who small { display: block; color: var(--muted); font-size: 11.5px; }
   .cl-phone { white-space: nowrap; font-variant-numeric: tabular-nums; } .cl-phone i { font-style: normal; color: var(--muted); font-size: 11px; margin-left: 6px; }
   .cl-via { display: flex; align-items: center; gap: 8px; white-space: nowrap; } .cl-via .tk-av { width: 28px; height: 28px; font-size: 11px; }
@@ -575,11 +594,22 @@
         <div class="tk-subtabs" id="callSub"><button type="button" data-cs="calls" class="on">Calls</button><button type="button" data-cs="stats">Statistics</button></div>
         <div class="sp"></div>
         <div class="tk-qwrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input type="text" id="callQ" placeholder="Search phone, client or words said"></div>
-        <select id="callVia" class="tk-select"><option value="">Any TalkAI</option></select>
         <button type="button" class="tk-refresh" id="callRefresh" title="Load the newest calls"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg><span>Refresh</span></button>
       </div>
       <div class="tk-dashpane" data-cs="calls">
         <div class="tk-tiles" id="callTiles"></div>
+        <!-- 1.20.82: the filter bar — every select applies on change; Clear resets them all -->
+        <div class="tk-filt" id="callFilt">
+          <label><span>Direction</span><select data-f="dir"><option value="">All</option><option value="in">Inbound</option><option value="out">Outbound</option></select></label>
+          <label><span>Status</span><select data-f="state"><option value="">All</option><optgroup label="Inbound"><option value="answered">Answered</option><option value="missed">Missed</option><option value="voicemail">Voicemail</option></optgroup><optgroup label="Outbound"><option value="connected">Connected</option><option value="missed_out">Missed</option></optgroup></select></label>
+          <label><span>Client</span><select data-f="client"><option value="">Any client</option></select></label>
+          <label><span>Time</span><select data-f="period"><option value="">All time</option><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="week">This week</option><option value="month">This month</option><option value="30">Last 30 days</option><option value="custom">Custom…</option></select></label>
+          <span class="tk-filt-range" id="callRange" hidden><input type="date" data-f="from"><i>–</i><input type="date" data-f="to"></span>
+          <label><span>AM</span><select data-f="am"><option value="">Any AM</option></select></label>
+          <label><span>AM TalkAI</span><select id="callVia" data-f="via"><option value="">Any TalkAI</option></select></label>
+          <label><span>Length</span><select data-f="len"><option value="">Any</option><option value="lt30">Under 30 s</option><option value="30-120">30 s – 2 min</option><option value="120-300">2 – 5 min</option><option value="gt300">Over 5 min</option></select></label>
+          <button type="button" class="tk-filt-clear" id="callClear" hidden>× Clear</button>
+        </div>
         <div class="tk-listbar"><span id="callStamp"></span><span><button type="button" id="callUnreadOnly">Unread only <b class="tk-ucount" id="tkUnread"></b></button> · <button type="button" id="callReadAll">Mark all read</button></span></div>
         <div class="tk-tablewrap"><table class="tk-ctable"><thead><tr><th>Call</th><th>When</th><th>Client / Contact</th><th>Phone</th><th>Answered by</th><th>Outcome</th><th>Duration</th><th>Rec</th><th>AI summary</th><th></th></tr></thead><tbody id="callRows"><tr><td colspan="10" class="tk-empty">Loading…</td></tr></tbody></table></div>
       </div>

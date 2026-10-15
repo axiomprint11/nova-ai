@@ -89,7 +89,44 @@
   let filter = '', current = null, qTimer = null, via = '';
   // 1.20.71: the dashboard — Calls | Statistics sub-tabs, the "Answered by" select, Unread only as a toggle
   $('callUnreadOnly').onclick = () => { filter = filter === 'unread' ? '' : 'unread'; $('callUnreadOnly').classList.toggle('on', filter === 'unread'); loadCalls(); };
-  $('callVia').onchange = () => { via = $('callVia').value; loadCalls(); };
+  // 1.20.82: the filter bar — F holds every filter; #callVia (AM TalkAI) is one of them
+  const F = { dir: '', state: '', client: '', period: '', from: '', to: '', am: '', via: '', len: '' };
+  const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  function periodRange(k) {
+    const now = new Date(), d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (k === 'today') return [ymd(d0), ymd(d0)];
+    if (k === 'yesterday') { const y = new Date(d0 - 86400000); return [ymd(y), ymd(y)]; }
+    if (k === 'week') { const mon = new Date(d0 - ((d0.getDay() + 6) % 7) * 86400000); return [ymd(mon), ymd(d0)]; }
+    if (k === 'month') return [ymd(new Date(now.getFullYear(), now.getMonth(), 1)), ymd(d0)];
+    if (k === '30') return [ymd(new Date(d0 - 29 * 86400000)), ymd(d0)];
+    return ['', ''];
+  }
+  function filterQuery() {
+    let [from, to] = F.period === 'custom' ? [F.from, F.to] : periodRange(F.period);
+    let state = F.state, dir = F.dir;
+    if (state === 'missed_out') { state = 'missed'; dir = 'out'; }
+    const q = { dir, state, client: F.client, from, to, am: F.am, via: F.via, len: F.len };
+    return Object.keys(q).filter(k => q[k]).map(k => k + '=' + encodeURIComponent(q[k])).join('&');
+  }
+  function paintFilterState() {
+    let any = false;
+    $('callFilt').querySelectorAll('[data-f]').forEach(el => { const on = !!F[el.dataset.f]; el.classList.toggle('on', on); if (on && el.dataset.f !== 'from' && el.dataset.f !== 'to') any = true; });
+    $('callRange').hidden = F.period !== 'custom';
+    $('callClear').hidden = !any;
+  }
+  $('callFilt').querySelectorAll('[data-f]').forEach(el => { el.onchange = () => { F[el.dataset.f] = el.value; if (el.dataset.f === 'period' && el.value !== 'custom') { F.from = F.to = ''; } via = F.via; paintFilterState(); if (F.period !== 'custom' || (F.from && F.to)) loadCalls(); }; });
+  $('callClear').onclick = () => { Object.keys(F).forEach(k => { F[k] = ''; }); via = ''; $('callFilt').querySelectorAll('[data-f]').forEach(el => { el.value = ''; }); paintFilterState(); loadCalls(); };
+  let amsLoaded = false, clientsKey = '';
+  function fillClients(list) {
+    const key = (list || []).map(c => c.id).join(','); if (key === clientsKey) return; clientsKey = key;
+    const sel = $('callFilt').querySelector('[data-f="client"]'), keep = sel.value;
+    sel.innerHTML = '<option value="">Any client</option><option value="none">Not a client yet</option>' + (list || []).map(c => '<option value="' + c.id + '">' + esc(c.company ? (c.name && c.name !== c.company ? c.name + ' · ' + c.company : c.company) : (c.name || '#' + c.id)) + '</option>').join('');
+    sel.value = keep;
+  }
+  async function fillAms() {
+    if (amsLoaded) return; amsLoaded = true;
+    try { const j = await api('/api/admin/talk/ams'); const sel = $('callFilt').querySelector('[data-f="am"]'); sel.innerHTML = '<option value="">Any AM</option>' + (j.ams || []).map(a => '<option value="' + a.id + '">' + esc(a.name) + '</option>').join(''); } catch (e) {}
+  }
   let statsMounted = false;
   document.querySelectorAll('#callSub button').forEach(b => { b.onclick = () => {
     document.querySelectorAll('#callSub button').forEach(x => x.classList.toggle('on', x === b));
@@ -109,13 +146,15 @@
   let linesLoaded = false;
   async function loadCalls() {
     if (!linesLoaded) { linesLoaded = true; try { const l = await api('/api/admin/talk/lines'); lines = l.lines || []; } catch (e) {} fillVia(); }
-    const j = await api('/api/admin/talk/calls?filter=' + encodeURIComponent(filter) + '&via=' + encodeURIComponent(via) + '&q=' + encodeURIComponent($('callQ').value.trim()));
+    fillAms();
+    const j = await api('/api/admin/talk/calls?filter=' + encodeURIComponent(filter) + '&' + filterQuery() + '&q=' + encodeURIComponent($('callQ').value.trim()));
+    if (j.ok && j.clients) fillClients(j.clients);
     if (!j.ok) { $('callRows').innerHTML = '<tr><td colspan="10" class="tk-empty">' + esc(j.error || 'Could not load calls.') + '</td></tr>'; return; }
     setUnread(j.unread);
     if (j.tiles) paintTiles(j.tiles);
     $('callStamp').textContent = j.calls.length + ' call' + (j.calls.length === 1 ? '' : 's') + ' · updated ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     if (!j.calls.length) {
-      $('callRows').innerHTML = '<tr><td colspan="10" class="tk-empty">' + (filter || via || $('callQ').value ? 'No calls match.' : 'No calls yet. Once the number is connected (Setup), every call shows up here — or try it under Try it.') + '</td></tr>';
+      $('callRows').innerHTML = '<tr><td colspan="10" class="tk-empty">' + (filter || filterQuery() || $('callQ').value ? 'No calls match these filters.' : 'No calls yet. Once the number is connected (Setup), every call shows up here — or try it under Try it.') + '</td></tr>';
       return;
     }
     $('callRows').innerHTML = j.calls.map(callTr).join('');
@@ -131,6 +170,8 @@
   }
   const firstName = (n) => String(n || '').trim().split(/\s+/)[0] || '';
   const SYS_ICON = {
+    in: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 7L7 17"/><path d="M16 17H7V8"/></svg>',
+    out: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7"/><path d="M8 7h9v9"/></svg>',
     ai: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.4L12 15l-1.8-4.6L5.5 9l4.7-1.4z"/><path d="M19 15l.8 2 2.2.6-2.2.7L19 20l-.8-1.7-2.2-.7 2.2-.6z"/></svg>',
     moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
     missed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/><path d="M15 3l6 6M21 3l-6 6"/></svg>',
@@ -170,11 +211,15 @@
     const company = own ? 'Calling their assistant' : c.customer_name ? (c.company || '') : match ? (match.company || '') : '';
     const num = phone(c.from_number);
     const v = viaOf(c);
-    const kind = test ? '<span class="tk-pillc test">' + SYS_ICON.test + 'Test</span>'
-      : c.answered_by === 'forward' ? '<span class="tk-pillc fw">Forwarded</span>'
-      : c.answered_by === 'message' ? '<span class="tk-pillc msg">Closed msg</span>'
-      : c.answered_by === 'person' ? '<span class="tk-pillc fw">Team</span>'
-      : '<span class="tk-pillc ai">' + SYS_ICON.ai + 'TalkAI</span>';
+    const when = new Date(String(c.created_at).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(c.created_at) ? '' : 'Z'));
+    // 1.20.82: direction + state — Inbound: Answered / Missed / Voicemail · Outbound: Connected / Missed (c.call from the server)
+    const cs = c.call || { dir: 'in', state: test ? 'test' : 'answered' };
+    const live = !test && cs.state === 'answered' && /^(ringing|in-progress|queued)$/.test(String(c.status || '')) && !c.duration_sec && !c.summary && !c.ai_summary && (Date.now() - when.getTime()) < 2 * 3600000;
+    const stName = { answered: 'Answered', missed: 'Missed', voicemail: 'Voicemail', connected: 'Connected', test: 'Test' }[cs.state] || cs.state;
+    const stTitle = cs.state === 'answered' ? (c.answered_by === 'forward' || c.answered_by === 'person' ? 'Answered by the team' : c.answered_by === 'pin' ? 'Account manager, by PIN' : 'Answered by NovaAI') : cs.state === 'voicemail' ? 'The closed message was played' : '';
+    const kind = test ? '<div class="cl-call"><span class="cl-dir test">' + SYS_ICON.test + '</span><div><small>Test</small><span class="tk-pillc st-test">' + (c.source === 'try' ? 'In text' : 'ElevenLabs') + '</span></div></div>'
+      : '<div class="cl-call"><span class="cl-dir ' + cs.dir + '" title="' + (cs.dir === 'out' ? 'Outbound' : 'Inbound') + '">' + (cs.dir === 'out' ? SYS_ICON.out : SYS_ICON.in) + '</span><div><small>' + (cs.dir === 'out' ? 'Outbound' : 'Inbound') + '</small>' +
+        '<span class="tk-pillc st-' + (live ? 'live' : esc(cs.state)) + '" title="' + esc(stTitle) + '">' + (live ? 'Live' : esc(stName)) + (cs.state === 'answered' && !live && (c.answered_by === 'forward' || c.answered_by === 'person') ? ' · team' : '') + '</span></div></div>';
     const out = [];
     if (c.outcome === 'message') out.push('<span class="tk-tag msg">Message</span>');
     if (Number(c.callback) === 1 && !test) out.push('<span class="tk-tag msg">Call back</span>');
@@ -182,7 +227,6 @@
     if (c.emails_n) out.push('<span class="tk-tag ok">✉ Emailed</span>');
     if (c.team_rating) out.push('<span class="tk-tag ' + (c.team_rating === 'good' ? 'ok' : 'warn') + '">' + (c.team_rating === 'good' ? '👍' : '👎') + '</span>');
     if (c.language && c.language !== 'en') out.push('<span class="tk-tag">' + esc(String(c.language).toUpperCase()) + '</span>');
-    const when = new Date(String(c.created_at).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(c.created_at) ? '' : 'Z'));
     const sum = c.ai_summary || c.summary || c.first_said || (c.answered_by === 'message' ? 'Closed message played' : '');
     const dd = c.duration_sec ? Math.floor(c.duration_sec / 60) + ':' + String(Math.round(c.duration_sec % 60)).padStart(2, '0') : '—';
     return '<tr class="tk-ctr tk-cl' + (c.unread && current !== c.id ? ' unread' : '') + (current === c.id ? ' on' : '') + '" data-id="' + c.id + '">' +

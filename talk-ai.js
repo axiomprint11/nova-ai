@@ -75,6 +75,9 @@ module.exports = function mountTalkAi(app, deps, bot) {
     // owner: 1 = the account manager called their own assistant (verified), 2 = their number, not verified.
     // screen_ok: 0 = their phone was rung with "press 1", 1 = they pressed it. pin_tries: wrong PINs.
     ['owner INTEGER', 'screen_ok INTEGER', 'pin_tries INTEGER DEFAULT 0'].forEach(c => db.run('ALTER TABLE talk_calls ADD COLUMN ' + c, () => {}));
+    // 1.20.82: direction ('in' / 'out'; null = inbound — everything NovaAI answers today) and, once Dialpad data comes in, an
+    // explicit state ('answered' / 'missed' / 'voicemail' / 'connected'); until then callState() derives it.
+    ['direction TEXT', 'call_state TEXT'].forEach(c => db.run('ALTER TABLE talk_calls ADD COLUMN ' + c, () => {}));
     db.run('CREATE UNIQUE INDEX IF NOT EXISTS talk_calls_share ON talk_calls(share_token)', () => {});
     // What was said, turn by turn, as Nova answered (role: caller | agent | event).
     db.run(`CREATE TABLE IF NOT EXISTS talk_turns (id INTEGER PRIMARY KEY AUTOINCREMENT, call_id INTEGER NOT NULL,
@@ -2122,11 +2125,62 @@ module.exports = function mountTalkAi(app, deps, bot) {
       res.json({ ok: true, unread: (r && r.n) || 0 });
     } catch (e) { res.json({ ok: false, unread: 0 }); }
   });
+  // 1.20.82: the Call column — Inbound (Answered / Missed / Voicemail) or Outbound (Connected / Missed).
+  // Everything Nova records today is inbound and answered (by NovaAI, by the team after ring-first, or the closed message);
+  // `direction` / `call_state` are filled by the Dialpad import later, this derives the rest.
+  const DEAD = ['no-answer', 'busy', 'failed', 'canceled'];
+  function callState(c) {
+    const dir = c.direction === 'out' ? 'out' : 'in';
+    if (c.source !== 'phone') return { dir, state: 'test' };
+    if (c.call_state) return { dir, state: c.call_state };
+    if (dir === 'out') return { dir, state: DEAD.indexOf(String(c.status || '')) > -1 || !(c.duration_sec > 0) ? 'missed' : 'connected' };
+    if (c.answered_by === 'message') return { dir, state: 'voicemail' };
+    if (!c.answered_by && (DEAD.indexOf(String(c.status || '')) > -1 || !(c.turns > 0))) return { dir, state: 'missed' };
+    return { dir, state: 'answered' };
+  }
+  // the SQL for a state filter (the same rules as callState, for rows with no explicit call_state)
+  const STATE_SQL = {
+    answered: "((c.call_state = 'answered') OR (c.call_state IS NULL AND COALESCE(c.direction,'in') = 'in' AND c.answered_by IS NOT NULL AND c.answered_by <> 'message'))",
+    missed: "((c.call_state = 'missed') OR (c.call_state IS NULL AND ((COALESCE(c.direction,'in') = 'in' AND c.answered_by IS NULL) OR (c.direction = 'out' AND COALESCE(c.duration_sec, 0) = 0))))",
+    voicemail: "((c.call_state = 'voicemail') OR (c.call_state IS NULL AND c.answered_by = 'message'))",
+    connected: "((c.call_state = 'connected') OR (c.call_state IS NULL AND c.direction = 'out' AND c.duration_sec > 0))"
+  };
+  // LA calendar day → UTC bounds, for the Time filter
+  function laDayUtc(ymd, endOfDay) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || '')); if (!m) return null;
+    const guess = Date.UTC(+m[1], +m[2] - 1, +m[3], 12);
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(guess));
+    const h = +parts.find(x => x.type === 'hour').value, mi = +parts.find(x => x.type === 'minute').value;
+    const offset = (h * 60 + mi - 12 * 60) * 60000;                 // LA wall minus UTC at noon that day
+    const midnight = Date.UTC(+m[1], +m[2] - 1, +m[3]) - offset;
+    return new Date(midnight + (endOfDay ? 86400000 - 1000 : 0)).toISOString().slice(0, 19).replace('T', ' ');
+  }
+  let amClientsCache = { at: 0, by: {} };
+  async function clientsOfAm(uid) {
+    if (Date.now() - amClientsCache.at > 600000) amClientsCache = { at: Date.now(), by: {} };
+    if (!amClientsCache.by[uid]) amClientsCache.by[uid] = (await runQuery('SELECT id FROM customer WHERE manager_id = ' + parseInt(uid)).catch(() => [])).map(r => parseInt(r.id)).filter(Boolean);
+    return amClientsCache.by[uid];
+  }
   app.get('/api/admin/talk/calls', auth, teamOk, async (req, res) => {
     const reader = readerOf(req);
     const q = String(req.query.q || '').trim().slice(0, 100);
     const f = String(req.query.filter || '');
     const where = [], p = [reader];
+    // 1.20.82: the filter bar — direction, state, client, time, the client's account manager, call length
+    const dir = String(req.query.dir || ''), state = String(req.query.state || ''), len = String(req.query.len || '');
+    if (dir === 'in') where.push("COALESCE(c.direction, 'in') = 'in' AND c.source = 'phone'");
+    if (dir === 'out') where.push("c.direction = 'out'");
+    if (STATE_SQL[state]) where.push("c.source = 'phone' AND " + STATE_SQL[state]);
+    if (parseInt(req.query.client)) { where.push('c.customer_id = ?'); p.push(parseInt(req.query.client)); }
+    else if (req.query.client === 'none') where.push("c.customer_id IS NULL AND c.source = 'phone'");
+    const from = laDayUtc(req.query.from), to = laDayUtc(req.query.to, true);
+    if (from) { where.push('c.created_at >= ?'); p.push(from); }
+    if (to) { where.push('c.created_at <= ?'); p.push(to); }
+    if (parseInt(req.query.am)) { const ids = await clientsOfAm(parseInt(req.query.am)); where.push(ids.length ? 'c.customer_id IN (' + ids.join(',') + ')' : '0'); }
+    if (len === 'lt30') where.push('COALESCE(c.duration_sec, 0) < 30');
+    if (len === '30-120') where.push('c.duration_sec >= 30 AND c.duration_sec < 120');
+    if (len === '120-300') where.push('c.duration_sec >= 120 AND c.duration_sec < 300');
+    if (len === 'gt300') where.push('c.duration_sec >= 300');
     if (f === 'unread') where.push('(r.read_at IS NULL OR r.read_at < c.updated_at)');
     if (f === 'phone') where.push("c.source = 'phone'");
     if (f === 'tests') where.push("c.source IN ('try','elevenlabs')");
@@ -2141,7 +2195,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
       where.push('(c.from_number LIKE ? OR c.customer_name LIKE ? OR c.company LIKE ? OR c.summary LIKE ? OR c.caller_match LIKE ? OR EXISTS (SELECT 1 FROM talk_turns t WHERE t.call_id = c.id AND t.content LIKE ?))');
       p.push(like, like, like, like, like, like);
     }
-    const rows = await dbAll('SELECT c.id, c.from_number, c.source, c.status, c.answered_by, c.customer_id, c.customer_name, c.company, c.verified, c.caller_match, c.owner, ' +
+    const rows = await dbAll('SELECT c.id, c.from_number, c.source, c.status, c.answered_by, c.direction, c.call_state, c.customer_id, c.customer_name, c.company, c.verified, c.caller_match, c.owner, ' +
       'c.language, c.summary, c.outcome, c.duration_sec, c.created_at, c.updated_at, c.audio_path IS NOT NULL AS has_audio, c.tried_by, c.verified_by, c.caller_first, c.hours_mode, c.line_id, (SELECT am_name FROM talk_lines l WHERE l.id = c.line_id) AS line_name, ' +
       '(SELECT COUNT(*) FROM talk_turns t WHERE t.call_id = c.id AND t.role = \'caller\') AS turns, ' +
       '(SELECT COUNT(*) FROM talk_emails m WHERE m.call_id = c.id AND m.ok = 1 AND COALESCE(m.kind, \'\') NOT IN (\'csr\', \'relay\', \'message\', \'summary\')) AS emails_n, c.callback, c.csr_sent_at, c.ai_summary, (SELECT rating FROM talk_ratings tr WHERE tr.call_id = c.id AND tr.active = 1) AS team_rating, ' +
@@ -2149,10 +2203,20 @@ module.exports = function mountTalkAi(app, deps, bot) {
       '(r.read_at IS NULL OR r.read_at < c.updated_at) AS unread ' +
       'FROM talk_calls c LEFT JOIN talk_reads r ON r.call_id = c.id AND r.reader = ? ' + (where.length ? 'WHERE ' + where.join(' AND ') : '') +
       ' ORDER BY c.id DESC LIMIT 200', p);
-    rows.forEach(r => { try { r.caller_match = r.caller_match ? JSON.parse(r.caller_match) : null; } catch (e) { r.caller_match = null; } r.unread = !!r.unread; r.has_audio = !!r.has_audio; });
+    rows.forEach(r => { try { r.caller_match = r.caller_match ? JSON.parse(r.caller_match) : null; } catch (e) { r.caller_match = null; } r.unread = !!r.unread; r.has_audio = !!r.has_audio; r.call = callState(r); });
+    // the Client filter's choices: every customer seen on a phone call
+    const clients = await dbAll("SELECT customer_id AS id, MAX(customer_name) AS name, MAX(company) AS company, COUNT(*) AS n FROM talk_calls WHERE source = 'phone' AND customer_id IS NOT NULL GROUP BY customer_id ORDER BY n DESC, name LIMIT 300").catch(() => []);
     const u = await dbGet("SELECT COUNT(*) AS n FROM talk_calls c LEFT JOIN talk_reads r ON r.call_id = c.id AND r.reader = ? WHERE c.source <> 'try' AND (r.read_at IS NULL OR r.read_at < c.updated_at)", [reader]);
     let tiles = null; try { tiles = await callTiles(); } catch (e) { console.error('TALK tiles', e.message); }
-    res.json({ ok: true, calls: rows, unread: (u && u.n) || 0, tiles });
+    res.json({ ok: true, calls: rows, unread: (u && u.n) || 0, tiles, clients });
+  });
+  // 1.20.82: the AM filter's choices — account managers with clients (id, name, photo only; the whole team may read it)
+  app.get('/api/admin/talk/ams', auth, teamOk, async (req, res) => {
+    try {
+      const rows = await runQuery('SELECT u.id, u.name, u.last_name, u.memberimage, COUNT(c.id) AS clients FROM user u JOIN customer c ON c.manager_id = u.id ' +
+        'WHERE u.blocked_at IS NULL AND (u.status IS NULL OR u.status = 10) GROUP BY u.id ORDER BY clients DESC LIMIT 80');
+      res.json({ ok: true, ams: rows.map(r => ({ id: r.id, name: [r.name, r.last_name].filter(Boolean).join(' ').trim(), photo: memberPhoto(r.memberimage), clients: Number(r.clients) || 0 })) });
+    } catch (e) { res.json({ ok: true, ams: [], error: e.message }); }
   });
   // 1.20.71: the dashboard tiles — today / yesterday / this week / this month, who answered today, outcomes, talk time.
   // Los Angeles days; created_at is UTC 'YYYY-MM-DD HH:MM:SS'.
