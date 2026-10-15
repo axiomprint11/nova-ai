@@ -1979,29 +1979,47 @@ module.exports = function mountTalkAi(app, deps, bot) {
     return u[0] ? await dbGet('SELECT * FROM talk_lines WHERE active = 1 AND am_user_id = ?', [parseInt(u[0].id)]).catch(() => null) : null;
   }
   const GREET_MAX = 600;
-  app.get('/api/talk/my-line', auth, async (req, res) => {
-    const l = await myLine(req);
-    if (!l) return res.json({ ok: true, line: null });
+  // The setup card's data for one line (My TalkAI for the person, the same card for an admin under Account managers).
+  async function lineSetup(l) {
     const s = await settings();
     const ph = l.am_user_id ? await runQuery('SELECT memberimage FROM user WHERE id = ' + parseInt(l.am_user_id) + ' LIMIT 1').catch(() => []) : [];
     const calls = await dbGet("SELECT COUNT(*) AS n FROM talk_calls WHERE line_id = ? AND source = 'phone'", [l.id]).catch(() => null);
-    res.json({ ok: true, line: { id: l.id, am_name: l.am_name, am_user_id: l.am_user_id, number: l.number || '', main_line: Number(l.main_line) !== 0, training: l.training || '',
+    return { ok: true, line: { id: l.id, am_name: l.am_name, am_user_id: l.am_user_id, number: l.number || '', main_line: Number(l.main_line) !== 0, training: l.training || '',
         greeting: l.greeting || '', greet_bh_known: l.greet_bh_known || '', greet_bh_new: l.greet_bh_new || '', greet_ah_known: l.greet_ah_known || '', greet_ah_new: l.greet_ah_new || '',
         photo: ph[0] ? memberPhoto(ph[0].memberimage) : '', calls: calls ? calls.n : 0, updated_at: l.updated_at, updated_by: l.updated_by },
       main_number: env('TALKAI_NUMBER') || null,
       // what a caller hears today when the line has no greeting of its own (shown as the placeholders)
       defaults: { bh_known: greetingFor(s, '{name}', s.modes.regular, muteGreet(l, l.number ? { why: 'number' } : {}), false, null, false), bh_new: greetingFor(s, '', s.modes.regular, muteGreet(l, l.number ? { why: 'number' } : {}), false, null, false),
-        ah_known: greetingFor(s, '{name}', s.modes.after, muteGreet(l, l.number ? { why: 'number' } : {}), false, null, false), ah_new: greetingFor(s, '', s.modes.after, muteGreet(l, l.number ? { why: 'number' } : {}), false, null, false) } });
+        ah_known: greetingFor(s, '{name}', s.modes.after, muteGreet(l, l.number ? { why: 'number' } : {}), false, null, false), ah_new: greetingFor(s, '', s.modes.after, muteGreet(l, l.number ? { why: 'number' } : {}), false, null, false) } };
+  }
+  async function saveSetup(l, b, who) {
+    const t = (v, max) => b[v] == null ? null : String(b[v]).replace(/\r/g, '').trim().slice(0, max) || null;
+    const vals = [t('training', 6000), t('greet_bh_known', GREET_MAX), t('greet_bh_new', GREET_MAX), t('greet_ah_known', GREET_MAX), t('greet_ah_new', GREET_MAX)];
+    await dbRun("UPDATE talk_lines SET training = COALESCE(?, training), greet_bh_known = ?, greet_bh_new = ?, greet_ah_known = ?, greet_ah_new = ?, updated_at = datetime('now'), updated_by = ? WHERE id = ?",
+      vals.concat([who, l.id]));
+    console.log('TALKAI line setup ' + l.id + ' (' + l.am_name + ') saved by ' + who);
+  }
+  app.get('/api/talk/my-line', auth, async (req, res) => {
+    const l = await myLine(req);
+    if (!l) return res.json({ ok: true, line: null });
+    res.json(await lineSetup(l));
   });
   app.post('/api/talk/my-line', auth, async (req, res) => {
     const l = await myLine(req);
     if (!l) return res.status(403).json({ ok: false, error: 'You are not set up as an account manager yet — ask an admin to add you under TalkAi → Account managers.' });
-    const b = req.body || {};
-    const t = (v, max) => b[v] == null ? null : String(b[v]).replace(/\r/g, '').trim().slice(0, max) || null;
-    const vals = [t('training', 6000), t('greet_bh_known', GREET_MAX), t('greet_bh_new', GREET_MAX), t('greet_ah_known', GREET_MAX), t('greet_ah_new', GREET_MAX)];
-    await dbRun("UPDATE talk_lines SET training = COALESCE(?, training), greet_bh_known = ?, greet_bh_new = ?, greet_ah_known = ?, greet_ah_new = ?, updated_at = datetime('now'), updated_by = ? WHERE id = ?",
-      vals.concat([readerOf(req), l.id]));
-    console.log('TALKAI my-line ' + l.id + ' (' + l.am_name + ') saved by ' + readerOf(req));
+    await saveSetup(l, req.body || {}, readerOf(req));
+    res.json({ ok: true });
+  });
+  // 1.20.79: an admin opens the same card for any account manager (Account managers → TalkAI setup)
+  app.get('/api/admin/talk/lines/:id/setup', auth, adminOnly, async (req, res) => {
+    const l = await dbGet('SELECT * FROM talk_lines WHERE id = ?', [parseInt(req.params.id) || 0]).catch(() => null);
+    if (!l) return res.status(404).json({ ok: false, error: 'No such line.' });
+    res.json(await lineSetup(l));
+  });
+  app.post('/api/admin/talk/lines/:id/setup', auth, adminOnly, async (req, res) => {
+    const l = await dbGet('SELECT * FROM talk_lines WHERE id = ?', [parseInt(req.params.id) || 0]).catch(() => null);
+    if (!l) return res.status(404).json({ ok: false, error: 'No such line.' });
+    await saveSetup(l, req.body || {}, readerOf(req));
     res.json({ ok: true });
   });
   const markRead = (id, reader) => dbRun("INSERT OR REPLACE INTO talk_reads (call_id, reader, read_at) VALUES (?, ?, datetime('now'))", [id, reader]).catch(() => {});

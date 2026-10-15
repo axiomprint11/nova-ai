@@ -880,9 +880,10 @@
         '<b>' + esc(l.am_name || 'Account manager') + '</b> <small>' + esc(l.am_title || '') + (l.calls ? ' · ' + l.calls + ' call' + (l.calls === 1 ? '' : 's') : '') + '</small>' +
         '<div class="tags">' + tags.join('') + '</div>' +
         (l.training ? '<div style="margin-top:6px;color:var(--ink-soft);font-size:12.5px;white-space:pre-wrap">' + esc(String(l.training).slice(0, 220)) + (l.training.length > 220 ? '…' : '') + '</div>' : '') +
-        '</div><button type="button" class="tk-btn ghost" data-edit="' + l.id + '">Edit</button></div>';
+        '</div><div class="tk-am-acts"><button type="button" class="tk-btn ghost" data-setup="' + l.id + '">TalkAI setup</button><button type="button" class="tk-btn ghost" data-edit="' + l.id + '">Edit</button></div></div>';
     }).join('') : '<div class="tk-empty" style="padding:14px">No account managers set up yet.</div>';
     $('amList').querySelectorAll('[data-edit]').forEach(b => { b.onclick = () => editLine(lines.find(x => x.id === parseInt(b.dataset.edit))); });
+    $('amList').querySelectorAll('[data-setup]').forEach(b => { b.onclick = () => openLineSetup(parseInt(b.dataset.setup), b.closest('.tk-am')); });
   }
   function paintNumbers(err) {
     if (err) { $('twNums').innerHTML = '<div class="tk-msg err">' + esc(err) + '</div>'; return; }
@@ -1090,38 +1091,51 @@
   // business hours / after hours, each for a caller NovaAI recognises and one it does not. Saved on their talk_lines row.
   const GREETS = [['bh', 'Business hours', '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>'],
     ['ah', 'After hours', '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>']];
-  async function loadMyLine() {
-    const box = $('myLine');
-    let j; try { j = await api('/api/talk/my-line'); } catch (e) { return; }
-    if (!j.ok || !j.line) { box.hidden = true; return; }
-    const l = j.line, d = j.defaults || {};
+  // Draws the card into `box`; for one's own line (default) or, for an admin, any line (`lineId`, Account managers).
+  async function loadMyLine(lineId, box) {
+    box = box || $('myLine');
+    const url = lineId ? '/api/admin/talk/lines/' + lineId + '/setup' : '/api/talk/my-line';
+    let j; try { j = await api(url); } catch (e) { return; }
+    if (!j.ok || !j.line) { box.hidden = true; if (lineId) box.innerHTML = '<div class="tk-msg err">' + esc(j.error || 'Could not load.') + '</div>'; return; }
+    const l = j.line, d = j.defaults || {}, own = !lineId;
     const ini = (l.am_name || '?').trim().charAt(0).toUpperCase();
     const where = l.number ? '<span class="tk-mine-num">' + esc(phone(l.number)) + '</span>'
       : '<span class="tk-mine-num" title="Your clients reach your TalkAI on the main number">' + esc(phone(j.main_number || '')) + ' <small>main line</small></span>';
-    box.innerHTML = '<div class="tk-mine-head" id="mlHead">' + (l.photo ? '<img src="' + esc(l.photo) + '" alt="">' : '<span class="tk-mine-ini">' + esc(ini) + '</span>') +
-        '<div><div class="tk-mine-t">My TalkAI <span>· ' + esc(l.am_name || '') + '’s assistant</span></div>' +
-        '<div class="tk-mine-s">' + (l.number ? 'Answers <b>your own number</b>' : 'Answers <b>your clients</b> on the main line') + (l.main_line && l.number ? ' and your clients on the main line' : '') +
+    const ids = (k) => k + (lineId ? '_' + lineId : '');
+    box.innerHTML = '<div class="tk-mine-head" id="' + ids('mlHead') + '">' + (l.photo ? '<img src="' + esc(l.photo) + '" alt="">' : '<span class="tk-mine-ini">' + esc(ini) + '</span>') +
+        '<div><div class="tk-mine-t">' + (own ? 'My TalkAI' : esc((l.am_name || '').split(' ')[0]) + '’s TalkAI') + ' <span>· ' + esc(l.am_name || '') + '’s assistant</span></div>' +
+        '<div class="tk-mine-s">' + (l.number ? 'Answers <b>' + (own ? 'your' : 'their') + ' own number</b>' : 'Answers <b>' + (own ? 'your' : 'their') + ' clients</b> on the main line') + (l.main_line && l.number ? ' and ' + (own ? 'your' : 'their') + ' clients on the main line' : '') +
         ' · ' + l.calls + ' call' + (l.calls === 1 ? '' : 's') + (l.updated_at ? ' · training saved ' + esc(rel(l.updated_at)) : '') + '</div></div>' +
-        where + '<span class="tk-mine-open">Set up my TalkAI <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></span></div>' +
+        where + '<span class="tk-mine-open">' + (own ? 'Set up my TalkAI' : 'Training & greetings') + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></span></div>' +
       '<div class="tk-mine-body">' +
         '<h4>How to answer</h4><p class="sub">Tell your assistant how to handle your calls — what you handle yourself, what to say about your clients’ usual orders, when to take a message, how formal to be. Plain words; it reads this before every call.</p>' +
-        '<textarea id="mlTraining" placeholder="Example: My clients are mostly real-estate offices ordering signs and flyers. If they ask for me, take a message with the job and a callback number — never promise a time. Quote business cards and flyers right away; for anything large-format say I will call them back the same day.">' + esc(l.training) + '</textarea>' +
+        '<textarea id="' + ids('mlTraining') + '" placeholder="Example: My clients are mostly real-estate offices ordering signs and flyers. If they ask for me, take a message with the job and a callback number — never promise a time. Quote business cards and flyers right away; for anything large-format say I will call them back the same day.">' + esc(l.training) + '</textarea>' +
         '<h4>Greeting</h4><p class="sub">The first thing a caller hears. <b>Client recognized</b> — the number is on an account, so NovaAI knows who is calling (<code>{name}</code> = their first name). <b>Not recognized</b> — a number NovaAI cannot place. Leave a box empty to use the standard greeting shown in grey.</p>' +
         '<div class="tk-mine-g">' + GREETS.map(g => '<div class="tk-mine-col"><h5>' + g[2] + esc(g[1]) + '</h5>' +
           '<label>Client recognized</label><textarea data-g="greet_' + g[0] + '_known" placeholder="' + esc(d[g[0] + '_known'] || '') + '">' + esc(l['greet_' + g[0] + '_known']) + '</textarea>' +
           '<label>Not recognized</label><textarea data-g="greet_' + g[0] + '_new" placeholder="' + esc(d[g[0] + '_new'] || '') + '">' + esc(l['greet_' + g[0] + '_new']) + '</textarea></div>').join('') + '</div>' +
-        '<div class="tk-mine-save"><button type="button" class="tk-btn" id="mlSave">Save my TalkAI</button><span class="tk-msg" id="mlMsg"></span></div>' +
+        '<div class="tk-mine-save"><button type="button" class="tk-btn" id="' + ids('mlSave') + '">' + (own ? 'Save my TalkAI' : 'Save') + '</button><span class="tk-msg" id="' + ids('mlMsg') + '"></span></div>' +
       '</div>';
     box.hidden = false;
-    $('mlHead').onclick = () => box.classList.toggle('open');
-    $('mlSave').onclick = async () => {
-      const body = { training: $('mlTraining').value };
+    if (lineId) box.classList.add('open');
+    $(ids('mlHead')).onclick = () => { if (own) box.classList.toggle('open'); };
+    $(ids('mlSave')).onclick = async () => {
+      const body = { training: $(ids('mlTraining')).value };
       box.querySelectorAll('[data-g]').forEach(t => { body[t.dataset.g] = t.value; });
-      $('mlSave').disabled = true; $('mlMsg').textContent = 'Saving…';
-      const r = await api('/api/talk/my-line', { method: 'POST', body: JSON.stringify(body) });
-      $('mlSave').disabled = false; $('mlMsg').textContent = r.ok ? 'Saved — your next call uses it.' : (r.error || 'Could not save.');
-      if (r.ok) setTimeout(() => { $('mlMsg').textContent = ''; }, 4000);
+      $(ids('mlSave')).disabled = true; $(ids('mlMsg')).textContent = 'Saving…';
+      const r = await api(url, { method: 'POST', body: JSON.stringify(body) });
+      $(ids('mlSave')).disabled = false; $(ids('mlMsg')).textContent = r.ok ? 'Saved — the next call uses it.' : (r.error || 'Could not save.');
+      if (r.ok) setTimeout(() => { $(ids('mlMsg')).textContent = ''; }, 4000);
     };
+  }
+  // Account managers → "TalkAI setup" on a row: the same card, opened under that row (1.20.79)
+  function openLineSetup(id, after) {
+    const old = document.getElementById('amSetup_' + id);
+    if (old) { old.remove(); return; }
+    document.querySelectorAll('.tk-mine.in-am').forEach(x => x.remove());
+    const box = document.createElement('div'); box.id = 'amSetup_' + id; box.className = 'tk-mine in-am'; box.hidden = true;
+    after.insertAdjacentElement('afterend', box);
+    loadMyLine(id, box);
   }
 
   // ---- start ----
