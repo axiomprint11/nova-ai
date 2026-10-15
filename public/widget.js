@@ -515,9 +515,10 @@ function setHeaderSignedIn(on) {
     const el = document.getElementById(id);
     if (el) el.style.display = on ? (id === 'wgOut' ? 'inline-flex' : 'flex') : 'none';
   });
-  document.getElementById('wgSub').textContent = on
-    ? (username ? 'Signed in as ' + username : 'AxiomPrint knowledge')
-    : 'Sign in required';
+  // 1.20.40: no "Signed in as …" line — the sub line is empty once signed in (who you are is in the admin menu / sign-out)
+  const sub = document.getElementById('wgSub');
+  sub.textContent = on ? '' : 'Sign in required';
+  sub.style.display = on ? 'none' : '';
 }
 
 function showAuth() {
