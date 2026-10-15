@@ -39,6 +39,15 @@ module.exports = function mountDesignerAi(app, deps) {
     }
   }
   let teamAt = 0;
+  // 1.20.33: `estimate.created` has no index, so "created >= 180 days ago" scans the whole table (EXPLAIN: type ALL,
+  // 167k rows). Estimate ids are monotonic: an id floor per window turns it into a PRIMARY range scan. One MIN() per
+  // window per hour.
+  const floors = {};
+  async function idFloor(days) {
+    const f = floors[days]; if (f && Date.now() - f.at < 3600e3) return f.id;
+    const r = await runQuery('SELECT MIN(id) id FROM estimate WHERE created >= DATE_SUB(NOW(), INTERVAL ' + parseInt(days) + ' DAY)');
+    const id = (r[0] && Number(r[0].id)) || 0; floors[days] = { id, at: Date.now() }; return id;
+  }
   // 1.20.31: the four CRM load queries are cached for 45 s — a Match read them twice (scoring + the model's profiles)
   let teamCache = null, teamCacheAt = 0;
   const dropTeamCache = () => { teamCache = null; };
@@ -54,11 +63,11 @@ module.exports = function mountDesignerAi(app, deps) {
     try {
       // 1.20.16: "active" is what the CRM board counts — proof_checking (and a rejected-edits round) on the designer's desk;
       // proof_sent / rejected_reupload sit with the customer and are shown apart as "waiting on client"
-      (await runQuery("SELECT m.user_id, SUM(e.prepress_status IN ('proof_checking', 'rejected_edits', 'insta_proof_manual')) n, SUM(e.prepress_status IN ('proof_sent', 'rejected_reupload', 'waiting_files', 'upload_files')) w FROM (SELECT DISTINCT m0.user_id, m0.estimate_id FROM estimate_team_members m0 WHERE m0.user_id IN (" + TEAM.join(',') + ")) m JOIN estimate e ON e.id = m.estimate_id JOIN estimate_stage s ON s.estimate_id = e.id WHERE s.estimate_stage = 'prepress' AND s.estimate_substage <> 'canceled' AND e.estimate_invoiceid > 0 GROUP BY m.user_id")).forEach(r => { load[r.user_id] = Number(r.n) || 0; waiting[r.user_id] = Number(r.w) || 0; });
-      (await runQuery("SELECT m.user_id, COUNT(DISTINCT CASE WHEN e.created >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN e.id END) n, COUNT(DISTINCT e.id) n90 FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id WHERE m.user_id IN (" + TEAM.join(',') + ") AND e.prepress_status = 'approved' AND e.created >= DATE_SUB(NOW(), INTERVAL 90 DAY) GROUP BY m.user_id")).forEach(r => { done[r.user_id] = Number(r.n); done90[r.user_id] = Number(r.n90); });
+      (await runQuery("SELECT m.user_id, COUNT(DISTINCT CASE WHEN e.prepress_status IN ('proof_checking', 'rejected_edits', 'insta_proof_manual') THEN e.id END) n, COUNT(DISTINCT CASE WHEN e.prepress_status IN ('proof_sent', 'rejected_reupload', 'waiting_files', 'upload_files') THEN e.id END) w FROM estimate_stage s JOIN estimate e ON e.id = s.estimate_id JOIN estimate_team_members m ON m.estimate_id = e.id AND m.user_id IN (" + TEAM.join(',') + ") WHERE s.estimate_stage = 'prepress' AND s.estimate_substage <> 'canceled' AND e.estimate_invoiceid > 0 GROUP BY m.user_id")).forEach(r => { load[r.user_id] = Number(r.n) || 0; waiting[r.user_id] = Number(r.w) || 0; });
+      (await runQuery("SELECT m.user_id, COUNT(DISTINCT CASE WHEN e.created >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN e.id END) n, COUNT(DISTINCT e.id) n90 FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id WHERE m.user_id IN (" + TEAM.join(',') + ") AND e.id >= " + (await idFloor(90)) + " AND e.prepress_status = 'approved' AND e.created >= DATE_SUB(NOW(), INTERVAL 90 DAY) GROUP BY m.user_id")).forEach(r => { done[r.user_id] = Number(r.n); done90[r.user_id] = Number(r.n90); });
     } catch (e) { errlog('load', e.message); }
     const nova = {}; (await dbAll("SELECT user_id, COUNT(*) n FROM da_assign WHERE status = 'assigned' AND at >= datetime('now', '-14 days') GROUP BY user_id")).forEach(r => { nova[r.user_id] = r.n; });
-    let total = {}; try { (await runQuery("SELECT m.user_id, COUNT(DISTINCT m.estimate_id) n FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id WHERE m.user_id IN (" + TEAM.join(',') + ") AND e.created >= DATE_SUB(NOW(), INTERVAL 180 DAY) GROUP BY m.user_id")).forEach(r => { total[r.user_id] = Number(r.n); }); } catch (e) {}
+    let total = {}; try { (await runQuery("SELECT m.user_id, COUNT(DISTINCT m.estimate_id) n FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id WHERE m.user_id IN (" + TEAM.join(',') + ") AND e.id >= " + (await idFloor(180)) + " AND e.created >= DATE_SUB(NOW(), INTERVAL 180 DAY) GROUP BY m.user_id")).forEach(r => { total[r.user_id] = Number(r.n); }); } catch (e) {}
     return rows.map(r => Object.assign({}, r, { skills: r.skills || '', skill_list: skillList(r.skills), hard_level: r.hard_level == null ? 5 : r.hard_level, creative_level: r.creative_level == null ? 5 : r.creative_level, comm_level: r.comm_level == null ? 5 : r.comm_level, languages: r.languages || '', language_list: String(r.languages || '').split(',').map(x => x.trim()).map(x => x.charAt(0).toUpperCase() + x.slice(1).toLowerCase()).filter(Boolean), active_jobs: load[r.user_id] || 0, waiting_client: waiting[r.user_id] || 0, done_30: done[r.user_id] || 0, done_90: done90[r.user_id] || 0, nova_assigned: nova[r.user_id] || 0, jobs_180: total[r.user_id] || 0, is_new: (total[r.user_id] || 0) < 60, on_shift: onShift(r) }));
   }
   const skillList = (s) => String(s || '').split(/[,;\n]+/).map(x => x.trim().toLowerCase()).filter(Boolean);
@@ -68,7 +77,7 @@ module.exports = function mountDesignerAi(app, deps) {
   // "id|name|last|photo;;…" → [{user_id, name, last_name, photo}] (1.20.20: the Team on it cell shows faces)
   const teamOf = (s) => !s ? [] : String(s).split(';;').map(x => { const [id, name, last, ph] = x.split('|'); return { user_id: Number(id), name: name || '', last_name: last || '', photo: staffPhoto(ph) }; }).filter(t => t.user_id);
   async function queue(tier, all, onlyId) {
-    const tu = TIER_USERS[tier] || TIER_USERS[1];
+    const tu = TIER_USERS[tier] || TIER_USERS[1]; const f180 = await idFloor(180);
     const rows = await runQuery(
       "SELECT e.id, e.estimate_name, e.created, e.complete_by, e.prepress_status, e.estimate_invoiceid inv, e.estimate_productid product_id, e.design_price, e.prepress_notes, e.prepress_internal_notes, p.title product, p.image product_image, pc.title category, pc.id category_id, " +
       "s.estimate_stage stage, s.estimate_substage substage, s.stage_in_date, c.company_name, c.name cname, c.last_name clname, " +
@@ -78,7 +87,7 @@ module.exports = function mountDesignerAi(app, deps) {
       "(SELECT dd.design_type FROM estimate_design_details dd WHERE dd.estimate_id = e.id AND dd.design_type NOT LIKE '%Proof%' ORDER BY dd.id DESC LIMIT 1) files_type, " +
       "(SELECT dd.service_type FROM estimate_design_details dd WHERE dd.estimate_id = e.id AND dd.service_type IS NOT NULL ORDER BY dd.id DESC LIMIT 1) service, " +
       "(SELECT dd.notes FROM estimate_design_details dd WHERE dd.estimate_id = e.id AND dd.notes IS NOT NULL AND dd.notes <> '' ORDER BY dd.id DESC LIMIT 1) design_notes, " +
-      "(SELECT COUNT(*) FROM estimate e2 WHERE e2.estimate_productid = e.estimate_productid AND e2.created >= DATE_SUB(NOW(), INTERVAL 180 DAY)) product_180 " +
+      "(SELECT COUNT(*) FROM estimate e2 WHERE e2.estimate_productid = e.estimate_productid AND e2.id >= " + f180 + " AND e2.created >= DATE_SUB(NOW(), INTERVAL 180 DAY)) product_180 " +
       "FROM estimate e JOIN estimate_team_members m ON m.estimate_id = e.id AND m.user_id = " + tu + " JOIN estimate_stage s ON s.estimate_id = e.id " +
       "LEFT JOIN product p ON p.id = e.estimate_productid LEFT JOIN productcategory pc ON pc.id = p.product_category_id LEFT JOIN customer c ON c.id = e.estimate_clientid " +
       "WHERE s.estimate_stage = 'prepress' AND s.estimate_substage <> 'canceled'" + (all ? '' : ' AND e.estimate_invoiceid > 0') + (onlyId ? ' AND e.id = ' + parseInt(onlyId) : '') + " ORDER BY e.created DESC LIMIT 300");
@@ -143,7 +152,7 @@ module.exports = function mountDesignerAi(app, deps) {
     const team = (await designers()).filter(d => d.active);
     let hist = {};
     try {
-      const h = await runQuery("SELECT m.user_id, SUM(e.estimate_productid = " + (parseInt(job.product_id) || 0) + ") same_product, SUM(p.product_category_id = (SELECT product_category_id FROM product WHERE id = " + (parseInt(job.product_id) || 0) + ")) same_cat FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id LEFT JOIN product p ON p.id = e.estimate_productid WHERE m.user_id IN (" + TEAM.join(',') + ") AND e.created >= DATE_SUB(NOW(), INTERVAL 180 DAY) GROUP BY m.user_id");
+      const h = await runQuery("SELECT m.user_id, SUM(e.estimate_productid = " + (parseInt(job.product_id) || 0) + ") same_product, SUM(p.product_category_id = (SELECT product_category_id FROM product WHERE id = " + (parseInt(job.product_id) || 0) + ")) same_cat FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id LEFT JOIN product p ON p.id = e.estimate_productid WHERE m.user_id IN (" + TEAM.join(',') + ") AND e.id >= " + (await idFloor(180)) + " AND e.created >= DATE_SUB(NOW(), INTERVAL 180 DAY) GROUP BY m.user_id");
       h.forEach(r => { hist[r.user_id] = { product: Number(r.same_product) || 0, cat: Number(r.same_cat) || 0 }; });
     } catch (e) { errlog('history', e.message); }
     const recent = {}; (await dbAll("SELECT user_id, COUNT(*) n FROM da_assign WHERE status = 'assigned' AND at >= datetime('now', '-2 hours') GROUP BY user_id")).forEach(r => { recent[r.user_id] = r.n; });
