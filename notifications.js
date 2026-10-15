@@ -1,0 +1,54 @@
+'use strict';
+// Email notifications (1.20.73): every email Nova sends to the TEAM, in one list — what it is, who gets it, on or off.
+// Admin → Emails shows the list; `notify_prefs` keeps the choice per kind (enabled + recipients override). The sending
+// code asks `Notify.on(kind)` before composing and `Notify.to(kind, fallback)` for the address, so a switched-off kind is
+// never sent (and never recorded as sent) and a recipients override replaces the configured address.
+// Customer-facing mail (quotes to callers, website quote emails) is not here — those are the product, not notifications.
+module.exports = function (deps) {
+  const { db, auth, adminOnly } = deps;
+  const KINDS = [
+    { kind: 'talk.summary', group: 'TalkAi', name: 'Every call — summary + transcript', desc: 'After each real call NovaAI answered: the summary and the transcript. Setup → "email a summary of every call".', where: 'TalkAi Setup → Notification email' },
+    { kind: 'talk.message', group: 'TalkAi', name: 'Message taken', desc: 'NovaAI took a message for the team on a call (caller, call-back number, topic, message).', where: 'TalkAi Setup → Notification email' },
+    { kind: 'talk.csr', group: 'TalkAi', name: 'CSR hand-off after each call', desc: 'The AI summary with call back yes / no, sent to the CSR team (Dialpad shows the call as missed, so the team hears what happened).', where: 'TalkAi Setup → CSR team' },
+    { kind: 'talk.relay', group: 'TalkAi', name: 'Relayed to the person asked for', desc: 'When a caller asked for someone by name, that team member gets the call summary.', where: 'the team directory (the person asked for)' },
+    { kind: 'client.escalate', group: 'Website chat', name: 'Past-due job escalation', desc: 'A customer asked about a job that is past its deadline and not finished — once per job per day.', where: 'CLIENT_BOT_ESCALATE_TO' },
+    { kind: 'client.quote_bcc', group: 'Website chat', name: 'Copy of quotes emailed to customers', desc: 'A BCC of every quote NovaAI emails a website customer.', where: 'CLIENT_BOT_MAIL_BCC' },
+    { kind: 'bk.alerts', group: 'Bookkeeping', name: 'Daily: overdue purchases + auto-categorized lines', desc: 'Once a day — purchases waiting for the bank / not received, and what Nova filed on its own in the last 24 h.', where: 'Bookkeeping Settings → Alerts' },
+    { kind: 'bk.loans', group: 'Bookkeeping', name: 'Missed loan payment', desc: 'A loan slot with no bank line after its due date (once per loan-month).', where: 'Bookkeeping Settings → Alerts' },
+    { kind: 'bk.ar', group: 'Bookkeeping', name: 'Notify Accounts Receivable', desc: 'A customer deposit filed under an income category — sent when someone presses "Notify Accounts Receivable".', where: 'Bookkeeping Settings → Alerts (AR to / cc)' },
+    { kind: 'backup', group: 'System', name: 'Backup problems', desc: 'The nightly users.db backup failed, or its Google Drive upload did.', where: 'BACKUP_ALERT_TO' }
+  ];
+  db.run('CREATE TABLE IF NOT EXISTS notify_prefs (kind TEXT PRIMARY KEY, enabled INTEGER DEFAULT 1, recipients TEXT, updated_at TEXT, updated_by TEXT)');
+  const prefs = {};                                   // kind → { enabled, recipients }
+  const defaults = {};                                // kind → () => current configured address (registered by each module)
+  function load() { return new Promise((res) => db.all('SELECT * FROM notify_prefs', [], (e, rows) => { if (!e) { Object.keys(prefs).forEach(k => delete prefs[k]); (rows || []).forEach(r => { prefs[r.kind] = r; }); } res(); })); }
+  load();
+  const on = (kind) => !prefs[kind] || Number(prefs[kind].enabled) !== 0;
+  const to = (kind, fallback) => { const p = prefs[kind]; const r = p && String(p.recipients || '').trim(); return r || fallback; };
+  const register = (kind, fn) => { defaults[kind] = fn; };
+  const who = (req) => String((req.user && (req.user.email || req.user.username || req.user.key)) || 'admin').replace(/^(member|user):/, '');
+  app_routes();
+  function app_routes() {
+    const app = deps.app;
+    app.get('/api/admin/notifications', auth, adminOnly, async (req, res) => {
+      const out = [];
+      for (const k of KINDS) {
+        let def = ''; try { def = defaults[k.kind] ? String(await defaults[k.kind]() || '') : ''; } catch (e) { def = ''; }
+        const p = prefs[k.kind] || null;
+        out.push(Object.assign({}, k, { enabled: on(k.kind), recipients: p ? (p.recipients || '') : '', default_to: def, effective_to: on(k.kind) ? to(k.kind, def) : '', updated_at: p ? p.updated_at : null, updated_by: p ? p.updated_by : null }));
+      }
+      res.json({ ok: true, kinds: out });
+    });
+    app.post('/api/admin/notifications/:kind', auth, adminOnly, (req, res) => {
+      const kind = String(req.params.kind || ''); if (!KINDS.some(k => k.kind === kind)) return res.status(404).json({ ok: false, error: 'No such email kind' });
+      const b = req.body || {};
+      const cur = prefs[kind] || { enabled: 1, recipients: '' };
+      const enabled = b.enabled == null ? Number(cur.enabled) !== 0 : !!b.enabled;
+      const recipients = b.recipients == null ? (cur.recipients || '') : String(b.recipients).replace(/\s+/g, ' ').trim().slice(0, 400);
+      if (recipients && !/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+(\s*[,;]\s*[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+)*$/.test(recipients)) return res.status(400).json({ ok: false, error: 'Recipients: one or more email addresses, separated by commas.' });
+      db.run("INSERT INTO notify_prefs (kind, enabled, recipients, updated_at, updated_by) VALUES (?,?,?,datetime('now'),?) ON CONFLICT(kind) DO UPDATE SET enabled = excluded.enabled, recipients = excluded.recipients, updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+        [kind, enabled ? 1 : 0, recipients || null, who(req)], async (e) => { if (e) return res.status(500).json({ ok: false, error: e.message }); await load(); console.log('NOTIFY ' + kind + ' ' + (enabled ? 'on' : 'OFF') + (recipients ? ' → ' + recipients : '') + ' by ' + who(req)); res.json({ ok: true, enabled, recipients }); });
+    });
+  }
+  return { KINDS, on, to, register, reload: load };
+};

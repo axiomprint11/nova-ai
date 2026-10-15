@@ -38,6 +38,8 @@ for f in "${FILES[@]}"; do
   [ -f "$SRC/$f" ] || { echo "!!! $f is not in the GitHub copy — nothing changed"; exit 1; }
   case "$f" in *.js) node -c "$SRC/$f" >/dev/null 2>&1 || { echo "!!! $f has a syntax error — nothing changed"; exit 1; } ;; esac
 done
+# 1.20.73: a // comment that swallowed a trailing + passes node -c and breaks the page at runtime (1.20.13, 1.20.66, 1.20.72)
+bash "$SRC/scripts/check-comments.sh" "$SRC"/public/*.js "$SRC"/*.js || { echo "!!! a comment swallowed code — nothing changed"; exit 1; }
 
 # 2) Back up and copy only what differs.
 CHANGED=(); RESTART=0

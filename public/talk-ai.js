@@ -94,6 +94,8 @@
   $('callQ').oninput = () => { clearTimeout(qTimer); qTimer = setTimeout(loadCalls, 300); };
   $('callRefresh').onclick = async () => { const b = $('callRefresh'); b.classList.add('spin'); await loadCalls(); setTimeout(() => b.classList.remove('spin'), 300); };
   $('callReadAll').onclick = async () => { await api('/api/admin/talk/read-all', { method: 'POST', body: '{}' }); loadCalls(); };
+  // after a call is closed: the badge drops by the rows just read (no reload, the list stays where it was)
+  function setUnreadFromRows() { const n = document.querySelectorAll('tr.tk-ctr.unread').length; const shown = parseInt($('tkUnread').textContent) || 0; if (n < shown) setUnread(n); }
   function setUnread(n) {
     $('tkUnread').textContent = n ? (n > 99 ? '99+' : n) : '';
     $('tkUnreadTab').textContent = n ? (n > 99 ? '99+' : n) : '';
@@ -178,7 +180,7 @@
     const when = new Date(String(c.created_at).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(c.created_at) ? '' : 'Z'));
     const sum = c.ai_summary || c.summary || c.first_said || (c.answered_by === 'message' ? 'Closed message played' : '');
     const dd = c.duration_sec ? Math.floor(c.duration_sec / 60) + ':' + String(Math.round(c.duration_sec % 60)).padStart(2, '0') : '—';
-    return '<tr class="tk-ctr tk-cl' + (c.unread ? ' unread' : '') + '" data-id="' + c.id + '">' +
+    return '<tr class="tk-ctr tk-cl' + (c.unread && current !== c.id ? ' unread' : '') + (current === c.id ? ' on' : '') + '" data-id="' + c.id + '">' +
       '<td>' + kind + '</td>' +
       '<td class="cl-when">' + esc(rel(c.created_at)) + '<small>' + esc(when.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })) + '</small></td>' +
       '<td><div class="cl-who">' + callAvatar(c) + '<div><b>' + esc(person || (test ? (c.source === 'try' ? 'Test in text' : 'ElevenLabs test') : 'Unknown caller')) + '</b><small>' + esc(person ? (company || '') : (test ? (c.tried_by ? 'by ' + String(c.tried_by).replace(/^member:|^user:/, '') : '') : 'Not a client yet')) + '</small></div></div></td>' +
@@ -214,7 +216,7 @@
   async function openCall(id) {
     current = id;
     $('vCalls').classList.add('detail');
-    document.querySelectorAll('.tk-row').forEach(b => { const on = parseInt(b.dataset.id) === id; b.classList.toggle('on', on); if (on) b.classList.remove('unread'); });
+    document.querySelectorAll('tr.tk-ctr').forEach(b => { const on = parseInt(b.dataset.id) === id; b.classList.toggle('on', on); if (on) b.classList.remove('unread'); });
     history.replaceState(null, '', '/talk-ai?call=' + id);
     const v = $('callView');
     v.classList.remove('tk-split');
@@ -392,7 +394,7 @@
       note.oninput = grow; grow();
       note.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('rateSave').click(); } };
     })();
-    $('callBack').onclick = () => { $('vCalls').classList.remove('detail'); current = null; history.replaceState(null, '', '/talk-ai'); loadCalls(); };
+    $('callBack').onclick = () => { $('vCalls').classList.remove('detail'); current = null; history.replaceState(null, '', '/talk-ai'); document.querySelectorAll('tr.tk-ctr.on').forEach(x => x.classList.remove('on')); setUnreadFromRows(); };
     $('callUnread').onclick = async () => { await api('/api/admin/talk/calls/' + id + '/unread', { method: 'POST', body: '{}' }); current = null; loadCalls(); $('vCalls').classList.remove('detail'); v.innerHTML = '<div class="tk-empty">Marked as unread.</div>'; };
     if ($('showLog')) $('showLog').onclick = () => {
       const on = $('callTx').classList.toggle('show-lk');
