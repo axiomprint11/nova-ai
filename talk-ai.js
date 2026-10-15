@@ -2055,6 +2055,11 @@ module.exports = function mountTalkAi(app, deps, bot) {
     if (f === 'phone') where.push("c.source = 'phone'");
     if (f === 'tests') where.push("c.source IN ('try','elevenlabs')");
     if (f === 'messages') where.push("c.outcome IN ('message','transferred')");
+    // 1.20.71: which TalkAI answered — an account manager's line (line:<id>), a setup (regular / missed / after), or tests
+    const via = String(req.query.via || '');
+    if (/^line:\d+$/.test(via)) { where.push('c.line_id = ?'); p.push(parseInt(via.slice(5))); }
+    else if (via === 'regular' || via === 'missed' || via === 'after') { where.push("c.source = 'phone' AND c.line_id IS NULL AND c.hours_mode = ?"); p.push(via); }
+    else if (via === 'tests') where.push("c.source IN ('try','elevenlabs')");
     if (q) {
       const like = '%' + q + '%';
       where.push('(c.from_number LIKE ? OR c.customer_name LIKE ? OR c.company LIKE ? OR c.summary LIKE ? OR c.caller_match LIKE ? OR EXISTS (SELECT 1 FROM talk_turns t WHERE t.call_id = c.id AND t.content LIKE ?))');
@@ -2070,8 +2075,55 @@ module.exports = function mountTalkAi(app, deps, bot) {
       ' ORDER BY c.id DESC LIMIT 200', p);
     rows.forEach(r => { try { r.caller_match = r.caller_match ? JSON.parse(r.caller_match) : null; } catch (e) { r.caller_match = null; } r.unread = !!r.unread; r.has_audio = !!r.has_audio; });
     const u = await dbGet("SELECT COUNT(*) AS n FROM talk_calls c LEFT JOIN talk_reads r ON r.call_id = c.id AND r.reader = ? WHERE c.source <> 'try' AND (r.read_at IS NULL OR r.read_at < c.updated_at)", [reader]);
-    res.json({ ok: true, calls: rows, unread: (u && u.n) || 0 });
+    let tiles = null; try { tiles = await callTiles(); } catch (e) { console.error('TALK tiles', e.message); }
+    res.json({ ok: true, calls: rows, unread: (u && u.n) || 0, tiles });
   });
+  // 1.20.71: the dashboard tiles — today / yesterday / this week / this month, who answered today, outcomes, talk time.
+  // Los Angeles days; created_at is UTC 'YYYY-MM-DD HH:MM:SS'.
+  function laMidnightUtc(daysBack) {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', weekday: 'short' }).formatToParts(now);
+    const g = (t) => parts.find(x => x.type === t).value;
+    const wall = Date.UTC(+g('year'), +g('month') - 1, +g('day'), +g('hour'), +g('minute'), +g('second'));
+    const offset = wall - now.getTime();                       // LA wall clock minus real UTC
+    const midnight = Date.UTC(+g('year'), +g('month') - 1, +g('day')) - offset - (daysBack || 0) * 86400000;
+    const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(g('weekday'));
+    return { ts: midnight, dow, day: +g('day'), y: +g('year'), m: +g('month'), offset };
+  }
+  const sqlTs = (ms) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+  async function callTiles() {
+    const t0 = laMidnightUtc(0), day = 86400000;
+    const today = sqlTs(t0.ts), yesterday = sqlTs(t0.ts - day);
+    const weekStart = sqlTs(t0.ts - ((t0.dow + 6) % 7) * day), lastWeekStart = sqlTs(t0.ts - ((t0.dow + 6) % 7) * day - 7 * day);
+    const monthStart = sqlTs(t0.ts - (t0.day - 1) * day);
+    const lastMonthStart = sqlTs(Date.UTC(t0.y, t0.m - 2, 1) - t0.offset);   // the 1st of last month, LA midnight (Date.UTC rolls month -1 over the year)
+    const n = async (sql, p) => (await dbGet(sql, p)).n || 0;
+    const P = "c.source = 'phone'";
+    const out = {
+      today: await n('SELECT COUNT(*) n FROM talk_calls c WHERE ' + P + ' AND c.created_at >= ?', [today]),
+      yesterday: await n('SELECT COUNT(*) n FROM talk_calls c WHERE ' + P + ' AND c.created_at >= ? AND c.created_at < ?', [yesterday, today]),
+      week: await n('SELECT COUNT(*) n FROM talk_calls c WHERE ' + P + ' AND c.created_at >= ?', [weekStart]),
+      last_week: await n('SELECT COUNT(*) n FROM talk_calls c WHERE ' + P + ' AND c.created_at >= ? AND c.created_at < ?', [lastWeekStart, weekStart]),
+      month: await n('SELECT COUNT(*) n FROM talk_calls c WHERE ' + P + ' AND c.created_at >= ?', [monthStart]),
+      last_month: await n('SELECT COUNT(*) n FROM talk_calls c WHERE ' + P + ' AND c.created_at >= ? AND c.created_at < ?', [lastMonthStart, monthStart]),
+      messages_today: await n("SELECT COUNT(*) n FROM talk_calls c WHERE " + P + " AND c.outcome = 'message' AND c.created_at >= ?", [today]),
+      messages_month: await n("SELECT COUNT(*) n FROM talk_calls c WHERE " + P + " AND c.outcome = 'message' AND c.created_at >= ?", [monthStart]),
+      callbacks_today: await n('SELECT COUNT(*) n FROM talk_calls c WHERE ' + P + ' AND c.callback = 1 AND c.created_at >= ?', [today]),
+      callbacks_month: await n('SELECT COUNT(*) n FROM talk_calls c WHERE ' + P + ' AND c.callback = 1 AND c.created_at >= ?', [monthStart]),
+      quotes_today: await n("SELECT COUNT(DISTINCT c.id) n FROM talk_calls c JOIN talk_emails m ON m.call_id = c.id AND m.ok = 1 AND m.kind = 'quote' WHERE " + P + " AND c.created_at >= ?", [today]),
+      quotes_month: await n("SELECT COUNT(DISTINCT c.id) n FROM talk_calls c JOIN talk_emails m ON m.call_id = c.id AND m.ok = 1 AND m.kind = 'quote' WHERE " + P + " AND c.created_at >= ?", [monthStart]),
+      transferred_today: await n("SELECT COUNT(*) n FROM talk_calls c WHERE " + P + " AND c.outcome = 'transferred' AND c.created_at >= ?", [today]),
+      talk_today: (await dbGet('SELECT COALESCE(SUM(duration_sec), 0) s, COUNT(*) k FROM talk_calls c WHERE ' + P + ' AND c.duration_sec > 0 AND c.created_at >= ?', [today])),
+      callers_month: await n('SELECT COUNT(DISTINCT c.from_number) n FROM talk_calls c WHERE ' + P + ' AND c.created_at >= ?', [monthStart]),
+      by_line_today: await dbAll('SELECT c.line_id, c.hours_mode, (SELECT am_name FROM talk_lines l WHERE l.id = c.line_id) AS line_name, (SELECT am_user_id FROM talk_lines l WHERE l.id = c.line_id) AS am_user_id, COUNT(*) n FROM talk_calls c WHERE ' + P + ' AND c.created_at >= ? GROUP BY c.line_id, c.hours_mode ORDER BY n DESC', [today]),
+      by_line_month: await dbAll('SELECT c.line_id, c.hours_mode, (SELECT am_name FROM talk_lines l WHERE l.id = c.line_id) AS line_name, (SELECT am_user_id FROM talk_lines l WHERE l.id = c.line_id) AS am_user_id, COUNT(*) n FROM talk_calls c WHERE ' + P + ' AND c.created_at >= ? GROUP BY c.line_id, c.hours_mode ORDER BY n DESC', [monthStart])
+    };
+    out.talk_today = { seconds: out.talk_today.s || 0, calls: out.talk_today.k || 0 };
+    // one bucket per TalkAI: the manager's line when there is one, else the setup (a NULL hours_mode is the regular one)
+    const fold = (rows) => { const m = new Map(); rows.forEach(r => { const key = r.line_id ? 'line:' + r.line_id : (r.hours_mode === 'after' || r.hours_mode === 'missed' ? r.hours_mode : 'regular'); const cur = m.get(key) || { key, line_id: r.line_id || null, line_name: r.line_name || (r.line_id ? 'Line #' + r.line_id : null), hours_mode: r.line_id ? null : (key === 'regular' ? 'regular' : key), n: 0 }; cur.n += r.n; m.set(key, cur); }); return [...m.values()].sort((a, b) => b.n - a.n); };
+    out.by_line_today = fold(out.by_line_today); out.by_line_month = fold(out.by_line_month);
+    return out;
+  }
   // Good / Bad + a note for training: one rating per call (the latest wins); an empty rating clears it.
   app.post('/api/admin/talk/calls/:id/rate', auth, adminOnly, async (req, res) => {
     const id = parseInt(req.params.id) || 0, b = req.body || {};

@@ -51,13 +51,14 @@
   .tk-rows { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
   .tk-row { position: relative; text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 10px 10px 10px 20px; font: 12px/1.35 inherit; cursor: pointer;
     display: flex; gap: 10px; align-items: flex-start; }
+  .tk-cl .tk-av { font-size: 11.5px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
   .tk-row .tk-av, .tk-hd-top .tk-av { flex: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 600; letter-spacing: .02em; overflow: visible; }
   .tk-av svg { width: 16px; height: 16px; }
-  .tk-row .tk-av.t0, .tk-hd-top .tk-av.t0 { background: #fde7d9; color: #b45309; } .tk-row .tk-av.t1, .tk-hd-top .tk-av.t1 { background: #ede4fb; color: #6d28d9; } .tk-row .tk-av.t2, .tk-hd-top .tk-av.t2 { background: #dcf5e7; color: #15803d; }
-  .tk-row .tk-av.t3, .tk-hd-top .tk-av.t3 { background: #dbeafe; color: #1d4ed8; } .tk-row .tk-av.t4, .tk-hd-top .tk-av.t4 { background: #fce4ec; color: #be185d; } .tk-row .tk-av.t5, .tk-hd-top .tk-av.t5 { background: #e0f2f1; color: #0f766e; }
-  .tk-row .tk-av.t6, .tk-hd-top .tk-av.t6 { background: #fef3c7; color: #a16207; } .tk-row .tk-av.t7, .tk-hd-top .tk-av.t7 { background: #e5e7f5; color: #3f3f9e; }
-  .tk-row .tk-av.own, .tk-hd-top .tk-av.own { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px #6366f1; }
-  .tk-row .tk-av.unk, .tk-hd-top .tk-av.unk { background: #fff; color: #a3a8b8; border: 1.5px dashed #cfd3df; }
+  .tk-row .tk-av.t0, .tk-hd-top .tk-av.t0, .tk-cl .tk-av.t0 { background: #fde7d9; color: #b45309; } .tk-row .tk-av.t1, .tk-hd-top .tk-av.t1, .tk-cl .tk-av.t1 { background: #ede4fb; color: #6d28d9; } .tk-row .tk-av.t2, .tk-hd-top .tk-av.t2, .tk-cl .tk-av.t2 { background: #dcf5e7; color: #15803d; }
+  .tk-row .tk-av.t3, .tk-hd-top .tk-av.t3, .tk-cl .tk-av.t3 { background: #dbeafe; color: #1d4ed8; } .tk-row .tk-av.t4, .tk-hd-top .tk-av.t4, .tk-cl .tk-av.t4 { background: #fce4ec; color: #be185d; } .tk-row .tk-av.t5, .tk-hd-top .tk-av.t5, .tk-cl .tk-av.t5 { background: #e0f2f1; color: #0f766e; }
+  .tk-row .tk-av.t6, .tk-hd-top .tk-av.t6, .tk-cl .tk-av.t6 { background: #fef3c7; color: #a16207; } .tk-row .tk-av.t7, .tk-hd-top .tk-av.t7, .tk-cl .tk-av.t7 { background: #e5e7f5; color: #3f3f9e; }
+  .tk-row .tk-av.own, .tk-hd-top .tk-av.own, .tk-cl .tk-av.own { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px #6366f1; }
+  .tk-row .tk-av.unk, .tk-hd-top .tk-av.unk, .tk-cl .tk-av.unk { background: #fff; color: #a3a8b8; border: 1.5px dashed #cfd3df; }
   .tk-row .tk-av.test, .tk-hd-top .tk-av.test { background: #fffbeb; color: #b45309; border: 1.5px solid #fde68a; }
   .tk-avcol { flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; width: 36px; }
   .tk-avdur { font-size: 10.5px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; line-height: 1; }
@@ -85,6 +86,52 @@
   .tk-tx.show-lk .tk-lk { display: flex; }
   .tk-lk span { background: #eef2ff; border-color: #c7d2fe; color: #3730a3; }
   .tk-detail { flex: 1; min-width: 0; overflow-y: auto; padding: 18px 24px; }
+  /* 1.20.71: the calls dashboard */
+  #vCalls { flex-direction: column; min-width: 0; }
+  .tk-ctable { table-layout: fixed; } .tk-ctable th:nth-child(1) { width: 92px; } .tk-ctable th:nth-child(2) { width: 120px; } .tk-ctable th:nth-child(3) { width: 200px; } .tk-ctable th:nth-child(4) { width: 150px; } .tk-ctable th:nth-child(5) { width: 190px; } .tk-ctable th:nth-child(6) { width: 110px; } .tk-ctable th:nth-child(7) { width: 70px; } .tk-ctable th:nth-child(8) { width: 44px; } .tk-ctable th:nth-child(10) { width: 36px; }
+  .tk-ctable td { overflow: hidden; } .cl-who { min-width: 0; } .cl-who > div { min-width: 0; } .cl-who b, .cl-who small { overflow: hidden; text-overflow: ellipsis; }
+  #vCalls.detail .tk-dash { display: none; } #vCalls:not(.detail) .tk-detail { display: none; }
+  .tk-dash { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; padding: 14px 20px 24px; background: #f7f7fb; }
+  .tk-dashbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .tk-subtabs { display: flex; gap: 2px; border-bottom: 2px solid transparent; }
+  .tk-subtabs button { border: none; background: none; font: 600 14px/1 inherit; color: var(--muted); padding: 8px 14px 10px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+  .tk-subtabs button.on { color: var(--ink); border-bottom-color: var(--indigo); }
+  .tk-qwrap { position: relative; } .tk-qwrap svg { position: absolute; left: 10px; top: 50%; width: 15px; height: 15px; transform: translateY(-50%); color: var(--muted); }
+  .tk-qwrap input { margin: 0; width: 280px; padding: 8px 10px 8px 32px; font-size: 13px; }
+  #callVia { width: auto; min-width: 170px; }
+  .tk-tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+  .tk-tile { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; position: relative; min-height: 92px; }
+  .tk-tile.acc-g { border-left: 3px solid #22c55e; } .tk-tile.acc-b { border-left: 3px solid #3b82f6; } .tk-tile.acc-p { border-left: 3px solid var(--indigo); } .tk-tile.acc-a { border-left: 3px solid #f59e0b; }
+  .tk-tile .k { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+  .tk-tile .k small { text-transform: none; letter-spacing: 0; font-weight: 500; }
+  .tk-tile .v { display: flex; align-items: baseline; gap: 10px; margin-top: 4px; } .tk-tile .v b { font-size: 26px; font-weight: 700; line-height: 1.1; } .tk-tile .v span { font-size: 12px; color: var(--muted); }
+  .tk-tile .faces { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .tk-face { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px 2px 2px; font-size: 11.5px; font-weight: 600; background: #fff; }
+  .tk-face .tk-av { width: 20px; height: 20px; font-size: 9px; } .tk-face.sys .tk-av { background: var(--indigo-light); color: var(--indigo-dark); }
+  .tk-tablewrap { background: #fff; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .tk-ctable { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .tk-ctable th { text-align: left; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 10px 12px; border-bottom: 1px solid var(--line); background: #fafafc; white-space: nowrap; }
+  .tk-ctable td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  .tk-ctable tr.tk-ctr { cursor: pointer; } .tk-ctable tr.tk-ctr:hover td { background: #f5f5ff; }
+  .tk-ctable tr.unread td:first-child { box-shadow: inset 3px 0 0 var(--indigo); }
+  .tk-ctable td.cl-when { white-space: nowrap; color: var(--ink-soft); } .tk-ctable td.cl-when small { display: block; color: var(--muted); font-size: 11px; }
+  .tk-pillc { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .tk-pillc.ai { background: #dcfce7; color: #166534; } .tk-pillc.test { background: #eef0f4; color: #4b5563; } .tk-pillc.fw { background: #dbeafe; color: #1e40af; } .tk-pillc.msg { background: #f3f4f6; color: #6b7280; }
+  .tk-pillc svg { width: 13px; height: 13px; }
+  .cl-who { display: flex; align-items: center; gap: 10px; } .cl-who .tk-av { flex: none; } .cl-who b { display: block; font-weight: 600; white-space: nowrap; } .cl-who small { display: block; color: var(--muted); font-size: 11.5px; }
+  .cl-phone { white-space: nowrap; font-variant-numeric: tabular-nums; } .cl-phone i { font-style: normal; color: var(--muted); font-size: 11px; margin-left: 6px; }
+  .cl-via { display: flex; align-items: center; gap: 8px; white-space: nowrap; } .cl-via .tk-av { width: 28px; height: 28px; font-size: 11px; }
+  .cl-via .tk-av.sys { background: var(--indigo-light); color: var(--indigo-dark); } .cl-via .tk-av.sys svg { width: 14px; height: 14px; }
+  .cl-via .tk-av.night { background: #1f2937; color: #fde68a; } .cl-via .tk-av.miss { background: #fee2e2; color: #b91c1c; }
+  .cl-out { display: flex; gap: 4px; flex-wrap: wrap; }
+  .cl-dur { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .cl-rec button { border: none; background: none; cursor: pointer; color: var(--indigo); padding: 2px; display: inline-flex; } .cl-rec svg { width: 18px; height: 18px; } .cl-rec .no { color: #d1d5db; }
+  .tk-tablewrap { overflow-x: auto; }
+  .cl-sum { color: var(--ink-soft); font-size: 12.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .cl-eye { color: var(--muted); } .cl-eye svg { width: 18px; height: 18px; }
+  .tk-ctable td.tk-empty { text-align: center; padding: 30px; }
+  @media (max-width: 1200px) { .tk-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 900px) { .tk-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .tk-ctable th:nth-child(4), .tk-ctable td:nth-child(4), .tk-ctable th:nth-child(9), .tk-ctable td:nth-child(9) { display: none; } .tk-qwrap input { width: 160px; } }
   .tk-hd { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; background: #fff; font-size: 13px; }
   /* The call header (number, chips, recording) stays put; the summary and transcript scroll under it. */
   /* Call view: header, prices and AI summary stay fixed; only the transcript and below scroll, with their own scrollbar. */
@@ -473,19 +520,21 @@
 <div class="tk-main">
   <!-- Calls -->
   <div class="tk-view on" id="vCalls">
-    <div class="tk-list">
-      <div class="tk-filters">
-        <div class="tk-qrow"><input type="text" id="callQ" placeholder="Search number, name, company or words said">
-          <button type="button" class="tk-refresh" id="callRefresh" title="Load the newest calls"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg><span>Refresh</span></button></div>
-        <div class="row" id="callFilter">
-          <button type="button" data-f="" class="on">All</button>
-          <button type="button" data-f="unread">Unread <b class="tk-ucount" id="tkUnread"></b></button>
-          <button type="button" data-f="phone">Phone calls</button>
-          <button type="button" data-f="tests">Tests</button>
-        </div>
+    <!-- 1.20.71: the calls dashboard in the CRM's style — sub-tabs, tiles, one wide table; a call opens full width in .tk-detail -->
+    <div class="tk-dash" id="callDash">
+      <div class="tk-dashbar">
+        <div class="tk-subtabs" id="callSub"><button type="button" data-cs="calls" class="on">Calls</button><button type="button" data-cs="stats">Statistics</button></div>
+        <div class="sp"></div>
+        <div class="tk-qwrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input type="text" id="callQ" placeholder="Search phone, client or words said"></div>
+        <select id="callVia" class="tk-select"><option value="">Any TalkAI</option></select>
+        <button type="button" class="tk-refresh" id="callRefresh" title="Load the newest calls"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg><span>Refresh</span></button>
       </div>
-      <div class="tk-listbar"><span id="callStamp"></span><span><button type="button" id="callOverview">Overview</button> · <button type="button" id="callReadAll">Mark all read</button></span></div>
-      <div class="tk-rows" id="callRows"><div class="tk-empty">Loading…</div></div>
+      <div class="tk-dashpane" data-cs="calls">
+        <div class="tk-tiles" id="callTiles"></div>
+        <div class="tk-listbar"><span id="callStamp"></span><span><button type="button" id="callUnreadOnly">Unread only <b class="tk-ucount" id="tkUnread"></b></button> · <button type="button" id="callReadAll">Mark all read</button></span></div>
+        <div class="tk-tablewrap"><table class="tk-ctable"><thead><tr><th>Call</th><th>When</th><th>Client / Contact</th><th>Phone</th><th>Answered by</th><th>Outcome</th><th>Duration</th><th>Rec</th><th>AI summary</th><th></th></tr></thead><tbody id="callRows"><tr><td colspan="10" class="tk-empty">Loading…</td></tr></tbody></table></div>
+      </div>
+      <div class="tk-dashpane" data-cs="stats" hidden><div id="talkStats"></div></div>
     </div>
     <div class="tk-detail" id="callView"></div>
   </div>

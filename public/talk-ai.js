@@ -81,10 +81,16 @@
   document.querySelectorAll('.tk-tabs button').forEach(b => { b.onclick = () => show(b.dataset.v); });
 
   // ---- Calls ----
-  let filter = '', current = null, qTimer = null;
-  document.querySelectorAll('#callFilter button').forEach(b => {
-    b.onclick = () => { filter = b.dataset.f; document.querySelectorAll('#callFilter button').forEach(x => x.classList.toggle('on', x === b)); loadCalls(); };
-  });
+  let filter = '', current = null, qTimer = null, via = '';
+  // 1.20.71: the dashboard — Calls | Statistics sub-tabs, the "Answered by" select, Unread only as a toggle
+  $('callUnreadOnly').onclick = () => { filter = filter === 'unread' ? '' : 'unread'; $('callUnreadOnly').classList.toggle('on', filter === 'unread'); loadCalls(); };
+  $('callVia').onchange = () => { via = $('callVia').value; loadCalls(); };
+  let statsMounted = false;
+  document.querySelectorAll('#callSub button').forEach(b => { b.onclick = () => {
+    document.querySelectorAll('#callSub button').forEach(x => x.classList.toggle('on', x === b));
+    document.querySelectorAll('#callDash .tk-dashpane').forEach(pn => { pn.hidden = pn.dataset.cs !== b.dataset.cs; });
+    if (b.dataset.cs === 'stats' && !statsMounted && window.NovaStats) { statsMounted = true; NovaStats.mount($('talkStats'), { url: '/api/admin/talk/stats', token: token, key: 'talk' }); }
+  }; });
   $('callQ').oninput = () => { clearTimeout(qTimer); qTimer = setTimeout(loadCalls, 300); };
   $('callRefresh').onclick = async () => { const b = $('callRefresh'); b.classList.add('spin'); await loadCalls(); setTimeout(() => b.classList.remove('spin'), 300); };
   $('callReadAll').onclick = async () => { await api('/api/admin/talk/read-all', { method: 'POST', body: '{}' }); loadCalls(); };
@@ -93,17 +99,96 @@
     $('tkUnreadTab').textContent = n ? (n > 99 ? '99+' : n) : '';
     if (window.NovaNav) NovaNav.set('talk', n);
   }
+  let linesLoaded = false;
   async function loadCalls() {
-    const j = await api('/api/admin/talk/calls?filter=' + encodeURIComponent(filter) + '&q=' + encodeURIComponent($('callQ').value.trim()));
-    if (!j.ok) { $('callRows').innerHTML = '<div class="tk-empty">' + esc(j.error || 'Could not load calls.') + '</div>'; return; }
+    if (!linesLoaded) { linesLoaded = true; try { const l = await api('/api/admin/talk/lines'); lines = l.lines || []; } catch (e) {} fillVia(); }
+    const j = await api('/api/admin/talk/calls?filter=' + encodeURIComponent(filter) + '&via=' + encodeURIComponent(via) + '&q=' + encodeURIComponent($('callQ').value.trim()));
+    if (!j.ok) { $('callRows').innerHTML = '<tr><td colspan="10" class="tk-empty">' + esc(j.error || 'Could not load calls.') + '</td></tr>'; return; }
     setUnread(j.unread);
+    if (j.tiles) paintTiles(j.tiles);
     $('callStamp').textContent = j.calls.length + ' call' + (j.calls.length === 1 ? '' : 's') + ' · updated ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     if (!j.calls.length) {
-      $('callRows').innerHTML = '<div class="tk-empty">' + (filter || $('callQ').value ? 'No calls match.' : 'No calls yet. Once the number is connected (Setup), every call shows up here — or try it under Try it.') + '</div>';
+      $('callRows').innerHTML = '<tr><td colspan="10" class="tk-empty">' + (filter || via || $('callQ').value ? 'No calls match.' : 'No calls yet. Once the number is connected (Setup), every call shows up here — or try it under Try it.') + '</td></tr>';
       return;
     }
-    $('callRows').innerHTML = j.calls.map(callRow).join('');
-    $('callRows').querySelectorAll('.tk-row').forEach(b => { b.onclick = () => openCall(parseInt(b.dataset.id)); });
+    $('callRows').innerHTML = j.calls.map(callTr).join('');
+    $('callRows').querySelectorAll('tr.tk-ctr').forEach(tr => { tr.onclick = (e) => { if (e.target.closest('[data-play]')) return; openCall(parseInt(tr.dataset.id)); }; });
+    $('callRows').querySelectorAll('[data-play]').forEach(b => { b.onclick = (e) => { e.stopPropagation(); openCall(parseInt(b.dataset.play)); }; });
+  }
+  // The "Answered by" select: every TalkAI that can pick up — the three setups and each account manager's line.
+  function fillVia() {
+    const sel = $('callVia'), keep = sel.value;
+    sel.innerHTML = '<option value="">Any TalkAI</option><option value="regular">Regular Hours TalkAI</option><option value="missed">Team Missed TalkAI</option><option value="after">After Hours TalkAI</option>' +
+      lines.map(l => '<option value="line:' + l.id + '">' + esc(firstName(l.am_name)) + '’s TalkAI</option>').join('') + '<option value="tests">Tests</option>';
+    sel.value = keep;
+  }
+  const firstName = (n) => String(n || '').trim().split(/\s+/)[0] || '';
+  const SYS_ICON = {
+    ai: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.4L12 15l-1.8-4.6L5.5 9l4.7-1.4z"/><path d="M19 15l.8 2 2.2.6-2.2.7L19 20l-.8-1.7-2.2-.7 2.2-.6z"/></svg>',
+    moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
+    missed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/><path d="M15 3l6 6M21 3l-6 6"/></svg>',
+    play: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l5.5-3.5z" fill="currentColor" stroke="none"/></svg>',
+    eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+    test: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>'
+  };
+  // Who picked up: "Mane’s TalkAI" (the manager’s face), "After Hours TalkAI", "Team Missed TalkAI", "Regular Hours TalkAI".
+  function viaOf(c) {
+    if (c.source !== 'phone') return { label: c.source === 'try' ? 'Test in text' : 'ElevenLabs test', av: '<span class="tk-av sys">' + SYS_ICON.test + '</span>' };
+    if (c.line_id && c.line_name) {
+      const l = lines.find(x => x.id === c.line_id);
+      const av = l && l.photo ? '<span class="tk-av own"><img src="' + esc(l.photo) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">' + esc(initials(c.line_name)) + '</span>' : '<span class="tk-av t' + tone(c.line_name) + ' own">' + esc(initials(c.line_name)) + '</span>';
+      return { label: firstName(c.line_name) + '’s TalkAI', av };
+    }
+    if (c.hours_mode === 'after') return { label: 'After Hours TalkAI', av: '<span class="tk-av sys night">' + SYS_ICON.moon + '</span>' };
+    if (c.hours_mode === 'missed') return { label: 'Team Missed TalkAI', av: '<span class="tk-av sys miss">' + SYS_ICON.missed + '</span>' };
+    return { label: 'Regular Hours TalkAI', av: '<span class="tk-av sys">' + SYS_ICON.ai + '</span>' };
+  }
+  const nice = (n) => Number(n || 0).toLocaleString('en-US');
+  function paintTiles(t) {
+    const faces = (rows) => rows.slice(0, 5).map(r => { const v = viaOf({ source: 'phone', line_id: r.line_id, line_name: r.line_name, hours_mode: r.hours_mode }); return '<span class="tk-face' + (r.line_id ? '' : ' sys') + '" title="' + esc(v.label) + '">' + v.av + esc(r.line_id ? firstName(r.line_name) : v.label.replace(' TalkAI', '')) + ' ' + r.n + '</span>'; }).join('') + (rows.length > 5 ? '<span class="tk-face sys">+' + (rows.length - 5) + '</span>' : '');
+    const talk = t.talk_today || { seconds: 0, calls: 0 }, avg = talk.calls ? Math.round(talk.seconds / talk.calls) : 0;
+    const mmss = (s) => Math.floor(s / 60) + ':' + String(Math.round(s % 60)).padStart(2, '0');
+    $('callTiles').innerHTML =
+      '<div class="tk-tile acc-g"><div class="k">Answered by TalkAI <small>' + t.yesterday + ' yesterday</small></div><div class="v"><b>' + nice(t.today) + '</b><span>today</span></div><div class="faces tk-cl">' + (faces(t.by_line_today || []) || '<span class="tk-face sys" style="opacity:.6">no calls yet today</span>') + '</div></div>' +
+      '<div class="tk-tile acc-b"><div class="k">This month <small>' + nice(t.last_month) + ' last month</small></div><div class="v"><b>' + nice(t.month) + '</b><span>calls · ' + nice(t.callers_month) + ' callers · ' + nice(t.week) + ' this week</span></div><div class="faces tk-cl">' + faces(t.by_line_month || []) + '</div></div>' +
+      '<div class="tk-tile acc-a"><div class="k">Messages & call backs <small>today</small></div><div class="v"><b>' + nice(t.messages_today) + '</b><span>messages · <b style="font-size:15px">' + nice(t.callbacks_today) + '</b> call backs</span></div><div class="k" style="margin-top:8px"><small>' + nice(t.messages_month) + ' messages · ' + nice(t.callbacks_month) + ' call backs this month</small></div></div>' +
+      '<div class="tk-tile acc-p"><div class="k">Quotes emailed <small>today</small></div><div class="v"><b>' + nice(t.quotes_today) + '</b><span>' + nice(t.quotes_month) + ' this month' + (t.transferred_today ? ' · ' + nice(t.transferred_today) + ' transferred today' : '') + '</span></div></div>' +
+      '<div class="tk-tile"><div class="k">Avg talk <small>today</small></div><div class="v"><b>' + mmss(avg) + '</b><span>' + mmss(talk.seconds) + ' total · ' + nice(talk.calls) + ' calls</span></div></div>';
+  }
+  function callTr(c) {
+    const match = c.caller_match && c.caller_match[0];
+    const test = c.source !== 'phone';
+    const own = Number(c.owner) === 1 && c.line_name;
+    const person = own ? c.line_name : c.customer_name || (match ? (match.person || match.name) : '');
+    const company = own ? 'Calling their assistant' : c.customer_name ? (c.company || '') : match ? (match.company || '') : '';
+    const num = phone(c.from_number);
+    const v = viaOf(c);
+    const kind = test ? '<span class="tk-pillc test">' + SYS_ICON.test + 'Test</span>'
+      : c.answered_by === 'forward' ? '<span class="tk-pillc fw">Forwarded</span>'
+      : c.answered_by === 'message' ? '<span class="tk-pillc msg">Closed msg</span>'
+      : c.answered_by === 'person' ? '<span class="tk-pillc fw">Team</span>'
+      : '<span class="tk-pillc ai">' + SYS_ICON.ai + 'TalkAI</span>';
+    const out = [];
+    if (c.outcome === 'message') out.push('<span class="tk-tag msg">Message</span>');
+    if (Number(c.callback) === 1 && !test) out.push('<span class="tk-tag msg">Call back</span>');
+    if (c.outcome === 'transferred') out.push('<span class="tk-tag tr">Transferred</span>');
+    if (c.emails_n) out.push('<span class="tk-tag ok">✉ Emailed</span>');
+    if (c.team_rating) out.push('<span class="tk-tag ' + (c.team_rating === 'good' ? 'ok' : 'warn') + '">' + (c.team_rating === 'good' ? '👍' : '👎') + '</span>');
+    if (c.language && c.language !== 'en') out.push('<span class="tk-tag">' + esc(String(c.language).toUpperCase()) + '</span>');
+    const when = new Date(String(c.created_at).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(c.created_at) ? '' : 'Z'));
+    const sum = c.ai_summary || c.summary || c.first_said || (c.answered_by === 'message' ? 'Closed message played' : '');
+    const dd = c.duration_sec ? Math.floor(c.duration_sec / 60) + ':' + String(Math.round(c.duration_sec % 60)).padStart(2, '0') : '—';
+    return '<tr class="tk-ctr tk-cl' + (c.unread ? ' unread' : '') + '" data-id="' + c.id + '">' +
+      '<td>' + kind + '</td>' +
+      '<td class="cl-when">' + esc(rel(c.created_at)) + '<small>' + esc(when.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })) + '</small></td>' +
+      '<td><div class="cl-who">' + callAvatar(c) + '<div><b>' + esc(person || (test ? (c.source === 'try' ? 'Test in text' : 'ElevenLabs test') : 'Unknown caller')) + '</b><small>' + esc(person ? (company || '') : (test ? (c.tried_by ? 'by ' + String(c.tried_by).replace(/^member:|^user:/, '') : '') : 'Not a client yet')) + '</small></div></div></td>' +
+      '<td class="cl-phone">' + esc(num || '—') + (c.turns ? '<i>' + c.turns + ' turn' + (c.turns === 1 ? '' : 's') + '</i>' : '') + '</td>' +
+      '<td><div class="cl-via">' + v.av + '<span>' + esc(v.label) + '</span></div></td>' +
+      '<td><div class="cl-out">' + (out.join('') || '<span class="tk-tag" style="opacity:.5">—</span>') + '</div></td>' +
+      '<td class="cl-dur">' + dd + '</td>' +
+      '<td class="cl-rec">' + (c.has_audio ? '<button type="button" data-play="' + c.id + '" title="Open the call and play the recording">' + SYS_ICON.play + '</button>' : '<span class="no">' + SYS_ICON.play + '</span>') + '</td>' +
+      '<td><div class="cl-sum" title="' + esc(sum) + '">' + esc(sum || '—') + '</div></td>' +
+      '<td class="cl-eye">' + SYS_ICON.eye + '</td></tr>';
   }
 
   // One call in the list: an avatar that says at a glance who it is (initials = a customer we know; a plain grey
@@ -116,7 +201,7 @@
     test: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>'
   };
   // Which setup answered the call (Training tabs), one short grey label everywhere.
-  const MODE_LABEL = { regular: 'Team Support', missed: 'Team Missed', after: 'After Hours' };
+  const MODE_LABEL = { regular: 'Regular Hours TalkAI', missed: 'Team Missed TalkAI', after: 'After Hours TalkAI' };   // 1.20.71: the same names as the dashboard's Answered by
   function callAvatar(c) {
     const match = c.caller_match && c.caller_match[0];
     const own = Number(c.owner) === 1 && c.line_name;
@@ -125,46 +210,6 @@
     if (person) return '<span class="tk-av t' + tone(person) + (own ? ' own' : '') + '" title="' + esc(c.verified ? 'Recognised customer' : 'Number on a customer account \u2014 not verified') + '">' + esc(initials(person)) + '</span>';
     return '<span class="tk-av unk" title="Not a client yet \u2014 this number is not on a customer account" aria-label="Not a client yet">' + AV_ICON.phone + '</span>';
   }
-  function callRow(c) {
-    const match = c.caller_match && c.caller_match[0];
-    const test = c.source !== 'phone';
-    const own = Number(c.owner) === 1 && c.line_name;
-    // Who: verified/recognised customer, else the account the number belongs to, else nobody.
-    const person = own ? c.line_name : c.customer_name || (match ? (match.person || match.name) : '');
-    const company = own ? 'Calling their assistant' : c.customer_name ? (c.company || '') : match ? (match.company || '') : '';
-    const known = !!person;
-    const num = phone(c.from_number);
-    const av = callAvatar(c);
-    let title, line2;
-    if (test) {
-      title = known ? person : c.source === 'try' ? 'Test in text' : 'ElevenLabs test call';
-      line2 = [known && company ? company : '', c.source === 'try' && c.tried_by ? 'by ' + String(c.tried_by).replace(/^member:|^user:/, '') : '', num].filter(Boolean).join(' \u00b7 ');
-    } else if (known) {
-      title = person;
-      line2 = null;      // the phone number (the caller's identifier) first and darker, then the business
-    } else {
-      title = num || 'No caller ID';
-      line2 = '';        // "not a client yet" is in the icon's tooltip
-    }
-    const tags = [];
-    if (!own && c.line_name) tags.push('<span class="tk-tag tr">' + esc(String(c.line_name).split(' ')[0]) + '\u2019s line</span>');
-    if (MODE_LABEL[c.hours_mode] && c.source === 'phone') tags.push('<span class="tk-tag">' + MODE_LABEL[c.hours_mode] + '</span>');
-    if (c.emails_n) tags.push('<span class="tk-tag ok">\u2709 Email sent</span>');
-    if (c.team_rating) tags.push('<span class="tk-tag ' + (c.team_rating === 'good' ? 'ok' : 'warn') + '">' + (c.team_rating === 'good' ? '\ud83d\udc4d Good' : '\ud83d\udc4e Bad') + '</span>');
-    if (test) tags.push('<span class="tk-tag test">Test</span>');
-    if (c.outcome === 'message') tags.push('<span class="tk-tag msg">Message</span>');
-    if (c.outcome === 'transferred' || c.answered_by === 'forward') tags.push('<span class="tk-tag tr">' + (c.outcome === 'transferred' ? 'Transferred' : 'Forwarded') + '</span>');
-    if (Number(c.callback) === 1 && !test) tags.push('<span class="tk-tag msg">Call back</span>');
-    const sub = c.ai_summary || c.summary || c.first_said || (c.answered_by === 'message' ? 'Closed message played' : c.status ? 'Status: ' + c.status : '');
-    return '<button type="button" class="tk-row' + (c.unread ? ' unread' : '') + (current === c.id ? ' on' : '') + (known || test ? '' : ' unknown') + '" data-id="' + c.id + '"><span class="tk-avcol">' + av +
-      (c.duration_sec ? '<span class="tk-avdur" title="Call length ' + esc(dur(c.duration_sec)) + '">' + esc(Math.floor(c.duration_sec / 60) + ':' + String(Math.round(c.duration_sec % 60)).padStart(2, '0')) + '</span>' : '') + '</span>' +
-      '<span class="tk-rb"><span class="tk-r1"><b class="t">' + esc(title) + '</b><span class="when">' + esc(rel(c.created_at)) + '</span></span>' +
-      (line2 === null ? '<span class="tk-r2">' + (num ? '<b class="ph">' + esc(num) + '</b>' : '') + (num && company ? ' · ' : '') + esc(company) + '</span>'
-        : line2 ? '<span class="tk-r2">' + esc(line2) + '</span>' : '') +
-      (tags.length ? '<span class="tk-r3">' + tags.join('') + '</span>' : '') +
-      (sub ? '<small>' + esc(sub) + '</small>' : '') + '</span></button>';
-  }
-
   let audioUrl = null;
   async function openCall(id) {
     current = id;
@@ -179,9 +224,9 @@
     const c = j.call, turns = j.turns || [];
     const match = (c.caller_match || []).map(m => esc(m.name) + (m.company ? ' (' + esc(m.company) + ')' : '') + ' <i>#' + m.id + '</i>').join(', ');
     const chips = [];
-    if (c.line_name) chips.push('<span class="tk-chip ok">' + esc(c.line_name) + (Number(c.owner) === 1 ? ' calling their assistant' : Number(c.owner) === 2 ? '\u2019s phone (not verified)' : '\u2019s line') + '</span>');
+    if (c.line_name) chips.push('<span class="tk-chip ok">' + esc(Number(c.owner) ? c.line_name : firstName(c.line_name)) + (Number(c.owner) === 1 ? ' calling their assistant' : Number(c.owner) === 2 ? '\u2019s phone (not verified)' : '\u2019s TalkAI') + '</span>');
     if (c.screen_ok != null) chips.push('<span class="tk-chip">' + (Number(c.screen_ok) === 1 ? 'They pressed 1 and took it' : 'Rang them first \u2014 not taken') + '</span>');
-    if (MODE_LABEL[c.hours_mode]) chips.push('<span class="tk-chip" title="Which NovaAI setup answered">' + MODE_LABEL[c.hours_mode] + '</span>');
+    if (MODE_LABEL[c.hours_mode] && !c.line_name) chips.push('<span class="tk-chip" title="Which TalkAI answered">' + MODE_LABEL[c.hours_mode] + '</span>');
     if (Number(c.returning) === 1) chips.push('<span class="tk-chip">Talked to NovaAI before \u2014 short greeting</span>');
     if (c.language) chips.push(flagChip(c.language));
     // The usual case (NovaAI answered, call completed) needs no chip; only the exceptions are shown.
@@ -347,7 +392,7 @@
       note.oninput = grow; grow();
       note.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('rateSave').click(); } };
     })();
-    $('callBack').onclick = () => { $('vCalls').classList.remove('detail'); current = null; history.replaceState(null, '', '/talk-ai'); showCallsOverview(); };
+    $('callBack').onclick = () => { $('vCalls').classList.remove('detail'); current = null; history.replaceState(null, '', '/talk-ai'); loadCalls(); };
     $('callUnread').onclick = async () => { await api('/api/admin/talk/calls/' + id + '/unread', { method: 'POST', body: '{}' }); current = null; loadCalls(); $('vCalls').classList.remove('detail'); v.innerHTML = '<div class="tk-empty">Marked as unread.</div>'; };
     if ($('showLog')) $('showLog').onclick = () => {
       const on = $('callTx').classList.toggle('show-lk');
@@ -1034,21 +1079,11 @@
     $('hitsRefresh').onclick = (e) => { e.preventDefault(); e.stopPropagation(); loadOverview().then(paintSetup); };
   }
 
-  // The overview (calls by day / week / month and this month's outcomes) fills the right side until a call is picked.
-  function showCallsOverview() {
-    current = null;
-    document.querySelectorAll('.tk-row.on').forEach(b => b.classList.remove('on'));
-    $('callView').classList.remove('tk-split');
-    $('callView').innerHTML = '<div id="talkStats"></div><div class="tk-empty" style="padding:4px 0">Pick a call on the left to see it.</div>';
-    if (window.NovaStats) NovaStats.mount($('talkStats'), { url: '/api/admin/talk/stats', token: token, key: 'talk' });
-  }
-  $('callOverview').onclick = () => { $('vCalls').classList.remove('detail'); history.replaceState(null, '', '/talk-ai'); showCallsOverview(); };
-
   // ---- start ----
   loadOverview().then(() => {
     const id = parseInt(new URLSearchParams(location.search).get('call'));
     show('calls');
-    if (id) openCall(id); else showCallsOverview();
+    if (id) openCall(id);
   });
   setInterval(() => { if (!document.hidden && $('vCalls').classList.contains('on')) loadCalls(); }, 30000);
 })();
