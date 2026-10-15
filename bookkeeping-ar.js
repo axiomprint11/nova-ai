@@ -25,6 +25,8 @@ module.exports = function mountAr(ctx) {
     ctx.db.run(`CREATE TABLE IF NOT EXISTS bk_ar_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, pattern TEXT, customer_id INTEGER, customer_name TEXT,
       source TEXT DEFAULT 'learned', made_by TEXT, hits INTEGER DEFAULT 0, last_hit_at TEXT, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
     ctx.db.run('CREATE UNIQUE INDEX IF NOT EXISTS bk_ar_rules_pat ON bk_ar_rules(pattern)', () => {});
+    // 1.20.84: one payer can be several CRM accounts (Peace & Haight × 5 contacts) — customer_ids is the comma list; customer_id = the first
+    ctx.db.run('ALTER TABLE bk_ar_rules ADD COLUMN customer_ids TEXT', () => {});
   });
   const crypto = require('crypto');
   const env = (k) => String(process.env[k] || '').trim();
@@ -132,6 +134,7 @@ module.exports = function mountAr(ctx) {
   // "PEACE & HAIGHT I PAYMENT 261014 20261014AC" → "peace haight". A deposit matches a rule when every word of the rule is in it.
   const payerPattern = (t) => keyWords([t.name, t.merchant, t.orig_desc].filter(Boolean).join(' ')).filter(w => !/\d/.test(w)).slice(0, 5).join(' ');   // no reference codes (996pvahlt1cant3) — only the payer's words
   let rulesCache = { at: 0, rows: [] };
+  const ruleIds = (r) => { const ids = String(r.customer_ids || '').split(',').map(Number).filter(Boolean); if (!ids.length && r.customer_id) ids.push(Number(r.customer_id)); return ids; };
   async function arRules(force) {
     if (force || Date.now() - rulesCache.at > 60000) { rulesCache = { at: Date.now(), rows: await dbAll('SELECT * FROM bk_ar_rules ORDER BY LENGTH(pattern) DESC, id') }; }
     return rulesCache.rows;
@@ -147,8 +150,9 @@ module.exports = function mountAr(ctx) {
     const pat = payerPattern(t); if (!pat || !customerId) return null;
     if (pat.split(' ').length < 1 || pat.length < 4) return null;
     const cur = await dbGet('SELECT * FROM bk_ar_rules WHERE pattern = ?', [pat]);
-    if (cur) { if (Number(cur.customer_id) !== Number(customerId)) await dbRun('UPDATE bk_ar_rules SET customer_id = ?, customer_name = ?, made_by = ?, updated_at = ? WHERE id = ?', [customerId, customerName || null, who, nowIso(), cur.id]); }
-    else await dbRun('INSERT INTO bk_ar_rules (pattern, customer_id, customer_name, source, made_by, updated_at) VALUES (?,?,?,?,?,?)', [pat, customerId, customerName || null, 'learned', who, nowIso()]);
+    // 1.20.84: a second account chosen for the same payer words joins the rule (several CRM accounts, one payer) instead of replacing it
+    if (cur) { const ids = ruleIds(cur); if (ids.indexOf(Number(customerId)) < 0) { ids.push(Number(customerId)); const names = String(cur.customer_name || '').split(' · ').filter(Boolean); if (customerName && names.indexOf(customerName) < 0) names.push(customerName); await dbRun('UPDATE bk_ar_rules SET customer_ids = ?, customer_name = ?, made_by = ?, updated_at = ? WHERE id = ?', [ids.join(','), names.join(' · ') || null, who, nowIso(), cur.id]); } }
+    else await dbRun('INSERT INTO bk_ar_rules (pattern, customer_id, customer_ids, customer_name, source, made_by, updated_at) VALUES (?,?,?,?,?,?,?)', [pat, customerId, String(customerId), customerName || null, 'learned', who, nowIso()]);
     rulesCache.at = 0; return pat;
   }
   // the suggestions for one deposit (1.19.154 — the AR team's order of proof):
@@ -166,12 +170,13 @@ module.exports = function mountAr(ctx) {
     // 1.20.83: a payer rule narrows the field to that customer's invoices (+ any invoice number typed in the memo) and lifts them;
     // with nothing of theirs open the general matching runs as before. Never a pair by itself — the person still clicks.
     if (rule) {
-      const mine = invoices.filter(r => Number(r.customer_id) === Number(rule.customer_id) || nos.indexOf(r.id) > -1);
+      const rids = ruleIds(rule), isMine = (cid) => rids.indexOf(Number(cid)) > -1;
+      const mine = invoices.filter(r => isMine(r.customer_id) || nos.indexOf(r.id) > -1);
       if (mine.length) {
-        const out = suggest(t, mine, null).map(s => Object.assign({}, s, { score: Math.min(100, s.score + (Number(s.customer_id) === Number(rule.customer_id) ? 20 : 0)), why: (Number(s.customer_id) === Number(rule.customer_id) ? ['payer rule: ' + (rule.customer_name || s.customer)] : []).concat(s.why), rule: true }));
+        const out = suggest(t, mine, null).map(s => Object.assign({}, s, { score: Math.min(100, s.score + (isMine(s.customer_id) ? 20 : 0)), why: (isMine(s.customer_id) ? ['payer rule: ' + (s.customer || rule.customer_name)] : []).concat(s.why), rule: true }));
         // a known payer with no amount fit: still show their open invoices so the AR person can pick (partial / bulk)
         if (!out.length) { const open = mine.filter(r => r.status !== 'paid').sort((a, b) => String(b.created || '').localeCompare(String(a.created || ''))).slice(0, 3);
-          open.forEach(r => out.push({ score: 35, why: ['payer rule: ' + (rule.customer_name || r.customer), amt < r.balance - 0.005 ? 'partial payment? ' + usd(amt) + ' of ' + usd(r.balance) : 'amount does not fit this invoice'], customer: r.customer, customer_id: r.customer_id, kind: 'match', rule: true,
+          open.forEach(r => out.push({ score: 35, why: ['payer rule: ' + (r.customer || rule.customer_name), amt < r.balance - 0.005 ? 'partial payment? ' + usd(amt) + ' of ' + usd(r.balance) : 'amount does not fit this invoice'], customer: r.customer, customer_id: r.customer_id, kind: 'match', rule: true,
             invoices: [{ id: r.id, no: r.no, total: r.total, balance: r.balance, status: r.status, created: r.created, due: r.due, po: r.po, customer: r.customer, paid_at: r.paid_at }] })); }
         if (out.length) return out.slice(0, 5);
       }
@@ -321,7 +326,7 @@ module.exports = function mountAr(ctx) {
       const t0 = (await txFields([q.txn_id]))[q.txn_id] || {}; const rule = await ruleFor(t0);
       const ck2 = ck + ':' + (rule ? rule.id + '.' + (rule.updated_at || '') : '0');
       if (!sugCache.has(ck2)) { if (sugCache.size > 2000) sugCache.clear(); const extra = await extraFor(t0, invoices); sugCache.set(ck2, invoices.length || extra.length ? suggest(t0, invoices.concat(extra), rule) : []); if (rule) dbRun("UPDATE bk_ar_rules SET hits = hits + 1, last_hit_at = ? WHERE id = ?", [nowIso(), rule.id]).catch(() => {}); }
-      res.json({ ok: true, suggestions: sugCache.get(ck2), rule: rule ? { id: rule.id, customer: rule.customer_name, customer_id: rule.customer_id, pattern: rule.pattern } : null, invoices_open: invoices.length, invoices_at: inv.at });
+      res.json({ ok: true, suggestions: sugCache.get(ck2), rule: rule ? { id: rule.id, customer: rule.customer_name, customer_id: rule.customer_id, customer_ids: ruleIds(rule), pattern: rule.pattern } : null, invoices_open: invoices.length, invoices_at: inv.at });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
 
@@ -387,17 +392,21 @@ module.exports = function mountAr(ctx) {
   });
   // ---- 1.20.83: the Rules sub-tab
   app.get('/api/bookkeeping/ar/rules', ...guard, async (req, res) => {
-    try { res.json({ ok: true, rules: await arRules(true) }); } catch (e) { res.json({ ok: false, error: e.message }); }
+    try { res.json({ ok: true, rules: (await arRules(true)).map(r => Object.assign({}, r, { ids: ruleIds(r) })) }); } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   app.post('/api/bookkeeping/ar/rules', ...guard, async (req, res) => {
     try {
-      const pat = keyWords(String(req.body.pattern || '')).filter(w => !/\d/.test(w)).slice(0, 5).join(' '); const cid = parseInt(req.body.customer_id);
+      const pat = keyWords(String(req.body.pattern || '')).filter(w => !/\d/.test(w)).slice(0, 5).join(' ');
+      // 1.20.84: several accounts at once — customer_ids[] + customer_names[] (the old single customer_id / customer still works)
+      const ids = (Array.isArray(req.body.customer_ids) ? req.body.customer_ids : [req.body.customer_id]).map(x => parseInt(x)).filter(Boolean).filter((x, i, a) => a.indexOf(x) === i);
+      const names = (Array.isArray(req.body.customer_names) ? req.body.customer_names : [req.body.customer]).map(x => String(x || '').trim().slice(0, 120)).filter(Boolean);
       if (!pat) return res.json({ ok: false, error: 'Type the payer words as they show on the bank line (e.g. "peace haight").' });
-      if (!cid) return res.json({ ok: false, error: 'Pick the customer.' });
+      if (!ids.length) return res.json({ ok: false, error: 'Pick at least one customer.' });
+      const label = names.filter((x, i, a) => a.indexOf(x) === i).join(' · ').slice(0, 400);
       const cur = await dbGet('SELECT id FROM bk_ar_rules WHERE pattern = ?', [pat]);
-      if (cur) await dbRun("UPDATE bk_ar_rules SET customer_id = ?, customer_name = ?, source = 'manual', made_by = ?, updated_at = ? WHERE id = ?", [cid, String(req.body.customer || '').slice(0, 160), userId(req), nowIso(), cur.id]);
-      else await dbRun("INSERT INTO bk_ar_rules (pattern, customer_id, customer_name, source, made_by, updated_at) VALUES (?,?,?,'manual',?,?)", [pat, cid, String(req.body.customer || '').slice(0, 160), userId(req), nowIso()]);
-      rulesCache.at = 0; sugCache.clear(); await audit(userId(req), 'ar.rule', cur ? cur.id : 0, { pattern: pat, customer_id: cid });
+      if (cur) await dbRun("UPDATE bk_ar_rules SET customer_id = ?, customer_ids = ?, customer_name = ?, source = 'manual', made_by = ?, updated_at = ? WHERE id = ?", [ids[0], ids.join(','), label, userId(req), nowIso(), cur.id]);
+      else await dbRun("INSERT INTO bk_ar_rules (pattern, customer_id, customer_ids, customer_name, source, made_by, updated_at) VALUES (?,?,?,?,'manual',?,?)", [pat, ids[0], ids.join(','), label, userId(req), nowIso()]);
+      rulesCache.at = 0; sugCache.clear(); await audit(userId(req), 'ar.rule', cur ? cur.id : 0, { pattern: pat, customer_ids: ids });
       res.json({ ok: true, pattern: pat });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
