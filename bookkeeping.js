@@ -62,6 +62,8 @@ module.exports = function mountBookkeeping(app, deps) {
       category TEXT, category_source TEXT, rule_id INTEGER, proposal_id INTEGER, status TEXT DEFAULT 'new', raw TEXT,
       created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
     db.run('CREATE INDEX IF NOT EXISTS bk_txn_date ON bk_transactions(date)');
+    // 1.20.67: on a FRESH users.db the ALTERs above run before this CREATE and fail silently — repeat them here (duplicates are swallowed)
+    ['prev_status TEXT', 'refund_of INTEGER', 'ar_notified_at TEXT', 'ar_notified_by TEXT', 'check_image TEXT', 'transfer_of INTEGER', 'vendor_by TEXT', 'vendor_score REAL', 'suggest_vendor_id INTEGER', 'suggest_score REAL'].forEach(c => db.run('ALTER TABLE bk_transactions ADD COLUMN ' + c, () => {}));
     db.run(`CREATE TABLE IF NOT EXISTS bk_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, pattern TEXT, category TEXT, vendor TEXT,
       note TEXT, source TEXT, created_by TEXT, hits INTEGER DEFAULT 0, active INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')))`);
     // 1.19.112: an optional amount condition ("over" / "under" $n on the line's absolute amount; blank = any amount), and
@@ -716,7 +718,8 @@ module.exports = function mountBookkeeping(app, deps) {
     const txns = jarr(p.txn_ids); const tx = txns.length ? await dbAll('SELECT id, date, name, merchant, amount, account_name, category FROM bk_transactions WHERE id IN (' + txns.map(() => '?').join(',') + ')', txns) : [];
     const items = await dbAll('SELECT i.*, m.name AS material_name, m.photo AS material_photo, m.geo_type FROM bk_purchase_items i LEFT JOIN bk_materials m ON m.id = i.material_id WHERE i.purchase_id = ? ORDER BY i.pos, i.id', [pid]);
     const eq = p.equipment_id ? await dbGet('SELECT id, name FROM bk_equipment WHERE id = ?', [p.equipment_id]) : null;
-    return Object.assign({}, p, { vendor: p.vendor_name || p.vendor, bill, emails, txns: tx, items, equipment: eq, status: purchaseStatus(p, bill), paired: tx.length > 0 });
+    const files = (await dbAll("SELECT * FROM bk_files WHERE kind = 'purchase' AND ref_id = ? ORDER BY id", [pid])).map(fileRow);   // 1.20.67: delivery slips uploaded by Receiving
+    return Object.assign({}, p, { vendor: p.vendor_name || p.vendor, bill, emails, txns: tx, items, files, equipment: eq, status: purchaseStatus(p, bill), paired: tx.length > 0 });
   }
   // An email is handled: read in Gmail (first), closed here, the person's decision kept.
   async function handleEmail(em, kind, who, note) {
@@ -756,6 +759,7 @@ module.exports = function mountBookkeeping(app, deps) {
     else if (['no', 'partial', 'yes'].indexOf(f.dstatus) > -1) { where.push('p.expects_delivery = 1 AND p.received = ? AND p.cancelled = 0'); args.push(f.dstatus); }
     const rows = await dbAll('SELECT p.*, v.name AS vendor_name, v.photo AS vendor_photo, v.source AS vendor_source, v.kind AS vendor_kind FROM bk_purchases p LEFT JOIN bk_vendors v ON v.id = p.vendor_id WHERE ' + where.join(' AND ') + ' ORDER BY p.date DESC, p.id DESC LIMIT 400', args);
     const out = [];
+    const nFiles = {}; (await dbAll("SELECT ref_id, COUNT(*) n FROM bk_files WHERE kind = 'purchase' GROUP BY ref_id")).forEach(r => { nFiles[r.ref_id] = r.n; });   // 1.20.67
     for (const p of rows) {
       const bill = p.bill_id ? await dbGet('SELECT id, status, invoice_no, total, due_date, paid_at FROM bk_bills WHERE id = ?', [p.bill_id]) : null;
       const txns = jarr(p.txn_ids), arr = jarr(p.arrival_email_ids);
@@ -775,7 +779,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const when = (confirm && confirm.received_at) || firstArr || p.created_at;
       const delivery = p.cancelled ? 'cancelled' : !p.expects_delivery ? 'na' : (p.received === 'yes' ? 'yes' : p.received === 'partial' ? 'partial' : 'no');   // 1.19.141: the receiving dropdown's value
       const paid_on = tx.length ? tx.map(t => t.date).sort().slice(-1)[0] : null;
-      out.push(Object.assign({}, p, { vendor: p.vendor_name || p.vendor, vendor_card, suggestions, when, bill, txns: tx, confirm, arrivals: arr.length, status, days: age, paired: tx.length > 0, delivery, paid_on,
+      out.push(Object.assign({}, p, { vendor: p.vendor_name || p.vendor, vendor_card, suggestions, when, bill, txns: tx, confirm, arrivals: arr.length, files: nFiles[p.id] || 0, status, days: age, paired: tx.length > 0, delivery, paid_on,
         emails: ems.length + (bill && bill.id ? 1 : 0), email_subjects: ems.map(e => e.subject).slice(0, 5), attachments: atts, items: its ? its.items || 0 : 0, items_linked: its ? its.linked || 0 : 0,
         late: (status === 'awaiting bank' && age >= s.waiting_days) || ((status === 'not received' || status === 'partly received') && age >= s.notreceived_days),
         suggest: status === 'awaiting bank' ? (await suggestTxns(p)).length : 0 }));
@@ -2885,6 +2889,63 @@ module.exports = function mountBookkeeping(app, deps) {
     else return res.json({ ok: false, error: 'na, no, partial or yes' });
     await audit(userId(req), 'purchase.delivery', pid, { status: st, note }); res.json({ ok: true });
   });
+  // 1.20.67: Received is nailed down from paperwork — a delivery email matched from the vendor's recent mail, or the slip the
+  // driver handed to Receiving, uploaded here. Both ask Fully / Partially and set `received` themselves.
+  // The vendor's latest emails (not yet on this purchase), plus a text search over subject / sender.
+  app.get('/api/bookkeeping/purchases/:id/emails', ...guard, async (req, res) => { try {
+    const pid = parseInt(req.params.id), q = String(req.query.q || '').trim().toLowerCase();
+    const p = await dbGet('SELECT p.*, v.name AS vendor_name, v.email AS vendor_email, v.aliases FROM bk_purchases p LEFT JOIN bk_vendors v ON v.id = p.vendor_id WHERE p.id = ?', [pid]); if (!p) return res.json({ ok: false, error: 'No such purchase' });
+    const where = ['(e.purchase_id IS NULL OR e.purchase_id <> ?)'], args = [pid];
+    if (q) { where.push('(LOWER(COALESCE(e.subject, \'\')) LIKE ? OR LOWER(COALESCE(e.from_addr, \'\')) LIKE ? OR LOWER(COALESCE(e.snippet, \'\')) LIKE ?)'); const l = '%' + q + '%'; args.push(l, l, l); }
+    else {
+      const or = [], dom = domainOf(p.vendor_email), nm = String(p.vendor_name || p.vendor || '').toLowerCase().replace(/[^a-z0-9 &]+/g, ' ').trim();
+      if (p.vendor_id) { or.push('e.vendor_id = ?'); args.push(p.vendor_id); }
+      if (dom && !FREE_MAIL.test(dom)) { or.push('LOWER(e.from_addr) LIKE ?'); args.push('%@' + dom + '%'); }
+      if (nm.length >= 3) { or.push('LOWER(e.from_addr) LIKE ?'); args.push('%' + nm.split(' ')[0] + '%'); }
+      if (!or.length) return res.json({ ok: true, emails: [], note: 'No vendor on this purchase — search by words instead' });
+      where.push('(' + or.join(' OR ') + ')');
+    }
+    const rows = await dbAll('SELECT e.id, e.subject, e.from_addr, e.received_at, e.kind, e.decided_kind, e.attachments, e.purchase_id FROM bk_emails e WHERE ' + where.join(' AND ') + ' ORDER BY e.received_at DESC LIMIT 20', args);
+    res.json({ ok: true, emails: rows.map(e => ({ id: e.id, subject: e.subject, from: e.from_addr, received_at: e.received_at, kind: e.decided_kind || e.kind, attachments: jarr(e.attachments).length, on_purchase: e.purchase_id || null })) });
+  } catch (e) { res.json({ ok: false, error: e.message }); } });
+  // Attach an email as the delivery (or confirmation) of this purchase. received = yes / partial sets the Received status.
+  app.post('/api/bookkeeping/purchases/:id/attach-email', ...guard, async (req, res) => { try {
+    const pid = parseInt(req.params.id), b = req.body || {}, who = userId(req), eid = parseInt(b.email_id);
+    const p = await dbGet('SELECT id FROM bk_purchases WHERE id = ?', [pid]); if (!p) return res.json({ ok: false, error: 'No such purchase' });
+    const em = await dbGet('SELECT * FROM bk_emails WHERE id = ?', [eid]); if (!em) return res.json({ ok: false, error: 'No such email' });
+    const role = b.role === 'confirmation' ? 'confirmation' : 'delivery';
+    if (role === 'confirmation') { await attachTo(pid, { confirm_email_id: eid }, who); await handleEmail(em, 'receipt', who, 'confirmation — purchase #' + pid + ' by ' + who); }
+    else {
+      const received = b.received === 'partial' ? 'partial' : b.received === 'yes' ? 'yes' : null;
+      await attachTo(pid, Object.assign({ arrival_email_id: eid }, received ? { received, note: b.note ? String(b.note).slice(0, 300) : null } : {}), who);
+      try { await fillItemsFromEmail(pid, em, who); } catch (e) { errlog('items', e.message); }
+      await handleEmail(em, 'arrival', who, 'arrival — purchase #' + pid + (received ? ' (' + received + ')' : '') + ' by ' + who);
+    }
+    await audit(who, 'purchase.attach_email', pid, { email_id: eid, role, received: b.received || null });
+    res.json({ ok: true });
+  } catch (e) { res.json({ ok: false, error: e.message }); } });
+  // The delivery slip from Receiving: raw body, name in X-File-Name, X-Received yes / partial (optional) sets the status.
+  app.get('/api/bookkeeping/purchases/:id/files', ...guard, async (req, res) => {
+    res.json({ ok: true, files: (await dbAll("SELECT * FROM bk_files WHERE kind = 'purchase' AND ref_id = ? ORDER BY id", [parseInt(req.params.id)])).map(fileRow) });
+  });
+  app.post('/api/bookkeeping/purchases/:id/files', ...guard, require('express').raw({ type: () => true, limit: 25 * 1024 * 1024 + 1024 }), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id); const p = await dbGet('SELECT id, received FROM bk_purchases WHERE id = ?', [id]); if (!p) return res.status(404).json({ ok: false, error: 'No such purchase' });
+      const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0); if (!buf.length) return res.json({ ok: false, error: 'Empty file' });
+      if (buf.length > 25 * 1024 * 1024) return res.json({ ok: false, error: 'Files up to 25 MB' });
+      const kind = sniffFile(buf); if (!kind) return res.json({ ok: false, error: 'PDF, picture (PNG / JPG), Word or Excel files only' });
+      let name = decodeURIComponent(String(req.get('x-file-name') || '')).replace(/[\\/\u0000-\u001f]/g, '').trim().slice(0, 160) || ('delivery.' + kind.ext);
+      const dir = path.join(FILES, 'purchases'); fs.mkdirSync(dir, { recursive: true });
+      const file = 'purchases/' + id + '-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex') + '.' + kind.ext;
+      fs.writeFileSync(path.join(FILES, file), buf);
+      const label = String(req.get('x-file-label') || 'delivery').slice(0, 80) || null;
+      const r = await dbRun('INSERT INTO bk_files (kind, ref_id, name, mime, size, file, label, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', ['purchase', id, name, kind.mime, buf.length, file, label, userId(req), nowIso()]);
+      const received = String(req.get('x-received') || ''); const note = decodeURIComponent(String(req.get('x-note') || '')).slice(0, 300) || null;
+      if (received === 'yes' || received === 'partial') await dbRun("UPDATE bk_purchases SET expects_delivery = 1, received = ?, received_at = ?, received_note = CASE WHEN ? = 'yes' THEN ? ELSE COALESCE(?, received_note) END, updated_at = datetime('now') WHERE id = ?", [received, today(), received, note, note, id]);
+      await audit(userId(req), 'purchase.file', id, { file_id: r.lastID, name, size: buf.length, received: received || null });
+      res.json({ ok: true, file: fileRow(await dbGet('SELECT * FROM bk_files WHERE id = ?', [r.lastID])), received: received || null });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
   // 1.19.141: the category picked on a purchase row — the purchase and the bank lines behind it
   app.post('/api/bookkeeping/purchases/:id/category', ...guard, async (req, res) => {
     const pid = parseInt(req.params.id), cat = String((req.body || {}).category || '').trim();
@@ -3155,7 +3216,7 @@ module.exports = function mountBookkeeping(app, deps) {
   app.post('/api/bookkeeping/files/:id/delete', ...guard, async (req, res) => {
     const f = await dbGet('SELECT * FROM bk_files WHERE id = ?', [parseInt(req.params.id)]); if (!f) return res.json({ ok: false, error: 'No such file' });
     removeFile(f); await dbRun('DELETE FROM bk_files WHERE id = ?', [f.id]);
-    await audit(userId(req), 'loan.file.delete', f.ref_id, { file_id: f.id, name: f.name }); res.json({ ok: true });
+    await audit(userId(req), (f.kind || 'loan') + '.file.delete', f.ref_id, { file_id: f.id, name: f.name }); res.json({ ok: true });
   });
   app.post('/api/bookkeeping/files/:id', ...guard, async (req, res) => {   // rename / relabel
     const f = await dbGet('SELECT * FROM bk_files WHERE id = ?', [parseInt(req.params.id)]); if (!f) return res.json({ ok: false, error: 'No such file' });

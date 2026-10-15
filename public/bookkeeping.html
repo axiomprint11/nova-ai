@@ -306,6 +306,12 @@
   /* 1.19.141: the Purchases list in the Bank feed's style — vendor cell 262px, amount right-aligned with the paid date under it, category picker, status pill + delivery dropdown */
   .pu-table { table-layout: auto; } .pu-table th:nth-child(2), .pu-table td:nth-child(2) { width: 236px; } .pu-table .pu-acts { white-space: normal; } .pu-table .pu-acts .bk-btn { display: block; margin: 0 0 4px; white-space: nowrap; } .pu-st.paid { background: #e0e7ff; color: #3730a3; } .pu-table th:nth-child(3), .pu-table td:nth-child(3) { white-space: nowrap; width: 1%; } .pu-table td.neg .tx-amt { font-weight: 700; }
   .pu-table th:nth-child(4), .pu-table td:nth-child(4) { width: 210px; max-width: 210px; } .pu-table td:nth-child(4) .ckp-btn { max-width: 200px; } .pu-table th:nth-child(5), .pu-table td:nth-child(5) { width: 1%; white-space: nowrap; }
+  /* 1.20.67: Received pill + pencil, and its popover */
+  .pu-recv-w { display: inline-flex; align-items: center; gap: 6px; } .pu-redit { color: #9ca3af; display: inline-flex; } .pu-redit:hover { color: #4f46e5; } .pu-redit svg { width: 13px; height: 13px; }
+  .pu-st.rv-na { background: #f3f4f6; color: #6b7280; } .pu-st.rv-no { background: #fef3c7; color: #92400e; } .pu-st.rv-partial { background: #dbeafe; color: #1e40af; } .pu-st.rv-yes { background: #d1fae5; color: #065f46; }
+  .rv-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; } .rv-b.cur { outline: 2px solid #4f46e5; outline-offset: 1px; font-weight: 600; }
+  .rv-pop .rv-q { width: 100%; margin: 4px 0 6px; box-sizing: border-box; } .rv-pop .rv-list { max-height: 180px; overflow: auto; } .rv-pop .rv-e { cursor: pointer; } .rv-pop .rv-e:hover { background: #f5f3ff; }
+  .rv-pop .ln-drop { padding: 10px 12px; margin: 4px 0 6px; } .rv-pop .ln-drop.over { background: #ede9fe; } .pw-add { font-weight: 400; font-size: 12px; margin-left: 8px; color: #4f46e5; }
   .pu-status { width: 1%; white-space: nowrap; } .pu-status .pu-st { display: inline-block; margin-bottom: 4px; } .pu-deliv { display: block; font-size: 12px; padding: 3px 24px 3px 7px; border-radius: 6px; max-width: 160px; }
   .pu-deliv.warn { background: #fef3c7; border-color: #fcd34d; color: #92400e; } .pu-deliv.part { background: #ffedd5; border-color: #fdba74; color: #9a3412; } .pu-deliv.ok { background: #dcfce7; border-color: #86efac; color: #166534; }
   .pu-late { font-size: 11px; color: #991b1b; } .pu-rnote { font-size: 11px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }

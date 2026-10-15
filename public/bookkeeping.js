@@ -268,7 +268,7 @@
     let vals = splitCats(wrap.querySelector('.ckp-val').value);
     const pop = document.createElement('div'); pop.className = 'ckp-pop' + (multi ? ' multi' : ' single');
     pop.innerHTML = '<div class="ckp-search"><input type="text" placeholder="Search categories…"></div><div class="ckp-list"></div>' +
-      '<div class="ckp-foot"><a href="#" class="ckp-new">+ New category…</a>' + (wrap.dataset.reset ? '<a href="#" class="ckp-reset" title="Clear the category and send the line back to Pending">↺ Uncategorize</a>' : '') + '<span class="sp"></span>' + (blank ? '<a href="#" class="ckp-clear">' + esc(multi ? 'Clear' : blank) + '</a>' : '') + (multi ? '<button type="button" class="bk-btn sm p ckp-done">Done</button>' : '') + '</div>';
+      '<div class="ckp-foot"><a href="#" class="ckp-new">+ New category…</a>' + (wrap.dataset.reset ? '<a href="#" class="ckp-reset" title="Undo — clear the category and send the line back to Pending">↺ Undo (uncategorize)</a>' : '') + '<span class="sp"></span>' + (blank ? '<a href="#" class="ckp-clear">' + esc(multi ? 'Clear' : blank) + '</a>' : '') + (multi ? '<button type="button" class="bk-btn sm p ckp-done">Done</button>' : '') + '</div>';
     pop.addEventListener('click', (e) => e.stopPropagation());   // clicks inside (which re-draw the list) must not reach the close-on-outside-click handler
     document.body.appendChild(pop);
     const r = wrap.getBoundingClientRect(), W = Math.min(360, window.innerWidth - 16);
@@ -513,7 +513,7 @@
     '<span class="pu-slot bill' + (p.bill ? ' on' : '') + '" title="' + esc(p.bill ? 'Bill #' + p.bill.id + ' · ' + p.bill.status : 'No bill') + '">' + iconSvg('file') + '</span>' +
     '<span class="pu-slot bank' + (p.txns.length ? ' on' : '') + '" title="' + esc(p.txns.length ? p.txns.map(t => t.date + ' ' + t.name + ' ' + usd(Math.abs(t.amount))).join(', ') : p.no_paperwork ? 'Bank line (no paperwork expected)' : 'No bank line yet') + '">' + iconSvg('landmark') + '</span>' +
     '<span class="pu-slot conf' + (p.confirm ? ' on' : '') + '" title="' + esc(p.confirm ? 'Confirmation: ' + p.confirm.subject : 'No confirmation email') + '">' + iconSvg('receipt') + '</span>' +
-    '<span class="pu-slot arr' + (p.arrivals ? ' on' : '') + '" title="' + esc(p.arrivals ? p.arrivals + ' delivery email' + (p.arrivals === 1 ? '' : 's') : p.expects_delivery ? 'No delivery yet' : 'Nothing to receive') + '">' + iconSvg('package') + '</span></span>' + (p.paired ? '<span class="pu-paired" title="' + esc(p.txns.map(t => t.date + ' ' + t.name + ' ' + usd(Math.abs(t.amount))).join(', ')) + '">Paired</span>' : '');
+    '<span class="pu-slot arr' + (p.arrivals || p.files ? ' on' : '') + '" title="' + esc([p.arrivals ? p.arrivals + ' delivery email' + (p.arrivals === 1 ? '' : 's') : '', p.files ? p.files + ' delivery slip' + (p.files === 1 ? '' : 's') : ''].filter(Boolean).join(' · ') || (p.expects_delivery ? 'No delivery yet' : 'Nothing to receive')) + '">' + iconSvg('package') + '</span></span>' + (p.paired ? '<span class="pu-paired" title="' + esc(p.txns.map(t => t.date + ' ' + t.name + ' ' + usd(Math.abs(t.amount))).join(', ')) + '">Paired</span>' : '');
   // what is behind the row: emails · attachments · items, with the email subjects on hover
   const puInfo = (p) => { const bits = []; if (p.emails) bits.push(p.emails + ' ' + (p.emails === 1 ? 'email' : 'emails')); if (p.attachments) bits.push(p.attachments + ' ' + (p.attachments === 1 ? 'attachment' : 'attachments')); if (p.items) bits.push(p.items + ' ' + (p.items === 1 ? 'item' : 'items') + (p.items_linked ? ' · ' + p.items_linked + ' linked' : '')); if (!bits.length) return '';
     return '<a href="#" class="pu-info" data-open="' + p.id + '"' + (p.email_subjects && p.email_subjects.length ? ' data-tip="' + esc(p.email_subjects.join('\n')) + '"' : '') + '>' + bits.join(' · ') + '</a>'; };
@@ -525,6 +525,7 @@
   const savePF = () => { try { localStorage.setItem('bk_pu_filters', JSON.stringify(PF)); } catch (e) {} loadPurchases(lastSub.purchases || 'list'); };
   const P_SVG = (d) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
   const P_PEN = P_SVG('<path d="M4 20h4l10-10-4-4L4 16z"/><path d="M12.5 7.5l4 4"/>'), P_LINK = P_SVG('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5"/>');
+  const RECV_L = { na: 'N/A', no: 'Not received', partial: 'Partially received', yes: 'Received' };   // 1.20.67: the pill's words
   const DELIV = [['na', 'Not applicable', 'Nothing to receive — a service, a fee, a subscription'], ['no', 'Not received', 'Goods ordered, nothing has arrived yet'], ['partial', 'Partially received', 'Some of it arrived'], ['yes', 'Received', 'All of it arrived']];
   async function loadPurchases(view) {
     const v = $(view === 'waiting' ? 'vPurchWaiting' : view === 'notreceived' ? 'vPurchNotReceived' : 'vPurchList');
@@ -557,7 +558,9 @@
     // Status: the money side as a pill (awaiting bank / awaiting payment / closed / cancelled) + the receiving dropdown
     // closed = paid and nothing left to receive; paid = the bank line is matched but goods are still on the way
     const statusCell = (p) => { const money = p.cancelled ? '<span class="pu-st">cancelled</span>' : p.status === 'awaiting bank' || p.status === 'awaiting payment' ? puStatus(p) : p.status === 'closed' ? '<span class="pu-st closed">closed</span>' : '<span class="pu-st paid" title="Bank line matched — goods still to receive">paid</span>';
-      const sel = p.cancelled ? '' : '<select class="bk sm pu-deliv' + (p.delivery === 'no' ? ' warn' : p.delivery === 'partial' ? ' part' : p.delivery === 'yes' ? ' ok' : '') + '" data-deliv="' + p.id + '" title="Delivery">' + DELIV.map(d => '<option value="' + d[0] + '"' + (p.delivery === d[0] ? ' selected' : '') + ' title="' + esc(d[2]) + '">' + esc(d[1]) + '</option>').join('') + '</select>' + (p.late && /received/.test(p.status) ? '<div class="bk-dim pu-late">' + p.days + ' days</div>' : '') + (p.received_note ? '<div class="bk-dim pu-rnote" title="' + esc(p.received_note) + '">' + esc(p.received_note) + '</div>' : '');
+      // 1.20.67: Received is a nailed-down pill like Payment — it is set by the paperwork (a delivery email matched, the slip
+      // uploaded) and only edited by hand through the pencil (`receivePop`); N/A when there is nothing to receive.
+      const sel = p.cancelled ? '' : '<span class="pu-recv-w"><span class="pu-st rv-' + esc(p.delivery || 'na') + '" title="' + esc((DELIV.find(d => d[0] === p.delivery) || DELIV[0])[2]) + '">' + esc(RECV_L[p.delivery] || 'N/A') + '</span><a href="#" class="pu-redit" data-redit="' + p.id + '" title="Received — match a delivery email, upload the slip, or set it by hand">' + iconSvg('pencil') + '</a></span>' + (p.late && /received/.test(p.status) ? '<div class="bk-dim pu-late">' + p.days + ' days</div>' : '') + (p.received_note ? '<div class="bk-dim pu-rnote" title="' + esc(p.received_note) + '">' + esc(p.received_note) + '</div>' : '');
       return '<td class="pu-status">' + money + '</td><td class="pu-status pu-recv">' + sel + '</td>'; };   // 1.20.66: Payment and Received are two columns
     const row = (p) => '<tr data-pid="' + p.id + '"><td class="pu-date">' + esc(usD(p.date)) + (tm(p.when) ? '<div class="bk-dim">' + esc(tm(p.when)) + '</div>' : '') + '</td><td>' + vendorCell(p) + '</td>' + amountCell(p) +
       '<td data-pcat="' + p.id + '">' + catSelect(p.category || '', 'pu-cat', 'Choose…', { only: 'expense' }) + '</td><td>' + slots(p) + '</td>' + statusCell(p) +
@@ -593,11 +596,7 @@
     v.querySelectorAll('[data-pvpair]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); setPV(a.dataset.pvpair, Number(a.dataset.vid)); });
     v.querySelectorAll('.pu-slots').forEach(sl => { sl.onclick = (ev) => { ev.preventDefault(); const tr = sl.closest('tr'); paperworkPop(sl, Number(tr.dataset.pid)); }; });
     // the receiving dropdown — Partially received asks what came
-    v.querySelectorAll('select[data-deliv]').forEach(sel => { const was = sel.value; sel.onchange = async () => {
-      const st = sel.value; let note = '';
-      if (st === 'partial') { note = await askText('What arrived, what is missing?', { title: 'Partially received' }); if (note == null) { sel.value = was; return; } }
-      const r = await post('/api/bookkeeping/purchases/' + sel.dataset.deliv + '/delivery', { status: st, note }); if (!r.ok) { alert(r.error); sel.value = was; return; } loadPurchases(view); overview();
-    }; });
+    v.querySelectorAll('[data-redit]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); const p = rows.find(x => String(x.id) === a.dataset.redit); receivePop(a, p, () => { loadPurchases(view); overview(); }); });   // 1.20.67
     // the category picker sets it on the spot — on the purchase and the bank lines behind it
     v.querySelectorAll('td[data-pcat]').forEach(td => { const wrap = td.querySelector('.ckp'), inp = td.querySelector('input.pu-cat'); if (!wrap || !inp) return; let last = inp.value;
       wrap.addEventListener('change', async () => { if (inp.value === last || !inp.value) return; last = inp.value; const r = await post('/api/bookkeeping/purchases/' + td.dataset.pcat + '/category', { category: inp.value }); const tr = td.closest('tr'); tr.classList.add(r.ok ? 'saved' : 'failed'); setTimeout(() => tr.classList.remove('saved', 'failed'), 1200); if (!r.ok) alert(r.error); else loadPurchases(view); }); });
@@ -771,7 +770,7 @@
       (j.transactions || []).map(t => '<tr><td class="tx-date" title="Synced from the bank · bank date ' + esc(usD(t.date)) + (t.pending ? ' (still pending at the bank)' : '') + '">' + laD2(t.created_at) + checkLine(t) + '</td>' +
         '<td>' + vendorCell(t) + '</td><td class="tx-desc-td" title="' + esc([prettyCat(t) ? 'Bank category: ' + prettyCat(t) : '', t.place].filter(Boolean).join(' · ')) + '">' + esc(descTop(t)) + ((t.orig_desc || t.name) !== descTop(t) ? '<div class="bk-muted tx-orig">' + esc(t.orig_desc || t.name) + '</div>' : '') + '</td><td>' + bankCell(t) + '</td>' +
         '<td class="num ' + (t.amount > 0 ? 'neg' : 'pos') + '"><div class="tx-amt">' + usd(-t.amount) + chanLine(t) + '</div><div class="tx-when bk-dim" title="When the transaction happened' + (t.pending ? ' (still pending at the bank)' : '') + '">' + esc(txWhen(t)) + '</div></td>' +
-        '<td data-txid="' + t.id + '">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : (t.amount < 0 ? 'Income…' : 'Choose…'), { only: t.amount < 0 ? 'income' : 'expense', reset: (txnSt === 'categorized' || txnSt === 'auto') && t.status === 'categorized' }) +
+        '<td data-txid="' + t.id + '">' + catSelect(t.category || '', 'tx-cat', t.category ? '' : (t.amount < 0 ? 'Income…' : 'Choose…'), { only: t.amount < 0 ? 'income' : 'expense', reset: t.status === 'categorized' })   // 1.20.67: Undo (↺ Uncategorize) on every categorized line, in every view — it sits in the picker so the list stays clean +
         // 1.19.119: a Wise payout — pick the team member (the server lists the candidates by pay, or everyone), and a web-dev
         // member's line can flip between the build (asset) category and maintenance
         (t.team_hint && t.team_hint.members.length ? '<div class="tx-ref tx-team-hint"><span class="tx-match" title="' + esc(t.team_hint.ambiguous ? 'Two or more team members are on this pay — which one?' : 'A Wise payout — who is it for?') + '">' + TEAMI + ' Who is this?</span><select class="bk sm tx-team-sel" data-teamsel="' + t.id + '"><option value="">— team member —</option>' + t.team_hint.members.map(m => '<option value="' + m.id + '">' + esc(m.name) + (m.dept ? ' · ' + esc(m.dept) : '') + (m.pay != null ? ' · ' + usd(m.pay) : '') + '</option>').join('') + '</select></div>' : '') +
@@ -923,6 +922,58 @@
   }
   // An email in a popup (from a bill or a purchase): header, body, attachments, and "Take me to the Inbox".
   // 1.19.30: click the paperwork icons → what each slot holds (bill, bank lines, confirmation, deliveries); emails open, the bill goes to Bills
+  // 1.20.67: the Received popover — the status by hand, a delivery email matched from the vendor's recent mail (search too),
+  // or the slip the driver handed to Receiving dropped / pasted / uploaded. An email or a slip asks "Fully or partially?" and
+  // sets the status itself; the pill on the row then reads Received / Partially received.
+  const fullOrPart = async (what) => { const r = await ask('**' + what + '** — did everything arrive?', { title: 'Received', ok: 'Fully received', alt: 'Partially', cancel: 'Cancel' }); if (!r) return null; if (r === true) return { received: 'yes', note: '' }; const note = await askText('What arrived, what is missing?', { title: 'Partially received' }); if (note == null) return null; return { received: 'partial', note }; };
+  const fIconOf = (f) => f.ext === 'pdf' ? '<span class="ln-fi pdf">PDF</span>' : f.ext === 'docx' ? '<span class="ln-fi doc">DOC</span>' : f.ext === 'xlsx' ? '<span class="ln-fi xls">XLS</span>' : '<span class="ln-fi img">IMG</span>';
+  const openDoc = async (id) => { const rr = await fetch('/api/bookkeeping/files/' + id, { headers: { 'Authorization': 'Bearer ' + token } }); if (!rr.ok) return alert('File not available.'); window.open(URL.createObjectURL(await rr.blob()), '_blank', 'noopener'); };
+  async function receivePop(anchor, p, done) {
+    document.querySelectorAll('.ckp-pop').forEach(x => x.remove());
+    const usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '-' + m[3] + '-' + m[1] : String(d || ''); };
+    const pop = document.createElement('div'); pop.className = 'ckp-pop single pw-pop rv-pop'; pop.addEventListener('click', (e) => e.stopPropagation());
+    const cur = p.delivery || 'na';
+    pop.innerHTML = '<div class="pw-t">Received — ' + esc(p.vendor || '?') + (p.order_no ? ' <small>#' + esc(p.order_no) + '</small>' : '') + (p.amount != null ? ' <small>' + usd(p.amount) + '</small>' : '') + '</div>' +
+      '<div class="rv-row">' + DELIV.map(d => '<button type="button" class="bk-btn sm rv-b rv-' + d[0] + (cur === d[0] ? ' cur' : '') + '" data-rs="' + d[0] + '" title="' + esc(d[2]) + '">' + esc(RECV_L[d[0]]) + '</button>').join('') + '</div>' +
+      '<div class="pw-g"><div class="pw-h"><span class="pu-slot arr on">' + iconSvg('mail') + '</span>Match a delivery email <span class="bk-dim">— the vendor\'s latest mail</span></div><input class="bk sm rv-q" placeholder="Search subject or sender…"><div class="rv-list"><div class="bk-dim" style="padding:4px 2px">Loading…</div></div></div>' +
+      '<div class="pw-g"><div class="pw-h"><span class="pu-slot arr on">' + iconSvg('upload') + '</span>Upload the delivery slip <span class="bk-dim">— what the driver handed to Receiving</span></div><div class="ln-drop rv-drop" tabindex="0">' + iconSvg('upload') + '<div><b>Drop it here</b>, paste (Ctrl+V) or click · PDF or a photo</div><input type="file" multiple accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" hidden></div><div class="rv-msg bk-dim"></div><div class="rv-files ln-files"></div></div>';
+    document.body.appendChild(pop);
+    const r = anchor.getBoundingClientRect(), W = Math.min(440, window.innerWidth - 16);
+    pop.style.left = Math.max(8, Math.min(r.right - W, window.innerWidth - W - 8)) + 'px'; pop.style.width = W + 'px';
+    const below = window.innerHeight - r.bottom - 8; if (below >= 360) { pop.style.top = (r.bottom + 4) + 'px'; pop.style.maxHeight = Math.min(560, below) + 'px'; } else { pop.style.bottom = (window.innerHeight - r.top + 4) + 'px'; pop.style.maxHeight = Math.min(560, r.top - 8) + 'px'; }
+    const close = () => { pop.remove(); document.removeEventListener('click', close); document.removeEventListener('paste', onPaste); }; setTimeout(() => document.addEventListener('click', close), 0);
+    const finish = () => { close(); if (done) done(); };
+    // by hand
+    pop.querySelectorAll('[data-rs]').forEach(b => b.onclick = async () => { const st = b.dataset.rs; let note = ''; if (st === 'partial') { note = await askText('What arrived, what is missing?', { title: 'Partially received' }); if (note == null) return; } const rr = await post('/api/bookkeeping/purchases/' + p.id + '/delivery', { status: st, note }); if (!rr.ok) return alert(rr.error); finish(); });
+    // the vendor's emails
+    const list = pop.querySelector('.rv-list'), q = pop.querySelector('.rv-q'); let tmr = null;
+    const paintEmails = async () => {
+      const j = await api('/api/bookkeeping/purchases/' + p.id + '/emails?q=' + encodeURIComponent(q.value.trim()));
+      if (!j.ok) { list.innerHTML = '<div class="bk-dim">' + esc(j.error) + '</div>'; return; }
+      list.innerHTML = j.emails.length ? j.emails.map(e => '<div class="pw-i rv-e" data-e="' + e.id + '" title="Attach as the delivery of this purchase"><a href="#" data-e="' + e.id + '">' + esc(e.subject || '(no subject)') + '</a><small>' + esc(usD(e.received_at)) + ' · ' + esc(String(e.from || '').replace(/<.*$/, '').trim()) + (e.kind ? ' · ' + esc(e.kind) : '') + (e.attachments ? ' · ' + e.attachments + ' attachment' + (e.attachments === 1 ? '' : 's') : '') + (e.on_purchase ? ' · on purchase #' + e.on_purchase : '') + '</small></div>').join('') : '<div class="bk-dim" style="padding:4px 2px">' + esc(j.note || (q.value.trim() ? 'Nothing matches.' : 'No recent mail from this vendor — search by words.')) + '</div>';
+      list.querySelectorAll('[data-e]').forEach(a => a.onclick = async (ev) => { ev.preventDefault(); const e = j.emails.find(x => String(x.id) === a.dataset.e); const fp = await fullOrPart(e.subject || 'This email'); if (!fp) return; const rr = await post('/api/bookkeeping/purchases/' + p.id + '/attach-email', { email_id: e.id, role: 'delivery', received: fp.received, note: fp.note }); if (!rr.ok) return alert(rr.error); toast('Delivery email attached · ' + RECV_L[fp.received]); finish(); });
+    };
+    q.oninput = () => { clearTimeout(tmr); tmr = setTimeout(paintEmails, 400); }; q.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(tmr); paintEmails(); } };
+    paintEmails();
+    // the slip
+    const drop = pop.querySelector('.rv-drop'), pick = drop.querySelector('input'), msg = pop.querySelector('.rv-msg'), fl = pop.querySelector('.rv-files');
+    const paintFiles = async () => { const j = await api('/api/bookkeeping/purchases/' + p.id + '/files'); const files = j.files || []; fl.innerHTML = files.map(f => '<div class="ln-file">' + fIconOf(f) + '<div class="ln-fn"><a href="#" data-open="' + f.id + '">' + esc(f.name) + '</a><div class="bk-dim">' + (f.uploaded_by ? esc(f.uploaded_by.split('@')[0]) + ' · ' : '') + esc(usD(f.created_at)) + '</div></div><a href="#" class="bk-dim" data-rm="' + f.id + '" title="Remove">×</a></div>').join('');
+      fl.querySelectorAll('[data-open]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); openDoc(a.dataset.open); });
+      fl.querySelectorAll('[data-rm]').forEach(a => a.onclick = async (ev) => { ev.preventDefault(); if (!(await ask('Remove this slip?', { ok: 'Remove', danger: true }))) return; await post('/api/bookkeeping/files/' + a.dataset.rm + '/delete', {}); paintFiles(); }); };
+    paintFiles();
+    const upload = async (files) => {
+      files = Array.from(files || []).filter(f => f && f.size); if (!files.length) return;
+      const fp = await fullOrPart(files.length === 1 ? files[0].name : files.length + ' files'); if (!fp) return;
+      let n = 0;
+      for (const f of files) { msg.textContent = 'Uploading ' + f.name + '…';
+        const rr = await fetch('/api/bookkeeping/purchases/' + p.id + '/files', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(f.name || 'slip'), 'X-File-Label': 'delivery', 'X-Received': fp.received, 'X-Note': encodeURIComponent(fp.note || '') }, body: f }).then(x => x.json()).catch(e => ({ ok: false, error: e.message }));
+        if (!rr.ok) { msg.textContent = f.name + ': ' + (rr.error || 'could not upload'); continue; } n++; }
+      if (n) { toast(n + ' slip' + (n === 1 ? '' : 's') + ' saved · ' + RECV_L[fp.received]); finish(); }
+    };
+    drop.onclick = () => pick.click(); pick.onchange = () => upload(pick.files);
+    drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); }; drop.ondragleave = () => drop.classList.remove('over'); drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); upload(e.dataTransfer.files); };
+    const onPaste = (e) => { const fs = Array.from((e.clipboardData || {}).files || []); if (fs.length) { e.preventDefault(); upload(fs); } }; document.addEventListener('paste', onPaste);
+  }
   async function paperworkPop(anchor, pid) {
     document.querySelectorAll('.ckp-pop').forEach(p => p.remove());
     const j = await api('/api/bookkeeping/purchases/' + pid); if (!j.ok) return alert(j.error);
@@ -935,7 +986,7 @@
       grp('bill', 'Bill', p.bill ? '<div class="pw-i"><a href="#" data-gobill="' + p.bill.id + '">Bill #' + p.bill.id + (p.bill.invoice_no ? ' · ' + esc(p.bill.invoice_no) : '') + '</a><small>' + esc(usD(p.bill.invoice_date)) + ' · ' + usd(p.bill.total) + ' · ' + esc(p.bill.status) + '</small></div>' : '', 'No bill') +
       grp('bank', 'Bank line' + (p.txns.length === 1 ? '' : 's'), p.txns.length ? p.txns.map(t => '<div class="pw-i"><span>' + esc(t.merchant || t.name) + '</span><small>' + esc(usD(t.date)) + ' · ' + usd(Math.abs(t.amount)) + (t.account_name ? ' · ' + esc(t.account_name) : '') + '</small></div>').join('') : '', p.no_paperwork ? 'Bank line only — no paperwork expected' : 'No bank line yet') +
       grp('conf', 'Confirmation', conf.length ? conf.map(em).join('') : '', 'No confirmation email') +
-      grp('arr', 'Delivery', dels.length ? dels.map(em).join('') : '', p.expects_delivery ? 'No delivery email yet' : 'Nothing to receive') +
+      grp('arr', 'Delivery <a href="#" class="pw-add" data-recv-add title="Match a delivery email or upload the slip">+ Attach…</a>', (dels.length ? dels.map(em).join('') : '') + (p.files || []).map(f => '<div class="pw-i"><a href="#" data-file="' + f.id + '">' + esc(f.name) + '</a><small>slip · ' + esc(usD(f.created_at)) + (f.uploaded_by ? ' · ' + esc(f.uploaded_by.split('@')[0]) : '') + '</small></div>').join(''), p.expects_delivery ? 'No delivery email or slip yet' : 'Nothing to receive') +
       '<div class="ckp-foot"><a href="#" data-openp="' + p.id + '">Open the purchase</a> <span class="bk-dim">· emails, attachments, items</span></div>';
     document.body.appendChild(pop);
     const r = anchor.getBoundingClientRect(), W = Math.min(400, window.innerWidth - 16);
@@ -945,6 +996,8 @@
     pop.querySelectorAll('[data-em]').forEach(a => a.onclick = (e) => { e.preventDefault(); close(); emailModal(Number(a.dataset.em)); });
     pop.querySelectorAll('[data-gobill]').forEach(a => a.onclick = (e) => { e.preventDefault(); close(); show('bills', p.bill.status === 'draft' ? 'pending' : p.bill.status); setTimeout(() => { const c = document.querySelector('.bl-card[data-bill="' + a.dataset.gobill + '"]'); if (c) { c.scrollIntoView({ block: 'center', behavior: 'smooth' }); c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 1800); } }, 700); });
     pop.querySelectorAll('[data-openp]').forEach(a => a.onclick = (e) => { e.preventDefault(); close(); purchaseView(p.id, () => loadPurchases(lastSub.purchases)); });
+    pop.querySelectorAll('[data-file]').forEach(a => a.onclick = (e) => { e.preventDefault(); openDoc(a.dataset.file); });
+    const add = pop.querySelector('[data-recv-add]'); if (add) add.onclick = (e) => { e.preventDefault(); close(); receivePop(anchor, Object.assign({}, p, { delivery: p.expects_delivery ? (p.received || 'no') : 'na' }), () => loadPurchases(lastSub.purchases)); };
   }
   async function emailModal(id) {
     const j = await api('/api/bookkeeping/emails/' + id); if (!j.ok) return alert(j.error);
