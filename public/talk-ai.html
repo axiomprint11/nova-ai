@@ -90,12 +90,12 @@
   #vCalls { flex-direction: column; min-width: 0; }
   .tk-ctable { table-layout: fixed; } .tk-ctable th:nth-child(1) { width: 92px; } .tk-ctable th:nth-child(2) { width: 120px; } .tk-ctable th:nth-child(3) { width: 200px; } .tk-ctable th:nth-child(4) { width: 150px; } .tk-ctable th:nth-child(5) { width: 190px; } .tk-ctable th:nth-child(6) { width: 110px; } .tk-ctable th:nth-child(7) { width: 70px; } .tk-ctable th:nth-child(8) { width: 44px; } .tk-ctable th:nth-child(10) { width: 36px; }
   .tk-ctable td { overflow: hidden; } .cl-who { min-width: 0; } .cl-who > div { min-width: 0; } .cl-who b, .cl-who small { overflow: hidden; text-overflow: ellipsis; }
-  /* 1.20.73: a call opens as a side panel on the right — the dashboard stays */
-  #vCalls.detail { flex-direction: row; } #vCalls:not(.detail) .tk-detail { display: none; }
-  #vCalls.detail .tk-detail { width: min(640px, 46%); flex: none; border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(17, 24, 39, .06); background: #fff; }
-  #vCalls.detail .tk-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  #vCalls.detail .tk-ctable th:nth-child(4), #vCalls.detail .tk-ctable td:nth-child(4), #vCalls.detail .tk-ctable th:nth-child(8), #vCalls.detail .tk-ctable td:nth-child(8), #vCalls.detail .tk-ctable th:nth-child(9), #vCalls.detail .tk-ctable td:nth-child(9) { display: none; }
-  #vCalls.detail .tk-ctable th:nth-child(6) { width: auto; } #vCalls.detail .tk-ctable th:nth-child(5) { width: 160px; } #vCalls.detail .tk-ctable th:nth-child(10), #vCalls.detail .tk-ctable td:nth-child(10) { display: none; } #vCalls.detail .tk-qwrap input { width: 180px; }
+  /* 1.20.75: a call opens as a drawer OVER the dashboard — nothing underneath moves; a click outside or the X closes it */
+  #vCalls { position: relative; } #vCalls:not(.detail) .tk-detail { display: none; }
+  #vCalls.detail .tk-detail { position: absolute; top: 0; right: 0; bottom: 0; width: min(680px, 60%); z-index: 30; background: #fff; border-left: 1px solid var(--line); box-shadow: -16px 0 40px rgba(17, 24, 39, .14); animation: tk-slide .18s ease-out; }
+  @keyframes tk-slide { from { transform: translateX(24px); opacity: .6; } to { transform: none; opacity: 1; } }
+  #vCalls.detail .tk-dash { position: relative; } #vCalls.detail .tk-dash::after { content: ""; position: absolute; inset: 0; background: rgba(17, 24, 39, .06); z-index: 20; pointer-events: none; }
+  @media (max-width: 900px) { #vCalls.detail .tk-detail { width: 100%; } }
   .tk-ctable tr.tk-ctr.on td { background: var(--indigo-light); }
   @media (max-width: 1100px) { #vCalls.detail .tk-dash { display: none; } #vCalls.detail .tk-detail { width: 100%; } }
   .tk-dash { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; padding: 14px 20px 24px; background: #f7f7fb; }

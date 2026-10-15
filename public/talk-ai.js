@@ -394,7 +394,12 @@
       note.oninput = grow; grow();
       note.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('rateSave').click(); } };
     })();
-    $('callBack').onclick = () => { $('vCalls').classList.remove('detail'); current = null; history.replaceState(null, '', '/talk-ai'); document.querySelectorAll('tr.tk-ctr.on').forEach(x => x.classList.remove('on')); setUnreadFromRows(); };
+    const closeCall = () => { $('vCalls').classList.remove('detail'); current = null; history.replaceState(null, '', '/talk-ai'); document.querySelectorAll('tr.tk-ctr.on').forEach(x => x.classList.remove('on')); setUnreadFromRows(); document.removeEventListener('mousedown', awayClose); document.removeEventListener('keydown', escClose); };
+    // 1.20.75: the drawer closes on a click on the dimmed dashboard or Esc (another row's click opens that call instead)
+    const awayClose = (e) => { if (!$('vCalls').classList.contains('detail')) return; if (v.contains(e.target) || e.target.closest('.tk-top')) return; if (e.target.closest('tr.tk-ctr')) return; closeCall(); };
+    const escClose = (e) => { if (e.key === 'Escape') closeCall(); };
+    document.addEventListener('mousedown', awayClose); document.addEventListener('keydown', escClose);
+    $('callBack').onclick = closeCall;
     $('callUnread').onclick = async () => { await api('/api/admin/talk/calls/' + id + '/unread', { method: 'POST', body: '{}' }); current = null; loadCalls(); $('vCalls').classList.remove('detail'); v.innerHTML = '<div class="tk-empty">Marked as unread.</div>'; };
     if ($('showLog')) $('showLog').onclick = () => {
       const on = $('callTx').classList.toggle('show-lk');
