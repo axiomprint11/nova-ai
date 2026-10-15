@@ -302,6 +302,16 @@ module.exports = function mountDesignerAi(app, deps) {
     // 1.20.53: no email any more — History (and the row's "Everyone is busy" tag) is where the team sees it.
     return { emailed: false, logged: true };
   }
+  // JSON from a model: exact first, then with trailing commas removed, then the complete picks before a cut-off tail.
+  function parseLoose(txt) {
+    try { return JSON.parse(txt); } catch (e) {}
+    try { return JSON.parse(txt.replace(/,\s*([}\]])/g, '$1')); } catch (e) {}
+    const items = []; const re = /\{\s*"user_id"\s*:\s*(\d+)\s*,\s*"score"\s*:\s*(\d+(?:\.\d+)?)\s*(?:,\s*"note"\s*:\s*"((?:[^"\\]|\\.)*)")?/g; let mm;
+    while ((mm = re.exec(txt))) items.push({ user_id: Number(mm[1]), score: Number(mm[2]), note: mm[3] ? mm[3].replace(/\\"/g, '"') : '' });
+    if (!items.length) throw new Error('Match Logic answer was not JSON');
+    const busy = /"busy"\s*:\s*true/.test(txt); const br = /"busy_reason"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(txt);
+    return { picks: items, busy, busy_reason: br ? br[1] : '' };
+  }
   async function aiAdjust(job, picks, logic, overload) {
     overload = (overload || '').trim(); logic = (logic || '').trim();
     if (overload === OVERLOAD_DEFAULT.trim()) overload = '';   // Nova's own default is already builtinBusy() — no model call for it
@@ -313,9 +323,11 @@ module.exports = function mountDesignerAi(app, deps) {
     const user = 'OWNER\'S RULES:\n' + (logic.slice(0, 4000) || '(none)') + '\n\nOVERLOAD RULES (when is everyone busy):\n' + (overload.slice(0, 2000) || '(none)') + '\n\nJOB:\n' + JSON.stringify({ e: job.e, name: job.name, customer: job.customer, product: job.product, category: job.category, tier: job.tier, proof_type: job.proof_type, status: job.status_label, hard: job.hard, files: job.files ? job.files.labels : [], creative: job.creative, design_fee: job.design_fee, expedite: job.service === 'expedite', due: job.complete_by, created: job.created, notes: (job.notes || '').slice(0, 600), team_on_it: job.others }) +
       '\n\nDESIGNERS:\n' + JSON.stringify(prof) + '\n\nNOVA\'S SCORES:\n' + JSON.stringify(cand) + '\n\nTime now (Los Angeles): ' + new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
     try {
-      const r = await anthropic.messages.create({ model: model || 'claude-haiku-4-5', max_tokens: 900, system: sys, messages: [{ role: 'user', content: user }] });
-      const txt = (r.content || []).filter(c => c.type === 'text').map(c => c.text).join(''); const m = /\{[\s\S]*\}/.exec(txt); if (!m) return { picks, ai: false };
-      const out = JSON.parse(m[0]); const by = {}; (out.picks || []).forEach(p => { by[p.user_id] = p; });
+      // 1.20.58: 900 tokens cut the JSON mid-array on a 9-designer team ("Expected ',' or ']' … at position 263");
+      // more room, notes kept short, and the answer is parsed with a repair pass (fences, trailing commas, a cut-off tail)
+      const r = await anthropic.messages.create({ model: model || 'claude-haiku-4-5', max_tokens: 2000, system: sys + ' Keep every note under 12 words. No text outside the JSON.', messages: [{ role: 'user', content: user }] });
+      const txt = (r.content || []).filter(c => c.type === 'text').map(c => c.text).join(''); const m = /\{[\s\S]*\}/.exec(txt.replace(/```json|```/g, '')); if (!m) return { picks, ai: false };
+      const out = parseLoose(m[0]); const by = {}; (out.picks || []).forEach(p => { by[p.user_id] = p; });
       const adj = picks.map(p => { const a = by[p.user_id]; if (!a) return p; const sc = Math.max(0, Math.min(100, Math.round(Number(a.score)))); const changed = !isNaN(sc) && sc !== p.score; return Object.assign({}, p, { score: isNaN(sc) ? p.score : sc, why: changed || a.note ? p.why.concat(['your rule: ' + (a.note || ('score ' + p.score + ' → ' + sc))]) : p.why, ai_changed: changed }); });
       if (adj.every(p => p.off_shift || !p.hours_known) && adj.some(p => p.next_start != null)) adj.sort((a, b) => (a.next_start == null) - (b.next_start == null) || (a.next_start || 0) - (b.next_start || 0) || b.score - a.score);
       else adj.sort((a, b) => (a.off_shift - b.off_shift) || (a.at_max - b.at_max) || b.score - a.score || a.active_jobs - b.active_jobs);
