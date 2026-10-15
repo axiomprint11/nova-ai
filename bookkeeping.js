@@ -1284,24 +1284,48 @@ module.exports = function mountBookkeeping(app, deps) {
     return dirCache.list;
   }
   // The directory entry a bank line / bill belongs to: an alias or the full name inside the text, or the email domain.
+  // 1.20.63: the paying bank's own name is boilerplate on its lines ("… PACIFIC OFFICE WELLS FARGO BANK NA" is Pacific
+  // Office, not Wells Fargo). The connected institutions (+ the usual card / bank names) are cut out of the wording before
+  // a vendor is looked for — unless nothing but the bank is left (a real bank fee still links to the bank's vendor).
+  const BANK_WORDS = ['wells fargo bank na', 'wells fargo bank', 'wells fargo', 'american express', 'amex', 'chase', 'jpmorgan chase', 'bank of america', 'citibank', 'citi', 'capital one', 'us bank', 'pnc bank', 'td bank'];
+  let bankNames = null, bankNamesAt = 0;
+  async function bankBoilerplate() {
+    if (bankNames && Date.now() - bankNamesAt < 600000) return bankNames;
+    const inst = (await dbAll("SELECT DISTINCT institution FROM bk_accounts WHERE institution IS NOT NULL AND status <> 'removed'").catch(() => [])).map(r => normV(r.institution)).filter(x => x.length >= 4);
+    bankNames = inst.concat(BANK_WORDS.map(normV)).filter((x, i, a) => x && a.indexOf(x) === i).sort((a, b) => b.length - a.length); bankNamesAt = Date.now();
+    return bankNames;
+  }
+  const isBankVendor = (v, banks) => banks.some(b => v._n === b || v._n === b + ' na');
+  function stripBank(n, banks) {
+    let out = ' ' + n + ' ';
+    banks.forEach(b => { out = out.split(' ' + b + ' ').join(' '); });
+    out = out.replace(/\b(business to business|ach|bill pay|bill_pay|online payment|na)\b/g, ' ').replace(/\s+/g, ' ').trim();
+    const payee = out.split(' ').filter(w => /[a-z]{3,}/.test(w) && !/^\d+$/.test(w));
+    return payee.length >= 1 ? out : null;   // null = the bank is all there is (a fee, interest) — keep the wording whole
+  }
   async function matchVendor(text, email) {
     const list = await directory();
+    const banks = await bankBoilerplate();
     // 1.19.157: "USPS1000009688" on a B2B ACH line is "USPS" + an account code — let the letters match the name
-    const n = normV(String(text || '').replace(/\b([A-Za-z]{3,})(\d{4,})\b/g, '$1 $2')), dom = domainOf(email);
+    let n = normV(String(text || '').replace(/\b([A-Za-z]{3,})(\d{4,})\b/g, '$1 $2')), dom = domainOf(email);
+    const stripped = stripBank(n, banks);
+    if (stripped != null && stripped !== n) { n = stripped; text = stripped; }   // the payee's words only; the bank's own vendor never wins on them
     // an address someone linked from the inbox (kept here in bk_vendors.aliases, not in the CRM) wins
     const addr = String(email || '').toLowerCase().match(/[\w.+-]+@[\w.-]+/); if (addr) { const byAddr = list.find(v => v._em.indexOf(addr[0]) > -1); if (byAddr) return byAddr; }
     if (dom && !FREE_MAIL.test(dom)) { const byDom = list.find(v => v._dom && (v._dom === dom || dom.endsWith('.' + v._dom))); if (byDom) return byDom; }
     if (!n) return null;
-    const hits = list.filter(v => v._n.length >= 3 && (n === v._n || (' ' + n + ' ').indexOf(' ' + v._n + ' ') > -1 || v._al.some(a => a.length >= 3 && (' ' + n + ' ').indexOf(' ' + a + ' ') > -1)));
+    const cand = stripped != null && stripped !== String(text || '') ? list.filter(v => !isBankVendor(v, banks)) : list;
+    // a bank's own vendor still links through an alias a person typed ("monthly service fee") — just never through its name
+    const hits = list.filter(v => v._n.length >= 3 && ((cand.indexOf(v) > -1 && (n === v._n || (' ' + n + ' ').indexOf(' ' + v._n + ' ') > -1)) || v._al.some(a => a.length >= 3 && (' ' + n + ' ').indexOf(' ' + a + ' ') > -1)));
     if (hits.length) return hits.sort((a, b) => b._n.length - a._n.length)[0];
     // 1.20.62: spacing differences — "4Over" on "4 OVER INTERNATIONAL", "B2 Sign" on "B2SIGN": compare with spaces removed,
     // the vendor's compact name (or alias) at least 5 characters and starting a word of the line
     const nc = n.replace(/ /g, ''), starts = n.split(' ').map((w, i, a) => a.slice(i).join(''));
-    const byCompact = list.filter(v => [v._n].concat(v._al || []).some(a => { const c = a.replace(/ /g, ''); return c.length >= 5 && starts.some(st => st.indexOf(c) === 0) && (c.length >= 6 || nc.indexOf(c) === 0); }));
+    const byCompact = cand.filter(v => [v._n].concat(v._al || []).some(a => { const c = a.replace(/ /g, ''); return c.length >= 5 && starts.some(st => st.indexOf(c) === 0) && (c.length >= 6 || nc.indexOf(c) === 0); }));
     if (byCompact.length) return byCompact.sort((a, b) => b._n.length - a._n.length)[0];
     // 1.19.91: an alias whose stable wording (codes dropped) equals, or sits inside, the line's stable wording
     const ns = stableV(text);
-    if (ns.length >= 6) { const byStable = list.filter(v => (v._als || []).some(a => a === ns || (' ' + ns + ' ').indexOf(' ' + a + ' ') > -1)); if (byStable.length) return byStable.sort((a, b) => b._n.length - a._n.length)[0]; }
+    if (ns.length >= 6) { const byStable = cand.filter(v => (v._als || []).some(a => a === ns || (' ' + ns + ' ').indexOf(' ' + a + ' ') > -1)); if (byStable.length) return byStable.sort((a, b) => b._n.length - a._n.length)[0]; }
     // (No first-word guessing here: "Pacific Office Automation" must not land on "Pacific Engravers". Near matches are
     // offered by suggestVendors() for a person to confirm.)
     return null;
@@ -2044,6 +2068,26 @@ module.exports = function mountBookkeeping(app, deps) {
   // debits). Drop those aliases, unlink the machine-made links on own-name lines, and send their rule-made categories back
   // to Pending; the next Bank feed load re-links them from the real wording.
   db.run('CREATE TABLE IF NOT EXISTS bk_migrations (key TEXT PRIMARY KEY, at TEXT)', () => {
+    // 1.20.63: links to the paying bank's own vendor ("Wells Fargo Bank" on "… PACIFIC OFFICE WELLS FARGO BANK NA") are undone
+    // and the rule-made categories they caused go back to Pending; a person's own link is left alone
+    db.get("SELECT key FROM bk_migrations WHERE key = 'bank_boilerplate_163'", [], async (e, row) => {
+      if (e || row) return;
+      try {
+        const banks = await bankBoilerplate(); dirCache.at = 0;
+        const list = await directory(); const bankIds = list.filter(v => isBankVendor(v, banks)).map(v => v.id);
+        let unlinked = 0, reset = 0;
+        if (bankIds.length) for (const t of await dbAll("SELECT id, name, merchant, raw, vendor_id, category_source FROM bk_transactions WHERE vendor_id IN (" + bankIds.join(',') + ") AND IFNULL(vendor_by, 'auto') <> 'person' AND status NOT IN ('removed', 'excluded')")) {
+          const real = await matchVendorAny(t).catch(() => null);
+          if (real && real.id === t.vendor_id) continue;
+          await dbRun('UPDATE bk_transactions SET vendor_id = NULL, vendor_by = NULL, vendor_score = NULL WHERE id = ?', [t.id]); unlinked++;
+          if (t.category_source === 'rule') { await dbRun("UPDATE bk_transactions SET category = NULL, category_source = NULL, rule_id = NULL, status = 'pending', auto_reviewed_at = NULL, updated_at = datetime('now') WHERE id = ?", [t.id]); reset++; }
+          if (real) await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = 'auto', vendor_score = 1 WHERE id = ?", [real.id, t.id]);
+        }
+        await dbRun("INSERT OR REPLACE INTO bk_migrations (key, at) VALUES ('bank_boilerplate_163', datetime('now'))");
+        await audit('system', 'repair.bank_boilerplate', null, { unlinked, reset });
+        console.log('BOOKKEEPER repair bank-boilerplate links: unlinked ' + unlinked + ', categories reset ' + reset);
+      } catch (e2) { errlog('repair bank boilerplate', e2.message); }
+    });
     db.get("SELECT key FROM bk_migrations WHERE key = 'own_alias_158'", [], async (e, row) => {
       if (e || row) return;
       try {
