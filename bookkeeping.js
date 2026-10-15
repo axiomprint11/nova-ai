@@ -126,6 +126,9 @@ module.exports = function mountBookkeeping(app, deps) {
     // 1.19.149: a line a person sent back to Pending ("Uncategorize" in the Categorized view) — the rule / team / loan
     // sweeps leave it alone until someone files it again
     db.run('ALTER TABLE bk_transactions ADD COLUMN no_auto INTEGER DEFAULT 0', () => {});
+    db.run('ALTER TABLE bk_transactions ADD COLUMN auto_reviewed_at TEXT', () => {});   // 1.20.61: an auto-filed line a person has looked at (the Auto tab shows only the unreviewed)
+    db.run('ALTER TABLE bk_transactions ADD COLUMN auto_reviewed_by TEXT', () => {});
+    db.run('ALTER TABLE bk_transactions ADD COLUMN dup_of INTEGER', () => {});   // 1.20.61: the same bank line already held under another connection (a re-linked bank gives new Plaid ids)
     db.run('ALTER TABLE bk_transactions ADD COLUMN category_by TEXT', () => {});   // 1.20.1: who filed it by hand / approved it (rules and sweeps leave it NULL)
     db.run('ALTER TABLE bk_bills ADD COLUMN merged_into INTEGER', () => {});
     // How bill lines were linked by hand: vendor + the line's wording → material / machine. The next bill from that
@@ -473,7 +476,7 @@ module.exports = function mountBookkeeping(app, deps) {
   // Pull new / changed / removed transactions for one bank connection (cursor-based, so nothing is missed or doubled).
   async function syncItem(row, who) {
     const token = dec(row.access_token);
-    let cursor = row.cursor || undefined, added = 0, modified = 0, removed = 0, more = true, guardN = 0;
+    let cursor = row.cursor || undefined, added = 0, modified = 0, removed = 0, dups = 0, more = true, guardN = 0;
     while (more && guardN++ < 50) {
       const j = await plaid('/transactions/sync', { access_token: token, cursor: cursor, count: 500, options: { include_original_description: true } });   // 1.19.56: the bank's own memo line too
       const names = {}; let accts = [];
@@ -488,6 +491,15 @@ module.exports = function mountBookkeeping(app, deps) {
             [t.transaction_id, row.item_id, t.account_id, names[t.account_id] || null, t.date, t.name, t.merchant_name || null, Number(t.amount), t.pending ? 1 : 0, cat, JSON.stringify(t).slice(0, 20000)]);
           added++;
           if (excl.indexOf(t.account_id) > -1) await dbRun("UPDATE bk_transactions SET status = 'excluded', prev_status = 'new' WHERE id = ?", [ins.lastID]);
+          // 1.20.61: Plaid transaction ids are per connection — a bank re-linked for more history sends the SAME lines with
+          // NEW ids. A posted line whose date + amount + wording already sit under another connection is a duplicate
+          // (counted: two real $227.43 B2 Sign charges on one day stay two — only the surplus copies are set aside).
+          else if (!t.pending) {
+            const dupe = await dbGet("SELECT id FROM bk_transactions WHERE item_id <> ? AND date = ? AND amount = ? AND IFNULL(name, '') = ? AND pending = 0 AND status NOT IN ('removed') AND dup_of IS NULL AND id <> ? ORDER BY id LIMIT 1 OFFSET " +
+              "(SELECT COUNT(*) FROM bk_transactions WHERE item_id = ? AND date = ? AND amount = ? AND IFNULL(name, '') = ? AND pending = 0 AND status <> 'removed' AND id < ?)",
+              [row.item_id, t.date, Number(t.amount), t.name || '', ins.lastID, row.item_id, t.date, Number(t.amount), t.name || '', ins.lastID]);
+            if (dupe) { await dbRun("UPDATE bk_transactions SET status = 'excluded', prev_status = 'new', dup_of = ? WHERE id = ?", [dupe.id, ins.lastID]); dups++; }
+          }
           // 1.19.51: a posted line replaces its pending one — keep the category, vendor and the AI's suggestion the pending line had
           const prev = t.pending_transaction_id ? await dbGet('SELECT * FROM bk_transactions WHERE txn_id = ?', [t.pending_transaction_id]) : null;
           if (prev && (prev.category || prev.vendor_id || prev.proposal_id)) {
@@ -510,13 +522,13 @@ module.exports = function mountBookkeeping(app, deps) {
       cursor = j.next_cursor; more = !!j.has_more;
       await dbRun("UPDATE bk_accounts SET cursor = ?, last_sync_at = datetime('now'), status = 'ok', error = NULL WHERE id = ?", [cursor, row.id]);
     }
-    await audit(who, 'plaid.sync', row.item_id, { added, modified, removed });
-    return { added, modified, removed };
+    await audit(who, 'plaid.sync', row.item_id, { added, modified, removed, duplicates: dups });
+    return { added, modified, removed, dups };
   }
   async function syncAll(who) {
     const out = { added: 0, modified: 0, removed: 0, items: 0, errors: [] };
     for (const row of await dbAll('SELECT * FROM bk_accounts')) {
-      try { const r = await syncItem(row, who); out.added += r.added; out.modified += r.modified; out.removed += r.removed; out.items++; }
+      try { const r = await syncItem(row, who); out.added += r.added; out.modified += r.modified; out.removed += r.removed; out.dups = (out.dups || 0) + (r.dups || 0); out.items++; }
       catch (e) { out.errors.push(row.institution + ': ' + e.message); await dbRun("UPDATE bk_accounts SET status = 'error', error = ? WHERE id = ?", [e.message.slice(0, 300), row.id]); errlog('plaid sync', e.message); }
     }
     return out;
@@ -2165,7 +2177,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (st === 'pending') { where.push("t.status IN ('new', 'pending') AND t.created_at < ? AND t.date >= date('now', '-90 days')"); p.push(cut); }
     else if (st === 'old') where.push("t.status IN ('new', 'pending') AND t.date < date('now', '-90 days')");
     else if (st === 'new') { where.push("t.status IN ('new', 'pending') AND t.created_at >= ?"); p.push(cut); }   // 1.19.115: Today = synced today and still open; a categorized line moves to Categorized
-    else if (st === 'auto') where.push("t.status = 'categorized' AND t.category_source IN ('rule', 'team', 'loan')");   // 1.20.12: Auto = filed by the system with no click (a rule, the overseas-team match, a loan sweep)
+    else if (st === 'auto') where.push("t.status = 'categorized' AND t.category_source IN ('rule', 'team', 'loan') AND t.auto_reviewed_at IS NULL");   // 1.20.61: only what nobody has reviewed yet   // 1.20.12: Auto = filed by the system with no click (a rule, the overseas-team match, a loan sweep)
     else if (st) { where.push('t.status = ?'); p.push(st); }
     if (q) { where.push('(t.name LIKE ? OR t.merchant LIKE ? OR t.category LIKE ? OR v.name LIKE ?)'); p.push('%' + q + '%', '%' + q + '%', '%' + q + '%', '%' + q + '%'); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(g('from'))) { where.push('t.date >= ?'); p.push(g('from')); }
@@ -2190,7 +2202,7 @@ module.exports = function mountBookkeeping(app, deps) {
     by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND created_at >= ?", [cut])).n;
     by_status.new_open = by_status.new;
     by_status.old = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND date < date('now', '-90 days')")).n;
-    by_status.auto = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status = 'categorized' AND category_source IN ('rule', 'team', 'loan') AND status NOT IN ('removed', 'excluded')")).n;   // 1.20.12
+    by_status.auto = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status = 'categorized' AND category_source IN ('rule', 'team', 'loan') AND auto_reviewed_at IS NULL")).n;   // 1.20.12; 1.20.61: the unreviewed ones — "n new"
     by_status.pending = (by_status.new_status || 0) + (by_status.pending || 0) - by_status.new_open - by_status.old;   // the open lines older than a day, within 90 days
     const W = ' FROM bk_transactions t LEFT JOIN bk_vendors v ON v.id = t.vendor_id LEFT JOIN bk_vendors sv ON sv.id = t.suggest_vendor_id LEFT JOIN bk_accounts ba ON ba.item_id = t.item_id LEFT JOIN bk_transactions tr ON tr.id = t.transfer_of LEFT JOIN bk_accounts tra ON tra.item_id = tr.item_id LEFT JOIN bk_loans lo ON lo.id = t.loan_id LEFT JOIN bk_proposals pr ON pr.id = t.proposal_id LEFT JOIN bk_transactions ro ON ro.id = t.refund_of LEFT JOIN bk_transactions rb ON rb.refund_of = t.id WHERE ' + where.join(' AND ');
     const rows = await dbAll('SELECT t.id, t.txn_id, t.team_id, t.account_name, t.account_ref, t.date, t.created_at, t.name, t.raw, t.merchant, t.amount, t.pending, t.plaid_category, t.category, t.category_source, t.rule_id, t.proposal_id, t.status, t.vendor_id, t.vendor_by, t.vendor_score, t.suggest_vendor_id, t.suggest_score, ' +
@@ -2852,6 +2864,18 @@ module.exports = function mountBookkeeping(app, deps) {
     res.json({ ok: true, materials: rows });
   });
   app.get('/api/bookkeeping/purchases/:id/suggest', ...guard, async (req, res) => { const p = await dbGet('SELECT * FROM bk_purchases WHERE id = ?', [parseInt(req.params.id)]); if (!p) return res.json({ ok: false, error: 'No such purchase' }); res.json({ ok: true, transactions: await suggestTxns(p) }); });
+  // 1.20.61: the Auto tab is a review queue — "Mark all reviewed" clears it (every unreviewed auto-filed line, or the ids given)
+  app.post('/api/bookkeeping/transactions/auto-reviewed', ...guard, async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(Number).filter(Boolean) : null;
+      const who = userId(req), now = new Date().toISOString();
+      const r = ids && ids.length
+        ? await dbRun("UPDATE bk_transactions SET auto_reviewed_at = ?, auto_reviewed_by = ? WHERE id IN (" + ids.map(() => '?').join(',') + ") AND auto_reviewed_at IS NULL", [now, who].concat(ids))
+        : await dbRun("UPDATE bk_transactions SET auto_reviewed_at = ?, auto_reviewed_by = ? WHERE status = 'categorized' AND category_source IN ('rule', 'team', 'loan') AND auto_reviewed_at IS NULL", [now, who]);
+      await audit(who, 'auto.reviewed', 0, { n: r.changes, ids: ids || 'all' });
+      res.json({ ok: true, reviewed: r.changes });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
   app.post('/api/bookkeeping/purchases/:id/attach', ...guard, async (req, res) => { try { const pid = parseInt(req.params.id), tid = parseInt(req.body && req.body.transaction_id); if (!tid) return res.json({ ok: false, error: 'Which bank line?' }); const tx = await dbGet('SELECT id, purchase_id FROM bk_transactions WHERE id = ?', [tid]); if (!tx) return res.json({ ok: false, error: 'No such transaction' }); if (tx.purchase_id && tx.purchase_id !== pid) return res.json({ ok: false, error: 'That bank line already belongs to purchase #' + tx.purchase_id }); await attachTo(pid, { txn_id: tid }, userId(req)); res.json({ ok: true }); } catch (e) { res.json({ ok: false, error: e.message }); } });
   app.post('/api/bookkeeping/purchases/:id/receive', ...guard, async (req, res) => {
     const pid = parseInt(req.params.id), b = req.body || {}, st = String(b.status || ''); const p = await dbGet('SELECT id FROM bk_purchases WHERE id = ?', [pid]); if (!p) return res.json({ ok: false, error: 'No such purchase' });
@@ -3572,12 +3596,18 @@ module.exports = function mountBookkeeping(app, deps) {
   app.post('/api/bookkeeping/plaid/link-token', ...guard, async (req, res) => {
     if (!plaidReady()) return res.json({ ok: false, error: 'PLAID_CLIENT_ID and PLAID_SECRET are not in .env yet.' });
     try {
-      const j = await plaid('/link/token/create', { user: { client_user_id: 'axiomprint-books' }, client_name: 'AxiomPrint BookkeeperAI', products: ['transactions'], country_codes: ['US'], language: 'en',
-        webhook: NOVA_URL + '/api/bookkeeping/plaid/webhook', transactions: { days_requested: 90 },
+      // 1.20.61: the full history Plaid allows (730 days) — new banks get it at once; an existing connection gets it through
+      // Link's update mode (`item_id` in the body: same connection, same transaction ids, the extra months arrive as "added"
+      // on the next sync — nothing is doubled). Update mode needs no public_token exchange.
+      const upd = req.body && req.body.item_id ? await dbGet('SELECT * FROM bk_accounts WHERE id = ? OR item_id = ?', [parseInt(req.body.item_id) || 0, String(req.body.item_id)]) : null;
+      if (req.body && req.body.item_id && !upd) return res.json({ ok: false, error: 'No such bank connection.' });
+      const days = Math.max(30, Math.min(730, parseInt(req.body && req.body.days) || 730));
+      const j = await plaid('/link/token/create', Object.assign({ user: { client_user_id: 'axiomprint-books' }, client_name: 'AxiomPrint BookkeeperAI', country_codes: ['US'], language: 'en',
+        webhook: NOVA_URL + '/api/bookkeeping/plaid/webhook', transactions: { days_requested: days } }, upd ? { access_token: dec(upd.access_token) } : { products: ['transactions'] }, {
         // 1.19.46: OAuth banks (Chase, Bank of America, Wells Fargo, Capital One…) send the person back here after
         // signing in at the bank. The same address must be in the Plaid dashboard: Team Settings → API → Allowed redirect URIs.
-        redirect_uri: NOVA_URL + '/bookkeeping/plaid-oauth' });
-      res.json({ ok: true, link_token: j.link_token, env: PLAID_ENV });
+        redirect_uri: NOVA_URL + '/bookkeeping/plaid-oauth' }));
+      res.json({ ok: true, link_token: j.link_token, env: PLAID_ENV, update: !!upd, days });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   app.post('/api/bookkeeping/plaid/exchange', ...guard, async (req, res) => {

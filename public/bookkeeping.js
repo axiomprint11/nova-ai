@@ -765,7 +765,7 @@
     const bankCell = (t) => '<div class="tx-bank" title="' + esc((t.institution || 'Bank') + (t.mask ? ' - ' + t.mask : '') + (t.account_name ? ' · ' + t.account_name : '')) + '">' + (t.bank_logo ? '<img src="' + esc(t.bank_logo) + '" alt="">' : '<span class="tx-bank-ph" style="' + (t.bank_color ? 'background:' + esc(t.bank_color) : '') + '">' + esc(String(t.institution || t.account_name || '?').charAt(0)) + '</span>') +
       '<b>' + esc(t.institution ? bankAbbr(t.institution) : 'Bank') + (t.mask ? ' <span class="tx-mask">••' + esc(t.mask) + '</span>' : '') + '</b></div>';
     const statsBar = txStats ? '<div class="bk-filters tx-stats-bar"><span class="bk-muted">Period</span>' + PERIODS.map(pp => '<button class="ib-chip sm' + (TF.period === pp.v && !TF.from ? ' on' : '') + '" data-period="' + pp.v + '">' + esc(pp.l) + '</button>').join('') + '<span class="sp"></span><button class="bk-btn sm" id="tfMore" title="Vendor, account, amount and category filters">' + (anyF && TF.period === '30' ? 'Filtered' : 'Filter…') + '</button></div>' : '';
-    v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top"><span class="bk-muted">' + (j.matched != null ? j.matched : (j.transactions || []).length) + ' ' + (st && st !== 'new' ? (STL[st] || '').toLowerCase() + ' ' : '') + 'line' + (j.matched === 1 ? '' : 's') + (st === 'new' ? ' synced today' : st === 'old' ? ' older than 90 days' : TF.period === '30' && !TF.from ? ' in the last 30 days' : '') + ((j.transactions || []).length < (j.matched || 0) ? ' · showing the first ' + j.transactions.length : '') + '</span><span class="sp"></span>' + (anyF ? '<button class="bk-btn sm" id="tfClear" title="Remove every column filter">× Clear filters</button>' : '') + '<button class="bk-btn ico" id="syncNow" title="Sync with Bank" aria-label="Sync with Bank">' + syncIcon + '</button></div>' + fbar + statsBar + chart +
+    v.innerHTML = '<div class="bk-card"><div class="bk-filters tx-top"><span class="bk-muted">' + (j.matched != null ? j.matched : (j.transactions || []).length) + ' ' + (st && st !== 'new' ? (STL[st] || '').toLowerCase() + ' ' : '') + 'line' + (j.matched === 1 ? '' : 's') + (st === 'new' ? ' synced today' : st === 'auto' ? ' filed by Nova, not reviewed yet' : st === 'old' ? ' older than 90 days' : TF.period === '30' && !TF.from ? ' in the last 30 days' : '') + ((j.transactions || []).length < (j.matched || 0) ? ' · showing the first ' + j.transactions.length : '') + '</span><span class="sp"></span>' + (anyF ? '<button class="bk-btn sm" id="tfClear" title="Remove every column filter">× Clear filters</button>' : '') + (st === 'auto' && (j.matched || (j.transactions || []).length) ? '<button class="bk-btn sm" id="autoReviewed" title="Every line here has been looked at — clear the Auto tab">✓ Mark all reviewed</button>' : '') + '<button class="bk-btn ico" id="syncNow" title="Sync with Bank" aria-label="Sync with Bank">' + syncIcon + '</button></div>' + fbar + statsBar + chart +
       (txStats ? '' : '<table class="bk tx-table"><thead><tr><th class="tx-date">' + thFilter('date', 'Date', FO.date) + '</th><th class="tx-vth">' + thFilter('vkind', 'Vendor', FO.vkind, TF.vkind) + thFilter('vendor', 'Company', FO.vendor, TF.vendor_id) + '</th><th>Description</th><th>' + thFilter('account', 'Account', FO.account, TF.account) + '</th><th class="num">' + thFilter('amount', 'Amount', FO.amount) + '</th><th>' + thFilter('type', 'Category', FO.type, TF.type ? 'T:' + TF.type : TF.category ? 'C:' + TF.category : '') + '</th><th>Status</th></tr></thead><tbody>' +
       (j.transactions || []).map(t => '<tr><td class="tx-date" title="Synced from the bank · bank date ' + esc(usD(t.date)) + (t.pending ? ' (still pending at the bank)' : '') + '">' + laD2(t.created_at) + checkLine(t) + '</td>' +
         '<td>' + vendorCell(t) + '</td><td class="tx-desc-td" title="' + esc([prettyCat(t) ? 'Bank category: ' + prettyCat(t) : '', t.place].filter(Boolean).join(' · ')) + '">' + esc(descTop(t)) + ((t.orig_desc || t.name) !== descTop(t) ? '<div class="bk-muted tx-orig">' + esc(t.orig_desc || t.name) + '</div>' : '') + '</td><td>' + bankCell(t) + '</td>' +
@@ -808,6 +808,12 @@
     v.querySelectorAll('[data-rtype]').forEach(el => el.onclick = () => { TF.type = el.dataset.rtype; TF.category = ''; saveTF(); });
     v.querySelectorAll('[data-rvendor]').forEach(el => el.onclick = () => { TF.vendor_id = el.dataset.rvendor; saveTF(); });
     $('syncNow').onclick = async () => { $('syncNow').disabled = true; const r = await post('/api/bookkeeping/sync', {}); if (!r.ok) alert(r.error); loadTxns(); overview(); };
+    if ($('autoReviewed')) $('autoReviewed').onclick = async () => {
+      const n = j.matched != null ? j.matched : (j.transactions || []).length;
+      if (!(await ask('Mark all **' + n + '** auto-filed lines as reviewed? They leave the Auto tab (and stay under Categorized).', { ok: 'Mark reviewed' }))) return;
+      const r = await post('/api/bookkeeping/transactions/auto-reviewed', {}); if (!r.ok) return alert(r.error);
+      toast(r.reviewed + ' line' + (r.reviewed === 1 ? '' : 's') + ' marked reviewed'); loadTxns('auto'); overview();
+    };
     // Picking a category sets it on the spot (no Set button); the row flashes green.
     v.querySelectorAll('td[data-txid]').forEach(td => { const wrap = td.querySelector('.ckp'), inp = td.querySelector('input.tx-cat'); let last = inp.value;
       // 1.19.149: "↺ Uncategorize" (Categorized view only) — back to Pending, the sweeps leave it alone until it is filed again
@@ -2445,7 +2451,7 @@
       '<div class="bk-muted" style="margin-top:8px">Goods or service is decided by the type of expense in the Chart of Accounts ("expects delivery"), and can be flipped on any purchase.</div></div>' +
       // Plaid
       '<div class="bk-card"><h2>Bank accounts ' + pill(c.plaid.configured, 'Plaid keys set (' + esc(c.plaid.env) + ')', 'Plaid keys not in .env') + '<span class="sp"></span>' + (c.plaid.leftovers ? '<button class="bk-btn bad" id="plaidPurge" title="Remove the sandbox connections and every test transaction, proposal and purchase that came from them. Bills and emails stay.">Remove test data</button>' : '') + '<button class="bk-btn p" id="plaidLink"' + (c.plaid.configured ? '' : ' disabled') + '>Connect a bank</button></h2>' +
-      (c.plaid.items.length ? '<table class="bk"><thead><tr><th>Bank</th><th>Accounts</th><th>Last sync</th><th>Status</th><th></th></tr></thead><tbody>' + c.plaid.items.map(it => '<tr><td>' + esc(it.institution) + '</td><td>' + it.accounts.map(a => '<label class="bk-acct' + ((it.excluded || []).indexOf(a.account_id) > -1 ? ' off' : '') + '"><input type="checkbox" data-acct="' + esc(a.account_id) + '" data-item="' + it.id + '"' + ((it.excluded || []).indexOf(a.account_id) > -1 ? '' : ' checked') + '> ' + esc(a.name) + (a.mask ? ' ••' + esc(a.mask) : '') + ((it.excluded || []).indexOf(a.account_id) > -1 ? ' <span class="bk-dim">not in use</span>' : '') + '</label>').join('') + '</td><td>' + when(it.last_sync_at) + '</td><td>' + (it.env && it.env !== c.plaid.env ? '<span class="bk-pill err" title="Connected under Plaid ' + esc(it.env) + '; Nova now runs ' + esc(c.plaid.env) + ' — disconnect it and connect the real bank">' + esc(it.env) + ' — reconnect</span>' : it.status === 'ok' ? '<span class="bk-pill on">ok</span>' : '<span class="bk-pill err">' + esc(it.error || it.status) + '</span>') + '</td><td><button class="bk-btn sm bad" data-unlink="' + it.id + '">Disconnect</button></td></tr>').join('') + '</tbody></table>'
+      (c.plaid.items.length ? '<table class="bk"><thead><tr><th>Bank</th><th>Accounts</th><th>Last sync</th><th>Status</th><th></th></tr></thead><tbody>' + c.plaid.items.map(it => '<tr><td>' + esc(it.institution) + '</td><td>' + it.accounts.map(a => '<label class="bk-acct' + ((it.excluded || []).indexOf(a.account_id) > -1 ? ' off' : '') + '"><input type="checkbox" data-acct="' + esc(a.account_id) + '" data-item="' + it.id + '"' + ((it.excluded || []).indexOf(a.account_id) > -1 ? '' : ' checked') + '> ' + esc(a.name) + (a.mask ? ' ••' + esc(a.mask) : '') + ((it.excluded || []).indexOf(a.account_id) > -1 ? ' <span class="bk-dim">not in use</span>' : '') + '</label>').join('') + '</td><td>' + when(it.last_sync_at) + '</td><td>' + (it.env && it.env !== c.plaid.env ? '<span class="bk-pill err" title="Connected under Plaid ' + esc(it.env) + '; Nova now runs ' + esc(c.plaid.env) + ' — disconnect it and connect the real bank">' + esc(it.env) + ' — reconnect</span>' : it.status === 'ok' ? '<span class="bk-pill on">ok</span>' : '<span class="bk-pill err">' + esc(it.error || it.status) + '</span>') + '</td><td><button class="bk-btn sm" data-more="' + it.id + '" title="Re-open the bank sign-in in update mode and ask Plaid for up to 2 years of history on this same connection — the older months come in on the next sync, nothing is doubled">More history</button> <button class="bk-btn sm bad" data-unlink="' + it.id + '">Disconnect</button></td></tr>').join('') + '</tbody></table>'
         : '<div class="bk-muted">No bank connected yet.</div>') +
       '<ol class="bk-steps"><li>Create a Plaid account at dashboard.plaid.com (the Transactions product; Sandbox to try, then request Production / Limited Production).</li><li>Put <code>PLAID_CLIENT_ID</code>, <code>PLAID_SECRET</code> and <code>PLAID_ENV=sandbox|production</code> in <code>.env</code> and restart Nova.</li><li>Nothing to set in the dashboard\u2019s Webhooks page (that page is only for Transfer / Wallet / Income events): the Transactions webhook <code>' + esc(c.chat.plaid_webhook_url) + '</code> is attached to every bank connection Nova creates. Under Team Settings \u2192 API \u2192 <b>Allowed redirect URIs</b> add <code>https://nova.axiomprint.com/bookkeeping/plaid-oauth</code> \u2014 banks that sign you in on their own page (Chase, Bank of America, Wells Fargo, Capital One\u2026) send you back there.</li><li>Press <b>Connect a bank</b> and sign in to each bank (2 accounts). Transactions sync straight away; the webhook keeps them current, the daily run syncs again.</li></ol></div>' +
       // Gmail
@@ -2490,10 +2496,15 @@
       loadConn(); overview();
     });
     v.querySelectorAll('[data-unlink]').forEach(b => b.onclick = async () => { if (!await ask('Its transactions stay; new ones stop coming in.', { title: 'Disconnect this bank?', ok: 'Disconnect', danger: true })) return; await api('/api/bookkeeping/plaid/' + b.dataset.unlink, { method: 'DELETE' }); loadConn(); });
-    const openLink = async (token, receivedRedirectUri) => {
+    const openLink = async (token, receivedRedirectUri, update) => {
       await loadScript('https://cdn.plaid.com/link/v2/stable/link-initialize.js');
       const h = window.Plaid.create(Object.assign({ token: token,
-        onSuccess: async (public_token, metadata) => { try { localStorage.removeItem('bk_plaid_link_token'); } catch (e) {} const x = await post('/api/bookkeeping/plaid/exchange', { public_token, metadata }); $('connMsg').textContent = x.ok ? 'Connected ' + x.institution + (x.first_sync && x.first_sync.added != null ? ' — ' + x.first_sync.added + ' transactions pulled.' : '.') : x.error; $('plaidLink').disabled = false; loadConn(); },
+        onSuccess: async (public_token, metadata) => { try { localStorage.removeItem('bk_plaid_link_token'); localStorage.removeItem('bk_plaid_update'); } catch (e) {}
+          if (update) {   // 1.20.61: update mode — the connection already exists; sync pulls the extra history (duplicates are set aside by the sync itself)
+            $('connMsg').textContent = 'Pulling the extra history…'; const r = await post('/api/bookkeeping/sync', {});
+            $('connMsg').textContent = r.ok ? 'Done — ' + (r.sync.added || 0) + ' new lines' + (r.sync.dups ? ', ' + r.sync.dups + ' already-known lines set aside' : '') + '.' : (r.error || 'Sync failed');
+            ov = null; loadConn(); overview(); return; }
+          const x = await post('/api/bookkeeping/plaid/exchange', { public_token, metadata }); $('connMsg').textContent = x.ok ? 'Connected ' + x.institution + (x.first_sync && x.first_sync.added != null ? ' — ' + x.first_sync.added + ' transactions pulled.' : '.') : x.error; $('plaidLink').disabled = false; loadConn(); },
         onExit: () => { $('plaidLink').disabled = false; try { localStorage.removeItem('bk_plaid_link_token'); } catch (e) {} } }, receivedRedirectUri ? { receivedRedirectUri: receivedRedirectUri } : {}));
       h.open();
     };
@@ -2502,6 +2513,14 @@
       $('plaidPurge').disabled = true; const r = await post('/api/bookkeeping/plaid/purge-sandbox', {});
       $('connMsg').textContent = r.ok ? 'Removed ' + r.connections + ' test connection(s), ' + r.transactions + ' transactions and ' + r.purchases + ' purchases.' : r.error; ov = null; loadConn();
     };
+    v.querySelectorAll('[data-more]').forEach(b => b.onclick = async () => {
+      if (!await ask('Plaid will re-open this bank\u2019s sign-in and extend the history to up to **2 years** on the same connection. The older months arrive on the next sync; lines Nova already has are recognised and never doubled.', { title: 'Pull more history?', ok: 'Continue' })) return;
+      b.disabled = true;
+      const r = await post('/api/bookkeeping/plaid/link-token', { item_id: b.dataset.more, days: 730 });
+      if (!r.ok) { alert(r.error); b.disabled = false; return; }
+      try { localStorage.setItem('bk_plaid_link_token', r.link_token); localStorage.setItem('bk_plaid_update', '1'); } catch (e) {}
+      openLink(r.link_token, null, true);
+    });
     $('plaidLink').onclick = async () => {
       $('plaidLink').disabled = true;
       const r = await post('/api/bookkeeping/plaid/link-token', {});
@@ -2513,7 +2532,8 @@
     if (window.__plaidReturn) {
       const back = window.__plaidReturn; window.__plaidReturn = null;
       let tok = null; try { tok = localStorage.getItem('bk_plaid_link_token'); } catch (e) {}
-      if (tok) { $('plaidLink').disabled = true; openLink(tok, back); } else $('connMsg').textContent = 'The bank sent you back, but the connection could not be resumed — press Connect a bank again.';
+      let upd = false; try { upd = localStorage.getItem('bk_plaid_update') === '1'; } catch (e) {}
+      if (tok) { $('plaidLink').disabled = true; openLink(tok, back, upd); } else $('connMsg').textContent = 'The bank sent you back, but the connection could not be resumed — press Connect a bank again.';
     }
   }
   function loadScript(src) { return new Promise((ok, no) => { if (document.querySelector('script[src="' + src + '"]')) return ok(); const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); }); }
