@@ -271,22 +271,13 @@
     // at the bottom of the call (foot), with an envelope that lists every summary email sent to the team.
     let foot = '';
     const csrMails = (c.emails || []).map((m, i) => ({ m: m, i: i })).filter(x => x.m.kind === 'csr');
-    // One CSR control at the bottom: "CSR team notified · N" opens what was sent; "Notify again" sends the summary again.
-    const csrCtl = (csrMails.length ? '<button type="button" class="tk-mailbtn" data-ho="hist" title="What was sent to the CSR team">' +
-      '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>' +
-      'CSR team notified ' + esc(rel(csrMails[csrMails.length - 1].m.created_at)) + (csrMails.length > 1 ? ' · ' + csrMails.length + ' emails' : '') + '</button>' : '<span class="tk-foot-st">Not emailed to the CSR team yet</span>') +
-      '<button type="button" class="tk-notify" data-ho="csr">' + (csrMails.length ? 'Notify again' : 'Notify the CSR team') + '</button>';
     if (c.ai_summary) {
       const cb = Number(c.callback) === 1;
       html += '<div class="tk-sum ai"><span>AI summary <em class="' + (cb ? 'cb' : 'ok') + '">' + (cb ? 'Call back' + (c.callback_reason ? ': ' + esc(c.callback_reason) : '') : 'No callback needed') + '</em></span>' + esc(c.ai_summary) + '</div>';
-      foot = '<div class="tk-foot"><span class="tk-foot-csr">' + csrCtl + '</span>' +
-        (c.hook_status ? '<span class="tk-foot-st">CRM webhook: ' + esc(c.hook_status) + '</span>' : '<span class="tk-foot-st"></span>') +
-        '<button type="button" class="tk-link" data-ho="summary">Write it again</button>' +
-        '<button type="button" class="tk-link" data-ho="data">Webhook data</button>' +
-        '<button type="button" class="tk-link" data-ho="hook" title="POST this call to the CRM webhook now (call.updated when the CRM already has it)">' + (c.hook_status === 'delivered' ? 'Send to CRM again' : 'Send to CRM') + '</button></div>';
+      foot = '';   // 1.20.77: nothing under the call — the CSR email already sits in "After the call" with its time and recipients
     } else if (c.source === 'phone' && (c.transcript || []).length) {
       html += '<div class="tk-sum"><span>Summary' + (c.summary ? ' (ElevenLabs)' : '') + '</span>' + esc(c.summary || 'No AI summary yet.') + '</div>';
-      foot = '<div class="tk-foot"><button type="button" class="tk-link" data-ho="summary">Write the AI summary</button><button type="button" class="tk-link" data-ho="data">Webhook data</button><button type="button" class="tk-link" data-ho="hook" title="Write the summary and POST this call to the CRM webhook now">Send to CRM</button></div>';
+      foot = '<div class="tk-foot"><button type="button" class="tk-link" data-ho="summary">Write the AI summary</button></div>';   // 1.20.77: only when there is none yet
     } else if (c.summary) html += '<div class="tk-sum"><span>Summary</span>' + esc(c.summary) + '</div>';
     const topLen = html.length;          // header, prices and AI summary stay fixed; the transcript scrolls below them
     const events = turns.filter(t => t.role === 'event');
@@ -411,7 +402,7 @@
     v.querySelectorAll('[data-ho]').forEach(b => {
       b.onclick = async () => {
         const k = b.dataset.ho;
-        if (k === 'hist') return csrHistory(b, csrMails, () => v.querySelector('[data-ho="csr"]').click());
+        if (k === 'hist') return csrHistory(b, csrMails, () => { const x = v.querySelector('[data-ho="csr"]'); if (x) x.click(); });
         if (k === 'data') {
           const j = await api('/api/admin/talk/calls/' + id + '/handoff');
           if (!j.ok) return alert(j.error || 'Could not build it.');
