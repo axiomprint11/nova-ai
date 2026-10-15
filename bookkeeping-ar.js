@@ -19,7 +19,7 @@ module.exports = function mountAr(ctx) {
       created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
     // 1.20.2: kind = 'match' (an open invoice — Match & Pay) or 'pair' (an invoice the CRM already shows as paid); pay_* = the
     // Dev team's pay webhook result once AR_PAY_WEBHOOK_URL is set
-    ['kind TEXT', 'pay_status TEXT', 'pay_at TEXT', 'pay_ref TEXT', 'inv_json TEXT'].forEach(c => ctx.db.run('ALTER TABLE bk_ar ADD COLUMN ' + c, () => {}));
+    ['kind TEXT', 'pay_status TEXT', 'pay_at TEXT', 'pay_ref TEXT', 'inv_json TEXT', 'pay_method TEXT', 'send_receipt INTEGER'].forEach(c => ctx.db.run('ALTER TABLE bk_ar ADD COLUMN ' + c, () => {}));   /* 1.20.93: the CRM's method string + the receipt choice */
     // 1.20.83: AR rules — the payer words of a bank line → a CRM customer. Learned from every match / pair the AR team makes
     // (and typed by hand under Rules). A rule only narrows the matching to that customer's invoices; it never pairs by itself.
     ctx.db.run(`CREATE TABLE IF NOT EXISTS bk_ar_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, pattern TEXT, customer_id INTEGER, customer_name TEXT,
@@ -305,7 +305,7 @@ module.exports = function mountAr(ctx) {
       const out = [];
       for (const r of rows) {
         if (!tx[r.txn_id]) { if (r.status === 'open') dbRun("UPDATE bk_ar SET status = 'void', updated_at = ? WHERE id = ?", [nowIso(), r.id]).catch(() => {}); continue; }   // 1.20.11: a bank line that is gone leaves no empty row
-        const t = tx[r.txn_id]; const row = Object.assign({}, r, { txn: t });
+        const t = tx[r.txn_id]; if (t) t.crm_method = crmMethod(t.how); const row = Object.assign({}, r, { txn: t });   /* 1.20.93: the method the CRM will take, null = pick one */
         if (q && [t.name, t.merchant, t.orig_desc, r.customer_name, r.invoice_ids, r.note, String(r.amount)].filter(Boolean).join(' ').toLowerCase().indexOf(q) < 0) continue;
         if (st === 'open') { row.suggestions = null; if (r.status === 'review') { try { row.invoices = r.inv_json ? JSON.parse(r.inv_json) : []; } catch (e) { row.invoices = []; } delete row.inv_json; } }   // null = the page asks /ar/:id/suggest for it (1.19.159: the list never waits on the matching; 1.20.83: the cache key carries the rule, so the row route decides)
         else {   // 1.20.6: from the local snapshot taken at match time; older rows fall back to the warm cache (never a CRM call)
@@ -318,7 +318,8 @@ module.exports = function mountAr(ctx) {
         out.push(row);
       }
       const counts = await dbGet("SELECT SUM(status IN ('open', 'review')) AS open, SUM(status = 'review') AS review, SUM(status IN ('matched', 'skipped')) AS done, SUM(CASE WHEN status IN ('open', 'review') THEN amount ELSE 0 END) AS open_total FROM bk_ar");
-      res.json({ ok: true, rows: out, counts: { open: counts.open || 0, review: counts.review || 0, done: counts.done || 0, open_total: Math.round((counts.open_total || 0) * 100) / 100 }, invoices_open: invoices.length, invoices_at: inv.at, crm_error, from: AR_FROM });
+      const me = await whoFor(userId(req)).catch(() => ({}));   /* 1.20.93: can this person Match & Pay (a CRM account)? */
+      res.json({ ok: true, rows: out, counts: { open: counts.open || 0, review: counts.review || 0, done: counts.done || 0, open_total: Math.round((counts.open_total || 0) * 100) / 100 }, invoices_open: invoices.length, invoices_at: inv.at, crm_error, from: AR_FROM, can_pay: !!me.crm_user_id, methods: CRM_METHODS });
     } catch (e) { errlog('ar list', e.message); res.json({ ok: false, error: e.message }); }
   });
   // GET /api/bookkeeping/ar/:id/suggest — the suggestions for one payment (the page asks row by row, a few at a time)
@@ -388,8 +389,14 @@ module.exports = function mountAr(ctx) {
     try {
       const id = parseInt(req.params.id), q = await dbGet('SELECT * FROM bk_ar WHERE id = ?', [id]); if (!q) return res.json({ ok: false, error: 'No such payment' });
       if (q.status !== 'review') return res.json({ ok: false, error: 'This payment is not waiting for Match & Pay.' });
-      await dbRun("UPDATE bk_ar SET status = 'matched', matched_by = ?, matched_at = ?, updated_at = ? WHERE id = ?", [userId(req), nowIso(), nowIso(), id]);
-      await audit(userId(req), 'ar.match', id, { txn_id: q.txn_id, amount: q.amount, invoice_ids: String(q.invoice_ids || '').split(',').filter(Boolean).map(Number), customer: q.customer_name });
+      /* 1.20.93: the CRM needs the clicker's CRM user and one of its method strings — refuse here, before anything changes */
+      const who = await whoFor(userId(req));
+      if (!who.crm_user_id) return res.json({ ok: false, error: 'The CRM records the payment under the person who clicks Match & Pay, and it needs your Axiom CRM account for that — sign in to Nova with your Axiom username and password (not a Nova-only admin login).' });
+      const t = (await txFields([q.txn_id]))[q.txn_id] || {};
+      const method = crmMethod(req.body.method) || crmMethod(t.how);
+      if (!method) return res.json({ ok: false, error: 'Pick a payment method the CRM knows: ACH, Check, Mobile deposit (check), Credit card, Zelle or Venmo.' });
+      await dbRun("UPDATE bk_ar SET status = 'matched', matched_by = ?, matched_at = ?, pay_method = ?, send_receipt = ?, updated_at = ? WHERE id = ?", [userId(req), nowIso(), method, req.body.send_receipt ? 1 : 0, nowIso(), id]);
+      await audit(userId(req), 'ar.match', id, { txn_id: q.txn_id, amount: q.amount, invoice_ids: String(q.invoice_ids || '').split(',').filter(Boolean).map(Number), customer: q.customer_name, method, send_receipt: !!req.body.send_receipt });
       const pay = await payHook(id).catch(e => ({ sent: false, error: e.message }));
       res.json({ ok: true, pay });
     } catch (e) { res.json({ ok: false, error: e.message }); }
@@ -476,30 +483,48 @@ module.exports = function mountAr(ctx) {
     }
     return out;
   }
+  // 1.20.93 — the CRM accepts exactly these method strings (docs/NOVA_AR_PAY_WEBHOOK.md, the dev team's reply): anything else is a 422.
+  // crmMethod() maps what payMethod() read from the bank line onto them; null = the AR person has to pick one before Match & Pay.
+  const CRM_METHODS = ['ACH', 'Check', 'Mobile deposit (check)', 'Credit card', 'Zelle', 'Venmo'];
+  function crmMethod(how) {
+    const h = String(how || '').trim(); if (!h) return null;
+    if (/^check(\s*#\d+)?$/i.test(h)) return h.replace(/^check/i, 'Check');
+    const hit = CRM_METHODS.find(m => m.toLowerCase() === h.toLowerCase()); return hit || null;
+  }
+  // Who clicked — the signed-in person's email, their name, and their CRM user id (the CRM records the payment under that user and
+  // refuses a delivery without one, so a Nova-local admin account cannot Match & Pay).
+  async function whoFor(email) {
+    const who = { email: email || null, name: null, crm_user_id: null };
+    if (who.email && who.email.indexOf('@') > 0) {
+      const m = await dbGet('SELECT display_name FROM members WHERE LOWER(email) = ?', [who.email.toLowerCase()]).catch(() => null);
+      if (m && m.display_name) who.name = m.display_name;
+      const u = await runQuery("SELECT id, name, last_name FROM user WHERE type = 'member' AND LOWER(email) = " + mysql.escape(who.email.toLowerCase()) + ' LIMIT 1').catch(() => []);
+      if (u[0]) { who.crm_user_id = Number(u[0].id); if (!who.name) who.name = [u[0].name, u[0].last_name].filter(Boolean).join(' ').trim() || null; }
+    } else if (who.email) who.name = who.email;
+    return who;
+  }
   async function payHook(arId) {
     const url = env('AR_PAY_WEBHOOK_URL'), secret = env('AR_PAY_WEBHOOK_SECRET') || env('TALKAI_WEBHOOK_SECRET');
     const q = await dbGet('SELECT * FROM bk_ar WHERE id = ?', [arId]); if (!q) return { sent: false, error: 'No such payment' };
     if (!url) { await dbRun("UPDATE bk_ar SET pay_status = 'not configured' WHERE id = ?", [arId]); return { sent: false, error: 'AR_PAY_WEBHOOK_URL is not set — the CRM was not told' }; }
     if (!secret) { await dbRun("UPDATE bk_ar SET pay_status = 'no secret' WHERE id = ?", [arId]); return { sent: false, error: 'AR_PAY_WEBHOOK_SECRET is not in .env' }; }
     const t = (await txFields([q.txn_id]))[q.txn_id] || {};
-    // Who clicked Match & Pay — the signed-in person's email, their name, and their CRM user id when they are a CRM staff member
-    // (the CRM keeps the payment's "recorded by" on it). A Nova-local admin account has no CRM id.
-    const who = { email: q.matched_by || null, name: null, crm_user_id: null };
-    if (who.email && who.email.indexOf('@') > 0) {
-      const m = await dbGet('SELECT display_name FROM members WHERE LOWER(email) = ?', [who.email]).catch(() => null);
-      if (m && m.display_name) who.name = m.display_name;
-      const u = await runQuery('SELECT id, name, last_name FROM user WHERE LOWER(email) = ' + mysql.escape(who.email) + ' LIMIT 1').catch(() => []);
-      if (u[0]) { who.crm_user_id = Number(u[0].id); if (!who.name) who.name = [u[0].name, u[0].last_name].filter(Boolean).join(' ').trim() || null; }
-    } else if (who.email) who.name = who.email;
+    const who = await whoFor(q.matched_by);
+    if (!who.crm_user_id) { await dbRun("UPDATE bk_ar SET pay_status = 'failed: no CRM user — sign in with your Axiom account' WHERE id = ?", [arId]); return { sent: false, error: 'The CRM records the payment under the person who matched it — sign in with your Axiom CRM account and resend.' }; }
+    const method = q.pay_method || crmMethod(t.how);
+    if (!method) { await dbRun("UPDATE bk_ar SET pay_status = 'failed: pick a payment method' WHERE id = ?", [arId]); return { sent: false, error: 'The CRM needs a payment method it knows (ACH, Check, Credit card, Zelle, Venmo) — pick one and resend.' }; }
     const body = JSON.stringify({ event: 'ar.payment', nova_ar_id: arId, invoice_ids: String(q.invoice_ids || '').split(',').filter(Boolean).map(Number), amount: q.amount, currency: 'USD',
-      paid_on: t.tx_date || t.date || null, method: t.how || null, bank: { institution: t.institution || null, mask: t.mask || null, wording: t.orig_desc || t.name || null, check_no: t.check_no || null }, customer_id: q.customer_id, customer: q.customer_name,
-      matched_by: who.email, matched_by_name: who.name, matched_by_crm_user_id: who.crm_user_id, matched_at: q.matched_at });
+      paid_on: t.tx_date || t.date || null, method, bank: { institution: t.institution || null, mask: t.mask || null, wording: t.orig_desc || t.name || null, check_no: t.check_no || null }, customer_id: q.customer_id, customer: q.customer_name,
+      matched_by: who.email, matched_by_name: who.name, matched_by_crm_user_id: who.crm_user_id, matched_at: q.matched_at, send_receipt: !!q.send_receipt });
     const ts = Math.floor(Date.now() / 1000), sig = crypto.createHmac('sha256', secret).update(ts + '.' + body).digest('hex');
     let status = 0, err = null, ref = null;
     try {
       const r = await fetch(url, { method: 'POST', body, signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json', 'User-Agent': 'NovaAI-AR/1', 'X-Nova-Event': 'ar.payment', 'X-Nova-Delivery': 'nova-ar-' + arId, 'X-Nova-Signature': 't=' + ts + ',v1=' + sig } });
       status = r.status; const txt = await r.text().catch(() => '');
-      if (!r.ok) err = 'HTTP ' + r.status + ' ' + txt.slice(0, 120); else { try { const j = JSON.parse(txt); ref = j.payment_id || j.id || j.ref || null; } catch (e) {} }
+      let j = null; try { j = JSON.parse(txt); } catch (e) {}
+      if (!r.ok) err = 'HTTP ' + r.status + ' ' + ((j && j.error) || txt.slice(0, 120));   /* the CRM's reason, readable by the AR person */
+      else if (j && j.ok === false) err = j.error || 'refused';
+      else if (j) { ref = j.payment_id || j.id || j.ref || null; if (j.already_paid && !ref) ref = 'already paid'; if (j.unapplied > 0) await audit('system', 'ar.pay_unapplied', arId, { unapplied: j.unapplied }); }
     } catch (e) { err = e.message; }
     await dbRun("UPDATE bk_ar SET pay_status = ?, pay_at = ?, pay_ref = ? WHERE id = ?", [err ? 'failed: ' + err.slice(0, 160) : 'sent', nowIso(), ref ? String(ref).slice(0, 80) : null, arId]);
     await audit('system', 'ar.pay_hook', arId, { status, err, ref });
@@ -507,7 +532,10 @@ module.exports = function mountAr(ctx) {
   }
   // POST /api/bookkeeping/ar/:id/pay — resend the pay webhook for a matched payment (after the URL is set, or a failure)
   app.post('/api/bookkeeping/ar/:id/pay', ...guard, async (req, res) => {
-    try { const q = await dbGet('SELECT * FROM bk_ar WHERE id = ?', [parseInt(req.params.id)]); if (!q || q.status !== 'matched' || q.kind === 'pair') return res.json({ ok: false, error: 'Only a matched (not paired) payment can be sent.' }); res.json({ ok: true, pay: await payHook(q.id) }); }
+    try { const q = await dbGet('SELECT * FROM bk_ar WHERE id = ?', [parseInt(req.params.id)]); if (!q || q.status !== 'matched' || q.kind === 'pair') return res.json({ ok: false, error: 'Only a matched (not paired) payment can be sent.' });
+      /* 1.20.93: a resend may carry a method / receipt choice (the row's picker after a 422) */
+      const m = crmMethod(req.body && req.body.method); if (m || (req.body && req.body.send_receipt != null)) await dbRun('UPDATE bk_ar SET pay_method = COALESCE(?, pay_method), send_receipt = COALESCE(?, send_receipt) WHERE id = ?', [m, req.body.send_receipt == null ? null : (req.body.send_receipt ? 1 : 0), q.id]);
+      res.json({ ok: true, pay: await payHook(q.id) }); }
     catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // POST /api/bookkeeping/ar/:id/skip {note} — not a customer payment after all / handled elsewhere; kept in the history
