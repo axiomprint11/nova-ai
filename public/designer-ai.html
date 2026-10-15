@@ -60,10 +60,13 @@
   .da-subview { display: none; } .da-subview.on { display: block; }
   table.da-tt { width: 100%; border-collapse: collapse; font-size: 12.5px; } table.da-tt th { text-align: left; font-size: 11.5px; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--line); }
   table.da-tt td { padding: 8px; border-bottom: 1px solid #f0f0f5; vertical-align: middle; } table.da-tt tr.off td { opacity: .5; }
-  .da-who { display: flex; align-items: center; gap: 10px; } .da-who .da-av { width: 36px; height: 36px; font-size: 13px; } .da-who b { display: block; font-size: 13px; } .da-who .t { font-size: 11px; color: var(--muted); }
+  .da-who { display: flex; align-items: center; gap: 8px; } .da-who .da-av { width: 32px; height: 32px; font-size: 12px; } .da-who b { display: block; font-size: 12.5px; white-space: nowrap; } .da-who .t { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+  table.da-tt .da-c-who, table.da-tt td:first-child { width: 190px; max-width: 190px; }   /* 1.20.26: 30% narrower, titles abbreviated */
+  .da-appr { white-space: nowrap; } .da-appr > span { display: inline-flex; flex-direction: column; align-items: center; margin: 0 3px; line-height: 1.1; } .da-appr i { font-style: normal; font-size: 9.5px; color: var(--muted); }
+  table.da-tt .da-notes { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } table.da-tt .da-edit { width: 56px; text-align: right; white-space: nowrap; }
   .da-num { font-weight: 700; font-size: 14px; } .da-num small { font-weight: 500; color: var(--muted); font-size: 11px; }
   td .da-sk { margin-top: 0; } .da-formrow td { background: #fafaff; }
-  .da-skc { max-width: 240px; } .da-skc .da-sk { max-height: 66px; overflow: hidden; } .da-skc:hover .da-sk { max-height: none; }   /* 1.20.22: three rows of chips, the rest on hover */
+  .da-skc { max-width: 240px; min-width: 200px; } .da-skc .da-sk { max-height: 63px; overflow: hidden; } .da-skc:hover .da-sk { max-height: none; } .da-skc .da-sk span { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box; line-height: 14px; }   /* 1.20.22: three rows of chips, the rest on hover */
   .da-t2 { width: 17px; height: 17px; margin: 0; cursor: pointer; }
   .da-lvl { display: inline-block; width: 60px; height: 7px; border-radius: 4px; background: #eceef5; vertical-align: middle; overflow: hidden; } .da-lvl i { display: block; height: 100%; border-radius: 4px; }
   .da-on { color: #047857; font-weight: 600; } .da-off { color: #9a99ad; }
