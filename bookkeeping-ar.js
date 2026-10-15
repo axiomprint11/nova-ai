@@ -403,8 +403,12 @@ module.exports = function mountAr(ctx) {
       if (!pat) return res.json({ ok: false, error: 'Type the payer words as they show on the bank line (e.g. "peace haight").' });
       if (!ids.length) return res.json({ ok: false, error: 'Pick at least one customer.' });
       const label = names.filter((x, i, a) => a.indexOf(x) === i).join(' · ').slice(0, 400);
-      const cur = await dbGet('SELECT id FROM bk_ar_rules WHERE pattern = ?', [pat]);
-      if (cur) await dbRun("UPDATE bk_ar_rules SET customer_id = ?, customer_ids = ?, customer_name = ?, source = 'manual', made_by = ?, updated_at = ? WHERE id = ?", [ids[0], ids.join(','), label, userId(req), nowIso(), cur.id]);
+      // 1.20.85: Edit sends the rule's id — the row is rewritten (pattern included) unless another rule already has the new words
+      const editId = parseInt(req.body.id) || 0;
+      let cur = await dbGet('SELECT id FROM bk_ar_rules WHERE pattern = ?', [pat]);
+      if (editId && cur && cur.id !== editId) return res.json({ ok: false, error: 'Another rule already uses the words "' + pat + '" — edit that one instead.' });
+      if (editId && !cur) cur = { id: editId };
+      if (cur) await dbRun("UPDATE bk_ar_rules SET pattern = ?, customer_id = ?, customer_ids = ?, customer_name = ?, source = 'manual', made_by = ?, updated_at = ? WHERE id = ?", [pat, ids[0], ids.join(','), label, userId(req), nowIso(), cur.id]);
       else await dbRun("INSERT INTO bk_ar_rules (pattern, customer_id, customer_ids, customer_name, source, made_by, updated_at) VALUES (?,?,?,?,'manual',?,?)", [pat, ids[0], ids.join(','), label, userId(req), nowIso()]);
       rulesCache.at = 0; sugCache.clear(); await audit(userId(req), 'ar.rule', cur ? cur.id : 0, { pattern: pat, customer_ids: ids });
       res.json({ ok: true, pattern: pat });
