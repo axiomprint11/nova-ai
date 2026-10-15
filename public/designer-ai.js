@@ -41,13 +41,19 @@
     const d = team.find(x => x.user_id === id); const tr = $('daTeam').querySelector('tr[data-d="' + id + '"]'); if (!d || !tr) return;
     const old = tr.nextElementSibling; if (old && old.classList.contains('da-formrow')) { old.remove(); return; }
     const fr = document.createElement('tr'); fr.className = 'da-formrow';
-    fr.innerHTML = '<td colspan="13"><div class="da-form" style="max-width:760px"><label>Strong sides — comma separated; matched against the product, its category, the proof type and the job name (e.g. packaging, die cut, large format, business cards, labels, booklets, vehicle wrap, variable data)</label><textarea rows="2" class="sk">' + esc(d.skills) + '</textarea>' +
-      '<div class="row"><label><input type="checkbox" class="t2"' + (d.tier2 ? ' checked' : '') + '> Tier 2 designer</label><label>max active <input type="number" class="mx" min="1" value="' + (d.max_active || 25) + '"></label><label><input type="checkbox" class="ac"' + (d.active ? ' checked' : '') + '> takes jobs</label></div>' +
-      '<div class="row"><label title="0 = only the simplest jobs · 10 = packaging, die cuts, wraps, anything">Hard jobs <input type="range" class="hl" min="0" max="10" value="' + (d.hard_level == null ? 5 : d.hard_level) + '" oninput="this.nextElementSibling.textContent=this.value"><b>' + (d.hard_level == null ? 5 : d.hard_level) + '</b>/10</label>' +
-      '<label title="0 = production only · 10 = designs from scratch, branding, layouts">Creative jobs <input type="range" class="cl" min="0" max="10" value="' + (d.creative_level == null ? 5 : d.creative_level) + '" oninput="this.nextElementSibling.textContent=this.value"><b>' + (d.creative_level == null ? 5 : d.creative_level) + '</b>/10</label></div>' +
-      '<div class="row"><label>Hours (LA) <input type="time" class="ss" value="' + esc(d.shift_start || '') + '"> to <input type="time" class="se" value="' + esc(d.shift_end || '') + '"></label><label>Days ' + [1, 2, 3, 4, 5, 6, 7].map(n => '<label style="margin:0 2px"><input type="checkbox" class="wd" value="' + n + '"' + ((d.work_days || '1,2,3,4,5').split(',').map(Number).indexOf(n) > -1 ? ' checked' : '') + '>' + ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'][n - 1] + '</label>').join('') + '</label><span class="da-muted">A job is never suggested off shift, and not within the last hour of the day (soon from the hours table).</span></div>' +
-      '<label>Notes</label><input class="nt" value="' + esc(d.notes || '') + '">' +
-      '<div class="row"><button class="bk-btn pri sm sv">Save</button><button class="bk-btn sm cx">Cancel</button></div></div></td>';
+    const L = (n) => n == null ? 5 : n, days = (d.work_days || '1,2,3,4,5').split(',').map(Number);
+    fr.innerHTML = '<td colspan="13"><div class="da-ef">' +
+      '<div class="da-ef-main"><label class="da-ef-l">Strong sides</label><div class="da-ef-h">Comma separated. Matched against the product, its category, the proof type and the job name — e.g. packaging, die cut, large format, business cards, labels, booklets, vehicle wrap, variable data.</div><textarea rows="3" class="sk">' + esc(d.skills) + '</textarea>' +
+        '<label class="da-ef-l" style="margin-top:14px">Notes</label><input class="nt" value="' + esc(d.notes || '') + '" placeholder="Anything the matcher should know about ' + esc(d.name) + '"></div>' +
+      '<div class="da-ef-side">' +
+        '<div class="da-ef-row"><label><input type="checkbox" class="t2"' + (d.tier2 ? ' checked' : '') + '> Tier 2 designer</label></div>' +
+        '<div class="da-ef-row"><label>Max active <input type="number" class="mx" min="1" value="' + (d.max_active || 25) + '"></label></div>' +
+        '<div class="da-ef-row"><label><input type="checkbox" class="ac"' + (d.active ? ' checked' : '') + '> Takes jobs</label></div>' +
+        '<div class="da-ef-row da-ef-sl"><label>Hard jobs <b>' + L(d.hard_level) + '</b>/10</label><input type="range" class="hl" min="0" max="10" value="' + L(d.hard_level) + '" oninput="this.previousElementSibling.querySelector(\'b\').textContent=this.value"><div class="da-ef-h">0 = the simplest jobs only · 10 = packaging, die cuts, wraps, anything</div></div>' +
+        '<div class="da-ef-row da-ef-sl"><label>Creative jobs <b>' + L(d.creative_level) + '</b>/10</label><input type="range" class="cl" min="0" max="10" value="' + L(d.creative_level) + '" oninput="this.previousElementSibling.querySelector(\'b\').textContent=this.value"><div class="da-ef-h">0 = production only · 10 = designs from scratch, branding, layouts</div></div>' +
+        '<div class="da-ef-row"><label>Hours (LA)</label><div class="da-ef-time"><input type="time" class="ss" value="' + esc(d.shift_start || '') + '"> <span>to</span> <input type="time" class="se" value="' + esc(d.shift_end || '') + '"></div><div class="da-ef-days">' + [1, 2, 3, 4, 5, 6, 7].map(n => '<label><input type="checkbox" class="wd" value="' + n + '"' + (days.indexOf(n) > -1 ? ' checked' : '') + '>' + ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'][n - 1] + '</label>').join('') + '</div></div>' +
+      '</div>' +
+      '<div class="da-ef-foot"><button class="bk-btn pri sv">Save</button><button class="bk-btn cx">Cancel</button></div></div></td>';
     tr.after(fr);
     fr.querySelector('.cx').onclick = () => fr.remove();
     fr.querySelector('.sv').onclick = async () => { const r = await api('/api/designer/designers/' + id, { skills: fr.querySelector('.sk').value, tier2: fr.querySelector('.t2').checked, max_active: fr.querySelector('.mx').value, active: fr.querySelector('.ac').checked, notes: fr.querySelector('.nt').value,
@@ -89,12 +95,18 @@
     const td = btn.closest('td'); td.innerHTML = '<span class="da-muted">Thinking…</span>';
     const r = await api('/api/designer/match', { estimate_id: id });
     if (!r.ok) { td.innerHTML = '<span style="color:#b91c1c;font-size:12px">' + esc(r.error) + '</span>'; return; }
-    td.innerHTML = '<div class="da-picks">' + r.picks.map((p, i) => '<div class="da-pick' + (i === 0 ? ' top' : '') + '">' + av(p) + '<span class="pct">' + p.score + '%</span><div class="who"><b>' + esc(p.name + ' ' + (p.last_name || '')) + '</b><div class="why">' + esc(p.why.join(' · ')) + '</div></div><button class="bk-btn sm ' + (i === 0 ? 'go' : '') + '" data-pick="' + p.user_id + '" data-score="' + p.score + '" data-why="' + esc(p.why.join(' · ')) + '">Assign</button></div>').join('') + '<a href="#" class="da-sub" data-close="1">close</a></div>';
+    td.innerHTML = '<div class="da-picks">' + (r.ai ? '<div class="da-sub-ai">✦ your Match Logic was applied</div>' : r.ai_error ? '<div class="da-sub-ai" style="color:#b91c1c">Match Logic not applied: ' + esc(r.ai_error) + '</div>' : '') + r.picks.map((p, i) => '<div class="da-pick' + (i === 0 ? ' top' : '') + '">' + av(p) + '<span class="pct">' + p.score + '%</span><div class="who"><b>' + esc(p.name + ' ' + (p.last_name || '')) + '</b><div class="why">' + esc(p.why.join(' · ')) + '</div></div><button class="bk-btn sm ' + (i === 0 ? 'go' : '') + '" data-pick="' + p.user_id + '" data-score="' + p.score + '" data-why="' + esc(p.why.join(' · ')) + '">Assign</button></div>').join('') + '<a href="#" class="da-sub" data-close="1">close</a></div>';
     td.querySelectorAll('[data-pick]').forEach(b => b.onclick = async () => { const x = await api('/api/designer/assign', { estimate_id: id, user_id: Number(b.dataset.pick), score: Number(b.dataset.score), reason: b.dataset.why }); if (!x.ok) { alert(x.error); return; } toast('E' + id + ' → ' + x.designer.name + ' (kept in Nova; the CRM is not changed yet)'); loadQueue(); loadTeam(); });
     const c = td.querySelector('[data-close]'); if (c) c.onclick = (e) => { e.preventDefault(); const j = jobs.find(x => x.id === id); td.innerHTML = dcell(j); bind(); };
   }
+  // ---- Match Logic (1.20.18): the owner's rules in words, read by the model on every Match
+  async function loadLogic() {
+    const j = await api('/api/designer/settings'); if (!j.ok) return;
+    $('daLogic').value = j.match_logic || ''; $('daLogicWhen').textContent = j.updated_at ? 'Saved ' + new Date(j.updated_at).toLocaleString() + (j.updated_by ? ' by ' + j.updated_by.replace(/^(user|member):/, '') : '') : 'Nothing saved yet — Nova uses only its built-in rules.';
+  }
+  $('daLogicSave').onclick = async () => { const r = await api('/api/designer/settings', { match_logic: $('daLogic').value }); if (!r.ok) { alert(r.error); return; } toast('Match logic saved'); loadLogic(); };
   document.querySelectorAll('.da-sub [data-s]').forEach(b => b.onclick = () => { document.querySelectorAll('.da-sub [data-s]').forEach(x => x.classList.toggle('on', x === b)); document.querySelectorAll('.da-subview').forEach(v => v.classList.toggle('on', v.dataset.s === b.dataset.s)); $('daAllWrap').style.visibility = b.dataset.s === 'jobs' ? '' : 'hidden'; });
   $('daAll').onchange = loadQueue; $('daRefresh').onclick = () => { loadQueue(); loadTeam(); };
 
-  (async () => { await loadTeam(); await loadQueue(); })();
+  (async () => { await loadTeam(); await loadQueue(); loadLogic(); })();
 })();

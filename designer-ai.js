@@ -6,7 +6,7 @@
 'use strict';
 
 module.exports = function mountDesignerAi(app, deps) {
-  const { db, auth, adminOnly, serveVersionedHtml, runQuery } = deps;
+  const { db, auth, adminOnly, serveVersionedHtml, runQuery, anthropic, model } = deps;
   const dbAll = (sql, p) => new Promise((res, rej) => db.all(sql, p || [], (e, r) => e ? rej(e) : res(r || [])));
   const dbGet = (sql, p) => new Promise((res, rej) => db.get(sql, p || [], (e, r) => e ? rej(e) : res(r)));
   const dbRun = (sql, p) => new Promise((res, rej) => db.run(sql, p || [], function (e) { e ? rej(e) : res(this); }));
@@ -19,6 +19,7 @@ module.exports = function mountDesignerAi(app, deps) {
       skills TEXT, notes TEXT, max_active INTEGER DEFAULT 25, tier2 INTEGER DEFAULT 0, updated_at TEXT)`);
     db.run(`CREATE TABLE IF NOT EXISTS da_assign (id INTEGER PRIMARY KEY AUTOINCREMENT, estimate_id INTEGER, user_id INTEGER, score INTEGER, reason TEXT, picked_by TEXT, at TEXT, status TEXT DEFAULT 'assigned')`);
     db.run('CREATE INDEX IF NOT EXISTS da_assign_est ON da_assign(estimate_id)');
+    db.run('CREATE TABLE IF NOT EXISTS da_settings (key TEXT PRIMARY KEY, value TEXT, updated_by TEXT, updated_at TEXT)');   // 1.20.18: match_logic — the owner's rules in words
     // 1.20.17: how hard / how creative a job a designer can take (0–10), and their hours (until the hours table exists)
     ['hard_level INTEGER DEFAULT 5', 'creative_level INTEGER DEFAULT 5', 'shift_start TEXT', 'shift_end TEXT', 'work_days TEXT'].forEach(c => db.run('ALTER TABLE da_designers ADD COLUMN ' + c, () => {}));
   });
@@ -193,13 +194,39 @@ module.exports = function mountDesignerAi(app, deps) {
     try { const tier = req.query.tier === '2' ? 2 : req.query.tier === '1' ? 1 : 0; const jobs = await queueAll(req.query.all === '1', tier); res.json({ ok: true, tier, jobs, counts: { t1: jobs.filter(j => j.tier === 1).length, t2: jobs.filter(j => j.tier === 2).length } }); }
     catch (e) { res.json({ ok: false, error: 'CRM not reachable: ' + e.message }); }
   });
+  // 1.20.18: Match Logic — the owner's rules in plain words (Designer AI → Match Logic). When set, the model reads the job, the
+  // scored candidates and the rules, and may move the scores; every change it makes is shown as "your rule: …" on the pick.
+  const getSetting = async (k) => { const r = await dbGet('SELECT value FROM da_settings WHERE key = ?', [k]); return r ? r.value : ''; };
+  async function aiAdjust(job, picks, logic) {
+    if (!anthropic || !logic.trim()) return { picks, ai: false };
+    const cand = picks.map(p => ({ user_id: p.user_id, name: p.name + ' ' + (p.last_name || ''), score: p.score, reasons: p.why, active_jobs: p.active_jobs }));
+    const team = await designers();
+    const prof = team.filter(d => d.active).map(d => ({ user_id: d.user_id, name: d.name + ' ' + (d.last_name || ''), title: d.title, strong_sides: d.skill_list, tier2: !!d.tier2, hard_level: d.hard_level, creative_level: d.creative_level, notes: d.notes || '', active_jobs: d.active_jobs, waiting_on_client: d.waiting_client, approved_30d: d.done_30, jobs_180d: d.jobs_180, hours: d.shift_start ? d.shift_start + '-' + d.shift_end + ' days ' + (d.work_days || '1-5') : 'unknown', on_shift: d.on_shift }));
+    const sys = 'You assign print jobs to designers at AxiomPrint. Nova has already scored every designer with its built-in rules (history, strong sides, hardness, creativity, load, hours). The OWNER\'S RULES below take priority over those scores wherever they apply. Return ONLY JSON: {"picks":[{"user_id":n,"score":0-100,"note":"short reason citing the owner rule, or empty"}]} — every candidate once, scores changed only where a rule applies, note only when you changed something.';
+    const user = 'OWNER\'S RULES:\n' + logic.trim().slice(0, 4000) + '\n\nJOB:\n' + JSON.stringify({ e: job.e, name: job.name, customer: job.customer, product: job.product, category: job.category, tier: job.tier, proof_type: job.proof_type, status: job.status_label, hard: job.hard, creative: job.creative, design_fee: job.design_fee, expedite: job.service === 'expedite', due: job.complete_by, created: job.created, notes: (job.notes || '').slice(0, 600), team_on_it: job.others }) +
+      '\n\nDESIGNERS:\n' + JSON.stringify(prof) + '\n\nNOVA\'S SCORES:\n' + JSON.stringify(cand) + '\n\nTime now (Los Angeles): ' + new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
+    try {
+      const r = await anthropic.messages.create({ model: model || 'claude-haiku-4-5', max_tokens: 900, system: sys, messages: [{ role: 'user', content: user }] });
+      const txt = (r.content || []).filter(c => c.type === 'text').map(c => c.text).join(''); const m = /\{[\s\S]*\}/.exec(txt); if (!m) return { picks, ai: false };
+      const out = JSON.parse(m[0]); const by = {}; (out.picks || []).forEach(p => { by[p.user_id] = p; });
+      const adj = picks.map(p => { const a = by[p.user_id]; if (!a) return p; const sc = Math.max(0, Math.min(100, Math.round(Number(a.score)))); const changed = !isNaN(sc) && sc !== p.score; return Object.assign({}, p, { score: isNaN(sc) ? p.score : sc, why: changed || a.note ? p.why.concat(['your rule: ' + (a.note || ('score ' + p.score + ' → ' + sc))]) : p.why, ai_changed: changed }); });
+      adj.sort((a, b) => b.score - a.score || a.active_jobs - b.active_jobs);
+      return { picks: adj, ai: true };
+    } catch (e) { errlog('ai adjust', e.message); return { picks, ai: false, ai_error: e.message }; }
+  }
+  app.get('/api/designer/settings', ...guard, async (req, res) => { try { const r = await dbGet('SELECT * FROM da_settings WHERE key = ?', ['match_logic']); res.json({ ok: true, match_logic: r ? r.value : '', updated_by: r ? r.updated_by : null, updated_at: r ? r.updated_at : null }); } catch (e) { res.json({ ok: false, error: e.message }); } });
+  app.post('/api/designer/settings', ...guard, async (req, res) => {
+    try { await dbRun('INSERT INTO da_settings (key, value, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = excluded.updated_at', ['match_logic', String(req.body.match_logic || '').slice(0, 8000), userId(req), nowIso()]); res.json({ ok: true }); }
+    catch (e) { res.json({ ok: false, error: e.message }); }
+  });
   app.post('/api/designer/match', ...guard, async (req, res) => {
     try {
       const id = parseInt(req.body.estimate_id); if (!id) return res.json({ ok: false, error: 'Which job?' });
       const job = (await queueAll(true, 0)).find(j => j.id === id);
       if (!job) return res.json({ ok: false, error: 'E' + id + ' is not in the queue any more' });
-      const picks = await match(job);
-      res.json({ ok: true, job, picks: picks.slice(0, 4) });
+      const base = await match(job);
+      const r = await aiAdjust(job, base, await getSetting('match_logic'));
+      res.json({ ok: true, job, picks: r.picks.slice(0, 4), ai: r.ai, ai_error: r.ai_error || null });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // a pick made in Nova — kept here only (the CRM is not changed) until the web team gives us an assignment endpoint

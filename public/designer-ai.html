@@ -67,6 +67,19 @@
   .da-on { color: #047857; font-weight: 600; } .da-off { color: #9a99ad; }
   .da-jl b { color: var(--ink); } .da-notebox { white-space: pre-wrap; font: 11.5px/1.4 inherit; background: #fffbeb; border: 1px solid #fde68a; border-radius: 7px; padding: 6px 8px; margin-top: 4px; max-width: 420px; max-height: 160px; overflow: auto; }
   .da-form input[type=range] { width: 120px; vertical-align: middle; } .da-form input[type=time] { width: auto; }
+  /* 1.20.18: the designer edit form, spread out */
+  .da-ef { display: grid; grid-template-columns: 1fr 340px; gap: 14px 28px; padding: 6px 4px 10px; font-size: 13.5px; }
+  .da-ef-l { display: block; font-weight: 600; font-size: 13.5px; margin-bottom: 4px; } .da-ef-h { font-size: 12px; color: var(--muted); margin-bottom: 6px; line-height: 1.4; }
+  .da-ef textarea, .da-ef input[type=text], .da-ef input:not([type]) { width: 100%; box-sizing: border-box; font: 13.5px/1.4 inherit; border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
+  .da-ef-side { display: flex; flex-direction: column; gap: 14px; } .da-ef-row label { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; }
+  .da-ef-row input[type=checkbox] { width: 17px; height: 17px; } .da-ef-row input[type=number] { width: 72px; font: 13.5px inherit; border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; }
+  .da-ef-sl input[type=range] { width: 100%; margin: 6px 0 2px; } .da-ef-sl b { color: var(--indigo-dark); }
+  .da-ef-time { display: flex; align-items: center; gap: 8px; margin: 6px 0; } .da-ef-time input { font: 13.5px inherit; border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; }
+  .da-ef-days { display: flex; gap: 10px; flex-wrap: wrap; } .da-ef-days label { font-weight: 500; font-size: 12.5px; gap: 4px; }
+  .da-ef-foot { grid-column: 1 / -1; display: flex; gap: 8px; } .da-ef-foot .bk-btn { padding: 8px 16px; font-size: 13px; }
+  .da-p { font-size: 13.5px; line-height: 1.5; color: var(--ink-soft); margin: 0 0 10px; } #daLogic { width: 100%; min-height: 320px; resize: vertical; box-sizing: border-box; font: 13.5px/1.5 inherit; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  .da-h3 { font-size: 13px; margin: 22px 0 6px; } .da-ul { font-size: 12.5px; color: var(--ink-soft); line-height: 1.55; padding-left: 18px; margin: 0; } .da-ul li { margin-bottom: 3px; }
+  .da-sub-ai { font-size: 11.5px; color: #5b21b6; font-weight: 600; }
   .da-empty { color: var(--muted); font-size: 13px; padding: 24px; text-align: center; }
   .da-soon { padding: 60px 20px; text-align: center; color: var(--muted); } .da-soon b { display: block; font-size: 16px; color: var(--ink); margin-bottom: 6px; }
   .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #1c1c28; color: #fff; padding: 9px 14px; border-radius: 9px; font-size: 13px; z-index: 50; }
@@ -90,6 +103,7 @@
     <div class="da-sub">
       <button data-s="jobs" class="on">Jobs<span class="n" id="daQueueN"></span></button>
       <button data-s="designers">Designers<span class="n" id="daTeamN"></span></button>
+      <button data-s="logic">Match Logic</button>
       <span class="sp"></span>
       <label class="da-muted" id="daAllWrap"><input type="checkbox" id="daAll"> include quotes (not invoiced yet)</label>
       <button class="bk-btn sm" id="daRefresh">Refresh</button>
@@ -98,6 +112,31 @@
       <div class="da-card">
         <h2>Jobs waiting for a designer <span class="n" id="daTierN"></span><span class="sp"></span><span class="da-muted">Parked on "PrePress 1 Tier 1" / "PrePress Tier 2" in the CRM, in the prepress stage.</span></h2>
         <div id="daQueue"><div class="da-muted">Loading…</div></div>
+      </div>
+    </div>
+    <div class="da-subview" data-s="logic">
+      <div class="da-card">
+        <h2>Match Logic<span class="sp"></span><span class="da-muted" id="daLogicWhen"></span></h2>
+        <p class="da-p">Write how you want jobs matched to designers, in your own words — who takes what, who to protect, who to grow, what to avoid. Nova scores every designer with its built-in rules first (history with the product, strong sides, hardness and creativity against their levels, newer designers on common easy work, hours, load), then reads what you wrote here and moves the scores where your rules apply. Each change shows on the pick as "your rule: …".</p>
+        <textarea id="daLogic" rows="16" placeholder="Examples:
+- Packaging and folding cartons go to George or Edgar first; Jelly only when both are over 6 active jobs.
+- Never give Max a new job after 1:30 PM — he leaves at 2.
+- Rush / expedite jobs go to whoever has the fewest active jobs that is on shift right now.
+- Reorders of a product the same designer did last time stay with that designer.
+- Fernando and Rodrigo are learning: classic business cards, flyers and banners are theirs before anyone else.
+- Anything with a design fee over $100 goes to Edgar or Ani."></textarea>
+        <div class="da-ef-foot"><button class="bk-btn pri" id="daLogicSave">Save</button></div>
+        <h3 class="da-h3">What Nova scores on its own</h3>
+        <ul class="da-ul">
+          <li><b>History</b> — did this product in 180 days (+5 a job, up to +30), else the same category (+2 a job, up to +15).</li>
+          <li><b>Strong sides</b> — a word from the designer's list found in the product, category, proof type or job name (+12 each, up to +36).</li>
+          <li><b>Tier 2</b> — a Tier 2 job: +15 for a Tier 2 designer, −20 otherwise.</li>
+          <li><b>Hardness</b> — the job's 0–10 (category, die cut, wrap, variable data, Tier 2, expedite) against the designer's Hard jobs level: −6 per point over; +6 for a hard job within their level.</li>
+          <li><b>Creativity</b> — the job's 0–10 (design fee, "Work with Our Designers", design notes) rewards a high Creative level and costs a low one (−15 when 2+ below).</li>
+          <li><b>Newer designers</b> (under 60 jobs in 180 days) — +15 on a common, easy, non-creative product; −10 on a hard or creative one.</li>
+          <li><b>Hours</b> — off shift or day off −45; leaving within the hour −25; within 90 minutes on a hard job −15.</li>
+          <li><b>Load</b> — −3 per active job above the lightest designer (up to −30); −40 at their max. <b>Fairness</b> — −4 per pick made here in the last 2 hours.</li>
+        </ul>
       </div>
     </div>
     <div class="da-subview" data-s="designers">

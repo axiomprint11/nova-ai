@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.17';
-const NOVA_BUILT = '10-14-2026 5:30pm';
+const NOVA_VERSION = '1.20.18';
+const NOVA_BUILT = '10-14-2026 5:55pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -9337,7 +9337,7 @@ const bookkeeping = require('./bookkeeping')(app, { db, crypto, jwt, anthropic, 
   keyPath: '/opt/axiom-ai/gmail-key.json', dataDir: __dirname });
 
 // 1.20.14: Designer AI — AutoAssign Jobs (the prepress tier queues, the designers, the matcher); admins only for now
-require('./designer-ai')(app, { db, auth, adminOnly, serveVersionedHtml, runQuery });
+require('./designer-ai')(app, { db, auth, adminOnly, serveVersionedHtml, runQuery, anthropic, model: MODEL_MAIN });
 
 app.get(/^(?!\/api).*/, serveVersionedHtml('index.html'));
 
