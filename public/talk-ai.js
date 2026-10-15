@@ -108,24 +108,43 @@
     const q = { dir, state, client: F.client, from, to, am: F.am, via: F.via, len: F.len };
     return Object.keys(q).filter(k => q[k]).map(k => k + '=' + encodeURIComponent(q[k])).join('&');
   }
-  function paintFilterState() {
-    let any = false;
-    $('callFilt').querySelectorAll('[data-f]').forEach(el => { const on = !!F[el.dataset.f]; el.classList.toggle('on', on); if (on && el.dataset.f !== 'from' && el.dataset.f !== 'to') any = true; });
-    $('callRange').hidden = F.period !== 'custom';
-    $('callClear').hidden = !any;
+  // 1.20.92: the filters live in the Calls table's column headers (NovaTable — the Bank feed's funnel popovers);
+  // F is still the state and filterQuery() still builds the query. Call = direction + state in one list, When = a date
+  // range with presets, Client / Contact = Client and AM side by side, Answered by = AM TalkAI, Duration = length.
+  let clientOpts = [], amOpts = [];
+  const CALL_OPTS = [{ v: '', l: 'All calls' }, { v: 'in', l: 'Inbound — all' }, { v: 'answered', l: 'Inbound · Answered' }, { v: 'missed', l: 'Inbound · Missed' }, { v: 'voicemail', l: 'Inbound · Voicemail' }, { v: 'out', l: 'Outbound — all' }, { v: 'connected', l: 'Outbound · Connected' }, { v: 'missed_out', l: 'Outbound · Missed' }];
+  const callVal = () => F.state || F.dir;
+  function callSpecs() {
+    return {
+      call: CALL_OPTS,
+      when: { type: 'range', kind: 'date', presets: [{ v: '', l: 'All time' }, { v: 'today', l: 'Today' }, { v: 'yesterday', l: 'Yesterday' }, { v: 'week', l: 'This week' }, { v: 'month', l: 'This month' }, { v: '30', l: 'Last 30 days' }], period: F.period, from: F.from, to: F.to },
+      client: [{ v: '', l: 'Any client' }, { v: 'none', l: 'Not a client yet' }].concat(clientOpts),
+      am: [{ v: '', l: 'Any AM' }].concat(amOpts),
+      via: [{ v: '', l: 'Any TalkAI' }, { v: 'regular', l: 'Regular Hours TalkAI' }, { v: 'missed', l: 'Team Missed TalkAI' }, { v: 'after', l: 'After Hours TalkAI' }].concat(lines.map(l => ({ v: 'line:' + l.id, l: firstName(l.am_name) + '’s TalkAI' }))).concat([{ v: 'tests', l: 'Tests' }]),
+      len: [{ v: '', l: 'Any length' }, { v: 'lt30', l: 'Under 30 s' }, { v: '30-120', l: '30 s – 2 min' }, { v: '120-300', l: '2 – 5 min' }, { v: 'gt300', l: 'Over 5 min' }]
+    };
   }
-  $('callFilt').querySelectorAll('[data-f]').forEach(el => { el.onchange = () => { F[el.dataset.f] = el.value; if (el.dataset.f === 'period' && el.value !== 'custom') { F.from = F.to = ''; } via = F.via; paintFilterState(); if (F.period !== 'custom' || (F.from && F.to)) loadCalls(); }; });
-  $('callClear').onclick = () => { Object.keys(F).forEach(k => { F[k] = ''; }); via = ''; $('callFilt').querySelectorAll('[data-f]').forEach(el => { el.value = ''; }); paintFilterState(); loadCalls(); };
+  function callHead() {
+    const tr = $('callHead'); if (!tr || !window.NovaTable) return;
+    const S = callSpecs(), T = (k, l) => NovaTable.th(k, l, S[k], k === 'call' ? callVal() : k === 'when' ? '' : F[k]);
+    tr.innerHTML = '<th>' + T('call', 'Call') + '</th><th>' + T('when', 'When') + '</th><th class="tk-th2">' + T('client', 'Client') + T('am', 'AM') + '</th><th>Phone</th><th>' + T('via', 'Answered by') + '</th><th>Outcome</th><th>' + T('len', 'Duration') + '</th><th>Rec</th><th>AI summary</th><th></th>';
+    NovaTable.bind(tr, S, (k, v) => {
+      if (k === 'call') { F.dir = ''; F.state = ''; if (v === 'in' || v === 'out') F.dir = v; else F.state = v; }
+      else if (k === 'when') { F.period = v.period || ''; F.from = v.from || ''; F.to = v.to || ''; }
+      else F[k] = v;
+      via = F.via; loadCalls();
+    });
+    NovaTable.pin(tr.closest('table'));
+  }
+  function paintFilterState() { callHead(); }
   let amsLoaded = false, clientsKey = '';
   function fillClients(list) {
     const key = (list || []).map(c => c.id).join(','); if (key === clientsKey) return; clientsKey = key;
-    const sel = $('callFilt').querySelector('[data-f="client"]'), keep = sel.value;
-    sel.innerHTML = '<option value="">Any client</option><option value="none">Not a client yet</option>' + (list || []).map(c => '<option value="' + c.id + '">' + esc(c.company ? (c.name && c.name !== c.company ? c.name + ' · ' + c.company : c.company) : (c.name || '#' + c.id)) + '</option>').join('');
-    sel.value = keep;
+    clientOpts = (list || []).map(c => ({ v: String(c.id), l: c.company ? (c.name && c.name !== c.company ? c.name + ' · ' + c.company : c.company) : (c.name || '#' + c.id) }));
   }
   async function fillAms() {
     if (amsLoaded) return; amsLoaded = true;
-    try { const j = await api('/api/admin/talk/ams'); const sel = $('callFilt').querySelector('[data-f="am"]'); sel.innerHTML = '<option value="">Any AM</option>' + (j.ams || []).map(a => '<option value="' + a.id + '">' + esc(a.name) + '</option>').join(''); } catch (e) {}
+    try { const j = await api('/api/admin/talk/ams'); amOpts = (j.ams || []).map(a => ({ v: String(a.id), l: a.name })); } catch (e) {}
   }
   let statsMounted = false;
   document.querySelectorAll('#callSub button').forEach(b => { b.onclick = () => {
@@ -157,17 +176,13 @@
       $('callRows').innerHTML = '<tr><td colspan="10" class="tk-empty">' + (filter || filterQuery() || $('callQ').value ? 'No calls match these filters.' : 'No calls yet. Once the number is connected (Setup), every call shows up here — or try it under Try it.') + '</td></tr>';
       return;
     }
+    callHead();
     $('callRows').innerHTML = j.calls.map(callTr).join('');
     $('callRows').querySelectorAll('tr.tk-ctr').forEach(tr => { tr.onclick = (e) => { if (e.target.closest('[data-play]')) return; openCall(parseInt(tr.dataset.id)); }; });
     $('callRows').querySelectorAll('[data-play]').forEach(b => { b.onclick = (e) => { e.stopPropagation(); openCall(parseInt(b.dataset.play)); }; });
   }
   // The "Answered by" select: every TalkAI that can pick up — the three setups and each account manager's line.
-  function fillVia() {
-    const sel = $('callVia'), keep = sel.value;
-    sel.innerHTML = '<option value="">Any TalkAI</option><option value="regular">Regular Hours TalkAI</option><option value="missed">Team Missed TalkAI</option><option value="after">After Hours TalkAI</option>' +
-      lines.map(l => '<option value="line:' + l.id + '">' + esc(firstName(l.am_name)) + '’s TalkAI</option>').join('') + '<option value="tests">Tests</option>';
-    sel.value = keep;
-  }
+  function fillVia() { callHead(); }   /* 1.20.92: the Answered by options are built from `lines` in callSpecs() */
   const firstName = (n) => String(n || '').trim().split(/\s+/)[0] || '';
   const SYS_ICON = {
     in: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 7L7 17"/><path d="M16 17H7V8"/></svg>',

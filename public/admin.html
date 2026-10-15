@@ -42,15 +42,12 @@ input:focus { border-color: var(--indigo); box-shadow: 0 0 0 3px var(--indigo-li
 .feedback.ok { color: var(--green); }
 table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 th { background: #f7f7fc; text-align: left; padding: 11px 14px; font-weight: 600; color: var(--ink-soft); border-bottom: 1px solid var(--line); }
-/* 1.20.90: Users — the two header rows stay put while the people scroll; a filter under every column */
+/* 1.20.90 / 1.20.92: Users — header filters (NovaTable.th) and a pinned header (NovaTable.pin) */
 #tabUsers .us-wrap { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .us-table { border: 0; border-radius: 0; overflow: visible; }
-.us-table thead th { position: sticky; top: -26px; z-index: 2; box-shadow: 0 1px 0 var(--line); }   /* .content scrolls with 26px top padding */
-.us-table thead tr.us-filt th { top: 13px; padding: 6px 10px 8px; background: #fbfbfe; box-shadow: 0 -2px 0 #fbfbfe, 0 1px 0 var(--line); }
 .us-table th:last-child, .us-table td:last-child { min-width: 112px; }
-.us-filt input, .us-filt select { width: 100%; box-sizing: border-box; border: 1px solid #e3e3ee; border-radius: 7px; padding: 5px 8px; font: inherit; font-size: 12px; background: #fff; color: var(--ink); }
-.us-filt input::placeholder { color: #b0b0c3; }
 .us-count { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+.hist-filters { align-items: center; min-height: 32px; margin-bottom: 8px; } .hist-filters .us-count { margin: 0; } .hist-table { overflow: visible; }
 td { padding: 11px 14px; border-bottom: 1px solid var(--line); }
 tr:last-child td { border-bottom: none; }
 .hist-row { cursor: pointer; }
@@ -281,20 +278,7 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
         <div class="us-count" id="usCount"></div>
         <div class="us-wrap">
         <table class="us-table">
-          <thead>
-            <tr><th></th><th>Name</th><th>Username</th><th>Email</th><th>Last login</th><th>History</th><th>Knowledge</th><th>Roles</th><th>Status</th></tr>
-            <tr class="us-filt">
-              <th></th>
-              <th><input data-uf="name" placeholder="Name"></th>
-              <th><input data-uf="username" placeholder="Username"></th>
-              <th><input data-uf="email" placeholder="Email"></th>
-              <th><select data-uf="login"><option value="">Any</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="older">Over 90 days ago</option><option value="never">Never</option></select></th>
-              <th><select data-uf="hist"><option value="">Any</option><option value="7">Chatted this week</option><option value="30">Chatted this month</option><option value="none">No chats</option></select></th>
-              <th><select data-uf="know"><option value="">Any</option><option value="none">No access</option><option value="own">Own area</option><option value="all">See all</option></select></th>
-              <th><select data-uf="role"><option value="">Any</option><option value="is_admin">Admin</option><option value="is_bookkeeper">Bookkeeper</option><option value="is_ar">AR</option><option value="is_aging">Acct Aging</option><option value="none">No roles</option></select></th>
-              <th><select data-uf="status"><option value="1">Enabled</option><option value="0">Disabled</option><option value="">All</option></select></th>
-            </tr>
-          </thead>
+          <thead><tr id="usersHead"><th></th><th>Name</th><th>Username</th><th>Email</th><th>Last login</th><th>History</th><th>Knowledge</th><th>Roles</th><th>Status</th></tr></thead>
           <tbody id="usersBody"></tbody>
         </table>
         </div>
@@ -307,20 +291,22 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
         </div>
         <div style="height:10px"></div>
         <div id="crmStats"></div>
-        <div class="filters">
-          <select id="fRating" onchange="loadHistory()">
+        <!-- 1.20.92: the filters live in the column headers (NovaTable); the selects stay hidden as the state the rest of the page reads -->
+        <div class="filters hist-filters">
+          <select id="fRating" onchange="loadHistory()" hidden>
             <option value="all">All ratings</option>
             <option value="up">👍 Liked</option>
             <option value="down">👎 Disliked</option>
             <option value="unread">Unread</option>
           </select>
-          <select id="fUser" onchange="loadHistory()"><option value="">All users</option></select>
-          <select id="fAgent" onchange="loadHistory()" style="display:none"><option value="">All agents</option></select>
-          <select id="fClient" onchange="loadHistory()"><option value="">All clients</option></select>
+          <select id="fUser" onchange="loadHistory()" hidden><option value="">All users</option></select>
+          <select id="fAgent" onchange="loadHistory()" hidden><option value="">All agents</option></select>
+          <select id="fClient" onchange="loadHistory()" hidden><option value="">All clients</option></select>
+          <span class="us-count" id="histCount"></span>
           <button type="button" class="btn-ghost" id="fReadAll" onclick="crmReadAll()" style="display:none;margin-left:auto">Mark all read</button>
         </div>
-        <table>
-          <thead><tr><th>Date</th><th>User</th><th>Client</th><th>Agent</th><th>Summary</th><th>Rating</th></tr></thead>
+        <table class="hist-table">
+          <thead><tr id="histHead"><th>Date</th><th>User</th><th>Client</th><th>Agent</th><th>Summary</th><th>Rating</th></tr></thead>
           <tbody id="histBody"></tbody>
         </table>
       </div>
@@ -505,6 +491,7 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
 <script src="/install-pricing.js"></script>
 <script src="/nova-stats.js"></script>
 <script src="/nova-nav.js"></script>
+<script src="/nova-table.js"></script>
 <script>
 const token = localStorage.getItem('axiom_token');
 let currentAgentSlug = null;
@@ -871,11 +858,27 @@ async function loadEmails() {
 
 let usersCache = null;
 // 1.20.90: one filter per column (text on name / username / email, pickers on the rest); Status defaults to Enabled.
-function usersFilter() { const f = {}; document.querySelectorAll('#tabUsers [data-uf]').forEach(el => { f[el.dataset.uf] = el.value; }); return f; }
+// 1.20.92: the filters live in the column headers (NovaTable.th — the Bank feed's funnel popovers), state in UF.
+const UF = { name: '', username: '', email: '', login: '', hist: '', know: '', role: '', status: '' };   /* status '' = Enabled (the default view), '0' = Disabled, 'all' = everyone */
+const US_SPECS = () => ({
+  name: { type: 'text', value: UF.name }, username: { type: 'text', value: UF.username }, email: { type: 'text', value: UF.email },
+  login: [{ v: '', l: 'Any time' }, { v: '7', l: 'Last 7 days' }, { v: '30', l: 'Last 30 days' }, { v: '90', l: 'Last 90 days' }, { v: 'older', l: 'Over 90 days ago' }, { v: 'never', l: 'Never signed in' }],
+  hist: [{ v: '', l: 'Any' }, { v: '7', l: 'Chatted this week' }, { v: '30', l: 'Chatted this month' }, { v: 'none', l: 'No chats' }],
+  know: [{ v: '', l: 'Any' }, { v: 'none', l: 'No access' }, { v: 'own', l: 'Own area' }, { v: 'all', l: 'See all' }],
+  role: [{ v: '', l: 'Any' }, { v: 'is_admin', l: 'Admin' }, { v: 'is_bookkeeper', l: 'Bookkeeper' }, { v: 'is_ar', l: 'AR' }, { v: 'is_aging', l: 'Acct Aging' }, { v: 'none', l: 'No roles' }],
+  status: [{ v: '', l: 'Enabled' }, { v: '0', l: 'Disabled' }, { v: 'all', l: 'All — enabled and disabled' }]
+});
+function usersHead() {
+  const S = US_SPECS(), T = (k, l) => '<th>' + NovaTable.th(k, l, S[k], UF[k]) + '</th>';
+  const tr = document.getElementById('usersHead'); if (!tr || !window.NovaTable) return;
+  tr.innerHTML = '<th></th>' + T('name', 'Name') + T('username', 'Username') + T('email', 'Email') + T('login', 'Last login') + T('hist', 'History') + T('know', 'Knowledge') + T('role', 'Roles') + T('status', 'Status');
+  NovaTable.bind(tr, S, (k, v) => { UF[k] = typeof v === 'string' ? v : ''; renderUsers(); });
+}
+function usersFilter() { return UF; }
 function userPasses(m, f) {
   const has = (v, q) => !q || String(v || '').toLowerCase().indexOf(q.toLowerCase()) > -1;
   if (!has(m.display_name, f.name) || !has(m.username, f.username) || !has(m.email, f.email)) return false;
-  if (f.status !== '' && String(m.enabled ? 1 : 0) !== f.status) return false;
+  if (f.status !== 'all' && String(m.enabled ? 1 : 0) !== (f.status || '1')) return false;   /* '' = Enabled, the default */
   if (f.know && (m.knowledge_access || 'none') !== f.know) return false;
   if (f.role === 'none') { if (m.is_admin || m.is_bookkeeper || m.is_ar || m.is_aging) return false; } else if (f.role && !m[f.role]) return false;
   if (f.hist === '7' && !(m.chats7 > 0)) return false; if (f.hist === '30' && !(m.chats30 > 0)) return false; if (f.hist === 'none' && m.chatsTotal > 0) return false;
@@ -885,7 +888,6 @@ function userPasses(m, f) {
   }
   return true;
 }
-document.addEventListener('DOMContentLoaded', () => { document.querySelectorAll('#tabUsers [data-uf]').forEach(el => { el.addEventListener('input', renderUsers); el.addEventListener('change', renderUsers); }); });
 async function loadUsers() {
   const tb = document.getElementById('usersBody');
   if (!usersCache) tb.innerHTML = '<tr><td colspan="9" style="color:var(--muted)">Loading...</td></tr>';
@@ -899,6 +901,7 @@ async function loadUsers() {
 }
 function renderUsers() {
   const tb = document.getElementById('usersBody'); if (!usersCache) return;
+  usersHead(); if (window.NovaTable) NovaTable.pin(tb.closest('table'));
   const f = usersFilter(); const list = usersCache.filter(m => userPasses(m, f));
   const en = usersCache.filter(m => m.enabled).length;
   const cnt = document.getElementById('usCount'); if (cnt) cnt.textContent = list.length + ' of ' + usersCache.length + ' people shown · ' + en + ' enabled · ' + (usersCache.length - en) + ' disabled in the Axiom CRM';
@@ -1709,9 +1712,42 @@ function loadCrmStats(user) {
   crmStatsFor = user;
   NovaStats.mount(document.getElementById('crmStats'), { url: '/api/stats/crm' + (user ? '?user=' + encodeURIComponent(user) : ''), token: token, key: 'crm' });
 }
+// 1.20.92: CRM Chat header filters — Date (range, on the page), User / Client / Agent / Rating (the hidden selects → server),
+// Summary (text, on the page). The header is drawn from the selects' options so the lists are the same as before.
+const HF = { date: { from: '', to: '', period: '' }, summary: '' };
+function histSpecs() {
+  const opts = (id) => Array.from(document.getElementById(id).options).map(o => ({ v: o.value, l: o.textContent, sub: o.disabled ? 'soon' : '' }));
+  return {
+    date: { type: 'range', kind: 'date', presets: [{ v: '', l: 'All time' }, { v: 'today', l: 'Today' }, { v: 'week', l: 'This week' }, { v: 'month', l: 'This month' }, { v: '30', l: 'Last 30 days' }], period: HF.date.period, from: HF.date.from, to: HF.date.to },
+    user: opts('fUser'), client: opts('fClient'), agent: opts('fAgent'), rating: opts('fRating').map(o => ({ v: o.v === 'all' ? '' : o.v, l: o.l })),
+    summary: { type: 'text', value: HF.summary }
+  };
+}
+function histHead() {
+  const tr = document.getElementById('histHead'); if (!tr || !window.NovaTable) return;
+  const S = histSpecs(), cur = { user: document.getElementById('fUser').value, client: document.getElementById('fClient').value, agent: document.getElementById('fAgent').value, rating: document.getElementById('fRating').value === 'all' ? '' : document.getElementById('fRating').value };
+  const T = (k, l) => '<th>' + NovaTable.th(k, l, S[k], cur[k]) + '</th>';
+  tr.innerHTML = T('date', 'Date') + T('user', 'User') + T('client', 'Client') + T('agent', 'Agent') + T('summary', 'Summary') + T('rating', 'Rating');
+  NovaTable.bind(tr, S, (k, v) => {
+    if (k === 'date') { HF.date = v; renderHistory(); return; }
+    if (k === 'summary') { HF.summary = v; renderHistory(); return; }
+    const sel = document.getElementById({ user: 'fUser', client: 'fClient', agent: 'fAgent', rating: 'fRating' }[k]); sel.value = k === 'rating' && !v ? 'all' : v; loadHistory();
+  });
+}
+function histRange() {
+  const p = HF.date.period, d0 = new Date(); d0.setHours(0, 0, 0, 0); const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  if (p === 'custom') return [HF.date.from, HF.date.to];
+  if (p === 'today') return [ymd(d0), ymd(d0)];
+  if (p === 'week') return [ymd(new Date(d0 - ((d0.getDay() + 6) % 7) * 864e5)), ''];
+  if (p === 'month') return [ymd(new Date(d0.getFullYear(), d0.getMonth(), 1)), ''];
+  if (p === '30') return [ymd(new Date(d0 - 29 * 864e5)), ''];
+  return ['', ''];
+}
+let histCache = [];
 async function loadHistory() {
   const tb = document.getElementById('histBody');
   loadCrmStats(document.getElementById('fUser').value || '');
+  histHead();
   tb.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">Loading...</td></tr>';
   const rating = document.getElementById('fRating').value;
   const user = document.getElementById('fUser').value;
@@ -1724,9 +1760,19 @@ async function loadHistory() {
       { headers: { 'Authorization': 'Bearer ' + token } });
     const j = await res.json();
     if (!j.success) { tb.innerHTML = '<tr><td colspan="6" class="feedback err">' + (j.error||'Error') + '</td></tr>'; return; }
-    tb.innerHTML = '';
-    if (!j.history.length) { tb.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">No conversations match.</td></tr>'; return; }
-    j.history.forEach(h => {
+    histCache = j.history || [];
+    renderHistory();
+  } catch (e) { tb.innerHTML = '<tr><td colspan="6" class="feedback err">Connection error</td></tr>'; }
+}
+function renderHistory() {
+  const tb = document.getElementById('histBody'); histHead(); if (window.NovaTable) NovaTable.pin(tb.closest('table'));
+  const [from, to] = histRange(), q = HF.summary.toLowerCase();
+  const list = histCache.filter(h => { const d = String(h.updated_at || '').slice(0, 10); return (!from || d >= from) && (!to || d <= to) && (!q || String(h.title || '').toLowerCase().indexOf(q) > -1); });
+  const cnt = document.getElementById('histCount'); if (cnt) cnt.textContent = list.length === histCache.length ? histCache.length + ' conversations' : list.length + ' of ' + histCache.length + ' conversations';
+  tb.innerHTML = '';
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">No conversations match.</td></tr>'; return; }
+  try {
+    list.forEach(h => {
       const tr = document.createElement('tr');
       tr.className = 'hist-row' + (h.unread ? ' unread' : '');
       if (h.unread) tr.title = 'New since you last opened it';
@@ -1757,7 +1803,7 @@ async function loadHistory() {
       };
       tb.appendChild(tr);
     });
-  } catch (e) { tb.innerHTML = '<tr><td colspan="6" class="feedback err">Connection error</td></tr>'; }
+  } catch (e) { tb.innerHTML = '<tr><td colspan="6" class="feedback err">' + esc(e.message) + '</td></tr>'; }
 }
 
 // CRM Chat read state (admins): opening a conversation marks it read; the menu count follows.

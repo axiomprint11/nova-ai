@@ -115,7 +115,7 @@
   .tk-tile .faces { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
   .tk-face { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px 2px 2px; font-size: 11.5px; font-weight: 600; background: #fff; }
   .tk-face .tk-av { width: 20px; height: 20px; font-size: 9px; } .tk-face.sys .tk-av { background: var(--indigo-light); color: var(--indigo-dark); }
-  .tk-tablewrap { background: #fff; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .tk-tablewrap { background: #fff; border: 1px solid var(--line); border-radius: 12px; }
   .tk-ctable { width: 100%; border-collapse: collapse; font-size: 13px; }
   .tk-ctable th { text-align: left; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 10px 12px; border-bottom: 1px solid var(--line); background: #fafafc; white-space: nowrap; }
   .tk-ctable td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
@@ -152,7 +152,8 @@
   .cl-out { display: flex; gap: 4px; flex-wrap: wrap; }
   .cl-dur { white-space: nowrap; font-variant-numeric: tabular-nums; }
   .cl-rec button { border: none; background: none; cursor: pointer; color: var(--indigo); padding: 2px; display: inline-flex; } .cl-rec svg { width: 18px; height: 18px; } .cl-rec .no { color: #d1d5db; }
-  .tk-tablewrap { overflow-x: auto; }
+  .tk-tablewrap { overflow: visible; }   /* 1.20.92: the header is pinned (NovaTable.pin) — a clipping wrapper would stop it */
+  .tk-th2 .thf + .thf { margin-left: 14px; }
   .cl-sum { color: var(--ink-soft); font-size: 12.5px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cl-eye { color: var(--muted); } .cl-eye svg { width: 18px; height: 18px; }
   .tk-ctable td.tk-empty { text-align: center; padding: 30px; }
@@ -599,19 +600,8 @@
       <div class="tk-dashpane" data-cs="calls">
         <div class="tk-tiles" id="callTiles"></div>
         <!-- 1.20.82: the filter bar — every select applies on change; Clear resets them all -->
-        <div class="tk-filt" id="callFilt">
-          <label><span>Direction</span><select data-f="dir"><option value="">All</option><option value="in">Inbound</option><option value="out">Outbound</option></select></label>
-          <label><span>Status</span><select data-f="state"><option value="">All</option><optgroup label="Inbound"><option value="answered">Answered</option><option value="missed">Missed</option><option value="voicemail">Voicemail</option></optgroup><optgroup label="Outbound"><option value="connected">Connected</option><option value="missed_out">Missed</option></optgroup></select></label>
-          <label><span>Client</span><select data-f="client"><option value="">Any client</option></select></label>
-          <label><span>Time</span><select data-f="period"><option value="">All time</option><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="week">This week</option><option value="month">This month</option><option value="30">Last 30 days</option><option value="custom">Custom…</option></select></label>
-          <span class="tk-filt-range" id="callRange" hidden><input type="date" data-f="from"><i>–</i><input type="date" data-f="to"></span>
-          <label><span>AM</span><select data-f="am"><option value="">Any AM</option></select></label>
-          <label><span>AM TalkAI</span><select id="callVia" data-f="via"><option value="">Any TalkAI</option></select></label>
-          <label><span>Length</span><select data-f="len"><option value="">Any</option><option value="lt30">Under 30 s</option><option value="30-120">30 s – 2 min</option><option value="120-300">2 – 5 min</option><option value="gt300">Over 5 min</option></select></label>
-          <button type="button" class="tk-filt-clear" id="callClear" hidden>× Clear</button>
-        </div>
         <div class="tk-listbar"><span id="callStamp"></span><span><button type="button" id="callUnreadOnly">Unread only <b class="tk-ucount" id="tkUnread"></b></button> · <button type="button" id="callReadAll">Mark all read</button></span></div>
-        <div class="tk-tablewrap"><table class="tk-ctable"><thead><tr><th>Call</th><th>When</th><th>Client / Contact</th><th>Phone</th><th>Answered by</th><th>Outcome</th><th>Duration</th><th>Rec</th><th>AI summary</th><th></th></tr></thead><tbody id="callRows"><tr><td colspan="10" class="tk-empty">Loading…</td></tr></tbody></table></div>
+        <div class="tk-tablewrap"><table class="tk-ctable"><thead><tr id="callHead"><th>Call</th><th>When</th><th>Client / Contact</th><th>Phone</th><th>Answered by</th><th>Outcome</th><th>Duration</th><th>Rec</th><th>AI summary</th><th></th></tr></thead><tbody id="callRows"><tr><td colspan="10" class="tk-empty">Loading…</td></tr></tbody></table></div>
       </div>
       <div class="tk-dashpane" data-cs="stats" hidden><div id="talkStats"></div></div>
     </div>
@@ -835,6 +825,7 @@
 </div>
 
 <script src="/nova-nav.js"></script>
+<script src="/nova-table.js"></script>
 <script>NovaNav.mount({ current: 'talk' });</script>
 <script src="/nova-stats.js"></script>
 <script src="/talk-ai.js"></script>
