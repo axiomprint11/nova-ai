@@ -149,6 +149,7 @@
   $('daOverloadSave').onclick = async () => { const r = await api('/api/designer/settings', { overload_logic: $('daOverload').value, overload_to: $('daOverloadTo').value }); if (!r.ok) { alert(r.error); return; } toast('Overload logic saved'); loadLogic(); };
   $('daLogicSave').onclick = async () => { const r = await api('/api/designer/settings', { match_logic: $('daLogic').value }); if (!r.ok) { alert(r.error); return; } toast('Match logic saved'); loadLogic(); };
   document.querySelectorAll('.da-sub [data-s]').forEach(b => b.onclick = () => { document.querySelectorAll('.da-sub [data-s]').forEach(x => x.classList.toggle('on', x === b)); document.querySelectorAll('.da-subview').forEach(v => v.classList.toggle('on', v.dataset.s === b.dataset.s)); $('daAllWrap').style.visibility = b.dataset.s === 'jobs' ? '' : 'hidden'; });
+  $('daAllWrap').style.visibility = 'hidden';   // 1.20.36: History opens first; the quotes box belongs to Test Data
   $('daAll').onchange = loadQueue; $('daRefresh').onclick = () => { loadQueue(); loadTeam(); loadHistory(); };
   document.querySelector('.da-sub [data-s="history"]').addEventListener('click', loadHistory);
 

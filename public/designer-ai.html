@@ -120,21 +120,21 @@
   <div class="da-view" data-v="online"><div class="da-soon"><b>Online Designer</b>Coming soon.</div></div>
   <div class="da-view on" data-v="assign">
     <div class="da-sub">
-      <button data-s="jobs" class="on">Jobs<span class="n" id="daQueueN"></span></button>
+      <button data-s="history" class="on">History<span class="n" id="daHistN"></span></button>
       <button data-s="designers">Designers<span class="n" id="daTeamN"></span></button>
+      <button data-s="jobs">Test Data<span class="n" id="daQueueN"></span></button>
       <button data-s="logic">Match Logic</button>
-      <button data-s="history">History<span class="n" id="daHistN"></span></button>
       <span class="sp"></span>
       <label class="da-muted" id="daAllWrap"><input type="checkbox" id="daAll"> include quotes (not invoiced yet)</label>
       <button class="bk-btn sm" id="daRefresh">Refresh</button>
     </div>
-    <div class="da-subview on" data-s="jobs">
+    <div class="da-subview" data-s="jobs">
       <div class="da-card">
-        <h2>Jobs waiting for a designer <span class="n" id="daTierN"></span><span class="sp"></span><span class="da-muted">Parked on "PrePress 1 Tier 1" / "PrePress Tier 2" in the CRM, in the prepress stage.</span></h2>
+        <h2>Test Data — jobs waiting for a designer <span class="n" id="daTierN"></span><span class="sp"></span><span class="da-muted">Parked on "PrePress 1 Tier 1" / "PrePress Tier 2" in the CRM, in the prepress stage.</span></h2>
         <div id="daQueue"><div class="da-muted">Loading…</div></div>
       </div>
     </div>
-    <div class="da-subview" data-s="history">
+    <div class="da-subview on" data-s="history">
       <div class="da-card">
         <h2>Match history<span class="sp"></span><span class="da-muted">Every match Nova ran — from this page or from the CRM's cron (<code>POST /api/designer/auto-assign</code>). Nova never writes to the CRM; "applied" means the CRM told Nova it made the assignment.</span></h2>
         <div id="daHist"><div class="da-muted">Loading…</div></div>
