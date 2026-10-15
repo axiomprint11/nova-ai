@@ -146,6 +146,18 @@ module.exports = function mountDesignerAi(app, deps) {
     if (now.min >= en) return { known: true, on: false, why: 'left at ' + fmtT(d.shift_end) };
     return { known: true, on: true, left: en - now.min, ends: fmtT(d.shift_end) };
   }
+  // 1.20.51: minutes until the designer's next shift starts (LA), looking up to 7 days ahead — who is in first tomorrow.
+  function nextStart(d) {
+    const st = toMin(d.shift_start), en = toMin(d.shift_end); if (st == null || en == null) return null;
+    const now = laNow(); const days = String(d.work_days || '1,2,3,4,5').split(',').map(Number);
+    for (let k = 0; k <= 7; k++) {
+      const day = ((now.day - 1 + k) % 7) + 1;
+      if (days.indexOf(day) < 0) continue;
+      if (k === 0 && now.min >= st) continue;          // today's start is already gone
+      return { minutes: k * 1440 + st - now.min, at: fmtT(d.shift_start), day: k === 0 ? 'today' : k === 1 ? 'tomorrow' : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][day - 1] };
+    }
+    return null;
+  }
 
   // ---- the matcher: who should take this job
   //   history  — the designer did this product (5 a job, up to 30) or this category (2 a job, up to 15) in the last 180 days
@@ -200,8 +212,23 @@ module.exports = function mountDesignerAi(app, deps) {
       // 1.20.32: hours and the cap are hard limits, not just points — an off-shift designer can never top the list
       const off = !!(sh.known && !sh.on), atMax = !!(d.max_active && d.active_jobs >= d.max_active);
       if (off) score = Math.min(score, 15); else if (atMax) score = Math.min(score, 25);
-      return { user_id: d.user_id, name: d.name, last_name: d.last_name, photo: d.photo, score: Math.max(0, Math.min(100, Math.round(score))), why, active_jobs: d.active_jobs, at_max: atMax, off_shift: off, hours_known: !!sh.known };
-    }).sort((a, b) => (a.off_shift - b.off_shift) || (a.at_max - b.at_max) || b.score - a.score || a.active_jobs - b.active_jobs);
+      return { user_id: d.user_id, name: d.name, last_name: d.last_name, photo: d.photo, score: Math.max(0, Math.min(100, Math.round(score))), why, active_jobs: d.active_jobs, at_max: atMax, off_shift: off, hours_known: !!sh.known, _d: d };
+    });
+    // 1.20.51: after hours, when nobody is on shift, the job should wait for whoever is in FIRST — the picks are ranked by
+    // the next shift start (who starts earliest gets the points), still under the off-shift cap so "busy" stays true.
+    if (out.length && out.every(p => p.off_shift || !p.hours_known) && out.some(p => p.off_shift)) {
+      const starts = out.map(p => ({ p, n: p.off_shift ? nextStart(p._d) : null })).filter(x => x.n);
+      starts.sort((a, b) => a.n.minutes - b.n.minutes);
+      const first = starts.length ? starts[0].n.minutes : 0;
+      starts.forEach((x, i) => {
+        const bonus = Math.max(0, 12 - i * 3);
+        x.p.next_start = x.n.minutes; x.p.next_start_text = x.n.day + ' ' + x.n.at;
+        x.p.score = Math.max(0, Math.min(15, x.p.score + bonus));
+        x.p.why.push((i === 0 ? 'FIRST IN — ' : '') + 'starts ' + x.n.day + ' at ' + x.n.at + (x.n.minutes - first >= 60 ? ' (' + Math.round((x.n.minutes - first) / 60) + ' h later)' : '') + (bonus ? pts(bonus) : ''));
+      });
+      out.sort((a, b) => (a.next_start == null) - (b.next_start == null) || (a.next_start || 0) - (b.next_start || 0) || b.score - a.score || a.active_jobs - b.active_jobs);
+    } else out.sort((a, b) => (a.off_shift - b.off_shift) || (a.at_max - b.at_max) || b.score - a.score || a.active_jobs - b.active_jobs);
+    out.forEach(p => { delete p._d; });
     return out;
   }
 
@@ -274,7 +301,8 @@ module.exports = function mountDesignerAi(app, deps) {
       const txt = (r.content || []).filter(c => c.type === 'text').map(c => c.text).join(''); const m = /\{[\s\S]*\}/.exec(txt); if (!m) return { picks, ai: false };
       const out = JSON.parse(m[0]); const by = {}; (out.picks || []).forEach(p => { by[p.user_id] = p; });
       const adj = picks.map(p => { const a = by[p.user_id]; if (!a) return p; const sc = Math.max(0, Math.min(100, Math.round(Number(a.score)))); const changed = !isNaN(sc) && sc !== p.score; return Object.assign({}, p, { score: isNaN(sc) ? p.score : sc, why: changed || a.note ? p.why.concat(['your rule: ' + (a.note || ('score ' + p.score + ' → ' + sc))]) : p.why, ai_changed: changed }); });
-      adj.sort((a, b) => (a.off_shift - b.off_shift) || (a.at_max - b.at_max) || b.score - a.score || a.active_jobs - b.active_jobs);
+      if (adj.every(p => p.off_shift || !p.hours_known) && adj.some(p => p.next_start != null)) adj.sort((a, b) => (a.next_start == null) - (b.next_start == null) || (a.next_start || 0) - (b.next_start || 0) || b.score - a.score);
+      else adj.sort((a, b) => (a.off_shift - b.off_shift) || (a.at_max - b.at_max) || b.score - a.score || a.active_jobs - b.active_jobs);
       return { picks: adj, ai: true, busy: out.busy === true, busy_reason: out.busy === true ? String(out.busy_reason || '').slice(0, 300) : '' };
     } catch (e) { errlog('ai adjust', e.message); return { picks, ai: false, ai_error: e.message }; }
   }
