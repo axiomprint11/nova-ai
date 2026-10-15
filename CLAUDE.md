@@ -44,6 +44,16 @@ verify-anchors-then-patch script that refuses to write if any anchor is missing.
 
 ## Two databases — know which one you are touching
 
+**users.db runs in WAL mode with a 5 s busy timeout** (1.20.68, server.js right after the open): `users.db-wal` / `-shm` beside
+the file are part of the database — never delete them while Nova runs, and never copy the bare file as a backup.
+**Nightly backups** (`backups.js`, mounted after designer-ai): every day at `BACKUP_AT` (LA, default 03:15) `VACUUM INTO` writes a
+consistent snapshot, gzipped to `BACKUP_DIR` (`/opt/axiom-ai/backups`, gitignored) as `users-YYYY-MM-DD.db.gz`, kept
+`BACKUP_KEEP_DAYS` (30); a boot more than 90 s after the hour takes the day's missing one; with `BACKUP_DRIVE_FOLDER` set the
+file is also uploaded to that Google Drive folder with the order@ service account (needs the `drive.file` scope in the
+domain-wide delegation and the folder shared with order@ — until then "Drive skipped" and an email on a real failure to
+`BACKUP_ALERT_TO`, gary@). `GET /api/admin/backups`, `POST /api/admin/backups/run`; Admin → Connectors shows the row with
+**Back up now**. Restore: stop Nova, `gunzip -c backups/users-<date>.db.gz > users.db`, remove `-wal` / `-shm`, start.
+
 | | Purpose | Access |
 |---|---|---|
 | `users.db` (SQLite, local) | App state only: users, members, chats, messages, agents, training_examples, knowledge_docs | Read/write, schema auto-created and auto-migrated at boot (server.js:51-166) |

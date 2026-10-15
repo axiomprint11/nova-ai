@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.67';
-const NOVA_BUILT = '10-15-2026 10:10am';
+const NOVA_VERSION = '1.20.68';
+const NOVA_BUILT = '10-15-2026 10:45am';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -216,7 +216,14 @@ app.use(express.static(path.join(__dirname, 'public'), {
   }
 }));
 
-const db = new sqlite3.Database('/opt/axiom-ai/users.db');
+const DB_PATH = '/opt/axiom-ai/users.db';
+const db = new sqlite3.Database(DB_PATH);
+// 1.20.68: WAL — readers never wait for a writer (the Plaid sync, the AI categorizer and a page load overlap all day), and a
+// 5 s busy timeout instead of an instant SQLITE_BUSY when two writes do meet. users.db-wal / -shm appear beside the file;
+// they are part of the database — never delete them while Nova runs. Backups use VACUUM INTO (backups.js), not a file copy.
+db.configure('busyTimeout', 5000);
+db.run('PRAGMA journal_mode = WAL', (e) => { if (e) console.error('SQLite WAL:', e.message); });
+db.run('PRAGMA synchronous = NORMAL', () => {});
 db.run('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL)');
 // is_admin flag on local users (admin accounts like novaai)
 db.run('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0', () => {});
@@ -9537,6 +9544,7 @@ const bookkeeping = require('./bookkeeping')(app, { db, crypto, jwt, anthropic, 
 
 // 1.20.14: Designer AI — AutoAssign Jobs (the prepress tier queues, the designers, the matcher); admins only for now
 require('./designer-ai')(app, { db, auth, adminOnly, serveVersionedHtml, runQuery, anthropic, model: MODEL_MAIN, sendMail });
+require('./backups')(app, { db, auth, adminOnly, sendMail, google, keyPath: '/opt/axiom-ai/gmail-key.json', gmailUser: GMAIL_USER, dbPath: DB_PATH });   // 1.20.68: nightly users.db snapshots
 
 app.get(/^(?!\/api).*/, serveVersionedHtml('index.html'));
 

@@ -777,7 +777,24 @@ async function loadConnections() {
         '<span class="conn-status ' + dotClass + '">' + statusText + '</span>';
       box.appendChild(row);
     });
+    loadBackups(box);   // 1.20.68
   } catch (e) { box.innerHTML = '<div class="feedback err">Connection error</div>'; }
+}
+// 1.20.68: the nightly users.db backup as one more row — last run, what is on disk, Drive, and "Back up now"
+async function loadBackups(box) {
+  const row = document.createElement('div'); row.className = 'conn-row'; row.id = 'bkRow'; box.appendChild(row);
+  const paint = async () => {
+    const r = await fetch('/api/admin/backups', { headers: { 'Authorization': 'Bearer ' + token } }); const j = await r.json(); if (!j.ok) { row.remove(); return; }
+    const l = j.last || {}; const ok = l.ok === true, err = l.ok === false; const dot = ok ? 'on' : err ? 'err' : 'off';
+    const kb = (n) => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.round(n / 1024) + ' KB';
+    const when = l.at ? new Date(l.at).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null;
+    const drive = l.drive ? (l.drive.id ? 'copied to Google Drive' : l.drive.skipped ? 'Drive: ' + l.drive.skipped : l.drive.error ? 'Drive upload FAILED: ' + l.drive.error : '') : '';
+    row.innerHTML = '<span class="conn-dot ' + dot + '"></span><div class="conn-info"><div class="conn-name">Nightly backup of Nova\'s database</div>' +
+      '<div class="conn-detail">' + esc('Every day at ' + j.at + ' · ' + j.files.length + ' on the server (' + j.keep_days + ' days kept)' + (when ? ' · last ' + when + (ok ? ' ✓ ' + l.file + ', ' + kb(l.size || 0) : ' ✗ ' + (l.error || 'failed')) : ' · none since this start') + (drive ? ' · ' + drive : '')) + '</div></div>' +
+      '<button class="btn-mini" id="bkNow" style="margin-right:10px">Back up now</button><span class="conn-status ' + dot + '">' + (ok ? 'OK' : err ? 'Failed' : 'Scheduled') + '</span>';
+    document.getElementById('bkNow').onclick = async () => { const b = document.getElementById('bkNow'); b.disabled = true; b.textContent = 'Working…'; await fetch('/api/admin/backups/run', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: '{}' }); paint(); };
+  };
+  paint().catch(() => row.remove());
 }
 
 async function loadUsers() {
