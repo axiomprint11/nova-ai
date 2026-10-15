@@ -508,6 +508,11 @@ pattern for any new report over a large log table. To add a report, add an entry
   the recent messages and sets the product's `Pages*` field (choice by leading number, or the number field) when the model left it
   out ("3.5 x 5, 48 pages" had been priced as the 12-page default); `forModel.filled_from_chat` says so, and a count the product
   does not offer goes to `ignored_options` with the choices.
+  **Versions are artwork only** (1.20.46): the model had priced "one of every cover option" as 11 `versions` named "100# Gloss -
+  Matte Lamination"… — the website has no mixed-material order (versions = different designs, same options; variable data and
+  multi-size are the only in-run variations). Rule 5b + the tool description say so, and `priceCard` refuses versions whose
+  name contains a choice of any non-size option (`optWords` from the public variables) with an error telling the model each
+  stock / finish combination is its own order at its own minimum — price two or three, ask which.
 - **Plain printing** of pages / sheets / documents (no booklet or other product named) is Document Printing & Copies:
   the client bot's `search_products` adds "document copies" and ranks it first (`PLAIN_PRINT` / `BOUND_PRODUCT`), and
   prompt rule 9d (TalkAi: the EVERYTHING THEY SAID line) says to price with every spec said anywhere in the
