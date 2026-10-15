@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.36';
-const NOVA_BUILT = '10-14-2026 9:40pm';
+const NOVA_VERSION = '1.20.37';
+const NOVA_BUILT = '10-14-2026 10:05pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -1012,6 +1012,14 @@ const officeHours = require('./office-hours')(db);
 app.get('/api/office-hours', auth, async (req, res) => res.json({ ok: true, hours: await officeHours.get(), text: officeHours.weekText(await officeHours.get()), status: officeHours.status(await officeHours.get(), closedDays) }));
 app.post('/api/admin/office-hours', auth, adminOnly, async (req, res) => {
   try { const v = await officeHours.set(req.body || {}, String(req.user.username || req.user.key || '')); res.json({ ok: true, hours: v, text: officeHours.weekText(v) }); }
+  catch (e) { res.json({ ok: false, error: e.message }); }
+});
+// Graphic design services (1.20.37): rates + hours guide, company knowledge shared by every assistant — Domain Knowledge → Company info
+const DesignServices = require('./design-services')(db);
+app.get('/api/design-services', auth, async (req, res) => { try { res.json({ ok: true, design: await DesignServices.get() }); } catch (e) { res.json({ ok: false, error: e.message }); } });
+app.post('/api/admin/design-services', auth, adminOnly, async (req, res) => {
+  try { const b = req.body || {}; if (Number(b.max) > 0 && Number(b.min) > 0 && Number(b.max) < Number(b.min)) return res.json({ ok: false, error: 'The highest rate is below the lowest.' });
+    const v = await DesignServices.set({ guide: b.guide, min: b.min, max: b.max }, String(req.user.username || req.user.key || '')); res.json({ ok: true, design: v }); }
   catch (e) { res.json({ ok: false, error: e.message }); }
 });
 const { artworkSpecs } = require('./artwork-specs');
@@ -6660,6 +6668,22 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
       required: ['product_id', 'quantity']
     }
   }, {
+    name: 'estimate_design',
+    description: 'Price AxiomPrint\'s in-house GRAPHIC DESIGN work — the design fee / designer fee / design charge to add to a job, or a stand-alone design quote. ' +
+      'CALL THIS whenever the team asks what to charge for design, artwork, layout, a logo, file fixes or changes on a job or for a client. Pass the E-number when the question is about a job: the tool reads the job ' +
+      '(product, category, specs, the design details and notes, any design fee already on it) and returns it with the estimate. Split the work into pieces and give each its hours from the DESIGN SERVICES guide in the prompt ' +
+      '(low–high); the tool multiplies by the admin-set hourly rates. NEVER do the multiplication yourself or quote a rate from memory.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        e_number: { type: 'string', description: 'The job, e.g. "E1181735", when the design is for an existing job.' },
+        pieces: { type: 'array', description: 'Each piece of design work with hours low–high from the guide, e.g. [{"task":"Die cut business card, front and back, from the client\'s logo","hours_low":1.5,"hours_high":3}]',
+          items: { type: 'object', properties: { task: { type: 'string' }, hours_low: { type: 'number' }, hours_high: { type: 'number' } }, required: ['task', 'hours_low', 'hours_high'] } },
+        rush: { type: 'boolean', description: 'true when it is needed within 24 hours (adds 50% to the hours).' }
+      },
+      required: ['pieces']
+    }
+  }, {
     name: 'get_job',
     description: 'Look up one job / estimate by its E-number (e.g. E1175114) and show a card with its status, specs, product photo and a Reorder button. Use whenever a specific E-number is mentioned or the person asks about the status of a job.',
     input_schema: {
@@ -6844,6 +6868,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
   }
 
   const officeHoursLine = await officeHours.line(closedDays).catch(() => '');
+  const designSvc = await DesignServices.get().catch(() => null);
   const systemPrompt =
     'You are ChatBot, the AxiomPrint company brain. AxiomPrint is a Los Angeles commercial printing and ' +
     'fulfillment company. You answer questions from AxiomPrint STAFF - account managers, production, sales, ' +
@@ -7226,6 +7251,11 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     '\n\n=== REPORTS ===\n' +
     'For client follow-up lists, top clients, unpaid invoices or product sales, call run_report — it draws a ' +
     'full interactive table beside the chat. Use query_database only for questions none of the reports answers.\n' +
+    (designSvc ? '\n=== DESIGN SERVICES (design fee / designer fee) ===\n' +
+    'When the team asks what to charge for design, artwork, a logo, layout or file changes — on a job ("E1181735 how much can I charge for the designer fee") or for a client — go into design-estimate mode: ' +
+    'read the job if an E-number is given (its product, specs, design details and notes tell you what the designer has to do), split the work into pieces, give each its hours from the guide below, ' +
+    'and call estimate_design with the pieces (and the E-number). Quote its estimate, hours and hourly rate exactly as returned — never your own arithmetic, never a rate from memory. ' +
+    'Mention a design fee already on the job when the tool reports one. The rates are admin-set (Domain Knowledge → Company info).\nGUIDE:\n' + designSvc.guide + '\n' : '') +
     '\n=== SHIPPING (UPS / FedEx) ===\n' +
     'For shipping cost or how long shipping takes to a ZIP / city, call quote_shipping with the product already priced ' +
     '(same product_id, quantity and options) and the ZIP. UPS Ground transit days come from UPS\'s own transit table for ' +
@@ -8941,6 +8971,33 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
         }
         }
         }
+      } else if (toolUse.name === 'estimate_design') {
+        // 1.20.37: the design fee for a job — the shared company guide + rates (Domain Knowledge → Company info)
+        send({ type: 'query', description: 'Estimating the design work' });
+        try {
+          const rates = await DesignServices.get();
+          let pieces = Array.isArray(toolUse.input.pieces) ? toolUse.input.pieces : [];
+          if (toolUse.input.rush) pieces = pieces.map(x => Object.assign({}, x, { hours_low: Number(x.hours_low) * 1.5, hours_high: Number(x.hours_high) * 1.5 }));
+          const est = DesignServices.estimate(pieces, rates);
+          const out = Object.assign({ hourly_rates: { lowest: rates.min, highest: rates.max } }, est);
+          const eid = parseInt(String(toolUse.input.e_number || '').replace(/[^0-9]/g, ''));
+          if (eid) {
+            try {
+              const j = (await runQueryRaw('SELECT e.id, e.estimate_name, e.design_price, e.prepress_notes, e.estimate_productid product_id, p.title product, pc.title category, ' +
+                "(SELECT dd.design_type FROM estimate_design_details dd WHERE dd.estimate_id = e.id ORDER BY dd.id DESC LIMIT 1) design_type, " +
+                "(SELECT dd.service_type FROM estimate_design_details dd WHERE dd.estimate_id = e.id AND dd.service_type IS NOT NULL ORDER BY dd.id DESC LIMIT 1) service_type, " +
+                "(SELECT dd.notes FROM estimate_design_details dd WHERE dd.estimate_id = e.id AND dd.notes IS NOT NULL AND dd.notes <> '' ORDER BY dd.id DESC LIMIT 1) design_notes " +
+                'FROM estimate e LEFT JOIN product p ON p.id = e.estimate_productid LEFT JOIN productcategory pc ON pc.id = p.product_category_id WHERE e.id = ' + eid + ' LIMIT 1'))[0];
+              if (j) {
+                const specs = (await runQueryRaw("SELECT eo.estimate_option_name f, COALESCE(NULLIF(eo.selected,''), eo.estimate_option_value) v FROM estimateoption eo WHERE eo.estimate_id = " + eid + ' AND eo.hidden = 0 ORDER BY eo.`order` LIMIT 30')).filter(x => x.v != null && String(x.v).trim() !== '').map(x => String(x.f || '').replace(/_/g, ' ') + ': ' + x.v);
+                out.job = { e: 'E' + eid, name: j.estimate_name, product: j.product, category: j.category, specs, design_type: j.design_type || null, service_type: j.service_type || null, design_notes: j.design_notes || null, prepress_notes: j.prepress_notes || null,
+                  design_fee_on_file: Number(j.design_price) > 0 ? usd2(Number(j.design_price)) : null };
+                out.note = Number(j.design_price) > 0 ? 'A design fee of ' + usd2(Number(j.design_price)) + ' is already on this job — say so beside the estimate.' : 'No design fee is on this job yet; the estimate is what to charge.';
+              } else out.job_error = 'No job E' + eid;
+            } catch (je) { out.job_error = je.message; }
+          }
+          toolResult = JSON.stringify(out);
+        } catch (e) { toolResult = 'Could not estimate: ' + e.message; }
       } else if (toolUse.name === 'get_job') {
         const raw = String(toolUse.input.e_number || '').trim();
         const eid = parseInt(raw.replace(/[^0-9]/g, ''));
@@ -9324,7 +9381,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
 mountMcp(app, { runQuery, dataDictionary: DATA_DICTIONARY });
 
 // The customer-facing bot — separate tables, rules, tools and tokens (client-bot.js).
-const clientBot = require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly, Shipping,
+const clientBot = require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly, Shipping, DesignServices,
   quoteProduct, buildOrderLink, stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming,
   InstallPricing, getInstallPricing: () => installPricing, routeLookup, toTime24, driveFileBytes,
   extractAttachmentText, relatedRules, sendMail, closedDays, officeHours, loadClientTraining, dataDir: __dirname });

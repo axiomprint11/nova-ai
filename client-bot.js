@@ -30,7 +30,7 @@ const VisitorInfo = require('./visitor-info');
 module.exports = function mountClientBot(app, deps) {
   const { db, runQuery, jwt, crypto, anthropic, auth, adminOnly, quoteProduct, buildOrderLink,
           stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming,
-          InstallPricing, getInstallPricing, routeLookup, toTime24, driveFileBytes, extractAttachmentText } = deps;
+          InstallPricing, getInstallPricing, routeLookup, toTime24, driveFileBytes, extractAttachmentText, DesignServices } = deps;
   const fs = require('fs'), path = require('path');
   const Files = require('./client-files');
   let sharp = null;
@@ -163,7 +163,9 @@ module.exports = function mountClientBot(app, deps) {
   async function loadRules() {
     const r = await dbGet('SELECT * FROM client_bot_rules WHERE id = 1');
     const out = r || { rules: DEFAULT_RULES, knowledge: DEFAULT_KNOWLEDGE, greeting: DEFAULT_GREETING, contact: DEFAULT_CONTACT };
-    // Graphic design services: empty means "not set yet" -> the defaults.
+    // Graphic design services: since 1.20.37 the shared company store (Domain Knowledge → Company info) is the truth;
+    // the old columns here are only the migration source. Empty means "not set yet" -> the defaults.
+    if (DesignServices) { try { const d = await DesignServices.get(); out.design = d.guide; out.design_min = d.min; out.design_max = d.max; } catch (e) {} }
     if (out.design == null || out.design === '') out.design = DEFAULT_DESIGN;
     if (!(Number(out.design_min) > 0)) out.design_min = DEFAULT_DESIGN_MIN;
     if (!(Number(out.design_max) > 0)) out.design_max = DEFAULT_DESIGN_MAX;
@@ -1554,6 +1556,7 @@ module.exports = function mountClientBot(app, deps) {
     }
     if (name === 'estimate_design') {
       const r = await loadRules();
+      if (DesignServices) return DesignServices.estimate(input.pieces, { min: r.design_min, max: r.design_max });
       const lo = Number(r.design_min), hi = Number(r.design_max);
       const pieces = (Array.isArray(input.pieces) ? input.pieces : []).slice(0, 20).map(x => {
         let a = Math.max(0, Math.min(200, Number(x && x.hours_low) || 0)), b = Math.max(0, Math.min(200, Number(x && x.hours_high) || 0));
@@ -2881,6 +2884,7 @@ module.exports = function mountClientBot(app, deps) {
       [cur.rules, cur.knowledge, cur.greeting, cur.contact, cur.design, cur.design_min, cur.design_max, who, 'Before change by ' + who]);
     await dbRun("UPDATE client_bot_rules SET rules = ?, knowledge = ?, greeting = ?, contact = ?, design = ?, design_min = ?, design_max = ?, updated_at = datetime('now'), updated_by = ? WHERE id = 1",
       [next.rules, next.knowledge, next.greeting, next.contact, next.design, next.design_min, next.design_max, who]);
+    if (DesignServices) { try { await DesignServices.set({ guide: next.design, min: next.design_min, max: next.design_max }, who); } catch (e) {} }   // 1.20.37: one store for every assistant
     res.json({ ok: true, rules: await loadRules() });
   });
 

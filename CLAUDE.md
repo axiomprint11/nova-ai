@@ -439,6 +439,18 @@ pattern for any new report over a large log table. To add a report, add an entry
   say words in full, while the chats keep "Mon–Fri". TalkAi's
   `talk_settings.hours` (8:00–6:55) only decides which setup answers — the phone is answered 24/7 — and reaches the
   prompt as an internal TEAM AVAILABILITY line, never as opening hours.
+- **Graphic design services are company knowledge** (1.20.37): `design-services.js` (`DesignServices = require('./design-services')(db)`
+  in server.js) keeps the hourly rates + the "hours per kind of job" guide in SQLite `company_info` key `design_services`
+  (`{guide, min, max}`; the first `get()` migrates what was saved in `client_bot_rules.design / design_min / design_max`),
+  edited in Admin → Domain Knowledge → Company info → **Graphic design services** (`GET /api/design-services`,
+  `POST /api/admin/design-services`; the Client ChatBot Training section still shows the same fields and its Save writes the
+  shared store too). `DesignServices.estimate(pieces, {min, max})` is the one arithmetic (low hours × lowest rate to high hours
+  × highest rate, whole dollars) — the website chat's `estimate_design` uses it, and the **staff ChatBot has `estimate_design`
+  {e_number?, pieces[], rush?}** with a DESIGN SERVICES prompt section carrying the live guide: "E1181735 how much can I charge
+  for the designer fee" → the model reads the job, splits the work into pieces with hours, the tool reads the job (product,
+  category, specs, `estimate_design_details` design_type / service_type / notes, `prepress_notes`, `design_price` already on
+  file) and returns the estimate + job facts; the model quotes estimate / hours / rate verbatim and mentions a fee already on
+  the job. The models never multiply or quote a rate from memory.
 - **Closed days come from the production `holidays` table** (the website's "Closed days" panel), not a hard-coded
   list. `closed-days.js` expands each row (one-off, or `recurrence` yearly / monthly / weekly) into dates for last
   year .. three years ahead, keeps them in memory and reloads hourly. `usHolidays(year)` in server.js returns those

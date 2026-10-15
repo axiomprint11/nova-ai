@@ -305,6 +305,11 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
           <div class="ci-hd"><b>Company info</b><span>What NovaAI tells customers in CRM Chat, the website chat and on the phone. Not the TalkAi call-routing hours.</span></div>
           <div class="ci-body" id="ciBody"><span style="color:var(--muted);font-size:13px">Loading…</span></div>
         </div>
+        <!-- Graphic design services (1.20.37): rates + the hours guide, shared by CRM Chat (design fees on a job), the website chat and TalkAi -->
+        <div class="ci-card" id="designInfo">
+          <div class="ci-hd"><b>Graphic design services</b><span>How every assistant prices in-house design — the CRM Chat's design fee on a job ("E1181735 how much can I charge for the designer fee"), the website chat's design quotes, TalkAi. Hours per kind of job × the hourly rates; the models never do the arithmetic themselves.</span></div>
+          <div class="ci-body" id="dsBody"><span style="color:var(--muted);font-size:13px">Loading…</span></div>
+        </div>
 
         <div class="dk-tabs">
           <button class="dk-tab active" id="dkTabDocs" onclick="dkSwitch('docs')">Documents</button>
@@ -1318,8 +1323,31 @@ async function loadCompanyInfo() {
     };
   } catch (e) { box.textContent = 'Could not load.'; }
 }
+// Graphic design services (1.20.37): one store (company_info.design_services) read by every assistant
+async function loadDesignInfo() {
+  const box = document.getElementById('dsBody'); if (!box) return;
+  try {
+    const r = await fetch('/api/design-services', { headers: { 'Authorization': 'Bearer ' + token } }); const j = await r.json();
+    if (!j.ok) { box.textContent = 'Could not load.'; return; }
+    const d = j.design, ro = IS_ADMIN ? '' : ' disabled';
+    box.innerHTML = '<div class="ci-row" style="gap:18px;flex-wrap:wrap"><label style="display:flex;align-items:center;gap:6px;font-size:13px">Lowest rate $ <input type="number" id="dsMin" min="1" step="1" value="' + esc(String(d.min)) + '" style="width:80px"' + ro + '> per hour</label>' +
+      '<label style="display:flex;align-items:center;gap:6px;font-size:13px">Highest rate $ <input type="number" id="dsMax" min="1" step="1" value="' + esc(String(d.max)) + '" style="width:80px"' + ro + '> per hour</label></div>' +
+      '<div style="font-size:12.5px;color:var(--muted);margin:8px 0 4px">Time per kind of job — one line each, hours low–high. The assistants estimate from these; low hours × lowest rate to high hours × highest rate.</div>' +
+      '<textarea id="dsGuide" rows="12" style="width:100%;box-sizing:border-box;font:13px/1.45 inherit;border:1px solid var(--line);border-radius:8px;padding:9px 11px"' + ro + '>' + esc(d.guide || '') + '</textarea>' +
+      (d.updated_at ? '<div style="font-size:12px;color:var(--muted);margin-top:6px">Saved ' + esc(d.updated_at) + (d.updated_by ? ' by ' + esc(d.updated_by) : '') + '</div>' : '') +
+      (IS_ADMIN ? '<div class="ci-row"><button class="btn-solid" id="dsSave" style="font-size:12.5px;padding:7px 14px">Save design services</button><span id="dsMsg" style="font-size:12.5px;color:var(--muted)"></span></div>' : '');
+    const save = document.getElementById('dsSave');
+    if (save) save.onclick = async () => {
+      save.disabled = true;
+      const r2 = await fetch('/api/admin/design-services', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ min: document.getElementById('dsMin').value, max: document.getElementById('dsMax').value, guide: document.getElementById('dsGuide').value }) });
+      const j2 = await r2.json(); save.disabled = false;
+      document.getElementById('dsMsg').textContent = j2.ok ? 'Saved — CRM Chat, the website chat and TalkAi use it from their next answer.' : (j2.error || 'Could not save');
+      if (j2.ok) loadDesignInfo();
+    };
+  } catch (e) { box.textContent = 'Could not load.'; }
+}
 async function loadKnowledge() {
-  loadCompanyInfo();
+  loadCompanyInfo(); loadDesignInfo();
   document.getElementById('knowledgeEditor').style.display = 'none';
   document.getElementById('knowledgeList').style.display = 'block';
   const box = document.getElementById('knowledgeList');
