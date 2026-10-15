@@ -452,13 +452,13 @@ module.exports = function mountAr(ctx) {
         if (r.created && ymdOf(r.created) < floorIso) { dropped++; continue; }   /* the LA calendar day — no time-zone slip at midnight */
         const b = bucket(age);
         const k = r.customer_id || 'none';
-        const g = byCust[k] = byCust[k] || { customer_id: r.customer_id, customer: r.customer, company: r.company, person: r.person, email: r.email, am: (ams[r.manager_id] || {}).name || '', am_photo: (ams[r.manager_id] || {}).photo || null, buckets: { '0-30': 0, '31-60': 0, '61-90': 0, '90+': 0 }, total: 0, n: 0, oldest: 0, invoices: [] };
-        g.buckets[b] += r.balance; g.total += r.balance; g.n++; if (age != null && age > g.oldest) g.oldest = age;
+        const g = byCust[k] = byCust[k] || { customer_id: r.customer_id, customer: r.customer, company: r.company, person: r.person, email: r.email, am: (ams[r.manager_id] || {}).name || '', am_photo: (ams[r.manager_id] || {}).photo || null, buckets: { '0-30': 0, '31-60': 0, '61-90': 0, '90+': 0 }, total: 0, invoiced: 0, paid: 0, n: 0, oldest: 0, invoices: [] };
+        g.buckets[b] += r.balance; g.total += r.balance; g.invoiced += r.total; g.paid += r.done; g.n++;   /* 1.20.89: invoiced / paid so far beside the balance */ if (age != null && age > g.oldest) g.oldest = age;
         g.invoices.push({ id: r.id, no: r.no, created: r.created, due: r.due, total: r.total, done: r.done, balance: r.balance, status: r.status, po: r.po, age, bucket: b });
       }
-      const rows = Object.values(byCust).map(g => { B.forEach(k => { g.buckets[k] = Math.round(g.buckets[k] * 100) / 100; }); g.total = Math.round(g.total * 100) / 100; g.invoices.sort((a, b) => (b.age || 0) - (a.age || 0)); return g; }).sort((a, b) => b.total - a.total);
-      const totals = { '0-30': 0, '31-60': 0, '61-90': 0, '90+': 0, total: 0, n: 0, customers: rows.length };
-      rows.forEach(g => { B.forEach(k => { totals[k] += g.buckets[k]; }); totals.total += g.total; totals.n += g.n; });
+      const rows = Object.values(byCust).map(g => { B.forEach(k => { g.buckets[k] = Math.round(g.buckets[k] * 100) / 100; }); g.total = Math.round(g.total * 100) / 100; g.invoiced = Math.round(g.invoiced * 100) / 100; g.paid = Math.round(g.paid * 100) / 100; g.invoices.sort((a, b) => (b.age || 0) - (a.age || 0)); return g; }).sort((a, b) => b.total - a.total);
+      const totals = { '0-30': 0, '31-60': 0, '61-90': 0, '90+': 0, total: 0, invoiced: 0, paid: 0, n: 0, customers: rows.length };
+      rows.forEach(g => { B.forEach(k => { totals[k] += g.buckets[k]; }); totals.total += g.total; totals.invoiced += g.invoiced; totals.paid += g.paid; totals.n += g.n; });
       Object.keys(totals).forEach(k => { totals[k] = Math.round(totals[k] * 100) / 100; });
       res.json({ ok: true, rows, totals, at: inv.at, from: floorIso, dropped, crm_error: inv.error || null });
     } catch (e) { res.json({ ok: false, error: e.message }); }
