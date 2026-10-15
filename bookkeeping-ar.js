@@ -433,7 +433,8 @@ module.exports = function mountAr(ctx) {
   let amCache = { at: 0, by: {} };
   async function managers() {
     if (Date.now() - amCache.at < 600000) return amCache.by;
-    const by = {}; try { (await runQuery('SELECT id, name, last_name FROM user WHERE id IN (SELECT DISTINCT manager_id FROM customer WHERE manager_id > 0)')).forEach(r => { by[r.id] = [r.name, r.last_name].filter(Boolean).join(' ').trim(); }); } catch (e) {}
+    const photo = (ph) => !ph ? null : /^https?:\/\//.test(ph) ? ph : 'https://axiomprint.s3.us-west-1.amazonaws.com/MemberImages/' + String(ph).replace(/^\/+/, '');   /* user.memberimage is an S3 key */
+    const by = {}; try { (await runQuery('SELECT id, name, last_name, memberimage FROM user WHERE id IN (SELECT DISTINCT manager_id FROM customer WHERE manager_id > 0)')).forEach(r => { by[r.id] = { name: [r.name, r.last_name].filter(Boolean).join(' ').trim(), photo: photo(r.memberimage) }; }); } catch (e) {}
     amCache = { at: Date.now(), by }; return by;
   }
   app.get('/api/bookkeeping/ar/aging', ...guard, async (req, res) => {
@@ -450,7 +451,7 @@ module.exports = function mountAr(ctx) {
         if (r.created && ymdOf(r.created) < floorIso) { dropped++; continue; }   /* the LA calendar day — no time-zone slip at midnight */
         const b = bucket(age);
         const k = r.customer_id || 'none';
-        const g = byCust[k] = byCust[k] || { customer_id: r.customer_id, customer: r.customer, company: r.company, person: r.person, email: r.email, am: ams[r.manager_id] || '', buckets: { '0-30': 0, '31-60': 0, '61-90': 0, '90+': 0 }, total: 0, n: 0, oldest: 0, invoices: [] };
+        const g = byCust[k] = byCust[k] || { customer_id: r.customer_id, customer: r.customer, company: r.company, person: r.person, email: r.email, am: (ams[r.manager_id] || {}).name || '', am_photo: (ams[r.manager_id] || {}).photo || null, buckets: { '0-30': 0, '31-60': 0, '61-90': 0, '90+': 0 }, total: 0, n: 0, oldest: 0, invoices: [] };
         g.buckets[b] += r.balance; g.total += r.balance; g.n++; if (age != null && age > g.oldest) g.oldest = age;
         g.invoices.push({ id: r.id, no: r.no, created: r.created, due: r.due, total: r.total, done: r.done, balance: r.balance, status: r.status, po: r.po, age, bucket: b });
       }
