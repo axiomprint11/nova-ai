@@ -3154,7 +3154,20 @@ module.exports = function mountBookkeeping(app, deps) {
       if (t.vendor_id) vid = t.vendor_id;
       else {
         // 1.19.145: the lender's name typed on the loan beats the bank's merchant guess (Plaid reads a Mitsubishi HCC ACH as "Axiom Print")
-        const name = String((l.lender && l.lender.trim()) || t.merchant || t.name || l.name).replace(/\s+/g, ' ').trim().slice(0, 120);
+        // 1.20.64: never our own company — Plaid reads a Wells Fargo ACH as "Axiomprint Inc.", which named the Scodix lender after
+        // us. With no lender typed, the payee words of the statement wording ("SIGNATURE FIN") name the vendor instead.
+        let name = String((l.lender && l.lender.trim()) || '').replace(/\s+/g, ' ').trim();
+        if (!name) {
+          const guess = String(t.merchant || t.name || '').trim();
+          if (guess && !isOwnName(guess)) name = guess;
+          else {
+            const od = (() => { try { return JSON.parse(t.raw || '{}').original_description; } catch (e) { return null; } })() || t.name || '';
+            const payee = stripBank(normV(od), await bankBoilerplate());
+            const words = String(payee || '').replace(/\b(payment|pmt|pay|bill|signature|loan|lease|ach|ppd|ccd|inc|llc)\b/g, m => m === 'signature' ? m : ' ').replace(/\b[a-z]*\d+[a-z0-9]*\b/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(w => w.length >= 3 && !isOwnName(w)).slice(0, 3);
+            name = words.length ? words.map(w => w[0].toUpperCase() + w.slice(1)).join(' ') : ('Lender · ' + l.name);
+          }
+        }
+        name = name.slice(0, 120);
         const dup = await dbGet('SELECT id FROM bk_vendors WHERE lower(name) = lower(?)', [name]);
         if (dup) vid = dup.id;
         else { const r = await dbRun('INSERT INTO bk_vendors (name, source, kind, approved, approved_by, approved_at, default_category, specialty, aliases, notes) VALUES (?,?,?,?,?,?,?,?,?,?)', [name, 'nova', 'lender', 1, who, nowIso(), cat, 'Lender · ' + l.name, String(t.name || '').slice(0, 120) || null, 'Made from a loan payment (' + l.name + ')']); vid = r.lastID; made = name; dirCache.at = 0; }
