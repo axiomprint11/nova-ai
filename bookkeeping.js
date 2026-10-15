@@ -365,7 +365,7 @@ module.exports = function mountBookkeeping(app, deps) {
   const userId = (req) => String((req.user && (req.user.key || req.user.username)) || '').replace(/^(member|user):/, '').toLowerCase();
   // 1.19.138: members ticked "Bookkeeper" in Admin → Users (members.is_bookkeeper) join the .env list; cached, refreshed
   // on every change and every 60 s so a just-granted member gets in without a restart.
-  let dbUsers = new Set(), arUsers = new Set(), dbUsersAt = 0;
+  let dbUsers = new Set(), arUsers = new Set(), agingUsers = new Set(), dbUsersAt = 0;
   function refreshAccess() {
     dbUsersAt = Date.now();
     db.all("SELECT email, username FROM members WHERE is_bookkeeper = 1 AND enabled = 1", [], (err, rows) => {
@@ -376,6 +376,11 @@ module.exports = function mountBookkeeping(app, deps) {
     db.all("SELECT email, username FROM members WHERE is_ar = 1 AND enabled = 1", [], (err, rows) => {
       if (err) return;
       arUsers = new Set((rows || []).flatMap(r => [r.email, r.username]).filter(Boolean).map(x => String(x).toLowerCase()));
+    });
+    // 1.20.88: Acct Aging people (members.is_aging) — the aging report only, not the queue
+    db.all("SELECT email, username FROM members WHERE is_aging = 1 AND enabled = 1", [], (err, rows) => {
+      if (err) return;
+      agingUsers = new Set((rows || []).flatMap(r => [r.email, r.username]).filter(Boolean).map(x => String(x).toLowerCase()));
     });
   }
   refreshAccess();
@@ -399,6 +404,14 @@ module.exports = function mountBookkeeping(app, deps) {
   }
   function arOnly(req, res, next) { if (!isAr(req)) return res.status(403).json({ ok: false, error: 'Nova AR is not open to this account.' }); next(); }
   const arGuard = [auth, arOnly];
+  // 1.20.88: the Acct Aging report — AR people, plus the members ticked "Acct Aging" in Admin → Users (account managers)
+  function isAging(req) {
+    if (isAr(req)) return true;
+    const key = String((req.user && req.user.key) || '').toLowerCase(), email = key.replace(/^(member|user):/, ''), uname = String((req.user && req.user.username) || '').toLowerCase();
+    return agingUsers.has(email) || agingUsers.has(uname);
+  }
+  function agingOnly(req, res, next) { if (!isAging(req)) return res.status(403).json({ ok: false, error: 'Acct Aging is not open to this account.' }); next(); }
+  const agingGuard = [auth, agingOnly];
 
   // ---------------------------------------------------------------- secrets at rest
   const encKey = crypto.createHash('sha256').update('bookkeeper:' + String(process.env.JWT_SECRET || 'nova')).digest();
@@ -3791,6 +3804,6 @@ module.exports = function mountBookkeeping(app, deps) {
   });
 
   // 1.19.152: Nova AR — the customer-payment queue (bookkeeping-ar.js)
-  const AR = require('./bookkeeping-ar')({ app, db, guard: arGuard, dbAll, dbGet, dbRun, runQuery, mysql, audit, userId, nowIso, realCheckNo, errlog, people });
-  return { isBookkeeper, isAr, refreshAccess, runDaily, converse, settings, runChatTool, AR };
+  const AR = require('./bookkeeping-ar')({ app, db, guard: arGuard, agingGuard, isAr, dbAll, dbGet, dbRun, runQuery, mysql, audit, userId, nowIso, realCheckNo, errlog, people });
+  return { isBookkeeper, isAr, isAging, refreshAccess, runDaily, converse, settings, runChatTool, AR };
 };

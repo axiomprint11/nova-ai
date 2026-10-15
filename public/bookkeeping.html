@@ -115,10 +115,12 @@
   .ag-table { width: 100%; } .ag-table th.num, .ag-table td.num { text-align: right; white-space: nowrap; } .ag-table td.num.z { color: #c3c3d2; }
   .ag-table tr.ag-c { cursor: pointer; } .ag-table tr.ag-c:hover td { background: #fafafe; } .ag-table tr.ag-c td:first-child { font-weight: 600; }
   .ag-table tr.ag-c .bk-dim { font-weight: 400; font-size: 11.5px; }
-  .ag-table td.b3, .ag-table th.b3 { color: #991b1b; } .ag-table td.b2, .ag-table th.b2 { color: #b45309; } .ag-table td.b1, .ag-table th.b1 { color: #92400e; }
+  /* 1.20.88: the figures keep one colour whatever the bucket — the owner wants the invoices read, not alarmed */
+  .ag-table td.b3, .ag-table th.b3, .ag-table td.b2, .ag-table th.b2, .ag-table td.b1, .ag-table th.b1 { color: inherit; }
+  .bk-sub select.ag-amsel { margin: 0 6px 0 0; padding: 7px 10px; font: inherit; font-size: 13px; border: 1px solid var(--line); border-radius: 8px; background: #fff; align-self: flex-start; max-width: 220px; }
   .ag-table tr.ag-d td { background: #fafafe; padding: 6px 12px 10px 28px; }
   .ag-inv { width: 100%; font-size: 12.5px; } .ag-inv td { padding: 4px 8px; border-bottom: 1px solid var(--line); } .ag-inv td.num { text-align: right; white-space: nowrap; }
-  .ag-age { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: #e0e7ff; color: #3730a3; white-space: nowrap; } .ag-inv td.ag-agec { white-space: nowrap; width: 72px; } .ag-age.b1 { background: #fef3c7; color: #92400e; } .ag-age.b2 { background: #ffedd5; color: #9a3412; } .ag-age.b3 { background: #fee2e2; color: #991b1b; }
+  .ag-age { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: #eef0f6; color: #3b3b4f; white-space: nowrap; } .ag-inv td.ag-agec { white-space: nowrap; width: 72px; }
   .ag-table tr.ag-tot td { font-weight: 700; border-top: 2px solid var(--ink); }
   .ag-table th:first-child { width: 290px; } .ag-table th.ag-amh, .ag-table td.ag-am { width: 44px; text-align: center; padding-left: 6px; padding-right: 6px; }
   .ag-face { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; display: inline-block; vertical-align: middle; border: 1px solid var(--line); }
@@ -555,7 +557,7 @@
       <button data-s="b1">31–60</button>
       <button data-s="b2">61–90</button>
       <button data-s="b3">90+</button>
-      <span class="sp"></span><input id="agQ" class="bk sub-q" placeholder="Search customer, invoice, AM" autocomplete="off">
+      <span class="sp"></span><select id="agAm" class="bk ag-amsel" title="Only this account manager's customers"><option value="">All account managers</option></select><input id="agQ" class="bk sub-q" placeholder="Search customer, invoice, AM" autocomplete="off">
     </div>
     <div class="bk-subview on" data-s="list" id="vAgingList"></div>
   </section>

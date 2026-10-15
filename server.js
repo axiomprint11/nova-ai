@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.87';
-const NOVA_BUILT = '10-15-2026 5:58pm';
+const NOVA_VERSION = '1.20.88';
+const NOVA_BUILT = '10-15-2026 6:25pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -485,6 +485,7 @@ db.serialize(() => {
   db.run('ALTER TABLE members ADD COLUMN is_admin INTEGER DEFAULT 0', () => {});
   db.run('ALTER TABLE members ADD COLUMN is_bookkeeper INTEGER DEFAULT 0', () => {});   // 1.19.138: Bookkeeping AI access from Admin → Users
   db.run('ALTER TABLE members ADD COLUMN is_ar INTEGER DEFAULT 0', () => {});   // 1.19.153: Nova AR (Accounts Receivable queue) access
+  db.run('ALTER TABLE members ADD COLUMN is_aging INTEGER DEFAULT 0', () => {});   // 1.20.88: the Acct Aging report only (account managers)
   // Candidates the admin chose to ignore (so they stop appearing)
   db.run(`CREATE TABLE IF NOT EXISTS dismissed_candidates (
     message_id INTEGER PRIMARY KEY,
@@ -2552,6 +2553,7 @@ app.get('/api/me', auth, (req, res) => {
     key: key,
     bookkeeper: bookkeeping.isBookkeeper(req),
     ar: bookkeeping.isAr(req),   // 1.19.153: Nova AR — bookkeepers and the members ticked "AR"
+    aging: bookkeeping.isAging(req),   // 1.20.88: the Acct Aging report — AR people and the members ticked "Acct Aging"
     username: req.user.username,
     is_admin: !!req.user.is_admin,
     display_name: req.user.username,
@@ -5584,6 +5586,16 @@ app.post('/api/admin/members/set-ar', auth, adminOnly, (req, res) => {
     res.json({ success: true, is_ar: on });
   });
 });
+// 1.20.88: the Acct Aging report alone (account managers chase their own invoices) — no queue, no matching.
+app.post('/api/admin/members/set-aging', auth, adminOnly, (req, res) => {
+  const id = parseInt(req.body.id), on = req.body.is_aging ? 1 : 0;
+  if (!id) return res.json({ success: false, error: 'No member id' });
+  db.run('UPDATE members SET is_aging = ? WHERE id = ?', [on, id], function (err) {
+    if (err) return res.json({ success: false, error: err.message });
+    if (bookkeeping && bookkeeping.refreshAccess) bookkeeping.refreshAccess();
+    res.json({ success: true, is_aging: on });
+  });
+});
 
 // Set a member's Domain Knowledge access level: 'none' | 'own' | 'all'.
 app.post('/api/admin/members/knowledge-access', auth, adminOnly, (req, res) => {
@@ -5866,7 +5878,7 @@ app.post('/api/messages/rate', auth, (req, res) => {
 // Admin: list users (members + admins) with last login
 app.get('/api/admin/users-activity', auth, adminOnly, (req, res) => {
   // Select only columns guaranteed to exist; photo is backfilled live below.
-  db.all('SELECT id, email, username, display_name, enabled, last_login, created_at, axiom_user_id, knowledge_access, is_admin, is_bookkeeper, is_ar FROM members ORDER BY (last_login IS NULL), last_login DESC', [], async (err, members) => {
+  db.all('SELECT id, email, username, display_name, enabled, last_login, created_at, axiom_user_id, knowledge_access, is_admin, is_bookkeeper, is_ar, is_aging FROM members ORDER BY (last_login IS NULL), last_login DESC', [], async (err, members) => {
     if (err) return res.json({ success: false, error: 'members query: ' + err.message });
     members = members || [];
     try {

@@ -10,7 +10,7 @@
 // Tabs: Unmatched (status open) · Matched (matched + skipped, the history). Filters: date range, amount range, search.
 
 module.exports = function mountAr(ctx) {
-  const { app, guard, dbAll, dbGet, dbRun, runQuery, mysql, audit, userId, nowIso, realCheckNo, errlog, people } = ctx;
+  const { app, guard, agingGuard, isAr, dbAll, dbGet, dbRun, runQuery, mysql, audit, userId, nowIso, realCheckNo, errlog, people } = ctx;
 
   // 1.19.152: the queue
   ctx.db.serialize(() => {
@@ -272,12 +272,13 @@ module.exports = function mountAr(ctx) {
   };
 
   // GET /api/bookkeeping/ar/me — what the AR-only page needs instead of the full Bookkeeping overview (1.19.153)
-  app.get('/api/bookkeeping/ar/me', ...guard, async (req, res) => {
-    try { let pl = []; try { pl = people ? await people.list() : []; } catch (e) {} res.json({ ok: true, me: userId(req), people: pl, open: (await dbGet("SELECT COUNT(*) n FROM bk_ar WHERE status IN ('open', 'review')")).n }); }
+  app.get('/api/bookkeeping/ar/me', ...agingGuard, async (req, res) => {   /* 1.20.88: aging-only people open the page too — `ar` says whether the queue is theirs */
+    try { const ar = isAr(req); let pl = []; try { pl = people && ar ? await people.list() : []; } catch (e) {} res.json({ ok: true, me: userId(req), ar, people: pl, open: ar ? (await dbGet("SELECT COUNT(*) n FROM bk_ar WHERE status IN ('open', 'review')")).n : 0 }); }
     catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // 1.20.14: the left menu's badge — the open queue (synced first, so a fresh customer payment counts at once)
-  app.get('/api/bookkeeping/ar/unread-count', ...guard, async (req, res) => {
+  app.get('/api/bookkeeping/ar/unread-count', ...agingGuard, async (req, res) => {
+    if (!isAr(req)) return res.json({ ok: true, unread: 0 });   /* 1.20.88: no queue badge for aging-only people */
     try { await syncQueue(); res.json({ ok: true, unread: (await dbGet("SELECT COUNT(*) n FROM bk_ar WHERE status IN ('open', 'review')")).n }); } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // GET /api/bookkeeping/ar?status=open|done&from&to&min&max&q
@@ -437,7 +438,7 @@ module.exports = function mountAr(ctx) {
     const by = {}; try { (await runQuery('SELECT id, name, last_name, memberimage FROM user WHERE id IN (SELECT DISTINCT manager_id FROM customer WHERE manager_id > 0)')).forEach(r => { by[r.id] = { name: [r.name, r.last_name].filter(Boolean).join(' ').trim(), photo: photo(r.memberimage) }; }); } catch (e) {}
     amCache = { at: Date.now(), by }; return by;
   }
-  app.get('/api/bookkeeping/ar/aging', ...guard, async (req, res) => {
+  app.get('/api/bookkeeping/ar/aging', ...agingGuard, async (req, res) => {   /* 1.20.88: AR people and the Acct Aging role */
     try {
       const invoices = await openInvoices(req.query.fresh === '1'); const ams = await managers();
       const today = Date.now(); const B = ['0-30', '31-60', '61-90', '90+'];

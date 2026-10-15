@@ -873,7 +873,9 @@ async function loadUsers() {
         '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#555;margin-left:10px;" title="Opens Bookkeeping AI (bank feed, bills, purchases, loans) to this person">' +
         '<input type="checkbox" ' + (m.is_bookkeeper ? 'checked' : '') + ' onchange="setMemberBookkeeper(' + m.id + ', this.checked)" style="width:15px;height:15px;cursor:pointer;"> Bookkeeper</label>' +
         '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#555;margin-left:10px;" title="Opens Nova AR (the customer-payment queue) to this person — the queue only, not the rest of Bookkeeping">' +
-        '<input type="checkbox" ' + (m.is_ar ? 'checked' : '') + ' onchange="setMemberAr(' + m.id + ', this.checked)" style="width:15px;height:15px;cursor:pointer;"> AR</label></td>';
+        '<input type="checkbox" ' + (m.is_ar ? 'checked' : '') + ' onchange="setMemberAr(' + m.id + ', this.checked)" style="width:15px;height:15px;cursor:pointer;"> AR</label>' +
+        '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#555;margin-left:10px;" title="Opens the Acct Aging report (open invoices by age, per customer) to this person — the report only, no payment queue. Account managers chase their own invoices with it">' +
+        '<input type="checkbox" ' + (m.is_aging ? 'checked' : '') + ' onchange="setMemberAging(' + m.id + ', this.checked)" style="width:15px;height:15px;cursor:pointer;"> Acct Aging</label></td>';
       tr.innerHTML =
         '<td>' + avatar + '</td>' +
         '<td>' + esc(m.display_name || '-') + '</td>' +
@@ -930,6 +932,7 @@ async function setMemberRole(url, body, label) {
   loadUsers();
 }
 function setMemberAr(id, on) { setMemberRole('/api/admin/members/set-ar', { id, is_ar: on }, 'AR'); }   // 1.19.153: Nova AR
+function setMemberAging(id, on) { setMemberRole('/api/admin/members/set-aging', { id, is_aging: on }, 'Acct Aging'); }   // 1.20.88: the aging report only
 function setMemberBookkeeper(id, on) { setMemberRole('/api/admin/members/set-bookkeeper', { id, is_bookkeeper: on }, 'Bookkeeper'); }   // 1.19.138
 async function setMemberAdmin(id, makeAdmin) {
   await fetch('/api/admin/members/set-admin', {

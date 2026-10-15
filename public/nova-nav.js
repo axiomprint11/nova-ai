@@ -140,7 +140,7 @@ body.nn-shell { flex-direction: row !important; }
   function allowed(who) {
     if (!me) return who === 'all';
     if (who === 'bookkeeper') return !!me.bookkeeper;
-    if (who === 'ar') return !!me.ar;   // 1.19.153: Nova AR — bookkeepers and the members ticked AR
+    if (who === 'ar') return !!(me.ar || me.aging);   // 1.19.153: Nova AR — bookkeepers and the members ticked AR; 1.20.88: the Acct Aging role opens the same page (report only)
     if (me.is_admin) return true;
     if (who === 'knowledge') return (me.knowledge_access || 'none') !== 'none';
     return who === 'all';
