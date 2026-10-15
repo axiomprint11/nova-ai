@@ -71,6 +71,8 @@
   .da-form input[type=range] { width: 120px; vertical-align: middle; } .da-form input[type=time] { width: auto; }
   /* 1.20.18: the designer edit form, spread out */
   .da-ef { display: flex; flex-direction: column; gap: 18px; max-width: 760px; padding: 6px 4px 10px; font-size: 13.5px; }   /* 1.20.19: one column, on the left */
+  .da-q { display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; border: 1px solid #c7c7d6; background: #fff; color: var(--muted); font: 700 11px/1 inherit; cursor: help; vertical-align: 1px; margin-left: 4px; position: relative; }
+  .da-q .da-tip { display: none; position: absolute; left: 22px; top: -8px; width: 320px; background: #fff; border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px; font: 400 12px/1.45 inherit; color: var(--ink-soft); box-shadow: 0 8px 24px rgba(20,20,60,.12); z-index: 20; text-align: left; } .da-q:hover .da-tip, .da-q:focus .da-tip { display: block; }
   .da-ef-l { display: block; font-weight: 600; font-size: 13.5px; margin-bottom: 4px; } .da-ef-h { font-size: 12px; color: var(--muted); margin-bottom: 6px; line-height: 1.4; }
   .da-ef textarea, .da-ef input[type=text], .da-ef input:not([type]) { width: 100%; box-sizing: border-box; font: 13.5px/1.4 inherit; border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
   .da-ef-side { display: flex; flex-direction: column; gap: 16px; } .da-ef-row label { display: inline-flex; align-items: center; gap: 9px; font-size: 13.5px; font-weight: 600; line-height: 1; margin: 0; }

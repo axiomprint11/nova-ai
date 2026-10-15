@@ -45,7 +45,7 @@
     const fr = document.createElement('tr'); fr.className = 'da-formrow';
     const L = (n) => n == null ? 5 : n, days = (d.work_days || '1,2,3,4,5').split(',').map(Number), langs = d.language_list || [];
     fr.innerHTML = '<td colspan="14"><div class="da-ef">' +
-      '<div class="da-ef-main"><label class="da-ef-l">Strong sides</label><div class="da-ef-h">Comma separated. Matched against the product, its category, the proof type and the job name — e.g. packaging, die cut, large format, business cards, labels, booklets, vehicle wrap, variable data.</div><textarea rows="3" class="sk">' + esc(d.skills) + '</textarea>' +
+      '<div class="da-ef-main"><label class="da-ef-l">Strong sides <span class="da-q" tabindex="0">?<span class="da-tip">Comma separated. Matched against the product, its category, the proof type and the job name — e.g. packaging, die cut, large format, business cards, labels, booklets, vehicle wrap, variable data.</span></span></label><textarea rows="3" class="sk" placeholder="packaging, die cut, large format…">' + esc(d.skills) + '</textarea>' +
         '<label class="da-ef-l" style="margin-top:14px">Notes</label><input class="nt" value="' + esc(d.notes || '') + '" placeholder="Anything the matcher should know about ' + esc(d.name) + '"></div>' +
       '<div class="da-ef-side">' +
         '<div class="da-ef-top">' +
