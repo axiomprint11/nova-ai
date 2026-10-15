@@ -58,12 +58,14 @@ module.exports = function mountDesignerAi(app, deps) {
 
   // ---- the queue: jobs parked on a tier placeholder, in the prepress stage
   const PROOF_LABEL = { proof_checking: 'Proof Checking', insta_proofed: 'Insta Proofed', proof_sent: 'Proof Sent', upload_files: 'Upload Files', waiting_files: 'Waiting for Files', rejected_edits: 'Rejected — edits', rejected_reupload: 'Rejected — re-upload', approved: 'Approved', hard_copy_approved: 'Hard copy approved', insta_proof_manual: 'Insta Proof Manual' };
+  // "id|name|last|photo;;…" → [{user_id, name, last_name, photo}] (1.20.20: the Team on it cell shows faces)
+  const teamOf = (s) => !s ? [] : String(s).split(';;').map(x => { const [id, name, last, ph] = x.split('|'); return { user_id: Number(id), name: name || '', last_name: last || '', photo: staffPhoto(ph) }; }).filter(t => t.user_id);
   async function queue(tier, all) {
     const tu = TIER_USERS[tier] || TIER_USERS[1];
     const rows = await runQuery(
       "SELECT e.id, e.estimate_name, e.created, e.complete_by, e.prepress_status, e.estimate_invoiceid inv, e.estimate_productid product_id, e.design_price, e.prepress_notes, e.prepress_internal_notes, p.title product, p.image product_image, pc.title category, pc.id category_id, " +
       "s.estimate_stage stage, s.estimate_substage substage, s.stage_in_date, c.company_name, c.name cname, c.last_name clname, " +
-      "(SELECT GROUP_CONCAT(DISTINCT u.name ORDER BY u.name SEPARATOR ', ') FROM estimate_team_members m2 JOIN user u ON u.id = m2.user_id WHERE m2.estimate_id = e.id AND m2.user_id NOT IN (239, 331)) others, " +
+      "(SELECT GROUP_CONCAT(DISTINCT CONCAT_WS('|', u.id, u.name, IFNULL(u.last_name, ''), IFNULL(u.memberimage, '')) ORDER BY u.name SEPARATOR ';;') FROM estimate_team_members m2 JOIN user u ON u.id = m2.user_id WHERE m2.estimate_id = e.id AND m2.user_id NOT IN (239, 331)) others, " +
       "(SELECT GROUP_CONCAT(DISTINCT m3.user_id) FROM estimate_team_members m3 WHERE m3.estimate_id = e.id AND m3.user_id IN (" + TEAM.join(',') + ")) designer_ids, " +
       "(SELECT dd.design_type FROM estimate_design_details dd WHERE dd.estimate_id = e.id AND dd.design_type LIKE '%Proof%' ORDER BY dd.id DESC LIMIT 1) proof_type, " +
       "(SELECT dd.design_type FROM estimate_design_details dd WHERE dd.estimate_id = e.id AND dd.design_type NOT LIKE '%Proof%' ORDER BY dd.id DESC LIMIT 1) files_type, " +
@@ -79,7 +81,7 @@ module.exports = function mountDesignerAi(app, deps) {
       id: r.id, e: 'E' + r.id, name: r.estimate_name || '', created: r.created, complete_by: r.complete_by, invoiced: Number(r.inv) > 0, inv: r.inv,
       product_id: r.product_id, product: r.product || '', product_image: r.product_image || null, category: r.category || '', stage: r.stage, substage: r.substage, stage_in: r.stage_in_date,
       status: r.prepress_status, status_label: PROOF_LABEL[r.prepress_status] || r.prepress_status || '', proof_type: r.proof_type || (r.substage === 'tier_2' ? 'Tier 2' : r.substage === 'tier_1' ? 'Tier 1' : ''), files_type: r.files_type || '', service: r.service || '',
-      tier, customer: r.company_name || [r.cname, r.clname].filter(Boolean).join(' ') || '', others: r.others || '', designer_ids: r.designer_ids ? String(r.designer_ids).split(',').map(Number) : [],
+      tier, customer: r.company_name || [r.cname, r.clname].filter(Boolean).join(' ') || '', others: teamOf(r.others).map(t => t.name).join(', '), team: teamOf(r.others), designer_ids: r.designer_ids ? String(r.designer_ids).split(',').map(Number) : [],
       design_fee: Number(r.design_price) || 0, notes: [r.design_notes, r.prepress_notes, r.prepress_internal_notes].filter(Boolean).join('\n').slice(0, 1200), product_180: Number(r.product_180) || 0, category_id: r.category_id,
       nova: mine[r.id] || null
     })).map(j => Object.assign(j, { hard: jobHard(j), creative: jobCreative(j), common: j.product_180 >= 40 }));

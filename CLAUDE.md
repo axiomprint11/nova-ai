@@ -347,7 +347,7 @@ read-only: the jobs parked on the placeholder users **PrePress 1 Tier 1** (`user
 ticked (`GET /api/designer/queue?tier=1|2&all=1`): E-number, name, customer, product (+ `product.image`, `productcategory.title`),
 created / complete_by, **proof type** = the newest `estimate_design_details.design_type` that says Proof ("Manual Proof Tier1",
 "Insta Proof", "Manual Proof Tier2", "Insta Proof Manual Tier1"…; else the substage), `prepress_status` (PROOF_LABEL), the
-non-placeholder team on it, and any of the nine designers already on it. **Designers** = SQLite `da_designers` seeded from the CRM
+non-placeholder team on it (`team`: id, name, face — the Jobs row shows their heads, the name on hover, `.da-others`, 1.20.20; the old `.da-sub` class on that cell collided with the sub-tab bar's flex styles and drew a stray box), and any of the nine designers already on it. **Designers** = SQLite `da_designers` seeded from the CRM
 ids `TEAM` (Ani Muradyan 437, Alex Vradiy 277, George Abrahamyan 365, Max Mazmanyan 326, Edgar Papoyan 329, Fernando Lira 416,
 Rodrigo Garcia 417, Jelly Ace Pamatin 219, Greg Belarmino 232; faces from `user.memberimage` via `staffPhoto()`, re-synced every
 10 min) with the Nova-side fields **skills** (strong sides, comma list), `tier2`, `max_active` (25), `active`, notes (Edit on the

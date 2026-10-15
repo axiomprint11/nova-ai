@@ -78,7 +78,7 @@
       '<div class="da-sub da-jl"><span title="How hard Nova rates this job, 0–10 (category, die cut / wrap / variable data, Tier 2, expedite)">hard <b>' + j.hard + '</b></span> · <span title="How creative, 0–10 (design fee, Work with Our Designers, design notes)">creative <b>' + j.creative + '</b></span>' + (j.design_fee ? ' · <b style="color:#7c3aed">$' + j.design_fee + ' design</b>' : '') + (j.common ? ' · common product' : '') + (j.notes ? ' · <a href="#" class="da-notes" data-notes="' + esc(j.notes) + '">notes</a>' : '') + '</div></td>' +
     '<td>' + esc(usD(j.created)) + '<div class="da-sub">' + esc(ago(j.created)) + (j.complete_by ? '<br>due ' + esc(usD(j.complete_by)) : '') + '</div></td>' +
     '<td>' + tierTag(j) + '</td><td>' + proofTag(j) + '</td><td><span class="da-tag st">' + esc(j.status_label) + '</span><div class="da-sub">' + esc(j.substage || '') + '</div></td>' +
-    '<td class="da-sub">' + esc(j.others || '—') + '</td>' +
+    '<td><div class="da-others">' + ((j.team || []).length ? j.team.map(t => '<span class="da-face" title="' + esc((t.name + ' ' + (t.last_name || '')).trim()) + '">' + av(t) + '</span>').join('') : '<span class="da-sub">—</span>') + '</div></td>' +
     '<td class="da-dcell">' + dcell(j) + '</td></tr>';
   const dcell = (j) => {
     const ids = j.designer_ids || [];
