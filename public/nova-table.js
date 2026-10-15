@@ -29,7 +29,8 @@
 .thf-h { display: flex; align-items: center; padding: 10px 14px 6px; font-size: 13.5px; font-weight: 600; } .thf-hclear { margin-left: auto; font-size: 12px; font-weight: 500; }
 .thf-search { padding: 4px 10px 6px; } .thf-search input { width: 100%; box-sizing: border-box; border: 1.5px solid #e6e6f0; border-radius: 9px; padding: 7px 10px; font: inherit; font-size: 13px; outline: none; } .thf-search input:focus { border-color: #a5b4fc; }
 .thf-list { overflow: auto; padding: 4px 0; } .thf-i { display: flex; align-items: center; gap: 8px; padding: 7px 12px; cursor: pointer; } .thf-i:hover { background: #f3f3fa; } .thf-i.on { color: #3730a3; font-weight: 600; }
-.thf-i small { color: #b0b0c3; font-weight: 500; } .thf-t { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thf-i small { color: #b0b0c3; font-weight: 500; }
+.thf-av { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; flex: none; border: 1px solid #e6e6f0; display: inline-grid; place-items: center; font-size: 10px; font-weight: 700; color: #4338ca; background: #eef2ff; } .thf-t { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thf-r { width: 14px; height: 14px; border: 1.5px solid #c7c7d6; border-radius: 50%; flex: none; position: relative; } .thf-i.on .thf-r { background: #4f46e5; border-color: #4f46e5; } .thf-i.on .thf-r::after { content: ''; position: absolute; left: 3px; top: 3px; width: 6px; height: 6px; border-radius: 50%; background: #fff; }
 .thf-body { padding: 4px 14px 10px; } .thf-lab { display: block; font-size: 11.5px; color: #6b6b85; margin-bottom: 4px; }
 .thf-in, .thf-range input { width: 100%; box-sizing: border-box; border: 1.5px solid #e6e6f0; border-radius: 9px; padding: 7px 10px; font: inherit; font-size: 13px; outline: none; } .thf-in:focus, .thf-range input:focus { border-color: #a5b4fc; }
@@ -123,5 +124,7 @@ table.nt-pin { overflow: visible; } table.nt-pin thead th { position: sticky; z-
     table.style.setProperty('--nt-top', (-pad) + 'px'); table.style.setProperty('--nt-top2', (h1 - pad - 1) + 'px');
   }
 
-  window.NovaTable = { th, bind, active, clearOf, pin, esc };
+  // A list option with a face: face(url, name) → html for `h` (an initial when there is no photo or it fails to load)
+  const face = (url, name) => { const ini = esc(String(name || '?').trim().charAt(0).toUpperCase()); return (url ? '<img class="thf-av" src="' + esc(url) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;thf-av&quot;>' + ini + '</span>\'">' : '<span class="thf-av">' + ini + '</span>') + esc(name || ''); };
+  window.NovaTable = { th, bind, active, clearOf, pin, esc, face };
 })();

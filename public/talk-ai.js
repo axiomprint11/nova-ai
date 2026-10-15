@@ -120,7 +120,7 @@
       when: { type: 'range', kind: 'date', presets: [{ v: '', l: 'All time' }, { v: 'today', l: 'Today' }, { v: 'yesterday', l: 'Yesterday' }, { v: 'week', l: 'This week' }, { v: 'month', l: 'This month' }, { v: '30', l: 'Last 30 days' }], period: F.period, from: F.from, to: F.to },
       client: [{ v: '', l: 'Any client' }, { v: 'none', l: 'Not a client yet' }].concat(clientOpts),
       am: [{ v: '', l: 'Any AM' }].concat(amOpts),
-      via: [{ v: '', l: 'Any TalkAI' }, { v: 'regular', l: 'Regular Hours TalkAI' }, { v: 'missed', l: 'Team Missed TalkAI' }, { v: 'after', l: 'After Hours TalkAI' }].concat(lines.map(l => ({ v: 'line:' + l.id, l: firstName(l.am_name) + '’s TalkAI' }))).concat([{ v: 'tests', l: 'Tests' }]),
+      via: [{ v: '', l: 'Any TalkAI' }, { v: 'regular', l: 'Regular Hours TalkAI' }, { v: 'missed', l: 'Team Missed TalkAI' }, { v: 'after', l: 'After Hours TalkAI' }].concat(lines.map(l => ({ v: 'line:' + l.id, l: firstName(l.am_name) + '’s TalkAI', h: NovaTable.face(l.photo || '', firstName(l.am_name) + '’s TalkAI') }))).concat([{ v: 'tests', l: 'Tests' }]),
       len: [{ v: '', l: 'Any length' }, { v: 'lt30', l: 'Under 30 s' }, { v: '30-120', l: '30 s – 2 min' }, { v: '120-300', l: '2 – 5 min' }, { v: 'gt300', l: 'Over 5 min' }]
     };
   }
@@ -144,7 +144,7 @@
   }
   async function fillAms() {
     if (amsLoaded) return; amsLoaded = true;
-    try { const j = await api('/api/admin/talk/ams'); amOpts = (j.ams || []).map(a => ({ v: String(a.id), l: a.name })); } catch (e) {}
+    try { const j = await api('/api/admin/talk/ams'); amOpts = (j.ams || []).map(a => ({ v: String(a.id), l: a.name, h: NovaTable.face(a.photo || '', a.name) })); } catch (e) {}   /* 1.20.94: heads */
   }
   let statsMounted = false;
   document.querySelectorAll('#callSub button').forEach(b => { b.onclick = () => {

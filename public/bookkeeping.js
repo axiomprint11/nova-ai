@@ -45,7 +45,7 @@
   document.querySelectorAll('.bk-sub button').forEach(b => { b.onclick = () => show(b.closest('.bk-view').dataset.v, b.dataset.s); });
   $('puQ').onkeydown = (e) => { if (e.key === 'Enter') loadPurchases(lastSub.purchases); };
   { let arT = null; const arRun = () => show('ar', lastSub.ar || 'open'); $('arQ').oninput = () => { clearTimeout(arT); arT = setTimeout(arRun, 350); }; $('arQ').onkeydown = (e) => { if (e.key === 'Enter') { clearTimeout(arT); arRun(); } }; }
-  { let agT = null; const agRun = () => { const b = lastSub.aging || 'all'; show('aging', b); }; $('agQ').oninput = () => { clearTimeout(agT); agT = setTimeout(agRun, 300); }; $('agQ').onkeydown = (e) => { if (e.key === 'Enter') agRun(); }; if ($('agAm')) $('agAm').onchange = agRun; }   /* 1.20.88: the AM filter re-draws too */   // 1.19.29: one search for every Purchases view
+  { let agT = null; const agRun = () => { const b = lastSub.aging || 'all'; show('aging', b); }; $('agQ').oninput = () => { clearTimeout(agT); agT = setTimeout(agRun, 300); }; $('agQ').onkeydown = (e) => { if (e.key === 'Enter') agRun(); }; }   // 1.19.29: one search for every Purchases view
   $('txQ').onkeydown = (e) => { if (e.key === 'Enter') loadTxns(); if (e.key === 'Escape') { $('txQ').value = ''; loadTxns(); } };
   // 1.19.128: emptying the box (Backspace, the field's ×) goes back to the full list on its own; typing searches after a pause
   let txQT = null, txQLast = '';
@@ -1207,6 +1207,9 @@
   }
   // ---- 1.20.83: Acct Aging — the open invoices in the CRM by age (0–30 / 31–60 / 61–90 / 90+), per customer, expandable
   let agingData = null, agingOpen = {};
+  /* 1.20.94: Acct Aging header filters (the Bank feed's thFilter) — Customer text, AM list with heads, Due range, Days list; the sub-bar search stays */
+  const AGF = { customer: '', am: '', due: { from: '', to: '', period: '' }, days: '' };
+  const agFace = (g) => { const ini = esc(String(g.am || '?').charAt(0)); return (g.am_photo ? '<img class="ag-face sm" src="' + esc(g.am_photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;ag-face ag-ini sm&quot;>' + ini + '</span>\'">' : '<span class="ag-face ag-ini sm">' + ini + '</span>') + ' ' + esc(g.am); };
   async function loadAging(bucket) {
     const v = $('vAgingList'); if (!agingData) v.innerHTML = '<div class="bk-card bk-muted">Reading the open invoices from the CRM…</div>';
     try { if (!ov) await overview(); } catch (e) { ov = { me: '', people: [], counts: {}, settings: {}, chart: [] }; }
@@ -1214,15 +1217,24 @@
     const j = agingData; const B = ['0-30', '31-60', '61-90', '90+'], BL = { '0-30': '0–30 days', '31-60': '31–60 days', '61-90': '61–90 days', '90+': 'Over 90 days' }, BC = { '0-30': '#a7f3d0', '31-60': '#fde68a', '61-90': '#fdba74', '90+': '#fca5a5' }, BK = { '0-30': 'b0', '31-60': 'b1', '61-90': 'b2', '90+': 'b3' };
     const q = $('agQ').value.trim().toLowerCase();
     /* 1.20.88: the AM filter (the select keeps its pick across re-draws; options from the rows) */
-    const amSel = $('agAm'); const amPick = amSel ? amSel.value : '';
-    if (amSel) { const ams = j.rows.map(g => g.am).filter(Boolean).filter((a, i, arr) => arr.indexOf(a) === i).sort(); amSel.innerHTML = '<option value="">All account managers</option>' + ams.map(a => '<option value="' + esc(a) + '"' + (a === amPick ? ' selected' : '') + '>' + esc(a) + '</option>').join(''); if (amPick && ams.indexOf(amPick) < 0) amSel.value = ''; }
-    const amNow = amSel ? amSel.value : '';
+    const amRows = {}; j.rows.forEach(g => { if (g.am && !amRows[g.am]) amRows[g.am] = g; });
+    const AGS = {
+      customer: { type: 'text', value: AGF.customer },
+      am: [{ v: '', l: 'Any account manager' }].concat(Object.keys(amRows).sort().map(a => ({ v: a, l: agFace(amRows[a]), t: a }))),
+      due: { type: 'range', kind: 'number', from: AGF.due.from, to: AGF.due.to, period: '' },
+      days: [{ v: '', l: 'Any age' }, { v: '90', l: 'Oldest over 90 days' }, { v: '180', l: 'Oldest over 180 days' }, { v: '365', l: 'Oldest over a year' }]
+    };
+    const amNow = AGF.am;
     /* 1.20.88: a bucket view shows that bucket's invoices only — the customer's total, count and days are of those invoices */
     const inB = (g) => bucket === 'all' ? g.invoices : g.invoices.filter(i => i.bucket === bucket);
-    const rows = j.rows.filter(g => (bucket === 'all' || g.buckets[bucket] > 0.005) && (!amNow || g.am === amNow) && (!q || (g.customer + ' ' + g.person + ' ' + g.am + ' ' + g.invoices.map(i => i.no).join(' ')).toLowerCase().indexOf(q) > -1))
+    const cq = AGF.customer.toLowerCase(), dmin = AGF.due.from === '' ? null : Number(AGF.due.from), dmax = AGF.due.to === '' ? null : Number(AGF.due.to), dmin2 = AGF.days ? Number(AGF.days) : 0;
+    const rows = j.rows.filter(g => (bucket === 'all' || g.buckets[bucket] > 0.005) && (!amNow || g.am === amNow) && (!q || (g.customer + ' ' + g.person + ' ' + g.am + ' ' + g.invoices.map(i => i.no).join(' ')).toLowerCase().indexOf(q) > -1)
+        && (!cq || (g.customer + ' ' + (g.person || '') + ' ' + (g.email || '')).toLowerCase().indexOf(cq) > -1))
       .map(g => { const inv = inB(g); return Object.assign({}, g, { total: Math.round(inv.reduce((s, i) => s + i.balance, 0) * 100) / 100, invoiced: Math.round(inv.reduce((s, i) => s + i.total, 0) * 100) / 100, paid: Math.round(inv.reduce((s, i) => s + (i.done || 0), 0) * 100) / 100, n: inv.length, oldest: inv.reduce((m, i) => Math.max(m, i.age || 0), 0) }); });
     /* 1.20.89: the balance is what is due; invoiced / paid so far shown under it whenever something was paid */
     const dueCell = (g) => '<b>' + usd(g.total) + '</b>' + (g.paid > 0.005 ? '<div class="ag-ofp">of ' + usd(g.invoiced) + ' · paid ' + usd(g.paid) + '</div>' : '');
+    const rowsF = rows.filter(g => (dmin == null || g.total >= dmin) && (dmax == null || g.total <= dmax) && (!dmin2 || g.oldest > dmin2));
+    rows.length = 0; rowsF.forEach(g => rows.push(g));
     const cols = bucket === 'all' ? B : [bucket];
     $('nAging').textContent = j.totals.n || '';
     /* 1.20.91: every tile the same four lines — due · label with the invoice count · Invoiced · Paid (over every customer, not the filtered rows) */
@@ -1235,12 +1247,13 @@
     v.innerHTML = '<div class="bk-card">' +
       '<div class="ag-tiles">' + tile('all', j.totals.total, 'All open') + B.map(k => tile(k, j.totals[k], BL[k])).join('') + '</div>' +
       '<h2>Accounts receivable aging ' + qHelp('aging', 'Acct Aging', 'Every invoice the CRM shows as <b>unpaid or partial</b> (type invoice, total above zero), grouped by customer and aged from the invoice date: 0–30, 31–60, 61–90 and over 90 days. Invoices dated before <b>' + esc(usD(j.from || '2025-01-01')) + '</b> are left out — those are not chased any more (' + (j.dropped || 0) + ' hidden). The balance is total − paid. Click a customer to see the invoices; the bucket chips and tiles narrow the list; search by customer, invoice number or account manager. Read from the CRM, refreshed every 5 minutes (<a href="#" id="agFresh">refresh now</a>). Nothing here writes to the CRM.') + ' <span class="bk-muted">' + rows.length + ' customer' + (rows.length === 1 ? '' : 's') + (bucket !== 'all' ? ' · ' + esc(BL[bucket]) : '') + (amNow ? ' · ' + esc(amNow) : '') + ' · from ' + esc(usD(j.from || '2025-01-01')) + ' · read ' + esc(new Date(j.at || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) + ' <a href="#" id="agFresh2">refresh</a></span></h2>' +
-      (rows.length ? '<table class="bk ag-table"><thead><tr><th>Customer</th><th class="ag-amh">AM</th>' + cols.map(k => '<th class="num">' + esc(k === '90+' ? '90+' : BL[k].replace(' days', '')) + '</th>').join('') + '<th class="num">Due</th><th class="num">Inv</th><th class="num">Days</th></tr></thead><tbody>' +
+      (rows.length ? '<table class="bk ag-table"><thead><tr><th>' + thFilter('customer', 'Customer', AGS.customer) + '</th><th class="ag-amh">' + thFilter('am', 'AM', AGS.am, AGF.am) + '</th>' + cols.map(k => '<th class="num">' + esc(k === '90+' ? '90+' : BL[k].replace(' days', '')) + '</th>').join('') + '<th class="num">' + thFilter('due', 'Due', AGS.due) + '</th><th class="num">Inv</th><th class="num">' + thFilter('days', 'Days', AGS.days, AGF.days) + '</th></tr></thead><tbody>' +
         rows.map(g => '<tr class="ag-c" data-agc="' + esc(String(g.customer_id || 'none')) + '"><td>' + esc(g.customer) + (g.person && g.person !== g.customer ? '<div class="bk-dim">' + esc(g.person) + (g.email ? ' · ' + esc(g.email) : '') + '</div>' : (g.email ? '<div class="bk-dim">' + esc(g.email) + '</div>' : '')) + '</td><td class="ag-am">' + amFace(g) + '</td>' + cols.map(k => num(g.buckets[k])).join('') + '<td class="num">' + dueCell(g) + '</td><td class="num">' + g.n + '</td><td class="num ag-days"><span class="ag-age" title="Oldest open invoice' + (bucket !== 'all' ? ' in ' + BL[bucket] : '') + '">' + (g.oldest || 0) + ' d</span></td></tr>' +
           '<tr class="ag-d" data-agd="' + esc(String(g.customer_id || 'none')) + '"' + (agingOpen[g.customer_id || 'none'] ? '' : ' hidden') + '><td colspan="' + (cols.length + 5) + '">' + invRows(g) + '</td></tr>').join('') +
         '<tr class="ag-tot"><td>Total</td><td></td>' + cols.map(k => num(tot[k])).join('') + '<td class="num">' + dueCell(tot) + '</td><td></td><td></td></tr></tbody></table>'
         : '<div class="bk-muted" style="padding:16px 0">Nothing open' + (bucket !== 'all' ? ' in ' + esc(BL[bucket]) : '') + (amNow ? ' for ' + esc(amNow) : '') + (q ? ' for "' + esc(q) + '"' : '') + '.</div>') + '</div>';
     v.querySelectorAll('[data-agb]').forEach(t => t.onclick = () => show('aging', t.dataset.agb === 'all' ? 'all' : BK[t.dataset.agb]));
+    thFilterBind(v, AGS, (key, val) => { if (key === 'due') AGF.due = { from: (val && val.from) || '', to: (val && val.to) || '', period: '' }; else AGF[key] = typeof val === 'string' ? val : ''; loadAging(bucket); });
     v.querySelectorAll('tr.ag-c').forEach(tr => tr.onclick = () => { const d = v.querySelector('tr.ag-d[data-agd="' + tr.dataset.agc + '"]'); if (!d) return; d.hidden = !d.hidden; agingOpen[tr.dataset.agc] = !d.hidden; });
     const fresh = async (e) => { e.preventDefault(); agingData = null; const j2 = await api('/api/bookkeeping/ar/aging?fresh=1'); if (j2.ok) agingData = j2; loadAging(bucket); };
     ['agFresh', 'agFresh2'].forEach(id => { const a = $(id); if (a) a.onclick = fresh; });

@@ -1660,7 +1660,7 @@ async function loadHistoryUsers() {
     sel.innerHTML = '<option value="">All users</option>';
     (j.users || []).forEach(u => {
       const o = document.createElement('option');
-      o.value = u.key; o.textContent = u.label;
+      o.value = u.key; o.textContent = u.label; if (u.photo) o.dataset.photo = photoUrl(u.photo);   /* 1.20.94: the face for the header filter */
       sel.appendChild(o);
     });
     sel.value = cur;
@@ -1716,7 +1716,7 @@ function loadCrmStats(user) {
 // Summary (text, on the page). The header is drawn from the selects' options so the lists are the same as before.
 const HF = { date: { from: '', to: '', period: '' }, summary: '' };
 function histSpecs() {
-  const opts = (id) => Array.from(document.getElementById(id).options).map(o => ({ v: o.value, l: o.textContent, sub: o.disabled ? 'soon' : '' }));
+  const opts = (id) => Array.from(document.getElementById(id).options).map(o => ({ v: o.value, l: o.textContent, sub: o.disabled ? 'soon' : '', h: id === 'fUser' && o.value ? NovaTable.face(o.dataset.photo || '', o.textContent) : undefined }));   /* 1.20.94: heads on the User list */
   return {
     date: { type: 'range', kind: 'date', presets: [{ v: '', l: 'All time' }, { v: 'today', l: 'Today' }, { v: 'week', l: 'This week' }, { v: 'month', l: 'This month' }, { v: '30', l: 'Last 30 days' }], period: HF.date.period, from: HF.date.from, to: HF.date.to },
     user: opts('fUser'), client: opts('fClient'), agent: opts('fAgent'), rating: opts('fRating').map(o => ({ v: o.v === 'all' ? '' : o.v, l: o.l })),

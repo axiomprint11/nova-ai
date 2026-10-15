@@ -164,7 +164,12 @@ more. Used on Admin → Users (`UF`, `US_SPECS`, `usersHead()`), CRM Chat (`HF`,
 `renderHistory()` over `histCache`) and TalkAi → Calls (`callSpecs()` / `callHead()` in talk-ai.js — Call = direction + state in one
 list, When = date range, Client and AM side by side in one header (`.tk-th2`), Answered by = the AM TalkAI list, Duration = length;
 `F` and `filterQuery()` unchanged; the 1.20.82 `#callFilt` bar is gone). The Bank feed keeps its own `thFilter` copy in bookkeeping.js
-for now (same look; fold it in when it is next touched).
+for now (same look; fold it in when it is next touched). **People lists show heads** (1.20.94): a list option's `h` (NovaTable) or `l`
+(bookkeeping's thFilter takes html in `l`, `t` = the plain text for the tooltip) carries `NovaTable.face(url, name)` — a 22px round photo,
+an initial when there is none or it fails — on CRM Chat's User list (`/api/admin/chat-users` now returns `photo`), TalkAi's AM and
+Answered by lists, and Acct Aging's AM list. **Acct Aging** has header filters too (`AGF` / `AGS` in `loadAging`, bookkeeping's own
+`thFilter` / `thFilterBind`): Customer (text over company / contact / email), AM (heads; the sub-bar select is gone), Due (number range),
+Days (oldest over 90 / 180 / 365); the sub-bar search stays.
 
 Money is always shown as `$1,678.54`: use `usd2(n)` (defined in server.js, client-bot.js, chatbot.js, axiom-cards.js,
 order-assist.js and index.html), never `'$' + n.toFixed(2)`. The prompts tell the models the same.

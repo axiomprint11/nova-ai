@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.93';
-const NOVA_BUILT = '10-15-2026 7:55pm';
+const NOVA_VERSION = '1.20.94';
+const NOVA_BUILT = '10-15-2026 8:10pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -6215,12 +6215,13 @@ app.get('/api/admin/chat-users', auth, adminOnly, (req, res) => {
   db.all('SELECT DISTINCT user_key FROM chats', [], (err, chatRows) => {
     (chatRows || []).forEach(r => { users[r.user_key] = labelForKey(r.user_key); });
     // all enabled+disabled members
-    db.all('SELECT email, display_name, username FROM members', [], (e1, members) => {
-      (members || []).forEach(m => { users['member:' + m.email] = m.display_name || m.username || m.email; });
+    const photos = {};   /* 1.20.94: the member's face (S3 key) for the User filter's heads */
+    db.all('SELECT email, display_name, username, photo FROM members', [], (e1, members) => {
+      (members || []).forEach(m => { users['member:' + m.email] = m.display_name || m.username || m.email; if (m.photo) photos['member:' + m.email] = m.photo; });
       // all admins
       db.all('SELECT username FROM users', [], (e2, admins) => {
         (admins || []).forEach(a => { users['user:' + a.username] = a.username; });
-        const list = Object.keys(users).map(k => ({ key: k, label: users[k] }))
+        const list = Object.keys(users).map(k => ({ key: k, label: users[k], photo: photos[k] || null }))
           .sort((a, b) => a.label.localeCompare(b.label));
         res.json({ success: true, users: list });
       });
