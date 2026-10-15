@@ -127,11 +127,14 @@
     if (!j.ok) { $('daHist').innerHTML = '<div class="da-empty" style="color:#b91c1c">' + esc(j.error) + '</div>'; return; }
     $('daHistN').textContent = j.rows.length ? j.rows.length : '';
     if (!j.rows.length) { $('daHist').innerHTML = '<div class="da-empty">No matches yet.</div>'; return; }
-    const when = (d) => { const x = new Date(d); return isNaN(x) ? esc(d) : esc(x.toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: '2-digit', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit' })); };
+    // date on one line, time under it (LA); SQLite's "YYYY-MM-DD HH:MM:SS" is UTC — read it as such
+    const when = (d) => { const x = new Date(/^\d{4}-\d{2}-\d{2} /.test(String(d)) ? String(d).replace(' ', 'T') + 'Z' : d); if (isNaN(x)) return esc(d);
+      const o = { timeZone: 'America/Los_Angeles' };
+      return '<b>' + esc(x.toLocaleDateString('en-US', Object.assign({ month: '2-digit', day: '2-digit', year: 'numeric' }, o))) + '</b><div>' + esc(x.toLocaleTimeString('en-US', Object.assign({ hour: 'numeric', minute: '2-digit' }, o))) + '</div>'; };
     const st = (r) => r.status === 'busy' ? '<span class="da-tag busy">Everyone is busy</span>' : r.status === 'applied' ? '<span class="da-tag applied">applied in CRM</span>' : r.status === 'crm_failed' ? '<span class="da-tag crm_failed">CRM failed</span>' : '<span class="da-tag">' + esc(r.status) + '</span>';
     $('daHist').innerHTML = '<table class="da-ht"><thead><tr><th>When</th><th>Job</th><th>Product</th><th>Nova picked</th><th>Also considered</th><th>Status</th><th>Source</th></tr></thead><tbody>' + j.rows.map(r => {
       const others = (r.picks || []).filter(p => p.user_id !== r.picked_user_id).slice(0, 4);
-      return '<tr><td>' + when(r.at) + '<div class="da-sub">' + esc(ago(r.at)) + (r.ms ? ' · ' + r.ms + ' ms' : '') + (r.ai ? ' · ✦ rules' : '') + '</div></td>' +
+      return '<tr><td>' + when(r.at) + ((r.ms || r.ai) ? '<div class="da-sub">' + [r.ms ? (Math.round(r.ms / 100) / 10) + ' s' : '', r.ai ? '✦ rules' : ''].filter(Boolean).join(' · ') + '</div>' : '') + '</td>' +
         '<td><span class="da-e">' + esc(r.e) + '</span><div class="da-sub">' + esc(r.job_name || '') + '</div><div class="da-sub">' + esc(r.customer || '') + '</div></td>' +
         '<td>' + esc(r.product || '') + '<div class="da-sub">Tier ' + (r.tier || 1) + '</div></td>' +
         '<td>' + (r.picked_user_id ? '<div class="da-pickmini" title="' + esc(r.reason || '') + '">' + av({ name: r.picked_name, photo: r.photo }) + '<div><b>' + esc(r.picked_name) + '</b> <span class="pct">' + r.picked_score + '%</span><div class="da-sub" style="max-width:260px">' + esc((r.reason || '').slice(0, 110)) + ((r.reason || '').length > 110 ? '…' : '') + '</div></div></div>' : '<span class="da-muted">nobody</span><div class="da-sub" style="max-width:260px">' + esc(r.reason || '') + '</div>') + '</td>' +
