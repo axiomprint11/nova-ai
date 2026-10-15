@@ -1475,6 +1475,23 @@ module.exports = function mountClientBot(app, deps) {
   const WAITING_SAY = 'This order is past its due date because it is waiting on the customer (files to upload or a proof to review): ' +
     'tell them kindly that it is waiting on that step, and that the date will be updated once it is done.';
 
+  // The numbers a customer said as part of a size (5 1/2 feet, 42", 3x5, 36 inches wide), and the integers they said
+  // otherwise. A quantity the model passes that appears only inside a size is not a count.
+  const SIZE_RE = /(\d+(?:[.,]\d+)?)(?:\s+\d\s*\/\s*\d)?\s*(?:"|\u201d|''|\u2033|'|\u2019|\u2032|in\b|inch(?:es)?\b|ft\b|feet\b|foot\b|cm\b|mm\b|m\b|meters?\b|yards?\b|yd\b)|(\d+(?:[.,]\d+)?)\s*(?:x|\u00d7|by)\s*(\d+(?:[.,]\d+)?)|(\d+(?:[.,]\d+)?)\s+(?:high|tall|wide|long|deep|height|width|length)\b/gi;
+  function sizeOnlyQty(input, said) {
+    const text = String(said || '').replace(/\[PAGE:[^\]]*\]/g, ' ');
+    if (!text.trim()) return null;
+    const qs = (Array.isArray(input.quantities) && input.quantities.length ? input.quantities : [input.quantity]).map(n => parseInt(n)).filter(n => n > 0);
+    if (!qs.length) return null;
+    const inSize = {}; let rest = text;
+    text.replace(SIZE_RE, (m, a, b, c, d) => { [a, b, c, d].forEach(v => { if (v) inSize[parseInt(v)] = m.trim(); }); return m; });
+    rest = text.replace(SIZE_RE, ' ');
+    const loose = new Set((rest.match(/\d+/g) || []).map(n => parseInt(n)));
+    // Every quantity the model passed was only ever said inside a size → not a count.
+    const only = qs.filter(q => inSize[q] && !loose.has(q));
+    if (only.length !== qs.length) return null;
+    return { qty: qs[0], phrase: inSize[qs[0]] };
+  }
   async function runTool(name, input, who, cards, ctx) {
     input = input || {};
     const cid = who.customer ? parseInt(who.customer.id) : null;
@@ -1596,8 +1613,15 @@ module.exports = function mountClientBot(app, deps) {
       };
     }
     if (name === 'price_product') {
+      // 1.20.44: "5 1/2 feet high and 3 1/2 ft wide" is ONE piece — the model had taken the 5 as the quantity as well as
+      // the height. A quantity the customer only ever said as part of a size is dropped: the default is priced and the
+      // card shows the yellow quantity box, as when no quantity was given.
+      const sq = sizeOnlyQty(input, ctx && ctx.said);
+      if (sq) { input = Object.assign({}, input, { quantity: undefined, quantities: undefined }); }
       const r = await priceCard(input, cid, Object.assign({}, ctx, { fromModel: true }));
       if (r.error) return { error: r.error };
+      if (sq) r.forModel.quantity_note = 'The quantity ' + sq.qty + ' was NOT given by the customer — that number is part of the size they said ("' + sq.phrase + '"). ' +
+        'The default quantity (' + (r.card.rows[0] && r.card.rows[0].quantity) + ') was priced and they can set the count on the card. Never take a number from a size as the quantity.';
       // The suggested job name rides on the card; the Add to Cart box starts from it (+ " - 50x").
       const hint = String(input.job_name || '').replace(/[\u0000-\u001f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
       if (hint) r.card.job_hint = hint;
@@ -1931,7 +1955,7 @@ module.exports = function mountClientBot(app, deps) {
       '9a. PRICE FIRST, DO NOT ASK. Never ask a clarifying question before pricing — no "which paper?", "how many?", "one side or two?". Call price_product straight away with every option the customer stated (they show as Specified) and leave everything else on the website default (Default). No quantity given: leave quantities out and the default quantity is priced. Fields that change the price but were not stated show on the card as YELLOW dropdowns the customer picks from right there — do not ask about them; at most add a few words such as "you can pick the finish on the quote". When you cannot tell which product they mean ("cards", "signs", "flyers or postcards?"), do NOT list the kinds in words and do NOT ask them to type one: call search_products with the words they used — the customer sees a clickable list of matching products with pictures and taps the one they mean — and say one short line like "Tap the one you need and I\'ll price 3 sets of 500." Ask in words only when price_product itself says something is required. This overrides any house rule that says to confirm details before pricing.',
       '9b. SEVERAL PRODUCTS in one message (e.g. "business cards and roll up banners"): keep it short. Number them, one line each ("1) Business cards", "2) Roll up banners"), then "Starting with the business cards \u2014 which one do you need?" and call search_products for the FIRST one only (or price it straight away if the exact product is clear). Do not describe the products, list their types in a sentence or ask about quantities and specs. The next one comes after the first is priced or added to the cart. Never show product ids (#449) to the customer.',
       '9c. THE PAGE THEY ARE ON: a customer message may start with [PAGE: \u2026]. They see that product on their screen and assume you see it too. Unless they name a different product, "this", "it", "these" and questions such as "will this stick to \u2026", "is it waterproof", "what sizes", "how much for 10" are about THAT product \u2014 answer about it from the PAGE facts (product_details with its id for more; price it with price_product and its id). Do not answer about a product from earlier in the chat when the question fits the page product; if it could truly be either, answer for the page product first, then the other in one line. Practical questions get a straight answer from what the product is (a magnet holds only on steel or iron \u2014 not on plastic, aluminum, fiberglass or wood). A new [PAGE] means they moved to another product \u2014 follow them. When they ask for something else ("what banners do you have?") help with that as usual. Never say you can see their screen; say "the <product> page".',
-      '9d. EVERYTHING THEY ALREADY SAID GOES INTO THE PRICE: when you call price_product (also right after they pick a product from a list), pass every spec stated ANYWHERE in this conversation, not just in the last message \u2014 size, page count, sides, color, paper, finish, quantity. A PAGE COUNT goes in the product\u2019s pages field (Pages, Pages_Per_Set: "120"), never in quantity; quantity is how many copies, sets, booklets or pieces (one = 1). Never price a default when they told you the value. PLAIN PRINTING of pages, sheets or documents (color or black and white, single or double sided, loose / no binding, regular paper) is Document Printing & Copies \u2014 search "document copies" and price it: Pages_Per_Set = their page count, quantity = how many copies of the whole document, Printed_Sides and Print_Color as said. Suggest it first; offer a booklet or binding only if they ask for one.',
+      '9d. EVERYTHING THEY ALREADY SAID GOES INTO THE PRICE: when you call price_product (also right after they pick a product from a list), pass every spec stated ANYWHERE in this conversation, not just in the last message \u2014 size, page count, sides, color, paper, finish, quantity. A PAGE COUNT goes in the product\u2019s pages field (Pages, Pages_Per_Set: "120"), never in quantity; quantity is how many copies, sets, booklets or pieces (one = 1). A NUMBER THAT IS PART OF A SIZE IS NEVER THE QUANTITY: "5 1/2 feet high and 3 1/2 ft wide" is ONE piece 66" \u00d7 42" (5.5 ft = 66"), "3x5" and "36 inches wide" are sizes \u2014 take the quantity only from a count ("5 of them", "5 pieces", "qty 5"); with none given, leave quantities out. Never price a default when they told you the value. PLAIN PRINTING of pages, sheets or documents (color or black and white, single or double sided, loose / no binding, regular paper) is Document Printing & Copies \u2014 search "document copies" and price it: Pages_Per_Set = their page count, quantity = how many copies of the whole document, Printed_Sides and Print_Color as said. Suggest it first; offer a booklet or binding only if they ask for one.',
       '10. AxiomPrint also INSTALLS signs and graphics on site and DELIVERS locally in the Los Angeles area. Price those only with estimate_installation / estimate_delivery, always call the result an estimate, and never quote a rate yourself. When a product and its installation are both asked for, price the product with price_product and the installation with estimate_installation.',
       '11. Artwork templates: use get_template. The customer gets a Download button — do not send them to email for a template unless none exists.',
       '11b. What is new: when the customer asks about new, newest or latest products or recent additions, call newest_products and show them \u2014 never say there is no list of new products.',

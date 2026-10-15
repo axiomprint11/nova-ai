@@ -499,6 +499,11 @@ pattern for any new report over a large log table. To add a report, add an entry
   CRM Default (`product_variables.default_value`; a count left on it is flagged to confirm). They show as spec rows
   with `isNumber`; Order now links carry them as raw values (`"Pages_Per_Set": 120`); the website cart payload does not yet. Options with the **same title twice** (Document Copies' two "Full Color",
   one per side count, split by a Related-to rule) resolve to the twin the other choices allow.
+- **A number inside a size is never the quantity** (1.20.44): "5 1/2 feet high and 3 1/2 ft wide" was priced as FIVE foam
+  cut-outs. Client rule 9d now says so, and `sizeOnlyQty(input, ctx.said)` in the client bot's `price_product` handler
+  (`SIZE_RE`: a number followed by a unit / quote mark, `a x b` / `a by b`, or "high / wide / tall / long") drops a quantity the
+  customer only ever said inside a size (last 4 user messages, the `[PAGE]` note stripped): the default quantity is priced, the
+  card shows the yellow quantity box, and `forModel.quantity_note` tells the model why. "5 banners 3x5" keeps the 5.
 - **Plain printing** of pages / sheets / documents (no booklet or other product named) is Document Printing & Copies:
   the client bot's `search_products` adds "document copies" and ranks it first (`PLAIN_PRINT` / `BOUND_PRODUCT`), and
   prompt rule 9d (TalkAi: the EVERYTHING THEY SAID line) says to price with every spec said anywhere in the
