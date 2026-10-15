@@ -280,6 +280,37 @@
   .tk-btn:disabled { opacity: .55; cursor: default; }
   .tk-hint { font-size: 12px; color: #6b5d2e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 9px; padding: 7px 10px; line-height: 1.45; }
 
+  /* My TalkAI (1.20.78): a card on top of the Calls dashboard for the account manager's own assistant */
+  .tk-mine { flex: none; margin: 14px 18px 0; border: 1px solid #c7d2fe; border-radius: 12px; background: linear-gradient(180deg, #f5f3ff, #fff 70%); }
+  .tk-mine-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer; }
+  .tk-mine-head img, .tk-mine-head .tk-mine-ini { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex: none; }
+  .tk-mine-ini { display: inline-flex; align-items: center; justify-content: center; background: var(--indigo); color: #fff; font-weight: 700; font-size: 15px; }
+  .tk-mine-t { font-size: 14px; font-weight: 700; }
+  .tk-mine-t span { font-weight: 500; color: var(--muted); }
+  .tk-mine-s { font-size: 12.5px; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+  .tk-mine-s b { color: var(--ink); font-weight: 600; }
+  .tk-mine-num { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; font-weight: 700; color: var(--indigo-dark); background: #fff; border: 1px solid #c7d2fe; border-radius: 8px; padding: 5px 10px; white-space: nowrap; }
+  .tk-mine-open { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--indigo-dark); white-space: nowrap; }
+  .tk-mine-open svg { vertical-align: -3px; transition: transform .15s; }
+  .tk-mine.open .tk-mine-open svg { transform: rotate(180deg); }
+  .tk-mine-body { display: none; padding: 0 16px 16px; border-top: 1px solid #e0e7ff; }
+  .tk-mine.open .tk-mine-body { display: block; }
+  .tk-mine-body h4 { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 0 6px; }
+  .tk-mine-body p.sub { font-size: 12px; color: var(--muted); margin: 0 0 8px; line-height: 1.45; }
+  .tk-mine-body textarea { width: 100%; box-sizing: border-box; border: 1.5px solid var(--line); border-radius: 10px; padding: 9px 11px; font: 13px/1.5 inherit; resize: vertical; outline: none; min-height: 64px; background: #fff; }
+  .tk-mine-body textarea:focus { border-color: var(--indigo); }
+  .tk-mine-body textarea#mlTraining { min-height: 110px; }
+  .tk-mine-g { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .tk-mine-g .tk-mine-col { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fff; }
+  .tk-mine-col h5 { margin: 0 0 8px; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .tk-mine-col h5 svg { color: var(--indigo-dark); }
+  .tk-mine-col label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin: 8px 0 4px; }
+  .tk-mine-col label:first-of-type { margin-top: 0; }
+  .tk-mine-save { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+  @media (max-width: 900px) { .tk-mine-g { grid-template-columns: 1fr; } .tk-mine { margin: 10px 10px 0; } }
+  /* a member (not an admin) sees the dashboard read-only: no rating editor, no AI-summary rewrite */
+  body.tk-member .tk-rate-row, body.tk-member #rateEdit, body.tk-member .tk-foot { display: none !important; }
+
   /* Training */
   .tk-train { flex: 1; overflow-y: auto; padding: 20px 24px; }
   .tk-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; max-width: 1200px; }
@@ -533,6 +564,8 @@
 <div class="tk-main">
   <!-- Calls -->
   <div class="tk-view on" id="vCalls">
+    <!-- 1.20.78: My TalkAI — the signed-in account manager's own assistant (shown only when they have a line) -->
+    <div class="tk-mine" id="myLine" hidden></div>
     <!-- 1.20.71: the calls dashboard in the CRM's style — sub-tabs, tiles, one wide table; a call opens full width in .tk-detail -->
     <div class="tk-dash" id="callDash">
       <div class="tk-dashbar">

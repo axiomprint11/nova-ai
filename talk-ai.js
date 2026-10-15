@@ -69,6 +69,9 @@ module.exports = function mountTalkAi(app, deps, bot) {
     // when they last heard their calls; "press 1 to take it" when their phone rings first.
     ['own_numbers TEXT', 'owner_pin TEXT', 'owner_pin_always INTEGER DEFAULT 0', 'owner_greeting TEXT', 'owner_seen_at TEXT', 'screen INTEGER DEFAULT 1']
       .forEach(c => db.run('ALTER TABLE talk_lines ADD COLUMN ' + c, () => {}));
+    // 1.20.78: the account manager's own greetings, set by them under My TalkAI — business hours / after hours,
+    // each for a recognised caller ({name}) and for a caller NovaAI does not know. `greeting` stays as the one-for-all.
+    ['greet_bh_known TEXT', 'greet_bh_new TEXT', 'greet_ah_known TEXT', 'greet_ah_new TEXT'].forEach(c => db.run('ALTER TABLE talk_lines ADD COLUMN ' + c, () => {}));
     // owner: 1 = the account manager called their own assistant (verified), 2 = their number, not verified.
     // screen_ok: 0 = their phone was rung with "press 1", 1 = they pressed it. pin_tries: wrong PINs.
     ['owner INTEGER', 'screen_ok INTEGER', 'pin_tries INTEGER DEFAULT 0'].forEach(c => db.run('ALTER TABLE talk_calls ADD COLUMN ' + c, () => {}));
@@ -428,6 +431,15 @@ module.exports = function mountTalkAi(app, deps, bot) {
     hy: 'Բարև {name}, NovaAI-ն է, զանգը ձայնագրվում է։ Ինչո՞վ կարող եմ օգնել։',
     ru: 'Здравствуйте {name}, это NovaAI, звонок записывается. Чем могу помочь?' };
   const RETURNING_LINE = 'Hi {name}, NovaAI here for {am}, on a recorded line. Happy to help \u2014 what can I do for you?';
+  // 1.20.78: the line's own greeting for this call — after hours / business hours × recognised / not — else its one-for-all.
+  const GREET_F = ['greeting', 'greet_bh_known', 'greet_bh_new', 'greet_ah_known', 'greet_ah_new'];
+  function lineGreet(line, first, after) {
+    if (!line) return '';
+    const t = after ? (first ? line.greet_ah_known : line.greet_ah_new) : (first ? line.greet_bh_known : line.greet_bh_new);
+    return String(t || line.greeting || '').trim();
+  }
+  // the same line with no greeting of its own (the hours mode's greeting is used instead — e.g. Team Missed)
+  const muteGreet = (line, extra) => Object.assign({}, line, GREET_F.reduce((m, k) => (m[k] = null, m), {}), extra || {});
   function greetingFor(s, first, mode, line, missed, lang, returning) {
     mode = mode || s.modes.regular;
     if (s.caller_id === 'never') first = '';
@@ -435,7 +447,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const tpl = back ? (lang && lang !== 'en' && RETURNING_LANG[lang] ? RETURNING_LANG[lang]
         : line && (missed || line.why === 'number') ? RETURNING_LINE : mode.greeting_returning)
       : lang && lang !== 'en' && s.lang_greetings[lang] ? s.lang_greetings[lang]
-      : missed ? MISSED : (line && line.greeting) ? line.greeting
+      : missed ? MISSED : lineGreet(line, first, mode === s.modes.after) ? lineGreet(line, first, mode === s.modes.after)
       : (line && line.why === 'number') ? MISSED                       // their own number: NovaAI picks up their calls
       : (first ? mode.greeting_known : mode.greeting);
     return String(tpl || mode.greeting).replace(/\{am\}/gi, amFirst(line))
@@ -550,7 +562,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     // rules, always NovaAI, never ringing anyone first. Their account manager's notes still apply.
     const missedCall = !!(s.missed_number && last10(to) === last10(s.missed_number));
     let line = await routeLine(missedCall ? '' : to, match).catch(() => null);
-    if (missedCall && line) line = Object.assign({}, line, { greeting: null, why: 'client' });
+    if (missedCall && line) line = muteGreet(line, { why: 'client' });
     const modeKey = missedCall ? 'missed' : hn.mode;
     const mode = s.modes[modeKey];
     let answer = mode.answer;
@@ -612,7 +624,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const line = await lineById(call.line_id);
     const mode = s.modes[s.modes[call.hours_mode] ? call.hours_mode : 'regular'];
     try {
-      const tw = await registerCall(call, call.from_number, call.to_number, s, greetingFor(s, call.caller_first, mode, call.hours_mode === 'missed' && line ? Object.assign({}, line, { greeting: null }) : line, false, lang, Number(call.returning) === 1), line, lang);
+      const tw = await registerCall(call, call.from_number, call.to_number, s, greetingFor(s, call.caller_first, mode, call.hours_mode === 'missed' && line ? muteGreet(line) : line, false, lang, Number(call.returning) === 1), line, lang);
       await dbRun("UPDATE talk_calls SET answered_by = 'ai' WHERE id = ?", [call.id]).catch(() => {});
       hit('lang', true, 'Call ' + call.id + ': ' + LANGS[lang].name + (digit ? ' (pressed ' + digit + ')' : ' (no key)') + ' → NovaAI');
       return res.send(tw);
@@ -1951,10 +1963,53 @@ module.exports = function mountTalkAi(app, deps, bot) {
 
   // ---------------------------------------------------------------- admin
   const readerOf = (req) => String(req.user && (req.user.key || req.user.username) || 'admin').slice(0, 120);
+  // 1.20.78: the whole team can open TalkAi — the Calls dashboard and their own line (My TalkAI). `team` lets any
+  // signed-in member through and notes whether they are an admin (`req.talkAdmin`, the same check as adminOnly),
+  // so a route can trim what a member gets. Settings, Try it, Training, Account managers and Setup stay adminOnly.
+  const isAdminReq = (req) => new Promise(r => adminOnly(req, { status: () => ({ json: () => r(false) }) }, () => r(true)));
+  const teamOk = async (req, res, next) => { req.talkAdmin = await isAdminReq(req); next(); };
+  const memberEmail = (req) => String(req.user && (req.user.email || String(req.user.key || '').replace(/^(member|user):/, '')) || '').trim().toLowerCase();
+  // The signed-in person's own line: by the email on the line, else by their CRM user id (the production `user` table).
+  async function myLine(req) {
+    const em = memberEmail(req);
+    if (!em) return null;
+    let l = await dbGet('SELECT * FROM talk_lines WHERE active = 1 AND LOWER(am_email) = ?', [em]).catch(() => null);
+    if (l) return l;
+    const u = await runQuery('SELECT id FROM user WHERE LOWER(email) = ' + deps.mysql.escape(em) + ' LIMIT 1').catch(() => []);
+    return u[0] ? await dbGet('SELECT * FROM talk_lines WHERE active = 1 AND am_user_id = ?', [parseInt(u[0].id)]).catch(() => null) : null;
+  }
+  const GREET_MAX = 600;
+  app.get('/api/talk/my-line', auth, async (req, res) => {
+    const l = await myLine(req);
+    if (!l) return res.json({ ok: true, line: null });
+    const s = await settings();
+    const ph = l.am_user_id ? await runQuery('SELECT memberimage FROM user WHERE id = ' + parseInt(l.am_user_id) + ' LIMIT 1').catch(() => []) : [];
+    const calls = await dbGet("SELECT COUNT(*) AS n FROM talk_calls WHERE line_id = ? AND source = 'phone'", [l.id]).catch(() => null);
+    res.json({ ok: true, line: { id: l.id, am_name: l.am_name, am_user_id: l.am_user_id, number: l.number || '', main_line: Number(l.main_line) !== 0, training: l.training || '',
+        greeting: l.greeting || '', greet_bh_known: l.greet_bh_known || '', greet_bh_new: l.greet_bh_new || '', greet_ah_known: l.greet_ah_known || '', greet_ah_new: l.greet_ah_new || '',
+        photo: ph[0] ? memberPhoto(ph[0].memberimage) : '', calls: calls ? calls.n : 0, updated_at: l.updated_at, updated_by: l.updated_by },
+      main_number: env('TALKAI_NUMBER') || null,
+      // what a caller hears today when the line has no greeting of its own (shown as the placeholders)
+      defaults: { bh_known: greetingFor(s, '{name}', s.modes.regular, muteGreet(l, l.number ? { why: 'number' } : {}), false, null, false), bh_new: greetingFor(s, '', s.modes.regular, muteGreet(l, l.number ? { why: 'number' } : {}), false, null, false),
+        ah_known: greetingFor(s, '{name}', s.modes.after, muteGreet(l, l.number ? { why: 'number' } : {}), false, null, false), ah_new: greetingFor(s, '', s.modes.after, muteGreet(l, l.number ? { why: 'number' } : {}), false, null, false) } });
+  });
+  app.post('/api/talk/my-line', auth, async (req, res) => {
+    const l = await myLine(req);
+    if (!l) return res.status(403).json({ ok: false, error: 'You are not set up as an account manager yet — ask an admin to add you under TalkAi → Account managers.' });
+    const b = req.body || {};
+    const t = (v, max) => b[v] == null ? null : String(b[v]).replace(/\r/g, '').trim().slice(0, max) || null;
+    const vals = [t('training', 6000), t('greet_bh_known', GREET_MAX), t('greet_bh_new', GREET_MAX), t('greet_ah_known', GREET_MAX), t('greet_ah_new', GREET_MAX)];
+    await dbRun("UPDATE talk_lines SET training = COALESCE(?, training), greet_bh_known = ?, greet_bh_new = ?, greet_ah_known = ?, greet_ah_new = ?, updated_at = datetime('now'), updated_by = ? WHERE id = ?",
+      vals.concat([readerOf(req), l.id]));
+    console.log('TALKAI my-line ' + l.id + ' (' + l.am_name + ') saved by ' + readerOf(req));
+    res.json({ ok: true });
+  });
   const markRead = (id, reader) => dbRun("INSERT OR REPLACE INTO talk_reads (call_id, reader, read_at) VALUES (?, ?, datetime('now'))", [id, reader]).catch(() => {});
 
-  app.get('/api/admin/talk/overview', auth, adminOnly, async (req, res) => {
+  app.get('/api/admin/talk/overview', auth, teamOk, async (req, res) => {
     const s = await settings();
+    if (!req.talkAdmin) return res.json({ ok: true, member: true, settings: { mode: s.mode }, number: env('TALKAI_NUMBER') || null, hours_now: hoursNow(s),
+      keys: { TWILIO_AUTH_TOKEN: !!env('TWILIO_AUTH_TOKEN'), ELEVENLABS_API_KEY: !!env('ELEVENLABS_API_KEY'), ELEVENLABS_AGENT_ID: !!env('ELEVENLABS_AGENT_ID'), TALKAI_LLM_KEY: !!env('TALKAI_LLM_KEY') } });
     res.json({ ok: true, settings: s, defaults: DEFAULTS, mode_defaults: MODE_DEFAULTS, langs: Object.keys(LANGS).map(k => ({ code: k, name: LANGS[k].name, digit: LANGS[k].digit, greeting: LANGS[k].greeting || '' })), hours_now: Object.assign(hoursNow(s), { week: weekText(s.hours) }),
       latest_call: ((await dbGet("SELECT MAX(id) AS id FROM talk_calls WHERE source = 'phone' AND transcript IS NOT NULL").catch(() => null)) || {}).id || null,
       mode_counts: await dbAll("SELECT hours_mode AS k, COUNT(*) AS n FROM talk_calls WHERE source = 'phone' AND created_at > datetime('now', '-30 days') GROUP BY hours_mode").then(r => r.reduce((m, x) => (m[x.k || 'regular'] = x.n, m), {})).catch(() => ({})),
@@ -2027,7 +2082,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
 
   // Overview: calls by day / week / month (real phone calls only), and this month's outcomes.
   const usageStats = require('./usage-stats');
-  app.get('/api/admin/talk/stats', auth, adminOnly, async (req, res) => {
+  app.get('/api/admin/talk/stats', auth, teamOk, async (req, res) => {
     const rows = await dbAll("SELECT created_at FROM talk_calls WHERE source = 'phone' AND created_at > " + usageStats.SINCE).catch(() => []);
     const s = usageStats.series(rows.map(r => r.created_at));
     const m0 = usageStats.startOf('month');
@@ -2042,14 +2097,14 @@ module.exports = function mountTalkAi(app, deps, bot) {
       t('Missed calls', m.missed, 'picked up by AI'),
       t('Messages taken', m.msgs, 'this month'), t('Quotes emailed', e.n, 'this month')] });
   });
-  app.get('/api/admin/talk/unread-count', auth, adminOnly, async (req, res) => {
+  app.get('/api/admin/talk/unread-count', auth, teamOk, async (req, res) => {
     try {
       const r = await dbGet("SELECT COUNT(*) AS n FROM talk_calls c LEFT JOIN talk_reads r ON r.call_id = c.id AND r.reader = ? " +
         "WHERE c.source <> 'try' AND (r.read_at IS NULL OR r.read_at < c.updated_at)", [readerOf(req)]);
       res.json({ ok: true, unread: (r && r.n) || 0 });
     } catch (e) { res.json({ ok: false, unread: 0 }); }
   });
-  app.get('/api/admin/talk/calls', auth, adminOnly, async (req, res) => {
+  app.get('/api/admin/talk/calls', auth, teamOk, async (req, res) => {
     const reader = readerOf(req);
     const q = String(req.query.q || '').trim().slice(0, 100);
     const f = String(req.query.filter || '');
@@ -2144,7 +2199,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     lessonsCache.at = 0;
     res.json({ ok: true, rating: rating });
   });
-  app.get('/api/admin/talk/calls/:id', auth, adminOnly, async (req, res) => {
+  app.get('/api/admin/talk/calls/:id', auth, teamOk, async (req, res) => {
     const id = parseInt(req.params.id) || 0;
     const c = await dbGet('SELECT * FROM talk_calls WHERE id = ?', [id]);
     if (!c) return res.status(404).json({ ok: false, error: 'No such call.' });
@@ -2167,7 +2222,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     res.json({ ok: true, call: c, turns: turns });
   });
   // An email sent before emails were saved: rebuilt from the call's prices (the same template), and marked so.
-  app.get('/api/admin/talk/calls/:id/email-rebuild', auth, adminOnly, async (req, res) => {
+  app.get('/api/admin/talk/calls/:id/email-rebuild', auth, teamOk, async (req, res) => {
     const c = await dbGet('SELECT * FROM talk_calls WHERE id = ?', [parseInt(req.params.id) || 0]);
     if (!c) return res.status(404).json({ ok: false, error: 'No such call.' });
     let quotes = [];
@@ -2180,15 +2235,15 @@ module.exports = function mountTalkAi(app, deps, bot) {
       subject: 'Your AxiomPrint quote' + (quotes.length === 1 ? ' \u2014 ' + quotes[0].product : ''),
       html: quoteEmailHtml(quotes, name, pageUrl), text: quoteEmailText(quotes, name, pageUrl) } });
   });
-  app.post('/api/admin/talk/calls/:id/unread', auth, adminOnly, async (req, res) => {
+  app.post('/api/admin/talk/calls/:id/unread', auth, teamOk, async (req, res) => {
     await dbRun('DELETE FROM talk_reads WHERE call_id = ? AND reader = ?', [parseInt(req.params.id) || 0, readerOf(req)]).catch(() => {});
     res.json({ ok: true });
   });
-  app.post('/api/admin/talk/read-all', auth, adminOnly, async (req, res) => {
+  app.post('/api/admin/talk/read-all', auth, teamOk, async (req, res) => {
     await dbRun("INSERT OR REPLACE INTO talk_reads (call_id, reader, read_at) SELECT id, ?, datetime('now') FROM talk_calls", [readerOf(req)]).catch(() => {});
     res.json({ ok: true });
   });
-  app.get('/api/admin/talk/audio/:id', auth, adminOnly, async (req, res) => {
+  app.get('/api/admin/talk/audio/:id', auth, teamOk, async (req, res) => {
     const id = parseInt(req.params.id) || 0;
     let c = await dbGet('SELECT audio_path FROM talk_calls WHERE id = ?', [id]);
     if (c && !c.audio_path) {
@@ -2234,7 +2289,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const c = await dbGet('SELECT customer_name, company FROM talk_calls WHERE id = ?', [r.lastID]);
     const back = from && s.returning_short ? await isReturning(e164(from) || from, r.lastID, match).catch(() => false) : false;
     if (back) await dbRun('UPDATE talk_calls SET returning = 1 WHERE id = ?', [r.lastID]).catch(() => {});
-    res.json({ ok: true, call_id: r.lastID, returning: back, greeting: greetingFor(s, known.first, s.modes[modeKey], modeKey === 'missed' && line ? Object.assign({}, line, { greeting: null, why: 'client' }) : line, false, tlang, back), hours: modeKey, language: tlang ? LANGS[tlang].name : null,
+    res.json({ ok: true, call_id: r.lastID, returning: back, greeting: greetingFor(s, known.first, s.modes[modeKey], modeKey === 'missed' && line ? muteGreet(line, { why: 'client' }) : line, false, tlang, back), hours: modeKey, language: tlang ? LANGS[tlang].name : null,
       line: line ? (line.am_name || 'Account manager') + '\u2019s line' : null,
       recognised: known.trusted ? (c.customer_name || '') + (c.company ? ' (' + c.company + ')' : '') : null });
   });
@@ -2277,8 +2332,10 @@ module.exports = function mountTalkAi(app, deps, bot) {
         title: r.title || '', phone: e164(r.dialpad_phone || r.phone || '') || '', cell: e164(r.phone || '') || '', photo: memberPhoto(r.memberimage), clients: Number(r.clients) || 0 })) });
     } catch (e) { res.status(500).json({ ok: false, error: 'Could not load the account managers: ' + e.message }); }
   });
-  app.get('/api/admin/talk/lines', auth, adminOnly, async (req, res) => {
-    const lines = await dbAll('SELECT * FROM talk_lines ORDER BY active DESC, am_name');
+  app.get('/api/admin/talk/lines', auth, teamOk, async (req, res) => {
+    let lines = await dbAll('SELECT * FROM talk_lines ORDER BY active DESC, am_name');
+    // a member gets only what the dashboard needs: who answers on which number
+    if (!req.talkAdmin) lines = lines.map(l => ({ id: l.id, am_user_id: l.am_user_id, am_name: l.am_name, am_title: l.am_title, number: l.number, main_line: l.main_line, active: l.active }));
     const counts = await dbAll("SELECT line_id, COUNT(*) AS n FROM talk_calls WHERE line_id IS NOT NULL AND source = 'phone' GROUP BY line_id").catch(() => []);
     lines.forEach(l => { const c = counts.find(x => x.line_id === l.id); l.calls = c ? c.n : 0; l.own_numbers = ownNums(l); l.has_pin = !!l.owner_pin; delete l.owner_pin; });
     // Their CRM photo, live (it can change in the CRM).

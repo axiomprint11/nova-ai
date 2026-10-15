@@ -33,7 +33,7 @@
   const GROUPS = [
     [['history', 'CRM Chat', '/admin?tab=history', 'all'],
      ['client', 'Client ChatBot', '/client-bot', 'admin'],
-     ['talk', 'TalkAi', '/talk-ai', 'admin'],
+     ['talk', 'TalkAi', '/talk-ai', 'all'],           // 1.20.78: the whole team — the Calls dashboard + My TalkAI
      ['books', 'Bookkeeping AI', '/bookkeeping', 'bookkeeper'],
      ['ar', 'Nova AR', '/nova-ar', 'ar'],
      ['designer', 'Designer AI', '/designer-ai', 'admin']],
@@ -212,7 +212,7 @@ body.nn-shell { flex-direction: row !important; }
   async function refresh() {
     const t = token();
     if (!t || !me) return;
-    const keys = Object.keys(UNREAD).filter(k => k === 'history' ? me.is_admin : k === 'ar' ? allowed('ar') : allowed('admin'));
+    const keys = Object.keys(UNREAD).filter(k => k === 'history' ? me.is_admin : k === 'ar' ? allowed('ar') : k === 'talk' ? true : allowed('admin'));
     await Promise.all(keys.map(async k => {
       try {
         const r = await fetch(UNREAD[k][0], { headers: { 'Authorization': 'Bearer ' + t } });

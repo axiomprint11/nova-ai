@@ -8,8 +8,9 @@
   const $ = (id) => document.getElementById(id);
   const api = async (url, opts) => {
     const r = await fetch(url, Object.assign({ headers: H() }, opts || {}));
-    if (r.status === 401 || r.status === 403) { location.href = '/'; throw new Error('signed out'); }
+    if (r.status === 401) { location.href = '/'; throw new Error('signed out'); }
     const j = await r.json().catch(() => ({}));
+    if (r.status === 403 && !j.error) j.error = 'Admins only.';   /* 1.20.78: a member on the page is not signed out by an admin-only route */
     if (!r.ok && !j.error) j.error = 'Error ' + r.status;
     return j;
   };
@@ -51,11 +52,15 @@
       : '<span class="tk-chip">' + esc(name) + '</span>';
   };
 
-  let ov = null;
+  let ov = null, isAdmin = true;
   async function loadOverview() {
     const j = await api('/api/admin/talk/overview');
     if (!j.ok) return;
     ov = j;
+    if (j.member && isAdmin) {   /* 1.20.78: a team member — the Calls dashboard and My TalkAI only */
+      isAdmin = false; document.body.classList.add('tk-member');
+      document.querySelectorAll('.tk-tabs button').forEach(b => { if (b.dataset.v !== 'calls') b.hidden = true; });
+    }
     const k = j.keys, s = j.settings;
     const ready = k.TWILIO_AUTH_TOKEN && k.ELEVENLABS_API_KEY && k.ELEVENLABS_AGENT_ID && k.TALKAI_LLM_KEY;
     const pill = $('tkPill');
@@ -362,9 +367,10 @@
       '<button type="button" class="tk-rate-btn bad' + (tr && tr.rating === 'bad' ? ' on' : '') + '" data-rate="bad">👎 Bad</button>' +
       '<textarea id="rateNote" rows="1" placeholder="What was right or wrong? e.g. should have offered a callback instead of asking twice">' + esc(tr ? tr.note || '' : '') + '</textarea>' +
       '<button type="button" class="tk-notify" id="rateSave">Save</button>' + (tr ? '<button type="button" class="tk-rate-btn" id="rateCancel">Cancel</button>' : '') + '<span class="tk-foot-st" id="rateMsg"></span></div>';
-    const rate = '<div class="tk-rate" id="callRate"><div class="tk-rate-hd"><b>Rate this call</b><span class="tk-foot-st">for training — a Bad with a note tells NovaAI what not to repeat</span></div>' + viewHtml + editHtml + '</div>';
+    const rate = !isAdmin && !tr ? '' : '<div class="tk-rate" id="callRate"><div class="tk-rate-hd"><b>' + (isAdmin ? 'Rate this call' : 'Team rating') + '</b><span class="tk-foot-st">for training — a Bad with a note tells NovaAI what not to repeat</span></div>' + viewHtml + editHtml + '</div>';
     v.innerHTML = '<div class="tk-dtop">' + html.slice(0, topLen) + '</div><div class="tk-scroll" id="callScroll">' + html.slice(topLen) + rate + foot + '</div>';
     (function () {
+      if (!$('rateNote')) return;   /* a member's view has no rating editor */
       let picked = tr ? tr.rating : null;
       const btns = v.querySelectorAll('.tk-rate-btn[data-rate]'), note = $('rateNote');
       const grow = () => { note.style.height = 'auto'; note.style.height = Math.min(160, note.scrollHeight + 2) + 'px'; };
@@ -1079,8 +1085,48 @@
     $('hitsRefresh').onclick = (e) => { e.preventDefault(); e.stopPropagation(); loadOverview().then(paintSetup); };
   }
 
+  // ---- My TalkAI (1.20.78) ----
+  // The signed-in account manager's own assistant: their number, how to answer (training) and four greetings —
+  // business hours / after hours, each for a caller NovaAI recognises and one it does not. Saved on their talk_lines row.
+  const GREETS = [['bh', 'Business hours', '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>'],
+    ['ah', 'After hours', '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>']];
+  async function loadMyLine() {
+    const box = $('myLine');
+    let j; try { j = await api('/api/talk/my-line'); } catch (e) { return; }
+    if (!j.ok || !j.line) { box.hidden = true; return; }
+    const l = j.line, d = j.defaults || {};
+    const ini = (l.am_name || '?').trim().charAt(0).toUpperCase();
+    const where = l.number ? '<span class="tk-mine-num">' + esc(phone(l.number)) + '</span>'
+      : '<span class="tk-mine-num" title="Your clients reach your TalkAI on the main number">' + esc(phone(j.main_number || '')) + ' <small>main line</small></span>';
+    box.innerHTML = '<div class="tk-mine-head" id="mlHead">' + (l.photo ? '<img src="' + esc(l.photo) + '" alt="">' : '<span class="tk-mine-ini">' + esc(ini) + '</span>') +
+        '<div><div class="tk-mine-t">My TalkAI <span>· ' + esc(l.am_name || '') + '’s assistant</span></div>' +
+        '<div class="tk-mine-s">' + (l.number ? 'Answers <b>your own number</b>' : 'Answers <b>your clients</b> on the main line') + (l.main_line && l.number ? ' and your clients on the main line' : '') +
+        ' · ' + l.calls + ' call' + (l.calls === 1 ? '' : 's') + (l.updated_at ? ' · training saved ' + esc(rel(l.updated_at)) : '') + '</div></div>' +
+        where + '<span class="tk-mine-open">Set up my TalkAI <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></span></div>' +
+      '<div class="tk-mine-body">' +
+        '<h4>How to answer</h4><p class="sub">Tell your assistant how to handle your calls — what you handle yourself, what to say about your clients’ usual orders, when to take a message, how formal to be. Plain words; it reads this before every call.</p>' +
+        '<textarea id="mlTraining" placeholder="Example: My clients are mostly real-estate offices ordering signs and flyers. If they ask for me, take a message with the job and a callback number — never promise a time. Quote business cards and flyers right away; for anything large-format say I will call them back the same day.">' + esc(l.training) + '</textarea>' +
+        '<h4>Greeting</h4><p class="sub">The first thing a caller hears. <b>Client recognized</b> — the number is on an account, so NovaAI knows who is calling (<code>{name}</code> = their first name). <b>Not recognized</b> — a number NovaAI cannot place. Leave a box empty to use the standard greeting shown in grey.</p>' +
+        '<div class="tk-mine-g">' + GREETS.map(g => '<div class="tk-mine-col"><h5>' + g[2] + esc(g[1]) + '</h5>' +
+          '<label>Client recognized</label><textarea data-g="greet_' + g[0] + '_known" placeholder="' + esc(d[g[0] + '_known'] || '') + '">' + esc(l['greet_' + g[0] + '_known']) + '</textarea>' +
+          '<label>Not recognized</label><textarea data-g="greet_' + g[0] + '_new" placeholder="' + esc(d[g[0] + '_new'] || '') + '">' + esc(l['greet_' + g[0] + '_new']) + '</textarea></div>').join('') + '</div>' +
+        '<div class="tk-mine-save"><button type="button" class="tk-btn" id="mlSave">Save my TalkAI</button><span class="tk-msg" id="mlMsg"></span></div>' +
+      '</div>';
+    box.hidden = false;
+    $('mlHead').onclick = () => box.classList.toggle('open');
+    $('mlSave').onclick = async () => {
+      const body = { training: $('mlTraining').value };
+      box.querySelectorAll('[data-g]').forEach(t => { body[t.dataset.g] = t.value; });
+      $('mlSave').disabled = true; $('mlMsg').textContent = 'Saving…';
+      const r = await api('/api/talk/my-line', { method: 'POST', body: JSON.stringify(body) });
+      $('mlSave').disabled = false; $('mlMsg').textContent = r.ok ? 'Saved — your next call uses it.' : (r.error || 'Could not save.');
+      if (r.ok) setTimeout(() => { $('mlMsg').textContent = ''; }, 4000);
+    };
+  }
+
   // ---- start ----
   loadOverview().then(() => {
+    loadMyLine();
     const id = parseInt(new URLSearchParams(location.search).get('call'));
     show('calls');
     if (id) openCall(id);
