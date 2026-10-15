@@ -96,7 +96,7 @@ module.exports = function mountDesignerAi(app, deps) {
       "(SELECT COUNT(*) FROM estimate e2 WHERE e2.estimate_productid = e.estimate_productid AND e2.id >= " + f180 + " AND e2.created >= DATE_SUB(NOW(), INTERVAL 180 DAY)) product_180, " +
       // 1.20.52: the job's file slots from the CRM Files panel (estimate_prepress_option): print / foil / die_line / cutline / spot_uv /
       // kisscut / book_cover_* + white-support / VDP flags and how many artwork versions — a die line makes it a harder job
-      "(SELECT GROUP_CONCAT(DISTINCT CONCAT(po.type, IF(po.need_white_support, '+white', ''), IF(po.need_vdp, '+vdp', ''), IF(po.has_cut, '+cut', ''))) FROM estimate_prepress_option po WHERE po.estimate_id = e.id AND po.type <> 'material') file_slots, " +
+      "(SELECT GROUP_CONCAT(DISTINCT CONCAT(po.type, IF(po.need_white_support, '+white', ''), IF(po.need_vdp, '+vdp', ''), IF(po.has_cut, '+cut', ''), IF(po.drive_file_id IS NOT NULL OR po.approved_drive_file_id IS NOT NULL OR po.die_line_from_id IS NOT NULL OR po.not_need_file = 1, '+has', ''))) FROM estimate_prepress_option po WHERE po.estimate_id = e.id AND po.type <> 'material') file_slots, " +
       "(SELECT COUNT(DISTINCT IFNULL(po.version_name, '')) FROM estimate_prepress_option po WHERE po.estimate_id = e.id AND po.type = 'print') file_versions " +
       "FROM estimate e JOIN estimate_team_members m ON m.estimate_id = e.id AND m.user_id = " + tu + " JOIN estimate_stage s ON s.estimate_id = e.id " +
       "LEFT JOIN product p ON p.id = e.estimate_productid LEFT JOIN productcategory pc ON pc.id = p.product_category_id LEFT JOIN customer c ON c.id = e.estimate_clientid " +
@@ -119,13 +119,20 @@ module.exports = function mountDesignerAi(app, deps) {
   const SLOT_LABEL = { print: 'Print', foil: 'Foil', die_line: 'Die Line', cutline: 'Cut Line', spot_uv: 'Spot UV', kisscut: 'Kiss Cut', grommet: 'Grommets', book_cover_print: 'Book Cover', book_cover_foil: 'Cover Foil', book_cover_spot_uv: 'Cover Spot UV' };
   const SLOT_HARD = { die_line: 3, cutline: 1, kisscut: 1, foil: 1, spot_uv: 1, book_cover_print: 1, book_cover_foil: 1, book_cover_spot_uv: 1 };
   function jobFiles(slotsCsv, versions) {
-    const out = { slots: [], white: false, vdp: false, cut: false, versions: Number(versions) || 0, labels: [], hard: 0, why: [] };
+    const out = { slots: [], has: {}, white: false, vdp: false, cut: false, versions: Number(versions) || 0, labels: [], hard: 0, why: [] };
     String(slotsCsv || '').split(',').map(x => x.trim()).filter(Boolean).forEach(x => {
       const parts = x.split('+'); const t = parts[0];
-      if (out.slots.indexOf(t) < 0) { out.slots.push(t); if (SLOT_LABEL[t]) out.labels.push(SLOT_LABEL[t]); }
+      if (out.slots.indexOf(t) < 0) out.slots.push(t);
+      if (parts.indexOf('has') > -1) out.has[t] = true;   // a file is already in the slot (uploaded, approved, from the die library, or marked not needed)
       if (parts.indexOf('white') > -1) out.white = true; if (parts.indexOf('vdp') > -1) out.vdp = true; if (parts.indexOf('cut') > -1) out.cut = true;
     });
-    out.slots.forEach(t => { if (SLOT_HARD[t]) { out.hard += SLOT_HARD[t]; out.why.push(SLOT_LABEL[t] + ' file (+' + SLOT_HARD[t] + ')'); } });
+    // 1.20.59: an EMPTY die line / cut slot is the hard part — the designer has to draw it. One already filled is routine.
+    out.slots.forEach(t => {
+      if (SLOT_LABEL[t]) out.labels.push(SLOT_LABEL[t] + (out.has[t] ? ' ✓' : ''));
+      if (!SLOT_HARD[t]) return;
+      if (/die_line|cutline|kisscut/.test(t) && out.has[t]) { out.why.push(SLOT_LABEL[t] + ' already provided'); return; }
+      out.hard += SLOT_HARD[t]; out.why.push(SLOT_LABEL[t] + (/die_line|cutline|kisscut/.test(t) ? ' to make' : ' file') + ' (+' + SLOT_HARD[t] + ')');
+    });
     if (out.white) { out.hard += 1; out.why.push('white support (+1)'); }
     if (out.vdp) { out.hard += 1; out.why.push('variable data (+1)'); }
     if (out.versions > 1) { out.hard += 1; out.why.push(out.versions + ' versions (+1)'); }
@@ -136,7 +143,7 @@ module.exports = function mountDesignerAi(app, deps) {
     let h = HARD_BY_CAT[j.category] != null ? HARD_BY_CAT[j.category] : 5;
     const t = (j.product + ' ' + j.name).toLowerCase();
     if (j.files && j.files.hard) h += Math.min(5, j.files.hard);   // 1.20.52: a die line / foil / spot UV / cut file is more work
-    if (/die ?cut|custom shape|cutout|contour/.test(t) && !(j.files && j.files.slots.indexOf('die_line') > -1)) h += 2;
+    if (/die ?cut|custom shape|cutout|contour/.test(t) && !(j.files && j.files.slots.indexOf('die_line') > -1)) h += 2;   // a die line slot (made or provided) already speaks for the shape
     if (/wrap|vehicle|van|fleet/.test(t)) h += 3;
     if (/variable|vdp|numbering/.test(t)) h += 1;
     if (j.tier === 2 || /tier ?2/i.test(j.proof_type || '')) h += 2;
