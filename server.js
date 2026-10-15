@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.49';
-const NOVA_BUILT = '10-15-2026 12:25am';
+const NOVA_VERSION = '1.20.50';
+const NOVA_BUILT = '10-15-2026 1:10am';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -6571,6 +6571,22 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
       required: ['sql', 'description']
     }
   }, {
+    name: 'product_knowledge',
+    description: 'What axiomprint.com says about ONE product (website-knowledge mirror): the team\u2019s AI-training answers (highest trust), product FAQs, guideline tabs, page text, samples, bleed / DPI, options in words — plus, for the team only, the SEO block (meta title / description, keywords, keyword research). Use it for questions about a product that are not a price or an option lookup: what it is for, how it is made, selling points, file preparation, how the site describes it. Pass `question` so the relevant answers come first.',
+    input_schema: { type: 'object', properties: { product_id: { type: 'integer' }, question: { type: 'string' } }, required: ['product_id'] }
+  }, {
+    name: 'product_keywords',
+    description: 'INTERNAL MARKETING DATA — the SEO keyword research per product from the website: keyword, monthly search volume, difficulty, plus meta / target keywords. For the team\u2019s questions such as "what keywords does the lay-flat book page target", "which products have the most searched keywords", "search volume for business card keywords". Give a product id, a product name / topic, or `all` for the catalog-wide table (optionally filtered by a word). This is never for customers.',
+    input_schema: { type: 'object', properties: { product_id: { type: 'integer' }, query: { type: 'string', description: 'A product name or a word to filter keywords by.' }, all: { type: 'boolean', description: 'true = the catalog-wide keyword table sorted by search volume.' } } }
+  }, {
+    name: 'search_articles',
+    description: 'AxiomPrint\u2019s blog (how-to guides, ideas, product spotlights). Up to 5 articles with links; read_article gives the text.',
+    input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] }
+  }, {
+    name: 'read_article',
+    description: 'The full text of one blog article by slug (from search_articles).',
+    input_schema: { type: 'object', properties: { slug: { type: 'string' } }, required: ['slug'] }
+  }, {
     name: 'get_product_options',
     description: 'Get a product\'s fields and every selectable option: paper stocks, sizes, turnarounds, finishing, quantities — with prices, which is the default, and which are hidden. USE THIS (not raw SQL) whenever someone asks what options / papers / sizes / turnarounds a product has. Optionally pass `field` to narrow to one field (e.g. "paper" or "size").',
     input_schema: {
@@ -7327,6 +7343,11 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     'read the job if an E-number is given (its product, specs, design details and notes tell you what the designer has to do), split the work into pieces, give each its hours from the guide below, ' +
     'and call estimate_design with the pieces (and the E-number). Quote its estimate, hours and hourly rate exactly as returned — never your own arithmetic, never a rate from memory. ' +
     'Mention a design fee already on the job when the tool reports one. The rates are admin-set (Domain Knowledge → Company info).\nGUIDE:\n' + designSvc.guide + '\n' : '') +
+    '\n=== WEBSITE KNOWLEDGE (axiomprint.com text + SEO) ===\n' +
+    'Nova mirrors what axiomprint.com says about every product (the team\'s AI-training answers, FAQs, guideline tabs, page copy, samples, bleed / DPI) and the blog. ' +
+    'For a question about a product that is not a price or an option lookup — what it is for, selling points, how the site describes it, file prep, samples — call product_knowledge (trust order: team answers > FAQs > tabs > page text; quote facts as written). ' +
+    'find_products already uses the website\'s keywords, so "lay-flat book" style wording finds the product even when the catalog name differs. Ideas / how-to: search_articles + read_article, share the link. ' +
+    'MARKETING DATA (internal only): product_keywords gives the SEO keyword research — keyword, monthly search volume, difficulty, meta / target keywords — per product or catalog-wide. Answer the team\'s keyword questions with it freely (tables are fine), but it is never for a client: leave it out of anything drafted for a customer.\n' +
     '\n=== SHIPPING (UPS / FedEx) ===\n' +
     'For shipping cost or how long shipping takes to a ZIP / city, call quote_shipping with the product already priced ' +
     '(same product_id, quantity and options) and the ZIP. UPS Ground transit days come from UPS\'s own transit table for ' +
@@ -7444,6 +7465,29 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
           toolResult = 'That query failed: ' + e.message +
             '\nThe database IS connected. Fix the SQL and retry (check table/column names, drop any trailing semicolon).';
         }
+      } else if (toolUse.name === 'product_knowledge') {   // 1.20.50
+        send({ type: 'query', description: 'Reading what the website says about product #' + parseInt(toolUse.input.product_id) });
+        try {
+          const rec = await WebKnowledge.product(toolUse.input.product_id, { fresh: true });
+          toolResult = JSON.stringify(rec ? WebKnowledge.knowledgeFor(rec, toolUse.input.question, { internal: true })
+            : { none: 'The website mirror has no record for this product id (not live on axiomprint.com, or not synced yet). Use get_product_options / the catalog.', status: WebKnowledge.status() });
+        } catch (e) { toolResult = 'Website knowledge failed: ' + e.message; }
+      } else if (toolUse.name === 'product_keywords') {
+        send({ type: 'query', description: 'Reading the keyword research' });
+        try {
+          const r = toolUse.input.all || (!parseInt(toolUse.input.product_id) && !String(toolUse.input.query || '').trim())
+            ? await WebKnowledge.keywordTable({ query: toolUse.input.query, limit: 60 })
+            : await WebKnowledge.keywords(parseInt(toolUse.input.product_id) || String(toolUse.input.query || ''));
+          toolResult = JSON.stringify(r);
+        } catch (e) { toolResult = 'Keyword research failed: ' + e.message; }
+      } else if (toolUse.name === 'search_articles') {
+        send({ type: 'query', description: 'Searching the blog for "' + String(toolUse.input.query || '') + '"' });
+        try { toolResult = JSON.stringify({ results: await WebKnowledge.searchArticles(toolUse.input.query, 5) }); }
+        catch (e) { toolResult = 'Article search failed: ' + e.message; }
+      } else if (toolUse.name === 'read_article') {
+        send({ type: 'query', description: 'Reading the article' });
+        try { toolResult = JSON.stringify((await WebKnowledge.article(toolUse.input.slug)) || { error: 'No published article with that slug.' }); }
+        catch (e) { toolResult = 'Article read failed: ' + e.message; }
       } else if (toolUse.name === 'get_product_options') {
         send({ type: 'query', description: 'Loading product options' });
         try {
@@ -7706,6 +7750,24 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
           // foil, where "foil" is nowhere in its text) — pull those in too, but
           // only when every term is satisfied somewhere.
           let rows = nameRows || [];
+          // 1.20.50: the website's own words (SEO keywords, team Q&A, FAQs, page copy) — products only they match are
+          // pulled in, and every website match lifts the score (wkNorm below).
+          const wkMap = {};
+          try {
+            const hits = await WebKnowledge.search(q + ' ' + givenSpecs.join(' '), { limit: 10, internal: true });
+            const best = hits.length ? hits[0].score : 0;
+            hits.forEach(h => { wkMap[Number(h.product_id)] = { norm: best ? h.score / best : 0, why: h.why }; });
+            const miss = hits.filter(h => h.score >= Math.max(6, best * 0.4) && !rows.some(r => Number(r.id) === Number(h.product_id))).map(h => parseInt(h.product_id)).filter(Boolean).slice(0, 8);
+            if (miss.length) {
+              const more = await runQueryRaw(
+                'SELECT p.id, p.title, p.public_title, p.image, p.url, p.type, p.meta_keywords, ' +
+                'p.added_keywords, p.meta_title, p.available_for_websites, ' +
+                '(SELECT COUNT(*) FROM estimate e WHERE e.estimate_productid = p.id AND e.created >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)) AS order_count, ' +
+                '(SELECT COUNT(*) FROM estimate e2 WHERE e2.estimate_productid = p.id) AS lifetime_orders ' +
+                'FROM product p WHERE p.id IN (' + miss.join(',') + ')');
+              rows = rows.concat(more || []);
+            }
+          } catch (e) { console.error('website knowledge in find_products', e.message); }
           const haveIds = new Set(rows.map(r => Number(r.id)));
           // Products matched only through their OPTIONS. Previously this required
           // every term; now a strong partial counts, which is what surfaces a
@@ -8034,6 +8096,8 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
               const kwText = String(cand._kw || '');
               const kwHits = terms.filter(w => kwText.indexOf(w) > -1).length;
               const kwBonus = terms.length ? (kwHits / terms.length) : 0;
+              const wkHit = wkMap[Number(r.id)] || null;
+              const wkNorm = wkHit ? wkHit.norm : 0;    // the website's words about this product match the question
 
               const allText = (cand._kw || '') + ' ' + String(r.meta_title || '').toLowerCase();
 
@@ -8089,6 +8153,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
                     qtyFit * 14 +           // can it do this run size
                     sFit * 20 +             // ...and this size
                     kwBonus * 4 +
+                    wkNorm * 12 +
                     clientBonus * 14)))     // ...unless this client buys another
                 : Math.round(Math.max(3, Math.min(99,
                     m.score * 0.30 +
@@ -8098,11 +8163,13 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
                     sFit * 18 +
                     popularity * 12 +
                     kwBonus * 4 +
+                    wkNorm * 10 +
                     clientBonus * 9 +
                     specBonus * 12 +
                     featBonus * 4)));
               const why = [];
               if (mine) why.push('Client ordered ' + mine.toLocaleString() + ' x');
+              if (wkHit && wkHit.why && wkNorm >= 0.5) why.push(wkHit.why);
               const sizeLabel = wantSize
                 ? (wantSize.fromFeet
                     ? (wantSize.w / 12) + '\u00d7' + (wantSize.h / 12) + 'ft'
@@ -9453,7 +9520,10 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
 mountMcp(app, { runQuery, dataDictionary: DATA_DICTIONARY });
 
 // The customer-facing bot — separate tables, rules, tools and tokens (client-bot.js).
-const clientBot = require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly, Shipping, DesignServices,
+const WebKnowledge = require('./website-knowledge')({ db });
+app.get('/api/website-knowledge/status', auth, (req, res) => res.json(Object.assign({ ok: true }, WebKnowledge.status())));
+app.post('/api/admin/website-knowledge/refresh', auth, adminOnly, async (req, res) => res.json(await WebKnowledge.refresh(!!(req.body && req.body.full))));   // axiomprint.com's words about each product + the blog (1.20.50)
+const clientBot = require('./client-bot')(app, { db, runQuery, mysql, jwt, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly, Shipping, DesignServices, WebKnowledge,
   quoteProduct, buildOrderLink, stripHtml, searchTerms, likeStem, serveVersionedHtml, allowFraming,
   InstallPricing, getInstallPricing: () => installPricing, routeLookup, toTime24, driveFileBytes,
   extractAttachmentText, relatedRules, sendMail, closedDays, officeHours, loadClientTraining, dataDir: __dirname });

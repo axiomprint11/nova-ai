@@ -376,6 +376,30 @@ found in product / category / proof type / job name (12 each, up to 36), Tier 2 
 `GET /api/designer/history`) — **nothing is written to the CRM**; the row shows "picked in Nova … not in the CRM yet" until the web
 team provides an assignment endpoint.
 
+## Website knowledge (axiomprint.com text + SEO, 1.20.50)
+
+`website-knowledge.js` (`WebKnowledge = require('./website-knowledge')({ db })` in server.js, passed to client-bot as `deps.WebKnowledge`)
+mirrors the web team's read-only knowledge API — `NOVA_KNOWLEDGE_API`, default `https://website.workroomapp.com/api/v1/nova`
+(spec: `docs/NOVA_WEBSITE_KNOWLEDGE.md`): per product the SEO block (meta title / description / keywords, `keyword_analysis` = keyword +
+search volume + difficulty), `ai_training` Q&A written by the team, `faqs`, `tabs` (guidelines), page `content`, `options` in words,
+`samples`, `artwork`; and the blog `articles`. **Not called per question**: SQLite `wk_products` / `wk_articles` / `wk_meta` hold the
+mirror, loaded into memory at boot; a full page-through (`perPage=100`) on first boot or when the last refresh is a day old, then an
+`updatedSince` delta every `NOVA_KNOWLEDGE_REFRESH_MIN` (360) minutes; `NOVA_KNOWLEDGE=0` turns it off. `product(id, {fresh:true})`
+re-reads one product live with a 4 s budget (falls back to the mirror) when a chat asks about it. Restricted products never come in
+the list; `visibleTo(rec, customerId)` gates a direct read. `search(query)` scores the stemmed words of the question against name /
+category / keywords / meta / team Q&A / FAQ questions / page text, with a bonus for a whole site keyword phrase ("lay flat book");
+`knowledgeFor(rec, question, {internal})` returns the text in the spec's trust order (team_answers > faqs > tabs > page_text) inside a
+character budget, the items sharing words with the question first — `seo_internal` only for `internal`. `GET /api/website-knowledge/status`,
+`POST /api/admin/website-knowledge/refresh {full}`.
+Where it is used: **client bot + TalkAi** — `search_products` merges website matches (public products the catalog words missed are
+pulled in, every website hit lifts `_match` by up to 35), tools `product_knowledge {product_id, question}` (never the SEO block),
+`search_articles`, `read_article`, prompt rule 11d (product questions that are not a price → product_knowledge; ideas → articles;
+never SEO / keywords / volume to a customer); TalkAi's SHARED list carries `product_knowledge` + `search_articles`. **Staff ChatBot** —
+`find_products` pulls in website matches and adds `wkNorm` (×12 vague / ×10 with specs) to the score with the site keyword in `why`;
+tools `product_knowledge` (with `seo_internal`), **`product_keywords`** (INTERNAL marketing data: per product, by name, or `all` →
+`keywordTable()` sorted by search volume, optional word filter), `search_articles`, `read_article`; prompt section WEBSITE KNOWLEDGE.
+The sandbox cannot reach the API — logic was verified with a stubbed `fetch` (search, trust order, restricted gating, keyword table).
+
 ## Shipping rates & draft quotes (Axiom API, 1.19.142)
 
 `shipping.js` (`Shipping = require('./shipping')({ runQuery, mysql })` in server.js, passed to client-bot as `deps.Shipping`) follows

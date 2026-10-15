@@ -16,7 +16,7 @@ if [ ${#FILES[@]} -eq 0 ]; then
          public/client-bot-admin.js public/client-bot.html public/axiom-shared.css docs/CLIENT_BOT.md CLAUDE.md
          talk-ai.js public/talk-ai.html public/talk-ai.js docs/TALK_AI.md
          usage-stats.js public/nova-stats.js public/index.html public/chatbot.html public/chatbot.js public/nova-nav.js closed-days.js talk-handoff.js docs/TALKAI_CRM_WEBHOOK.md artwork-specs.js team-directory.js office-hours.js bookkeeping.js public/bookkeeping.html public/bookkeeping.js docs/BOOKKEEPING_AI.md
-         shipping.js design-services.js public/nova-date.js bookkeeping-ar.js docs/NOVA_AR_PAY_WEBHOOK.md docs/DESIGNER_AI_AUTOASSIGN.md)
+         shipping.js design-services.js public/nova-date.js bookkeeping-ar.js docs/NOVA_AR_PAY_WEBHOOK.md docs/DESIGNER_AI_AUTOASSIGN.md website-knowledge.js docs/NOVA_WEBSITE_KNOWLEDGE.md)
   # 1.19.143: any tracked code / page file that does not exist in the live copy yet is new — take it along, so a new
   # module (shipping.js, nova-date.js) never leaves server.js unable to start.
   # 1.20.7: and any tracked code / page file that DIFFERS from the live copy — bookkeeping-ar.js was deployed once as a

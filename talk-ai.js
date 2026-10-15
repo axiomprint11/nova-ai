@@ -764,7 +764,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     return m;
   }
 
-  const SHARED = ['search_products', 'newest_products', 'product_details', 'price_product', 'estimate_design',
+  const SHARED = ['search_products', 'newest_products', 'product_details', 'product_knowledge', 'search_articles', 'price_product', 'estimate_design',
     'estimate_installation', 'estimate_delivery', 'my_orders', 'order_status'];
   const VOICE_DESC = {
     search_products: 'Search AxiomPrint products by what the caller wants, e.g. "business cards", "vinyl banner". Returns up to 6 matches with ids.',
