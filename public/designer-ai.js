@@ -117,9 +117,28 @@
     const td = btn.closest('td'); td.innerHTML = '<span class="da-muted">Thinking…</span>';
     const r = await api('/api/designer/match', { estimate_id: id });
     if (!r.ok) { td.innerHTML = '<span style="color:#b91c1c;font-size:12px">' + esc(r.error) + '</span>'; return; }
+    loadHistory();
     td.innerHTML = '<div class="da-picks">' + (r.busy ? '<div class="da-busy top"><span class="da-tag busy">Everyone is busy</span> <span class="da-sub">' + esc(r.busy.reason || '') + '</span><div class="da-sub">' + (r.busy.emailed ? 'Emailed ' + esc((r.busy.to || []).join(', ')) : r.busy.emailed_at ? 'Team already emailed ' + esc(ago(r.busy.emailed_at)) : r.busy.error ? 'Email failed: ' + esc(r.busy.error) : 'No email sent') + ' · the job stays in the queue; assign below only to override</div></div>' : '') + (r.ai ? '<div class="da-sub-ai">✦ your Match Logic was applied</div>' : r.ai_error ? '<div class="da-sub-ai" style="color:#b91c1c">Match Logic not applied: ' + esc(r.ai_error) + '</div>' : '') + r.picks.map((p, i) => '<div class="da-pick' + (i === 0 ? ' top' : '') + '">' + av(p) + '<span class="pct">' + p.score + '%</span><div class="who"><b>' + esc(p.name + ' ' + (p.last_name || '')) + '</b>' + (p.off_shift ? ' <span class="da-tag busy">off shift</span>' : p.at_max ? ' <span class="da-tag st">at max</span>' : p.hours_known === false ? ' <span class="da-tag">hours not set</span>' : '') + '<div class="why">' + esc(p.why.join(' · ')) + '</div></div><button class="bk-btn sm ' + (i === 0 ? 'go' : '') + '" data-pick="' + p.user_id + '" data-score="' + p.score + '" data-why="' + esc(p.why.join(' · ')) + '">Assign</button></div>').join('') + '<a href="#" class="da-sub" data-close="1">close</a></div>';
     td.querySelectorAll('[data-pick]').forEach(b => b.onclick = async () => { const x = await api('/api/designer/assign', { estimate_id: id, user_id: Number(b.dataset.pick), score: Number(b.dataset.score), reason: b.dataset.why }); if (!x.ok) { alert(x.error); return; } toast('E' + id + ' → ' + x.designer.name + ' (kept in Nova; the CRM is not changed yet)'); loadQueue(); loadTeam(); });
     const c = td.querySelector('[data-close]'); if (c) c.onclick = (e) => { e.preventDefault(); const j = jobs.find(x => x.id === id); td.innerHTML = dcell(j); bind(); };
+  }
+  // ---- History (1.20.34): every match Nova ran, here or for the CRM's cron
+  async function loadHistory() {
+    const j = await api('/api/designer/matches?limit=300');
+    if (!j.ok) { $('daHist').innerHTML = '<div class="da-empty" style="color:#b91c1c">' + esc(j.error) + '</div>'; return; }
+    $('daHistN').textContent = j.rows.length ? j.rows.length : '';
+    if (!j.rows.length) { $('daHist').innerHTML = '<div class="da-empty">No matches yet.</div>'; return; }
+    const when = (d) => { const x = new Date(d); return isNaN(x) ? esc(d) : esc(x.toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: '2-digit', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit' })); };
+    const st = (r) => r.status === 'busy' ? '<span class="da-tag busy">Everyone is busy</span>' : r.status === 'applied' ? '<span class="da-tag applied">applied in CRM</span>' : r.status === 'crm_failed' ? '<span class="da-tag crm_failed">CRM failed</span>' : '<span class="da-tag">' + esc(r.status) + '</span>';
+    $('daHist').innerHTML = '<table class="da-ht"><thead><tr><th>When</th><th>Job</th><th>Product</th><th>Nova picked</th><th>Also considered</th><th>Status</th><th>Source</th></tr></thead><tbody>' + j.rows.map(r => {
+      const others = (r.picks || []).filter(p => p.user_id !== r.picked_user_id).slice(0, 4);
+      return '<tr><td>' + when(r.at) + '<div class="da-sub">' + esc(ago(r.at)) + (r.ms ? ' · ' + r.ms + ' ms' : '') + (r.ai ? ' · ✦ rules' : '') + '</div></td>' +
+        '<td><span class="da-e">' + esc(r.e) + '</span><div class="da-sub">' + esc(r.job_name || '') + '</div><div class="da-sub">' + esc(r.customer || '') + '</div></td>' +
+        '<td>' + esc(r.product || '') + '<div class="da-sub">Tier ' + (r.tier || 1) + '</div></td>' +
+        '<td>' + (r.picked_user_id ? '<div class="da-pickmini" title="' + esc(r.reason || '') + '">' + av({ name: r.picked_name, photo: r.photo }) + '<div><b>' + esc(r.picked_name) + '</b> <span class="pct">' + r.picked_score + '%</span><div class="da-sub" style="max-width:260px">' + esc((r.reason || '').slice(0, 110)) + ((r.reason || '').length > 110 ? '…' : '') + '</div></div></div>' : '<span class="da-muted">nobody</span><div class="da-sub" style="max-width:260px">' + esc(r.reason || '') + '</div>') + '</td>' +
+        '<td><div class="da-others-h">' + (others.length ? others.map(p => '<span class="o" title="' + esc(p.name + ' · ' + p.score + '% · ' + (p.why || []).join(' · ')) + '">' + av(p) + esc(p.name.split(' ')[0]) + ' <span class="da-muted">' + p.score + '%</span></span>').join('') : '<span class="da-muted">—</span>') + '</div></td>' +
+        '<td>' + st(r) + '</td><td><span class="da-tag ' + (r.source === 'nova' ? 'src-nova' : 'src-crm') + '">' + (r.source === 'nova' ? 'Nova' : r.source === 'crm-dry' ? 'CRM (dry run)' : 'CRM cron') + '</span><div class="da-sub">' + esc(String(r.by || '').replace(/^(user|member):/, '')) + '</div></td></tr>';
+    }).join('') + '</tbody></table>';
   }
   // ---- Match Logic (1.20.18): the owner's rules in words, read by the model on every Match
   async function loadLogic() {
@@ -130,7 +149,8 @@
   $('daOverloadSave').onclick = async () => { const r = await api('/api/designer/settings', { overload_logic: $('daOverload').value, overload_to: $('daOverloadTo').value }); if (!r.ok) { alert(r.error); return; } toast('Overload logic saved'); loadLogic(); };
   $('daLogicSave').onclick = async () => { const r = await api('/api/designer/settings', { match_logic: $('daLogic').value }); if (!r.ok) { alert(r.error); return; } toast('Match logic saved'); loadLogic(); };
   document.querySelectorAll('.da-sub [data-s]').forEach(b => b.onclick = () => { document.querySelectorAll('.da-sub [data-s]').forEach(x => x.classList.toggle('on', x === b)); document.querySelectorAll('.da-subview').forEach(v => v.classList.toggle('on', v.dataset.s === b.dataset.s)); $('daAllWrap').style.visibility = b.dataset.s === 'jobs' ? '' : 'hidden'; });
-  $('daAll').onchange = loadQueue; $('daRefresh').onclick = () => { loadQueue(); loadTeam(); };
+  $('daAll').onchange = loadQueue; $('daRefresh').onclick = () => { loadQueue(); loadTeam(); loadHistory(); };
+  document.querySelector('.da-sub [data-s="history"]').addEventListener('click', loadHistory);
 
-  (async () => { await loadTeam(); await loadQueue(); loadLogic(); })();
+  (async () => { await loadTeam(); await loadQueue(); loadLogic(); loadHistory(); })();
 })();

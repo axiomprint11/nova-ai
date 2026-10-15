@@ -92,6 +92,10 @@
   .da-p { font-size: 13.5px; line-height: 1.5; color: var(--ink-soft); margin: 0 0 10px; } #daLogic { width: 100%; min-height: 320px; resize: vertical; box-sizing: border-box; font: 13.5px/1.5 inherit; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
   #daOverload { width: 100%; min-height: 120px; resize: vertical; box-sizing: border-box; font: 13.5px/1.5 inherit; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; } #daOverloadTo { width: 100%; max-width: 520px; box-sizing: border-box; font: 13.5px inherit; border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; }
   .da-tag.busy { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; } .da-busy { font-size: 12px; } .da-busy.top { margin-bottom: 8px; padding: 8px 10px; background: #fff7f7; border: 1px solid #fecaca; border-radius: 8px; }
+  table.da-ht { width: 100%; border-collapse: collapse; font-size: 12.5px; } table.da-ht th { text-align: left; font-size: 11.5px; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--line); } table.da-ht td { padding: 8px; border-bottom: 1px solid #f0f0f5; vertical-align: middle; }
+  .da-ht .da-pickmini { display: flex; align-items: center; gap: 8px; } .da-ht .da-pickmini .da-av { width: 28px; height: 28px; font-size: 11px; } .da-ht .da-pickmini b { font-size: 12.5px; } .da-ht .pct { color: #047857; font-weight: 700; }
+  .da-others-h { display: flex; gap: 10px; flex-wrap: wrap; } .da-others-h span.o { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--ink-soft); cursor: default; } .da-others-h .da-av { width: 22px; height: 22px; font-size: 9px; }
+  .da-tag.src-crm { background: #ecfeff; color: #0e7490; border: 1px solid #a5f3fc; } .da-tag.src-nova { background: #eef2ff; color: #3730a3; } .da-tag.applied { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; } .da-tag.crm_failed { background: #fef2f2; color: #b91c1c; }
   .da-h3 { font-size: 13px; margin: 22px 0 6px; } .da-ul { font-size: 12.5px; color: var(--ink-soft); line-height: 1.55; padding-left: 18px; margin: 0; } .da-ul li { margin-bottom: 3px; }
   .da-sub-ai { font-size: 11.5px; color: #5b21b6; font-weight: 600; }
   .da-others { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; } .da-others .da-face { display: inline-flex; cursor: default; } .da-others .da-av { width: 30px; height: 30px; font-size: 11.5px; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line); }
@@ -119,6 +123,7 @@
       <button data-s="jobs" class="on">Jobs<span class="n" id="daQueueN"></span></button>
       <button data-s="designers">Designers<span class="n" id="daTeamN"></span></button>
       <button data-s="logic">Match Logic</button>
+      <button data-s="history">History<span class="n" id="daHistN"></span></button>
       <span class="sp"></span>
       <label class="da-muted" id="daAllWrap"><input type="checkbox" id="daAll"> include quotes (not invoiced yet)</label>
       <button class="bk-btn sm" id="daRefresh">Refresh</button>
@@ -127,6 +132,12 @@
       <div class="da-card">
         <h2>Jobs waiting for a designer <span class="n" id="daTierN"></span><span class="sp"></span><span class="da-muted">Parked on "PrePress 1 Tier 1" / "PrePress Tier 2" in the CRM, in the prepress stage.</span></h2>
         <div id="daQueue"><div class="da-muted">Loading…</div></div>
+      </div>
+    </div>
+    <div class="da-subview" data-s="history">
+      <div class="da-card">
+        <h2>Match history<span class="sp"></span><span class="da-muted">Every match Nova ran — from this page or from the CRM's cron (<code>POST /api/designer/auto-assign</code>). Nova never writes to the CRM; "applied" means the CRM told Nova it made the assignment.</span></h2>
+        <div id="daHist"><div class="da-muted">Loading…</div></div>
       </div>
     </div>
     <div class="da-subview" data-s="logic">

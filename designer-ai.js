@@ -19,7 +19,11 @@ module.exports = function mountDesignerAi(app, deps) {
       skills TEXT, notes TEXT, max_active INTEGER DEFAULT 25, tier2 INTEGER DEFAULT 0, updated_at TEXT)`);
     db.run(`CREATE TABLE IF NOT EXISTS da_assign (id INTEGER PRIMARY KEY AUTOINCREMENT, estimate_id INTEGER, user_id INTEGER, score INTEGER, reason TEXT, picked_by TEXT, at TEXT, status TEXT DEFAULT 'assigned')`);
     db.run('CREATE INDEX IF NOT EXISTS da_assign_est ON da_assign(estimate_id)');
-    db.run('CREATE TABLE IF NOT EXISTS da_settings (key TEXT PRIMARY KEY, value TEXT, updated_by TEXT, updated_at TEXT)');   // 1.20.18: match_logic — the owner's rules in words
+    db.run('CREATE TABLE IF NOT EXISTS da_settings (key TEXT PRIMARY KEY, value TEXT, updated_by TEXT, updated_at TEXT)');
+    // 1.20.34: every match that was run — by a person here or by the CRM's cron through /api/designer/auto-assign
+    db.run(`CREATE TABLE IF NOT EXISTS da_matches (id INTEGER PRIMARY KEY AUTOINCREMENT, estimate_id INTEGER, e TEXT, job_name TEXT, customer TEXT, product TEXT, tier INTEGER,
+      status TEXT, picked_user_id INTEGER, picked_name TEXT, picked_score INTEGER, reason TEXT, picks_json TEXT, source TEXT, by TEXT, ai INTEGER, ms INTEGER, at TEXT)`);
+    db.run('CREATE INDEX IF NOT EXISTS da_matches_at ON da_matches (at)');   // 1.20.18: match_logic — the owner's rules in words
     // 1.20.17: how hard / how creative a job a designer can take (0–10), and their hours (until the hours table exists)
     ['hard_level INTEGER DEFAULT 5', 'creative_level INTEGER DEFAULT 5', 'shift_start TEXT', 'shift_end TEXT', 'work_days TEXT', 'comm_level INTEGER DEFAULT 5', 'languages TEXT'].forEach(c => db.run('ALTER TABLE da_designers ADD COLUMN ' + c, () => {}));
   });
@@ -284,21 +288,100 @@ module.exports = function mountDesignerAi(app, deps) {
       res.json({ ok: true }); }
     catch (e) { res.json({ ok: false, error: e.message }); }
   });
+  // one Match, start to finish: the job, the built-in scores, the owner's rules, the overload test. Used by the Match
+  // button and by the CRM's cron (/api/designer/auto-assign). `who` is written on the busy row and the history.
+  async function runMatch(id, who, source) {
+    const t0 = Date.now();
+    const job = (await queueAll(true, 0, id)).find(j => j.id === id);   // 1.20.31: one job, not the whole queue
+    if (!job) return { ok: false, status: 'not_in_queue', error: 'E' + id + ' is not in the queue (not parked on PrePress Tier 1 / Tier 2 in the prepress stage)' };
+    const base = await match(job);
+    const overload = (await getSetting('overload_logic')) || OVERLOAD_DEFAULT;
+    const r = await aiAdjust(job, base, await getSetting('match_logic'), overload);
+    let busy = null;
+    if (r.busy) busy = { reason: r.busy_reason || 'your Overload Logic says nobody should take this now' };
+    else if (!r.ai && builtinBusy(base)) busy = { reason: 'every designer who takes jobs is at their max or off shift' };
+    if (!busy && !r.picks.length) busy = { reason: 'no designer is set to take jobs' };
+    if (busy) { const m = await markBusy(job, busy.reason, who); Object.assign(busy, m); }
+    const picks = r.picks.slice(0, 5);
+    const out = { ok: true, job, picks, ai: r.ai, ai_error: r.ai_error || null, busy, ms: Date.now() - t0 };
+    // the history row (1.20.34)
+    const top = !busy && picks[0] ? picks[0] : null;
+    const ins = await dbRun('INSERT INTO da_matches (estimate_id, e, job_name, customer, product, tier, status, picked_user_id, picked_name, picked_score, reason, picks_json, source, by, ai, ms, at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      [job.id, job.e, (job.name || '').slice(0, 200), (job.customer || '').slice(0, 200), (job.product || '').slice(0, 200), job.tier, busy ? 'busy' : 'matched', top ? top.user_id : null, top ? (top.name + ' ' + (top.last_name || '')).trim() : null, top ? top.score : null,
+        busy ? busy.reason : (top ? top.why.join(' · ') : ''), JSON.stringify(picks.map(p => ({ user_id: p.user_id, name: (p.name + ' ' + (p.last_name || '')).trim(), score: p.score, why: p.why, off_shift: !!p.off_shift, at_max: !!p.at_max }))), source, who, r.ai ? 1 : 0, out.ms, nowIso()]);
+    out.match_id = ins && ins.lastID;
+    return out;
+  }
   app.post('/api/designer/match', ...guard, async (req, res) => {
     try {
       const id = parseInt(req.body.estimate_id); if (!id) return res.json({ ok: false, error: 'Which job?' });
-      const t0 = Date.now();
-      const job = (await queueAll(true, 0, id)).find(j => j.id === id);   // 1.20.31: one job, not the whole queue
-      if (!job) return res.json({ ok: false, error: 'E' + id + ' is not in the queue any more' });
-      const base = await match(job);
-      const overload = (await getSetting('overload_logic')) || OVERLOAD_DEFAULT;
-      const r = await aiAdjust(job, base, await getSetting('match_logic'), overload);
-      let busy = null;
-      if (r.busy) busy = { reason: r.busy_reason || 'your Overload Logic says nobody should take this now' };
-      else if (!r.ai && builtinBusy(base)) busy = { reason: 'every designer who takes jobs is at their max or off shift' };
-      if (busy) { const m = await markBusy(job, busy.reason, userId(req)); Object.assign(busy, m); }
-      res.json({ ok: true, job, picks: r.picks.slice(0, 4), ai: r.ai, ai_error: r.ai_error || null, busy, ms: Date.now() - t0 });
+      const r = await runMatch(id, userId(req), 'nova');
+      if (!r.ok) return res.json({ ok: false, error: r.error });
+      res.json(Object.assign({}, r, { picks: r.picks.slice(0, 4) }));
     } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  // the history of every match — the Nova page's History sub-tab (1.20.34)
+  app.get('/api/designer/matches', ...guard, async (req, res) => {
+    try {
+      const lim = Math.min(500, parseInt(req.query.limit) || 200);
+      const rows = await dbAll('SELECT m.*, d.photo FROM da_matches m LEFT JOIN da_designers d ON d.user_id = m.picked_user_id ORDER BY m.id DESC LIMIT ?', [lim]);
+      const faces = {}; (await dbAll('SELECT user_id, photo FROM da_designers')).forEach(d => { faces[d.user_id] = d.photo; });
+      res.json({ ok: true, rows: rows.map(r => { let picks = []; try { picks = JSON.parse(r.picks_json || '[]'); } catch (e) {} return Object.assign({}, r, { picks_json: undefined, picks: picks.map(p => Object.assign(p, { photo: faces[p.user_id] || null })) }); }) });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+
+  // ---- the CRM's cron: POST /api/designer/auto-assign  (1.20.34; spec in docs/DESIGNER_AI_AUTOASSIGN.md)
+  // Bearer DESIGNER_API_TOKEN (.env). Body {estimate_id} or {estimate_ids:[…]} (≤ 20). The answer per job is a designer to
+  // put on it, or designer: null when nothing should change (everyone busy, not in the queue, already decided, an error).
+  // Nova never writes to the CRM — the caller does the assignment and may tell Nova the outcome with /auto-assign/done.
+  const API_TOKEN = String(process.env.DESIGNER_API_TOKEN || '').trim();
+  const apiAuth = (req, res, next) => {
+    if (!API_TOKEN) return res.status(503).json({ ok: false, error: 'DESIGNER_API_TOKEN is not set on the server' });
+    const h = String(req.headers.authorization || ''); const tok = h.replace(/^Bearer\s+/i, '').trim();
+    if (!tok || tok.length !== API_TOKEN.length || !require('crypto').timingSafeEqual(Buffer.from(tok), Buffer.from(API_TOKEN))) return res.status(401).json({ ok: false, error: 'bad token' });
+    next();
+  };
+  async function autoAssignOne(id, dryRun) {
+    const out = { estimate_id: id, e: 'E' + id, designer: null, status: 'error', reason: '', picks: [] };
+    try {
+      // already decided within 24 h (by a person here or an earlier cron run) → the same answer, nothing re-run
+      const prev = await dbGet("SELECT a.*, d.name, d.last_name FROM da_assign a LEFT JOIN da_designers d ON d.user_id = a.user_id WHERE a.estimate_id = ? AND a.status = 'assigned' AND a.at >= datetime('now', '-1 day') ORDER BY a.id DESC LIMIT 1", [id]);
+      if (prev && prev.user_id) return Object.assign(out, { status: 'already_assigned', designer: { user_id: prev.user_id, name: (prev.name + ' ' + (prev.last_name || '')).trim(), score: prev.score }, reason: 'picked ' + prev.at + ' by ' + prev.picked_by });
+      const r = await runMatch(id, 'crm-cron', dryRun ? 'crm-dry' : 'crm');
+      if (!r.ok) return Object.assign(out, { status: r.status || 'error', reason: r.error });
+      out.match_id = r.match_id; out.ms = r.ms; out.ai = r.ai;
+      out.picks = r.picks.map(p => ({ user_id: p.user_id, name: (p.name + ' ' + (p.last_name || '')).trim(), score: p.score, off_shift: !!p.off_shift, at_max: !!p.at_max, why: p.why }));
+      if (r.busy) return Object.assign(out, { status: 'busy', reason: r.busy.reason, emailed: !!r.busy.emailed });
+      const top = r.picks[0];
+      if (!top || top.off_shift || top.at_max) return Object.assign(out, { status: 'busy', reason: top ? 'best pick is ' + (top.off_shift ? 'off shift' : 'at max') : 'nobody available' });
+      out.designer = { user_id: top.user_id, name: (top.name + ' ' + (top.last_name || '')).trim(), score: top.score, why: top.why };
+      out.status = 'assigned'; out.reason = top.why.join(' · ');
+      if (!dryRun) {
+        await dbRun("UPDATE da_assign SET status = 'replaced' WHERE estimate_id = ? AND status IN ('assigned', 'busy')", [id]);
+        await dbRun('INSERT INTO da_assign (estimate_id, user_id, score, reason, picked_by, at) VALUES (?,?,?,?,?,?)', [id, top.user_id, top.score, out.reason.slice(0, 500), 'crm-cron', nowIso()]);
+        dropTeamCache();
+      } else out.status = 'dry_run';
+      return out;
+    } catch (e) { errlog('auto-assign', e.message); return Object.assign(out, { status: 'error', reason: e.message }); }
+  }
+  app.post('/api/designer/auto-assign', apiAuth, async (req, res) => {
+    const b = req.body || {}; const dry = b.dry_run === true || b.dry_run === 1 || b.dry_run === '1';
+    const ids = Array.isArray(b.estimate_ids) ? b.estimate_ids : b.estimate_id != null ? [b.estimate_id] : [];
+    const clean = Array.from(new Set(ids.map(x => parseInt(String(x).replace(/^E/i, ''))).filter(x => x > 0))).slice(0, 20);
+    if (!clean.length) return res.status(400).json({ ok: false, error: 'estimate_id or estimate_ids[] required (E-number or id)' });
+    const results = []; for (const id of clean) results.push(await autoAssignOne(id, dry));   // one at a time: fairness counts earlier picks
+    if (b.estimate_ids) return res.json({ ok: true, results });
+    res.json(Object.assign({ ok: true }, results[0]));
+  });
+  // what the CRM did with the answer — closes the loop in the history (optional)
+  app.post('/api/designer/auto-assign/done', apiAuth, async (req, res) => {
+    try {
+      const id = parseInt(String(req.body.estimate_id || '').replace(/^E/i, '')); if (!id) return res.status(400).json({ ok: false, error: 'estimate_id required' });
+      const ok = req.body.ok !== false; const uid = parseInt(req.body.user_id) || null;
+      await dbRun("UPDATE da_matches SET status = CASE WHEN ? THEN 'applied' ELSE 'crm_failed' END, reason = CASE WHEN ? THEN reason ELSE ? END WHERE id = (SELECT MAX(id) FROM da_matches WHERE estimate_id = ? AND source = 'crm')", [ok ? 1 : 0, ok ? 1 : 0, String(req.body.error || 'CRM could not assign').slice(0, 300), id]);
+      if (!ok) await dbRun("UPDATE da_assign SET status = 'cleared' WHERE estimate_id = ? AND status = 'assigned' AND picked_by = 'crm-cron'", [id]);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
   // a pick made in Nova — kept here only (the CRM is not changed) until the web team gives us an assignment endpoint
   app.post('/api/designer/assign', ...guard, async (req, res) => {
