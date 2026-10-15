@@ -821,11 +821,10 @@
     $('amList').innerHTML = lines.length ? lines.map(l => {
       const tags = [];
       if (l.number) tags.push('<span class="tk-chip ok">Own number ' + esc(phone(l.number)) + '</span>');
-      if (Number(l.main_line)) tags.push('<span class="tk-chip">Their clients on the main line</span>');
       if (l.own_numbers && l.own_numbers.length) tags.push('<span class="tk-chip ok">Their assistant from ' + l.own_numbers.map(phone).map(esc).join(', ') + (l.has_pin ? ' · PIN' : '') + '</span>');
       if (Number(l.ring_first)) tags.push('<span class="tk-chip">Rings ' + esc(phone(l.ring_number)) + ' first' + (Number(l.screen) !== 0 ? ' · press 1' : '') + '</span>');
       if (l.voice_id) tags.push('<span class="tk-chip">Own voice</span>');
-      if (!l.number && !Number(l.main_line)) tags.push('<span class="tk-chip warn">Not answering yet — give it a number or tick "their clients"</span>');
+      if (!l.number) tags.push('<span class="tk-chip">Main line only — their clients get this NovaAI there</span>');
       return '<div class="tk-am' + (Number(l.active) ? '' : ' off') + '">' + avatar(l.photo, l.am_name) + '<div class="bd">' +
         '<b>' + esc(l.am_name || 'Account manager') + '</b> <small>' + esc(l.am_title || '') + (l.calls ? ' · ' + l.calls + ' call' + (l.calls === 1 ? '' : 's') : '') + '</small>' +
         '<div class="tags">' + tags.join('') + '</div>' +
@@ -900,45 +899,34 @@
     l = l || { main_line: 1, active: 1, screen: 1, own_numbers: [] };
     const box = $('amEdit');
     const used = lines.filter(x => x.id !== l.id).map(x => x.number).filter(Boolean);
-    const numOpts = '<option value="">None — their clients on the main line only</option>' + twNumbers.filter(n => !n.main && !n.missed && (used.indexOf(n.number) === -1 || n.number === l.number))
+    const numOpts = '<option value="">None — main line only</option>' + twNumbers.filter(n => !n.main && !n.missed && (used.indexOf(n.number) === -1 || n.number === l.number))
       .map(n => '<option value="' + esc(n.number) + '"' + (l.number === n.number ? ' selected' : '') + '>' + esc(phone(n.number)) + (n.connected ? '' : ' (not connected yet)') + '</option>').join('') +
       (l.number && !twNumbers.some(n => n.number === l.number) ? '<option value="' + esc(l.number) + '" selected>' + esc(phone(l.number)) + '</option>' : '');
     const own = (l.own_numbers || []).concat(['', '', '']).slice(0, 3);
     const sec = (n, title, sub) => '<div class="tk-amsec"><div class="tk-sech"><i>' + n + '</i><div><b>' + title + '</b>' + (sub ? '<small>' + sub + '</small>' : '') + '</div></div>';
     box.hidden = false;
-    box.innerHTML = '<h3>' + (l.id ? 'Edit ' + esc(l.am_name) : 'Add an account manager') + '</h3><div class="tk-form">' +
-      sec(1, 'The person', 'Who this NovaAI works for.') +
+    // 1.20.69: the slim form — who, their email, their Dialpad number (read from the CRM, locked), their Twilio number and
+    // their training. "Their clients on the main line" is always on; the assistant phones / PIN, the ring-first block, the
+    // voice and the On switch are gone from here (the per-manager training area will take what still matters). What the form
+    // no longer shows is sent back unchanged from the saved line, so nothing already set up is lost on Save.
+    const mOf = (id) => (managers || []).find(x => x.id === parseInt(id));
+    const dial = (m) => m && m.phone ? phone(m.phone) : '';
+    box.innerHTML = '<h3>' + (l.id ? 'Edit ' + esc(l.am_name) : 'Add an account manager') + '</h3><div class="tk-form tk-form-slim">' +
+      '<div class="row2">' +
         '<div class="tk-flabel">Account manager<div class="tk-pick" id="amPick"><input type="hidden" id="amWho">' +
           '<button type="button" class="tk-pickbtn" aria-haspopup="listbox"></button>' +
           '<div class="tk-picklist" hidden><input type="text" class="tk-picksearch" placeholder="Search by name or title" autocomplete="off"><div class="tk-pickopts" role="listbox"></div></div></div></div>' +
-        '<label>Their email <small>Messages, call summaries and anything they ask NovaAI to email them.</small><input type="text" id="amNotify" value="' + esc(l.notify_to || '') + '" placeholder="their email"></label></div>' +
-      sec(2, 'Their NovaAI number', 'A Twilio number that always answers for them. Give it to clients, or forward their missed calls to it.') +
-        '<label>Twilio number<select id="amNum" class="tk-select">' + numOpts + '</select></label>' +
-        '<label class="chk"><input type="checkbox" id="amMain"' + (Number(l.main_line) ? ' checked' : '') + '> <span>Their clients on the main line too <small style="display:block;color:var(--muted)">A caller recognised by their number whose account manager this is gets this NovaAI.</small></span></label></div>' +
-      sec(3, 'Their phones — NovaAI is their assistant', 'When they call their NovaAI number (or the main number) from one of these, NovaAI answers as their personal assistant: their missed calls and messages, client and job look-ups, prices, notes emailed to them.') +
-        '<div class="row3">' + own.map((n, i) => '<input type="text" class="amOwn" value="' + esc(n ? phone(n) : '') + '" placeholder="' + (i === 0 ? 'Cell, e.g. 818 555 1234' : i === 1 ? 'Another phone' : 'Another phone') + '">').join('') + '</div>' +
-        '<div class="row2"><label>PIN <small>' + (l.has_pin ? 'A PIN is set. Type a new one to change it.' : 'Optional, 4–8 digits, typed on the keypad.') + '</small>' +
-          '<input type="password" id="amPin" inputmode="numeric" autocomplete="new-password" maxlength="8" placeholder="' + (l.has_pin ? '••••  (unchanged)' : 'e.g. 482915') + '"></label>' +
-          '<label>Greeting for them <small>{am} = their first name, {new} = “You have 2 new calls.”</small><input type="text" id="amOwnerGreet" value="' + esc(l.owner_greeting || '') + '" placeholder="Hi {am}! {new}How can I help today?"></label></div>' +
-        '<label class="chk"><input type="checkbox" id="amPinAlways"' + (Number(l.owner_pin_always) ? ' checked' : '') + '> <span>Ask for the PIN on every call <small style="display:block;color:var(--muted)">Otherwise only when their carrier can’t confirm the number is really theirs. Without a PIN, an unconfirmed call is treated as an ordinary caller.</small></span></label>' +
-        (l.has_pin ? '<label class="chk"><input type="checkbox" id="amPinClear"> <span>Remove the PIN</span></label>' : '') + '</div>' +
-      sec(4, 'When they miss a call', 'Instead of voicemail, NovaAI greets the caller, tries to help, and takes a message for them.') +
-        '<label class="chk"><input type="checkbox" id="amRingFirst"' + (Number(l.ring_first) ? ' checked' : '') + '> <span>Ring their phone first during regular hours <small style="display:block;color:var(--muted)">NovaAI answers if they don’t take it within <span class="tk-ring">' + ((ov && ov.ring_seconds) || 20) + '</span> seconds. Leave it off if their own phone (e.g. Dialpad) already forwards missed calls to this NovaAI number.</small></span></label>' +
-        '<div class="row2"><label>Phone to ring <small>Also where transfers go.</small><input type="text" id="amRing" value="' + esc(l.ring_number ? phone(l.ring_number) : '') + '" placeholder="e.g. 747 400 4060"></label>' +
-          '<label class="chk" style="align-self:end"><input type="checkbox" id="amScreen"' + (Number(l.screen) !== 0 ? ' checked' : '') + '> <span>“Press 1 to take it” <small style="display:block;color:var(--muted)">So their voicemail can’t pick up instead of NovaAI.</small></span></label></div>' +
-        '<label>Greeting for callers <small>Optional. {name} = the caller’s first name, {am} = theirs.</small>' +
-          '<textarea id="amGreeting" rows="2" placeholder="Hi {name}, {am} can’t come to the phone right now. I’m NovaAI, an AI assistant, and this call is recorded. How can I help you?">' + esc(l.greeting || '') + '</textarea></label></div>' +
-      sec(5, 'Their training', 'How they like things handled. NovaAI follows it with their clients and when it works for them.') +
-        '<textarea id="amTraining" rows="6" placeholder="- Most of my clients are restaurants: menus, table tents, banners.\n- Rush jobs: always take a message, I call back within the hour.\n- Say I’m in the office Mon–Thu.">' + esc(l.training || '') + '</textarea>' +
-        '<label>Voice ID <small>Optional: an ElevenLabs voice ID for this line.</small><input type="text" id="amVoice" value="' + esc(l.voice_id || '') + '"></label></div>' +
-      '<label class="chk"><input type="checkbox" id="amActive"' + (Number(l.active) || !l.id ? ' checked' : '') + '> <span>On</span></label>' +
+        '<label>Email <small>Messages, call summaries and anything they ask NovaAI to email them.</small><input type="text" id="amNotify" value="' + esc(l.notify_to || '') + '" placeholder="their email"></label></div>' +
+      '<div class="row2">' +
+        '<label>Dialpad number <small>From the CRM — where transfers go. Change it on their CRM profile.</small><input type="text" id="amDial" value="' + esc(dial(mOf(l.am_user_id)) || (l.ring_number ? phone(l.ring_number) : '')) + '" readonly class="tk-locked" placeholder="— not on their CRM profile —"></label>' +
+        '<label>Twilio number <small>Their own NovaAI line. Give it to clients, or forward their missed calls to it.</small><select id="amNum" class="tk-select">' + numOpts + '</select></label></div>' +
+      '<label>Their training <small>How they like things handled. NovaAI follows it with their clients and when it works for them.</small>' +
+        '<textarea id="amTraining" rows="6" placeholder="- Most of my clients are restaurants: menus, table tents, banners.\n- Rush jobs: always take a message, I call back within the hour.\n- Say I’m in the office Mon–Thu.">' + esc(l.training || '') + '</textarea></label>' +
       '<div class="acts"><button type="button" class="tk-btn" id="amSave">Save</button><button type="button" class="tk-btn ghost" id="amCancel">Cancel</button>' +
         '<span class="tk-msg" id="amMsg"></span>' + (l.id ? '<button type="button" class="del" id="amDel">Remove</button>' : '') + '</div></div>';
     amPicker(box, l.am_user_id || '', (m) => {
-      if (!$('amRing').value && m.phone) $('amRing').value = phone(m.phone);
+      $('amDial').value = dial(m);
       if (!$('amNotify').value) $('amNotify').value = m.email || '';
-      const first = box.querySelector('.amOwn');
-      if (first && !first.value && m.cell) first.value = phone(m.cell);
     });
     $('amCancel').onclick = () => { box.hidden = true; };
     if ($('amDel')) $('amDel').onclick = async () => {
@@ -947,11 +935,13 @@
     };
     $('amSave').onclick = async () => {
       const msg = $('amMsg'); msg.className = 'tk-msg'; msg.textContent = 'Saving…';
+      const m = mOf($('amWho').value);
       const j = await api('/api/admin/talk/lines', { method: 'POST', body: JSON.stringify({ id: l.id, am_user_id: $('amWho').value, number: $('amNum').value,
-        main_line: $('amMain').checked, ring_first: $('amRingFirst').checked, ring_number: $('amRing').value, notify_to: $('amNotify').value, screen: $('amScreen').checked,
-        own_numbers: Array.from(box.querySelectorAll('.amOwn')).map(x => x.value.trim()).filter(Boolean), pin: $('amPin').value.trim(),
-        pin_always: $('amPinAlways').checked, clear_pin: $('amPinClear') ? $('amPinClear').checked : false, owner_greeting: $('amOwnerGreet').value,
-        greeting: $('amGreeting').value, training: $('amTraining').value, voice_id: $('amVoice').value, active: $('amActive').checked }) });
+        main_line: true, notify_to: $('amNotify').value, training: $('amTraining').value,
+        // transfers go to their Dialpad number (the saved ring number when the CRM has none); the rest rides along unchanged
+        ring_number: (m && m.phone) || l.ring_number || '', ring_first: !!Number(l.ring_first), screen: Number(l.screen) !== 0,
+        own_numbers: l.own_numbers || [], pin: '', pin_always: !!Number(l.owner_pin_always), clear_pin: false, owner_greeting: l.owner_greeting || '',
+        greeting: l.greeting || '', voice_id: l.voice_id || '', active: l.id ? !!Number(l.active) : true }) });
       if (!j.ok) { msg.className = 'tk-msg err'; msg.textContent = j.error || 'Could not save.'; return; }
       box.hidden = true; loadAms();
     };
@@ -982,10 +972,12 @@
     const elDone = k.ELEVENLABS_API_KEY && k.ELEVENLABS_AGENT_ID && k.TALKAI_LLM_KEY && j.hits.some(h => h.kind === 'llm' && h.ok);
     const hookDone = k.ELEVENLABS_WEBHOOK_SECRET && j.hits.some(h => h.kind === 'elevenlabs-webhook' && h.ok);
     $('setupBox').innerHTML =
-      '<h2>Connect the phone number</h2><p class="lead">Twilio carries the call, ElevenLabs listens and speaks, and Nova decides what to say — with the same tools, ' +
-      'rules and knowledge as the website chat. Five steps; each one ticks itself once Nova sees it working.</p>' +
+      // 1.20.69: everything folds — the whole "Connect the phone" block and each step inside it are <details>, closed by
+      // default (the setup is done; the page is for the calls), the explanation sits behind a (?) on the title.
+      '<details class="tk-fold tk-fold-top"><summary><h2>Connect the phone <span class="tk-q" tabindex="0">?<span class="tk-tip">Twilio carries the call, ElevenLabs listens and speaks, and Nova decides what to say — with the same tools, ' +
+      'rules and knowledge as the website chat. Five steps; each one ticks itself once Nova sees it working. Open a step to see its settings and where they go.</span></span></h2></summary><div class="tk-foldbody">' +
 
-      '<div class="tk-step"><h3>' + done(k.TWILIO_AUTH_TOKEN && k.ELEVENLABS_API_KEY && k.ELEVENLABS_AGENT_ID && k.TALKAI_LLM_KEY && k.ELEVENLABS_WEBHOOK_SECRET) + '1. Keys in Nova’s .env</h3>' +
+      '<details class="tk-step"><summary><h3>' + done(k.TWILIO_AUTH_TOKEN && k.ELEVENLABS_API_KEY && k.ELEVENLABS_AGENT_ID && k.TALKAI_LLM_KEY && k.ELEVENLABS_WEBHOOK_SECRET) + '1. Keys in Nova’s .env</h3></summary>' +
       '<div class="tk-keys">' +
       ok(k.TWILIO_ACCOUNT_SID) + '<span><code>TWILIO_ACCOUNT_SID</code> — Twilio Console home page, Account Info (starts with AC). Needed for transfers.</span>' +
       ok(k.TWILIO_AUTH_TOKEN) + '<span><code>TWILIO_AUTH_TOKEN</code> — same place. Nova uses it to check every call really comes from Twilio.</span>' +
@@ -997,16 +989,16 @@
       ok(k.email) + '<span>Email sending (Gmail, the same as past-due escalations) — for messages and call summaries.</span></div>' +
       '<p style="margin:10px 0 4px">Add the missing lines to <code>/opt/axiom-ai/.env</code>, then run <code>pm2 restart axiom-ai</code>:</p>' +
       copyRow('', envText, true) +
-      '<p style="margin:8px 0 4px">To make <code>TALKAI_LLM_KEY</code>, run this on the server and use what it prints:</p>' + copyRow('', 'openssl rand -hex 24') + '</div>' +
+      '<p style="margin:8px 0 4px">To make <code>TALKAI_LLM_KEY</code>, run this on the server and use what it prints:</p>' + copyRow('', 'openssl rand -hex 24') + '</details>' +
 
-      '<div class="tk-step"><h3>' + done(twilioDone) + '2. Twilio: send calls to Nova</h3><ol>' +
+      '<details class="tk-step"><summary><h3>' + done(twilioDone) + '2. Twilio: send calls to Nova</h3></summary><ol>' +
       '<li>Twilio Console → Phone Numbers → Manage → Active numbers → <b>' + esc(phone(j.number) || '(747) 350-0012') + '</b> (or "Voice configuration → Set up" on the inventory page).</li>' +
       '<li>Under <b>Voice Configuration</b>: Configure with <b>Webhook</b>; <b>A call comes in</b> → Webhook, this URL, <b>HTTP POST</b>:' + copyRow('', u.voice) + '</li>' +
       '<li><b>Call status changes</b> → this URL, HTTP POST:' + copyRow('', u.status) + '</li>' +
       '<li>Primary handler fails: leave empty. Save configuration.</li></ol>' +
-      '<p class="tk-msg" style="margin-top:6px">Texting stays off until the A2P 10DLC registration Twilio shows is done; calls do not need it.</p></div>' +
+      '<p class="tk-msg" style="margin-top:6px">Texting stays off until the A2P 10DLC registration Twilio shows is done; calls do not need it.</p></details>' +
 
-      '<div class="tk-step"><h3>' + done(elDone) + '3. ElevenLabs: create the voice agent</h3><ol>' +
+      '<details class="tk-step"><summary><h3>' + done(elDone) + '3. ElevenLabs: create the voice agent</h3></summary><ol>' +
       '<li>ElevenLabs → <b>Agents</b> (Conversational AI) → Create agent → Blank. Name it <b>NovaAI Phone</b>. Copy its Agent ID into <code>ELEVENLABS_AGENT_ID</code>.</li>' +
       '<li><b>System prompt</b> — only this (Nova sends the real instructions):' + copyRow('', stub, true) + '</li>' +
       '<li><b>First message</b>:' + copyRow('', '{{greeting}}') + '</li>' +
@@ -1017,25 +1009,27 @@
         '(for Armenian use an <b>Eleven v3</b> voice). Then <b>Security \u2192 Overrides</b>: turn on <b>Language</b> \u2014 Nova tells ElevenLabs which language the caller chose.</li>' +
       '<li><b>Tools → System tools</b>: turn on <b>End conversation</b> and <b>Detect language</b>. Leave "Transfer to number" off — Nova does transfers (Training → Transfer to).</li>' +
       '<li><b>Advanced → audio</b>: user input audio format <b>μ-law 8000 Hz</b> and TTS output format <b>μ-law 8000 Hz</b> (needed because Nova hands the call over from Twilio).</li>' +
-      '<li>Leave the phone number out of ElevenLabs — Nova connects each call itself, so it can forward or play the closed message when needed.</li></ol></div>' +
+      '<li>Leave the phone number out of ElevenLabs — Nova connects each call itself, so it can forward or play the closed message when needed.</li></ol></details>' +
 
-      '<div class="tk-step"><h3>' + done(hookDone) + '4. ElevenLabs: transcript and recording back to Nova</h3><ol>' +
+      '<details class="tk-step"><summary><h3>' + done(hookDone) + '4. ElevenLabs: transcript and recording back to Nova</h3></summary><ol>' +
       '<li>ElevenLabs → Agents → <b>Settings</b> (workspace) → <b>Post-call webhook</b> → add this URL:' + copyRow('', u.webhook) + '</li>' +
-      '<li>Turn on <b>transcription</b> and <b>audio</b> (the recording). Copy the webhook’s secret into <code>ELEVENLABS_WEBHOOK_SECRET</code>.</li></ol></div>' +
+      '<li>Turn on <b>transcription</b> and <b>audio</b> (the recording). Copy the webhook’s secret into <code>ELEVENLABS_WEBHOOK_SECRET</code>.</li></ol></details>' +
 
-      '<div class="tk-step"><h3>' + done(j.hits.some(h => h.kind === 'llm' && h.ok) && twilioDone) + '5. Call it</h3>' +
+      '<details class="tk-step"><summary><h3>' + done(j.hits.some(h => h.kind === 'llm' && h.ok) && twilioDone) + '5. Call it</h3></summary>' +
       '<p style="margin:0">Call <b>' + esc(phone(j.number) || 'the number') + '</b>. You should hear the greeting, then NovaAI. The call shows up under Calls at once; the ' +
       'transcript, summary and recording a minute after you hang up. Try "How much are 500 business cards?", then an order status with an order number and the account’s email.</p>' +
-      '<p class="tk-msg" style="margin:6px 0 0">Calls cost about $0.10 a minute (Twilio + ElevenLabs) plus Nova’s AI. Recordings are kept ' + esc(j.keep_days) + ' days.</p></div>' +
+      '<p class="tk-msg" style="margin:6px 0 0">Calls cost about $0.10 a minute (Twilio + ElevenLabs) plus Nova’s AI. Recordings are kept ' + esc(j.keep_days) + ' days.</p></details></div></details>' +
 
-      '<div class="tk-step"><h3><i>↻</i>Recent activity <button type="button" class="tk-link" id="hitsRefresh" style="margin-left:auto">Refresh</button></h3>' +
+      '<details class="tk-step"><summary><h3><i>↻</i>Recent activity <button type="button" class="tk-link" id="hitsRefresh" style="margin-left:auto">Refresh</button></h3></summary>' +
       (j.hits.length ? '<table class="tk-hits">' + j.hits.map(h => '<tr><td>' + esc(new Date(h.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })) + '</td><td>' + ok(h.ok) +
         ' <b>' + esc(h.kind) + '</b></td><td>' + esc(h.note) + '</td></tr>').join('') + '</table>'
-        : '<p class="tk-msg" style="margin:0">Nothing yet since Nova last restarted. Each call, answer and webhook shows here, with what went wrong if it did.</p>') + '</div>';
+        : '<p class="tk-msg" style="margin:0">Nothing yet since Nova last restarted. Each call, answer and webhook shows here, with what went wrong if it did.</p>') + '</details>';
+    // the folds stay as the person left them within this visit (closed on first open)
+    $('setupBox').querySelectorAll('details').forEach((d, i) => { const key = 'ta_fold_' + i; d.open = sessionStorage.getItem(key) === '1'; d.addEventListener('toggle', () => { try { sessionStorage.setItem(key, d.open ? '1' : '0'); } catch (e) {} }); });
     $('setupBox').querySelectorAll('[data-copy]').forEach(b => {
       b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copied'; setTimeout(() => { b.textContent = 'Copy'; }, 1500); } catch (e) { b.textContent = 'Select it'; } };
     });
-    $('hitsRefresh').onclick = () => loadOverview().then(paintSetup);
+    $('hitsRefresh').onclick = (e) => { e.preventDefault(); e.stopPropagation(); loadOverview().then(paintSetup); };
   }
 
   // The overview (calls by day / week / month and this month's outcomes) fills the right side until a call is picked.

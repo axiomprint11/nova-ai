@@ -397,6 +397,23 @@
   .tk-setup h2 { font-size: 16px; margin: 0 0 4px; }
   .tk-setup .lead { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
   .tk-step { border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 14px 16px; margin-bottom: 14px; }
+  /* 1.20.69: the Setup page folds — <details> blocks, closed by default; the title row is the summary */
+  details.tk-fold, details.tk-step { padding: 0; }
+  details.tk-fold > summary, details.tk-step > summary { list-style: none; cursor: pointer; padding: 12px 16px; display: block; }
+  details.tk-fold > summary::-webkit-details-marker, details.tk-step > summary::-webkit-details-marker { display: none; }
+  details.tk-step > summary h3, details.tk-fold > summary h2 { margin: 0; }
+  details.tk-step > summary h3::after, details.tk-fold > summary h2::after { content: '▸'; margin-left: auto; color: var(--muted); font-size: 12px; transition: transform .15s; }
+  details.tk-step > summary h3 .tk-link { margin-left: auto !important; } details.tk-step > summary h3:has(.tk-link)::after { margin-left: 8px; }
+  details[open].tk-step > summary h3::after, details[open].tk-fold > summary h2::after { transform: rotate(90deg); }
+  details.tk-step > :not(summary) { margin-left: 16px; margin-right: 16px; } details.tk-step[open] { padding-bottom: 14px; }
+  details.tk-fold-top { border: 1px solid var(--line); border-radius: 12px; background: #fff; margin-bottom: 14px; }
+  details.tk-fold > summary h2 { font-size: 17px; display: flex; align-items: center; gap: 8px; }
+  .tk-foldbody { padding: 0 16px 4px; }
+  .tk-q { display: inline-flex; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 600; align-items: center; justify-content: center; position: relative; cursor: help; margin-left: 4px; }
+  .tk-q .tk-tip { display: none; position: absolute; left: 24px; top: -6px; width: 360px; background: #1f2937; color: #fff; font-size: 12.5px; font-weight: 400; line-height: 1.45; padding: 10px 12px; border-radius: 8px; z-index: 20; }
+  .tk-q:hover .tk-tip, .tk-q:focus .tk-tip { display: block; }
+  .tk-form-slim .row2 > label, .tk-form-slim .row2 > .tk-flabel { min-width: 0; }   /* Account manager 50% · Email 50% */
+  .tk-form input.tk-locked { background: #f3f4f6; color: #4b5563; cursor: not-allowed; }
   .tk-step h3 { font-size: 14px; margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
   .tk-step h3 i { font-style: normal; width: 22px; height: 22px; border-radius: 50%; background: var(--indigo-light); color: var(--indigo-dark); display: inline-flex;
     align-items: center; justify-content: center; font-size: 12px; font-weight: 800; flex: none; }
@@ -659,7 +676,7 @@
               <li><b>Their missed calls</b> — clients who call it (or whose calls they don't take) get NovaAI instead of voicemail: it greets them, tries to help, and takes a message for them.</li>
               <li><b>Their assistant</b> — when they call it from their own phone: <i>“Hi Armine! You have 2 new calls. How can I help today?”</i> It reads out their calls and messages, looks up clients, projects and jobs, prices work and emails them notes.</li>
             </ul>
-            <p class="sub" style="margin:8px 0 0">Their clients on the main line can get their NovaAI too, with no extra number.</p>
+            <p class="sub" style="margin:8px 0 0">Their clients get their NovaAI on the main line too — recognised by the caller's number, no extra line needed.</p>
           </div>
           <div id="amList"><div class="tk-empty">Loading…</div></div>
           <button type="button" class="tk-btn" id="amAdd">+ Add an account manager</button>
