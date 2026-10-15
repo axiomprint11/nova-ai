@@ -78,8 +78,9 @@
   .da-ef-side { display: flex; flex-direction: column; gap: 16px; } .da-ef-row label { display: inline-flex; align-items: center; gap: 9px; font-size: 13.5px; font-weight: 600; line-height: 1; margin: 0; }
   .da-ef-row input[type=checkbox] { width: 17px; height: 17px; margin: 0; flex: none; vertical-align: middle; position: relative; top: 0; } .da-ef-row input[type=number] { width: 72px; font: 13.5px inherit; border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; }
   .da-ef-sl input[type=range] { width: 100%; margin: 6px 0 2px; } .da-ef-sl b { color: var(--indigo-dark); }
-  .da-ef-time { display: flex; align-items: center; gap: 8px; margin: 6px 0; } .da-ef-time input { font: 13.5px inherit; border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; }
-  .da-ef-days { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 4px; } .da-ef-days label { font-weight: 500; font-size: 13px; gap: 5px; }
+  .da-ef-hours { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; margin-top: 6px; }   /* 1.20.24: days on the left, the hours beside them, one line */
+  .da-ef-time { display: flex; align-items: center; gap: 6px; } .da-ef-time input { font: 12.5px inherit; border: 1px solid var(--line); border-radius: 7px; padding: 3px 6px; width: 112px; box-sizing: border-box; } .da-ef-time span { font-size: 12px; color: var(--muted); }
+  .da-ef-days { display: flex; gap: 10px; flex-wrap: wrap; } .da-ef-days label { font-weight: 500; font-size: 12.5px; gap: 4px; } .da-ef-days input[type=checkbox] { width: 15px; height: 15px; }
   .da-ef-top { display: flex; align-items: center; gap: 28px; flex-wrap: wrap; } .da-ef-top label { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; margin: 0; line-height: 1; } .da-ef-top input[type=checkbox] { width: 17px; height: 17px; margin: 0; flex: none; }
   .da-ef-top input[type=number] { width: 72px; font: 13.5px inherit; border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; }
   .da-ef-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 32px; } .da-ef-langs { gap: 16px; }
