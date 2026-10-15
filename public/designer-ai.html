@@ -89,6 +89,8 @@
   .da-ef-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 32px; } .da-ef-langs { gap: 16px; }
   .da-ef-foot { display: flex; gap: 8px; } .da-ef-foot .bk-btn { padding: 8px 16px; font-size: 13px; }
   .da-p { font-size: 13.5px; line-height: 1.5; color: var(--ink-soft); margin: 0 0 10px; } #daLogic { width: 100%; min-height: 320px; resize: vertical; box-sizing: border-box; font: 13.5px/1.5 inherit; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  #daOverload { width: 100%; min-height: 120px; resize: vertical; box-sizing: border-box; font: 13.5px/1.5 inherit; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; } #daOverloadTo { width: 100%; max-width: 520px; box-sizing: border-box; font: 13.5px inherit; border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; }
+  .da-tag.busy { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; } .da-busy { font-size: 12px; } .da-busy.top { margin-bottom: 8px; padding: 8px 10px; background: #fff7f7; border: 1px solid #fecaca; border-radius: 8px; }
   .da-h3 { font-size: 13px; margin: 22px 0 6px; } .da-ul { font-size: 12.5px; color: var(--ink-soft); line-height: 1.55; padding-left: 18px; margin: 0; } .da-ul li { margin-bottom: 3px; }
   .da-sub-ai { font-size: 11.5px; color: #5b21b6; font-weight: 600; }
   .da-others { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; } .da-others .da-face { display: inline-flex; cursor: default; } .da-others .da-av { width: 30px; height: 30px; font-size: 11.5px; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line); }
@@ -138,6 +140,11 @@
 - Fernando and Rodrigo are learning: classic business cards, flyers and banners are theirs before anyone else.
 - Anything with a design fee over $100 goes to Edgar or Ani."></textarea>
         <div class="da-ef-foot"><button class="bk-btn pri" id="daLogicSave">Save</button></div>
+        <h3 class="da-h3" style="margin-top:30px">Overload Logic<span class="da-muted" id="daOverloadWhen" style="font-weight:500;margin-left:10px"></span></h3>
+        <p class="da-p">When nobody can take a job. Nova's own test: every designer who takes jobs is at their Max active, or the only ones with room are off shift. Then the job stays in the queue as it is, the row is marked <b>Everyone is busy</b>, and the people below get one email per job per day — the designers pick it up themselves. Write here when you want that to happen (or not), in your own words; the model reads it on every Match.</p>
+        <textarea id="daOverload" rows="6"></textarea>
+        <div class="da-ef-row" style="margin:10px 0 12px"><label class="da-ef-l" for="daOverloadTo">Email when everyone is busy</label><input id="daOverloadTo" placeholder="gary@axiomprint.com, tasha@axiomprint.com"></div>
+        <div class="da-ef-foot"><button class="bk-btn pri" id="daOverloadSave">Save</button></div>
         <h3 class="da-h3">What Nova scores on its own</h3>
         <ul class="da-ul">
           <li><b>History</b> — did this product in 180 days (+5 a job, up to +30), else the same category (+2 a job, up to +15).</li>

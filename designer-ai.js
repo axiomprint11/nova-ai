@@ -6,7 +6,7 @@
 'use strict';
 
 module.exports = function mountDesignerAi(app, deps) {
-  const { db, auth, adminOnly, serveVersionedHtml, runQuery, anthropic, model } = deps;
+  const { db, auth, adminOnly, serveVersionedHtml, runQuery, anthropic, model, sendMail } = deps;
   const dbAll = (sql, p) => new Promise((res, rej) => db.all(sql, p || [], (e, r) => e ? rej(e) : res(r || [])));
   const dbGet = (sql, p) => new Promise((res, rej) => db.get(sql, p || [], (e, r) => e ? rej(e) : res(r)));
   const dbRun = (sql, p) => new Promise((res, rej) => db.run(sql, p || [], function (e) { e ? rej(e) : res(this); }));
@@ -76,14 +76,14 @@ module.exports = function mountDesignerAi(app, deps) {
       "LEFT JOIN product p ON p.id = e.estimate_productid LEFT JOIN productcategory pc ON pc.id = p.product_category_id LEFT JOIN customer c ON c.id = e.estimate_clientid " +
       "WHERE s.estimate_stage = 'prepress' AND s.estimate_substage <> 'canceled'" + (all ? '' : ' AND e.estimate_invoiceid > 0') + " ORDER BY e.created DESC LIMIT 300");
     const ids = rows.map(r => r.id);
-    const mine = {}; if (ids.length) (await dbAll('SELECT estimate_id, user_id, score, reason, at, picked_by FROM da_assign WHERE status = \'assigned\' AND estimate_id IN (' + ids.map(() => '?').join(',') + ')', ids)).forEach(r => { mine[r.estimate_id] = r; });
+    const mine = {}, busy = {}; if (ids.length) (await dbAll('SELECT estimate_id, user_id, score, reason, at, picked_by, status FROM da_assign WHERE status IN (\'assigned\', \'busy\') AND estimate_id IN (' + ids.map(() => '?').join(',') + ')', ids)).forEach(r => { if (r.status === 'busy') busy[r.estimate_id] = r; else mine[r.estimate_id] = r; });
     return rows.map(r => ({
       id: r.id, e: 'E' + r.id, name: r.estimate_name || '', created: r.created, complete_by: r.complete_by, invoiced: Number(r.inv) > 0, inv: r.inv,
       product_id: r.product_id, product: r.product || '', product_image: r.product_image || null, category: r.category || '', stage: r.stage, substage: r.substage, stage_in: r.stage_in_date,
       status: r.prepress_status, status_label: PROOF_LABEL[r.prepress_status] || r.prepress_status || '', proof_type: r.proof_type || (r.substage === 'tier_2' ? 'Tier 2' : r.substage === 'tier_1' ? 'Tier 1' : ''), files_type: r.files_type || '', service: r.service || '',
       tier, customer: r.company_name || [r.cname, r.clname].filter(Boolean).join(' ') || '', others: teamOf(r.others).map(t => t.name).join(', '), team: teamOf(r.others), designer_ids: r.designer_ids ? String(r.designer_ids).split(',').map(Number) : [],
       design_fee: Number(r.design_price) || 0, notes: [r.design_notes, r.prepress_notes, r.prepress_internal_notes].filter(Boolean).join('\n').slice(0, 1200), product_180: Number(r.product_180) || 0, category_id: r.category_id,
-      nova: mine[r.id] || null
+      nova: mine[r.id] || null, busy: busy[r.id] ? { at: busy[r.id].at, reason: busy[r.id].reason } : null
     })).map(j => Object.assign(j, { hard: jobHard(j), creative: jobCreative(j), common: j.product_180 >= 40 }));
   }
   // 1.20.17: how hard and how creative a job is, 0–10 — from the category, the proof tier, the design fee and the notes
@@ -174,7 +174,7 @@ module.exports = function mountDesignerAi(app, deps) {
       add(over > 0 ? -Math.min(30, over * 3) : 0, d.active_jobs + ' active job' + (d.active_jobs === 1 ? '' : 's') + (over === 0 ? ' — lightest load' : ''));
       if (d.max_active && d.active_jobs >= d.max_active) add(-40, 'at max (' + d.max_active + ')');
       if (recent[d.user_id]) add(-recent[d.user_id] * 4, 'picked ' + recent[d.user_id] + '× in the last 2 h');
-      return { user_id: d.user_id, name: d.name, last_name: d.last_name, photo: d.photo, score: Math.max(0, Math.min(100, Math.round(score))), why, active_jobs: d.active_jobs };
+      return { user_id: d.user_id, name: d.name, last_name: d.last_name, photo: d.photo, score: Math.max(0, Math.min(100, Math.round(score))), why, active_jobs: d.active_jobs, at_max: !!(d.max_active && d.active_jobs >= d.max_active), off_shift: !!(sh.known && !sh.on) };
     }).sort((a, b) => b.score - a.score || a.active_jobs - b.active_jobs);
     return out;
   }
@@ -208,13 +208,39 @@ module.exports = function mountDesignerAi(app, deps) {
   // 1.20.18: Match Logic — the owner's rules in plain words (Designer AI → Match Logic). When set, the model reads the job, the
   // scored candidates and the rules, and may move the scores; every change it makes is shown as "your rule: …" on the pick.
   const getSetting = async (k) => { const r = await dbGet('SELECT value FROM da_settings WHERE key = ?', [k]); return r ? r.value : ''; };
-  async function aiAdjust(job, picks, logic) {
-    if (!anthropic || !logic.trim()) return { picks, ai: false };
+  // 1.20.28 — Overload: when nobody can take the job it stays in the queue, is marked "Everyone is busy" and the people in
+  // `overload_to` get an email (once per job per day). Built-in test: every designer who takes jobs is at their Max active
+  // or off shift. The owner's Overload Logic text (editable on the Match Logic tab) goes to the model too, which may say
+  // busy for its own reasons ({"busy":true,"busy_reason":…}).
+  const OVERLOAD_DEFAULT = 'Everyone is busy when every designer who takes jobs is at their Max active, or the only ones with room are off shift for the day.\nWhen that happens: do not force the job on anyone. Leave it in the queue, mark it "Everyone is busy" and email the team — the designers will pick it up themselves.\nA rush / expedite job may still go to the lightest designer who is on shift, even at their max, if the due date is today or tomorrow.';
+  const OVERLOAD_TO_DEFAULT = 'gary@axiomprint.com, tasha@axiomprint.com';
+  const builtinBusy = (picks) => picks.length > 0 && picks.every(p => p.at_max || p.off_shift);
+  async function markBusy(job, reason, who) {
+    const open = await dbGet("SELECT id, at FROM da_assign WHERE estimate_id = ? AND status = 'busy' ORDER BY id DESC LIMIT 1", [job.id]);
+    if (!open) await dbRun("INSERT INTO da_assign (estimate_id, user_id, score, reason, picked_by, at, status) VALUES (?,?,?,?,?,?,'busy')", [job.id, 0, null, String(reason || '').slice(0, 500), who, nowIso()]);
+    // the email, once per job per 24 h
+    const last = await dbGet("SELECT value FROM da_settings WHERE key = ?", ['busy_mailed_' + job.id]);
+    if (last && Date.now() - new Date(last.value).getTime() < 24 * 3600e3) return { emailed: false, emailed_at: last.value };
+    const to = ((await getSetting('overload_to')) || OVERLOAD_TO_DEFAULT).split(/[,;\s]+/).map(x => x.trim()).filter(x => /@/.test(x));
+    if (!sendMail || !to.length) return { emailed: false };
+    try {
+      const line = (k, v) => v ? k + ': ' + v + '\n' : '';
+      await sendMail({ to: to.join(', '), subject: 'Designer AI — everyone is busy, ' + job.e + ' not assigned',
+        text: 'Everyone is busy and AI wasn\'t able to assign this job to anyone. It stays in the queue for now — the designers will pick it up themselves.\n\n' +
+          line('Job', job.e + (job.name ? ' — ' + job.name : '')) + line('Customer', job.customer) + line('Product', job.product + (job.category ? ' (' + job.category + ')' : '')) + line('Tier', 'Tier ' + job.tier + (job.proof_type ? ' · ' + job.proof_type : '')) + line('Due', job.complete_by ? String(job.complete_by).slice(0, 10) : '') + line('Why', reason) +
+          '\nDesigner AI: https://nova.axiomprint.com/designer-ai\n' });
+      await dbRun('INSERT INTO da_settings (key, value, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at', ['busy_mailed_' + job.id, nowIso(), who, nowIso()]);
+      return { emailed: true, to };
+    } catch (e) { errlog('busy mail', e.message); return { emailed: false, error: e.message }; }
+  }
+  async function aiAdjust(job, picks, logic, overload) {
+    overload = (overload || '').trim(); logic = (logic || '').trim();
+    if (!anthropic || (!logic && !overload)) return { picks, ai: false };
     const cand = picks.map(p => ({ user_id: p.user_id, name: p.name + ' ' + (p.last_name || ''), score: p.score, reasons: p.why, active_jobs: p.active_jobs }));
     const team = await designers();
     const prof = team.filter(d => d.active).map(d => ({ user_id: d.user_id, name: d.name + ' ' + (d.last_name || ''), title: d.title, strong_sides: d.skill_list, tier2: !!d.tier2, hard_level: d.hard_level, creative_level: d.creative_level, client_communication: d.comm_level, languages: d.language_list, notes: d.notes || '', active_jobs: d.active_jobs, waiting_on_client: d.waiting_client, approved_30d: d.done_30, jobs_180d: d.jobs_180, hours: d.shift_start ? d.shift_start + '-' + d.shift_end + ' days ' + (d.work_days || '1-5') : 'unknown', on_shift: d.on_shift }));
-    const sys = 'You assign print jobs to designers at AxiomPrint. Nova has already scored every designer with its built-in rules (history, strong sides, hardness, creativity, load, hours). The OWNER\'S RULES below take priority over those scores wherever they apply. Return ONLY JSON: {"picks":[{"user_id":n,"score":0-100,"note":"short reason citing the owner rule, or empty"}]} — every candidate once, scores changed only where a rule applies, note only when you changed something.';
-    const user = 'OWNER\'S RULES:\n' + logic.trim().slice(0, 4000) + '\n\nJOB:\n' + JSON.stringify({ e: job.e, name: job.name, customer: job.customer, product: job.product, category: job.category, tier: job.tier, proof_type: job.proof_type, status: job.status_label, hard: job.hard, creative: job.creative, design_fee: job.design_fee, expedite: job.service === 'expedite', due: job.complete_by, created: job.created, notes: (job.notes || '').slice(0, 600), team_on_it: job.others }) +
+    const sys = 'You assign print jobs to designers at AxiomPrint. Nova has already scored every designer with its built-in rules (history, strong sides, hardness, creativity, load, hours). The OWNER\'S RULES below take priority over those scores wherever they apply. Return ONLY JSON: {"picks":[{"user_id":n,"score":0-100,"note":"short reason citing the owner rule, or empty"}],"busy":false,"busy_reason":""} — every candidate once, scores changed only where a rule applies, note only when you changed something. Set busy to true ONLY when the OVERLOAD RULES say nobody should take this job right now (then the job stays in the queue and the team is emailed); give the reason in one sentence.';
+    const user = 'OWNER\'S RULES:\n' + (logic.slice(0, 4000) || '(none)') + '\n\nOVERLOAD RULES (when is everyone busy):\n' + (overload.slice(0, 2000) || '(none)') + '\n\nJOB:\n' + JSON.stringify({ e: job.e, name: job.name, customer: job.customer, product: job.product, category: job.category, tier: job.tier, proof_type: job.proof_type, status: job.status_label, hard: job.hard, creative: job.creative, design_fee: job.design_fee, expedite: job.service === 'expedite', due: job.complete_by, created: job.created, notes: (job.notes || '').slice(0, 600), team_on_it: job.others }) +
       '\n\nDESIGNERS:\n' + JSON.stringify(prof) + '\n\nNOVA\'S SCORES:\n' + JSON.stringify(cand) + '\n\nTime now (Los Angeles): ' + new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
     try {
       const r = await anthropic.messages.create({ model: model || 'claude-haiku-4-5', max_tokens: 900, system: sys, messages: [{ role: 'user', content: user }] });
@@ -222,12 +248,19 @@ module.exports = function mountDesignerAi(app, deps) {
       const out = JSON.parse(m[0]); const by = {}; (out.picks || []).forEach(p => { by[p.user_id] = p; });
       const adj = picks.map(p => { const a = by[p.user_id]; if (!a) return p; const sc = Math.max(0, Math.min(100, Math.round(Number(a.score)))); const changed = !isNaN(sc) && sc !== p.score; return Object.assign({}, p, { score: isNaN(sc) ? p.score : sc, why: changed || a.note ? p.why.concat(['your rule: ' + (a.note || ('score ' + p.score + ' → ' + sc))]) : p.why, ai_changed: changed }); });
       adj.sort((a, b) => b.score - a.score || a.active_jobs - b.active_jobs);
-      return { picks: adj, ai: true };
+      return { picks: adj, ai: true, busy: out.busy === true, busy_reason: out.busy === true ? String(out.busy_reason || '').slice(0, 300) : '' };
     } catch (e) { errlog('ai adjust', e.message); return { picks, ai: false, ai_error: e.message }; }
   }
-  app.get('/api/designer/settings', ...guard, async (req, res) => { try { const r = await dbGet('SELECT * FROM da_settings WHERE key = ?', ['match_logic']); res.json({ ok: true, match_logic: r ? r.value : '', updated_by: r ? r.updated_by : null, updated_at: r ? r.updated_at : null }); } catch (e) { res.json({ ok: false, error: e.message }); } });
+  app.get('/api/designer/settings', ...guard, async (req, res) => { try { const r = await dbGet('SELECT * FROM da_settings WHERE key = ?', ['match_logic']); const o = await dbGet('SELECT * FROM da_settings WHERE key = ?', ['overload_logic']); const t = await dbGet('SELECT * FROM da_settings WHERE key = ?', ['overload_to']);
+    res.json({ ok: true, match_logic: r ? r.value : '', updated_by: r ? r.updated_by : null, updated_at: r ? r.updated_at : null, overload_logic: o ? o.value : OVERLOAD_DEFAULT, overload_default: !o, overload_to: t ? t.value : OVERLOAD_TO_DEFAULT, overload_updated_at: o ? o.updated_at : null, overload_updated_by: o ? o.updated_by : null }); } catch (e) { res.json({ ok: false, error: e.message }); } });
   app.post('/api/designer/settings', ...guard, async (req, res) => {
-    try { await dbRun('INSERT INTO da_settings (key, value, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = excluded.updated_at', ['match_logic', String(req.body.match_logic || '').slice(0, 8000), userId(req), nowIso()]); res.json({ ok: true }); }
+    try {
+      const put = (k, v) => dbRun('INSERT INTO da_settings (key, value, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = excluded.updated_at', [k, v, userId(req), nowIso()]);
+      const b = req.body || {};
+      if (b.match_logic != null) await put('match_logic', String(b.match_logic).slice(0, 8000));
+      if (b.overload_logic != null) await put('overload_logic', String(b.overload_logic).slice(0, 4000));
+      if (b.overload_to != null) await put('overload_to', String(b.overload_to).split(/[,;\s]+/).map(x => x.trim()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).join(', '));
+      res.json({ ok: true }); }
     catch (e) { res.json({ ok: false, error: e.message }); }
   });
   app.post('/api/designer/match', ...guard, async (req, res) => {
@@ -236,8 +269,13 @@ module.exports = function mountDesignerAi(app, deps) {
       const job = (await queueAll(true, 0)).find(j => j.id === id);
       if (!job) return res.json({ ok: false, error: 'E' + id + ' is not in the queue any more' });
       const base = await match(job);
-      const r = await aiAdjust(job, base, await getSetting('match_logic'));
-      res.json({ ok: true, job, picks: r.picks.slice(0, 4), ai: r.ai, ai_error: r.ai_error || null });
+      const overload = (await getSetting('overload_logic')) || OVERLOAD_DEFAULT;
+      const r = await aiAdjust(job, base, await getSetting('match_logic'), overload);
+      let busy = null;
+      if (r.busy) busy = { reason: r.busy_reason || 'your Overload Logic says nobody should take this now' };
+      else if (!r.ai && builtinBusy(base)) busy = { reason: 'every designer who takes jobs is at their max or off shift' };
+      if (busy) { const m = await markBusy(job, busy.reason, userId(req)); Object.assign(busy, m); }
+      res.json({ ok: true, job, picks: r.picks.slice(0, 4), ai: r.ai, ai_error: r.ai_error || null, busy });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // a pick made in Nova — kept here only (the CRM is not changed) until the web team gives us an assignment endpoint
@@ -245,7 +283,7 @@ module.exports = function mountDesignerAi(app, deps) {
     try {
       const eid = parseInt(req.body.estimate_id), uid = parseInt(req.body.user_id); if (!eid || !uid) return res.json({ ok: false, error: 'Job and designer, please' });
       const d = await dbGet('SELECT * FROM da_designers WHERE user_id = ?', [uid]); if (!d) return res.json({ ok: false, error: 'No such designer' });
-      await dbRun("UPDATE da_assign SET status = 'replaced' WHERE estimate_id = ? AND status = 'assigned'", [eid]);
+      await dbRun("UPDATE da_assign SET status = 'replaced' WHERE estimate_id = ? AND status IN ('assigned', 'busy')", [eid]);
       await dbRun('INSERT INTO da_assign (estimate_id, user_id, score, reason, picked_by, at) VALUES (?,?,?,?,?,?)', [eid, uid, parseInt(req.body.score) || null, String(req.body.reason || '').slice(0, 500), userId(req), nowIso()]);
       res.json({ ok: true, designer: { user_id: d.user_id, name: d.name, photo: d.photo } });
     } catch (e) { res.json({ ok: false, error: e.message }); }
