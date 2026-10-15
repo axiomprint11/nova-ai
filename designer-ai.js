@@ -39,7 +39,14 @@ module.exports = function mountDesignerAi(app, deps) {
     }
   }
   let teamAt = 0;
+  // 1.20.31: the four CRM load queries are cached for 45 s — a Match read them twice (scoring + the model's profiles)
+  let teamCache = null, teamCacheAt = 0;
+  const dropTeamCache = () => { teamCache = null; };
   async function designers() {
+    if (teamCache && Date.now() - teamCacheAt < 45000) return teamCache;
+    const out = await designersFresh(); teamCache = out; teamCacheAt = Date.now(); return out;
+  }
+  async function designersFresh() {
     if (Date.now() - teamAt > 10 * 60000) { try { await syncTeam(); teamAt = Date.now(); } catch (e) { errlog('team sync', e.message); } }
     const rows = await dbAll('SELECT * FROM da_designers ORDER BY name');
     // the live load: jobs in the prepress stage assigned to each designer (not canceled), and what they finished in 30 days
@@ -60,7 +67,7 @@ module.exports = function mountDesignerAi(app, deps) {
   const PROOF_LABEL = { proof_checking: 'Proof Checking', insta_proofed: 'Insta Proofed', proof_sent: 'Proof Sent', upload_files: 'Upload Files', waiting_files: 'Waiting for Files', rejected_edits: 'Rejected — edits', rejected_reupload: 'Rejected — re-upload', approved: 'Approved', hard_copy_approved: 'Hard copy approved', insta_proof_manual: 'Insta Proof Manual' };
   // "id|name|last|photo;;…" → [{user_id, name, last_name, photo}] (1.20.20: the Team on it cell shows faces)
   const teamOf = (s) => !s ? [] : String(s).split(';;').map(x => { const [id, name, last, ph] = x.split('|'); return { user_id: Number(id), name: name || '', last_name: last || '', photo: staffPhoto(ph) }; }).filter(t => t.user_id);
-  async function queue(tier, all) {
+  async function queue(tier, all, onlyId) {
     const tu = TIER_USERS[tier] || TIER_USERS[1];
     const rows = await runQuery(
       "SELECT e.id, e.estimate_name, e.created, e.complete_by, e.prepress_status, e.estimate_invoiceid inv, e.estimate_productid product_id, e.design_price, e.prepress_notes, e.prepress_internal_notes, p.title product, p.image product_image, pc.title category, pc.id category_id, " +
@@ -74,7 +81,7 @@ module.exports = function mountDesignerAi(app, deps) {
       "(SELECT COUNT(*) FROM estimate e2 WHERE e2.estimate_productid = e.estimate_productid AND e2.created >= DATE_SUB(NOW(), INTERVAL 180 DAY)) product_180 " +
       "FROM estimate e JOIN estimate_team_members m ON m.estimate_id = e.id AND m.user_id = " + tu + " JOIN estimate_stage s ON s.estimate_id = e.id " +
       "LEFT JOIN product p ON p.id = e.estimate_productid LEFT JOIN productcategory pc ON pc.id = p.product_category_id LEFT JOIN customer c ON c.id = e.estimate_clientid " +
-      "WHERE s.estimate_stage = 'prepress' AND s.estimate_substage <> 'canceled'" + (all ? '' : ' AND e.estimate_invoiceid > 0') + " ORDER BY e.created DESC LIMIT 300");
+      "WHERE s.estimate_stage = 'prepress' AND s.estimate_substage <> 'canceled'" + (all ? '' : ' AND e.estimate_invoiceid > 0') + (onlyId ? ' AND e.id = ' + parseInt(onlyId) : '') + " ORDER BY e.created DESC LIMIT 300");
     const ids = rows.map(r => r.id);
     const mine = {}, busy = {}; if (ids.length) (await dbAll('SELECT estimate_id, user_id, score, reason, at, picked_by, status FROM da_assign WHERE status IN (\'assigned\', \'busy\') AND estimate_id IN (' + ids.map(() => '?').join(',') + ')', ids)).forEach(r => { if (r.status === 'busy') busy[r.estimate_id] = r; else mine[r.estimate_id] = r; });
     return rows.map(r => ({
@@ -191,14 +198,14 @@ module.exports = function mountDesignerAi(app, deps) {
       await dbRun('UPDATE da_designers SET skills = ?, notes = ?, max_active = ?, tier2 = ?, active = ?, hard_level = ?, creative_level = ?, shift_start = ?, shift_end = ?, work_days = ?, comm_level = ?, languages = ?, updated_at = ? WHERE user_id = ?',
         [String(b.skills != null ? b.skills : cur.skills || '').slice(0, 600), String(b.notes != null ? b.notes : cur.notes || '').slice(0, 1000), Math.max(1, parseInt(b.max_active) || cur.max_active || 25), b.tier2 != null ? (b.tier2 ? 1 : 0) : cur.tier2, b.active != null ? (b.active ? 1 : 0) : cur.active,
           lvl(b.hard_level, cur.hard_level), lvl(b.creative_level, cur.creative_level), tm(b.shift_start, cur.shift_start), tm(b.shift_end, cur.shift_end), b.work_days != null ? String(b.work_days).split(',').map(x => parseInt(x)).filter(x => x >= 1 && x <= 7).join(',') || null : cur.work_days, lvl(b.comm_level, cur.comm_level), b.languages != null ? String(b.languages).split(',').map(x => x.trim()).map(x => x.charAt(0).toUpperCase() + x.slice(1).toLowerCase()).filter(x => LANGS.indexOf(x) > -1).join(',') : cur.languages, nowIso(), id]);
-      res.json({ ok: true });
+      dropTeamCache(); res.json({ ok: true });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // both tiers in one list (1.20.15); ?tier=1|2 narrows. A job parked on both placeholders shows once, as Tier 2.
-  async function queueAll(all, tier) {
+  async function queueAll(all, tier, onlyId) {
     const want = tier === 1 || tier === 2 ? [tier] : [2, 1];
     const seen = new Map();
-    for (const t of want) for (const j of await queue(t, all)) if (!seen.has(j.id)) seen.set(j.id, j);
+    for (const t of want) for (const j of await queue(t, all, onlyId)) if (!seen.has(j.id)) seen.set(j.id, j);
     return Array.from(seen.values()).sort((a, b) => String(b.created).localeCompare(String(a.created)));
   }
   app.get('/api/designer/queue', ...guard, async (req, res) => {
@@ -235,6 +242,7 @@ module.exports = function mountDesignerAi(app, deps) {
   }
   async function aiAdjust(job, picks, logic, overload) {
     overload = (overload || '').trim(); logic = (logic || '').trim();
+    if (overload === OVERLOAD_DEFAULT.trim()) overload = '';   // Nova's own default is already builtinBusy() — no model call for it
     if (!anthropic || (!logic && !overload)) return { picks, ai: false };
     const cand = picks.map(p => ({ user_id: p.user_id, name: p.name + ' ' + (p.last_name || ''), score: p.score, reasons: p.why, active_jobs: p.active_jobs }));
     const team = await designers();
@@ -266,7 +274,8 @@ module.exports = function mountDesignerAi(app, deps) {
   app.post('/api/designer/match', ...guard, async (req, res) => {
     try {
       const id = parseInt(req.body.estimate_id); if (!id) return res.json({ ok: false, error: 'Which job?' });
-      const job = (await queueAll(true, 0)).find(j => j.id === id);
+      const t0 = Date.now();
+      const job = (await queueAll(true, 0, id)).find(j => j.id === id);   // 1.20.31: one job, not the whole queue
       if (!job) return res.json({ ok: false, error: 'E' + id + ' is not in the queue any more' });
       const base = await match(job);
       const overload = (await getSetting('overload_logic')) || OVERLOAD_DEFAULT;
@@ -275,7 +284,7 @@ module.exports = function mountDesignerAi(app, deps) {
       if (r.busy) busy = { reason: r.busy_reason || 'your Overload Logic says nobody should take this now' };
       else if (!r.ai && builtinBusy(base)) busy = { reason: 'every designer who takes jobs is at their max or off shift' };
       if (busy) { const m = await markBusy(job, busy.reason, userId(req)); Object.assign(busy, m); }
-      res.json({ ok: true, job, picks: r.picks.slice(0, 4), ai: r.ai, ai_error: r.ai_error || null, busy });
+      res.json({ ok: true, job, picks: r.picks.slice(0, 4), ai: r.ai, ai_error: r.ai_error || null, busy, ms: Date.now() - t0 });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   // a pick made in Nova — kept here only (the CRM is not changed) until the web team gives us an assignment endpoint
@@ -285,6 +294,7 @@ module.exports = function mountDesignerAi(app, deps) {
       const d = await dbGet('SELECT * FROM da_designers WHERE user_id = ?', [uid]); if (!d) return res.json({ ok: false, error: 'No such designer' });
       await dbRun("UPDATE da_assign SET status = 'replaced' WHERE estimate_id = ? AND status IN ('assigned', 'busy')", [eid]);
       await dbRun('INSERT INTO da_assign (estimate_id, user_id, score, reason, picked_by, at) VALUES (?,?,?,?,?,?)', [eid, uid, parseInt(req.body.score) || null, String(req.body.reason || '').slice(0, 500), userId(req), nowIso()]);
+      dropTeamCache();
       res.json({ ok: true, designer: { user_id: d.user_id, name: d.name, photo: d.photo } });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
