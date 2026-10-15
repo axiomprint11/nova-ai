@@ -68,15 +68,15 @@
   .da-jl b { color: var(--ink); } .da-notebox { white-space: pre-wrap; font: 11.5px/1.4 inherit; background: #fffbeb; border: 1px solid #fde68a; border-radius: 7px; padding: 6px 8px; margin-top: 4px; max-width: 420px; max-height: 160px; overflow: auto; }
   .da-form input[type=range] { width: 120px; vertical-align: middle; } .da-form input[type=time] { width: auto; }
   /* 1.20.18: the designer edit form, spread out */
-  .da-ef { display: grid; grid-template-columns: 1fr 340px; gap: 14px 28px; padding: 6px 4px 10px; font-size: 13.5px; }
+  .da-ef { display: flex; flex-direction: column; gap: 18px; max-width: 760px; padding: 6px 4px 10px; font-size: 13.5px; }   /* 1.20.19: one column, on the left */
   .da-ef-l { display: block; font-weight: 600; font-size: 13.5px; margin-bottom: 4px; } .da-ef-h { font-size: 12px; color: var(--muted); margin-bottom: 6px; line-height: 1.4; }
   .da-ef textarea, .da-ef input[type=text], .da-ef input:not([type]) { width: 100%; box-sizing: border-box; font: 13.5px/1.4 inherit; border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
-  .da-ef-side { display: flex; flex-direction: column; gap: 14px; } .da-ef-row label { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; }
-  .da-ef-row input[type=checkbox] { width: 17px; height: 17px; } .da-ef-row input[type=number] { width: 72px; font: 13.5px inherit; border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; }
+  .da-ef-side { display: flex; flex-direction: column; gap: 16px; } .da-ef-row label { display: inline-flex; align-items: center; gap: 9px; font-size: 13.5px; font-weight: 600; line-height: 1; margin: 0; }
+  .da-ef-row input[type=checkbox] { width: 17px; height: 17px; margin: 0; flex: none; vertical-align: middle; position: relative; top: 0; } .da-ef-row input[type=number] { width: 72px; font: 13.5px inherit; border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; }
   .da-ef-sl input[type=range] { width: 100%; margin: 6px 0 2px; } .da-ef-sl b { color: var(--indigo-dark); }
   .da-ef-time { display: flex; align-items: center; gap: 8px; margin: 6px 0; } .da-ef-time input { font: 13.5px inherit; border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; }
-  .da-ef-days { display: flex; gap: 10px; flex-wrap: wrap; } .da-ef-days label { font-weight: 500; font-size: 12.5px; gap: 4px; }
-  .da-ef-foot { grid-column: 1 / -1; display: flex; gap: 8px; } .da-ef-foot .bk-btn { padding: 8px 16px; font-size: 13px; }
+  .da-ef-days { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 4px; } .da-ef-days label { font-weight: 500; font-size: 13px; gap: 5px; }
+  .da-ef-foot { display: flex; gap: 8px; } .da-ef-foot .bk-btn { padding: 8px 16px; font-size: 13px; }
   .da-p { font-size: 13.5px; line-height: 1.5; color: var(--ink-soft); margin: 0 0 10px; } #daLogic { width: 100%; min-height: 320px; resize: vertical; box-sizing: border-box; font: 13.5px/1.5 inherit; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
   .da-h3 { font-size: 13px; margin: 22px 0 6px; } .da-ul { font-size: 12.5px; color: var(--ink-soft); line-height: 1.55; padding-left: 18px; margin: 0; } .da-ul li { margin-bottom: 3px; }
   .da-sub-ai { font-size: 11.5px; color: #5b21b6; font-weight: 600; }
