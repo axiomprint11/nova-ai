@@ -135,7 +135,7 @@
       getToken: () => token, greeting: j.greeting,
       // Signed in: Add to Cart goes straight into the website cart (Nova's server
       // does it); the page is told so it can refresh its cart count.
-      signedIn: () => signedIn, onCartAdded: cartChanged,
+      signedIn: () => signedIn, onCartAdded: cartChanged, guestCart: guestCart,
       contact: () => j.customer ? { name: j.customer.name || '', email: j.customer.email || '' } : null,
       suggestions: j.customer
         ? [['Status update of my last order', 'Status update of my last order'], ['Business card prices', 'How much are 500 business cards?']]
@@ -230,6 +230,26 @@
   function cartChanged() {
     parentSay({ type: 'nova-client:add-to-cart', id: Math.random().toString(36).slice(2), item: { alreadyAdded: true } });
   }
+  // 1.20.109: a GUEST's cart lives in the page (docs/NOVA_GUEST_CART.md). The site announces nova-client:cart-ready when it can
+  // save items; the chat hands it the server-priced item (nova-client:add-to-cart), asks for the lines (cart-get → cart-list) and
+  // removes / updates lines (cart-remove / cart-update → cart-result). Every call carries an id and resolves on the matching reply.
+  let cartReady = false;
+  const cartWaits = new Map();
+  function cartAsk(msg, timeoutMs) {
+    return new Promise((resolve) => {
+      const id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      const t = setTimeout(() => { cartWaits.delete(id); resolve({ ok: false, error: 'The page did not answer.' }); }, timeoutMs || 12000);
+      cartWaits.set(id, (d) => { clearTimeout(t); cartWaits.delete(id); resolve(d); });
+      parentSay(Object.assign({ id: id }, msg));
+    });
+  }
+  const guestCart = {
+    ready: () => cartReady && !signedIn,
+    add: (item) => cartAsk({ type: 'nova-client:add-to-cart', item: Object.assign({}, item, { nova_request_id: item.nova_request_id || Math.random().toString(36).slice(2) }) }),
+    get: () => cartAsk({ type: 'nova-client:cart-get' }, 2500),
+    remove: (lineId) => cartAsk({ type: 'nova-client:cart-remove', lineId: lineId }),
+    update: (lineId, changes) => cartAsk({ type: 'nova-client:cart-update', lineId: lineId, changes: changes })
+  };
 
   // ---- Sign in from the chat ----
   // Guests see a Sign in bar. If the website can sign a customer in for us
@@ -285,6 +305,8 @@
   window.addEventListener('message', async (ev) => {
     if (PARENTS.indexOf(ev.origin) === -1 || !ev.data) return;
     if (ev.data.type === 'nova-client:login-ready') { loginReady = true; return; }
+    if (ev.data.type === 'nova-client:cart-ready') { cartReady = true; return; }
+    if ((ev.data.type === 'nova-client:cart-result' || ev.data.type === 'nova-client:cart-list') && ev.data.id && cartWaits.has(ev.data.id)) { cartWaits.get(ev.data.id)(ev.data); return; }
     if (ev.data.type === 'nova-client:page') {
       pageNow = { url: String(ev.data.url || '').slice(0, 500), title: String(ev.data.title || '').slice(0, 150),
                   visit: ev.data.visit && typeof ev.data.visit === 'object' ? ev.data.visit : null,

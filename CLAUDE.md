@@ -318,7 +318,20 @@ public options only, no model call) and saves a `role='note'` row that is folded
 never public). The chat sends `files: [ref]`; only the uploader's unsent files attach. History re-sends pictures/PDFs
 for the latest two file messages within a byte/page budget; if the API refuses one, the files are marked `blocked`
 and the answer is retried text-only. Admins get files at `/api/admin/client-bot/files/:ref{/preview}`. After an add the chat posts
-`nova-client:add-to-cart {item:{alreadyAdded:true}}` so the website refreshes its cart count.
+`nova-client:add-to-cart {item:{alreadyAdded:true}}` so the website refreshes its cart count. **Guest cart (1.20.109, `docs/NOVA_GUEST_CART.md`)**: a visitor who is NOT signed in can add too — the cart lives in their browser (the
+site's IndexedDB) and moves to their account when they sign in. `addToCart()` prices a guest exactly as a customer (`priceCard` with no
+cid) and returns `{ guest, summary, item }` — `guestItem(payload)`: `nova_request_id` (the page adds one id once), `product_id`, `price` (ours),
+`selectedOption` (the full option objects keyed by variable title), `selectedMetric`, `jobName`, `customSize` for a custom size,
+`versionObject` / `totalQuantity`, `customQuantity`; the page loads the product itself. `POST /api/client-bot/cart` answers `{ guest: true, item }`
+and the chat (`doAdd`) hands it to the page: client-chat.html's `guestCart` (`add` / `get` / `remove` / `update` over `nova-client:add-to-cart`
+/ `cart-get` → `cart-list` / `cart-remove` / `cart-update` → `cart-result`, each with an id; `ready()` = the site sent `nova-client:cart-ready`
+and nobody is signed in), the embed relays the three new messages to `NovaClientChat.getCart / removeFromCart / updateCartItem`. The model's
+`add_to_cart` for a guest pushes a `cart_add_guest` card that the live answer carries out (`runGuestCards`: "Adding to your cart…" → "✓ Added
+to Cart" or "Not added" + the page's reason); every guest message carries the browser cart (`cart_lines` from `cart-get`, ≤ 30) which the
+server puts in front of the message as a `[CART in their browser: #14 Business Cards × 500 $54.25 "job" · …]` note and gives the tools
+`remove_cart_item {line_id}` / `update_cart_item {line_id, job_name?, notes?, art_notes?}` (guests only; `ctx.cartLines`; a `cart_action` card
+the chat relays — options / size / quantity changes are remove + add again). The guest SIGN-IN line and rule 17 say a guest never has to sign in
+to add. Admin preview still returns `preview` + `would_send`.
 **Sign in from the chat**: the header's Sign in button (guests) opens the website login in a window (`loginUrl`), and the loader's
 `followLogin()` (storage event + 2.5 s poll; `NovaClientChatAPI.loginChanged()`) signs the chat in when `axiom-print-app`
 changes; if the site defines `NovaClientChat.login(email, password) → token`, an in-chat form is shown instead and the

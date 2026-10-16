@@ -99,6 +99,12 @@
         (c.checkout && !c.preview ? '<a href="' + esc(c.checkout) + '" target="_blank" rel="noopener">Check out \u2197</a>' : '') +
       '</div>';
     }
+    if (c.type === 'cart_add_guest') {     /* 1.20.109: the page saves it; a live answer runs it (runGuestCards), history shows it as done */
+      const what = Number(c.quantity || 0).toLocaleString() + ' ' + (c.product || '') + (c.versions && c.versions.length ? ' (' + c.versions.length + ' versions)' : '');
+      return '<div class="cc-added cc-guest" data-gadd="' + esc((c.item && c.item.nova_request_id) || '') + '" title="' + esc(what + (c.job_name ? ' \u2014 job: ' + c.job_name : '')) + '"><b>' + (c.pending ? 'Adding to your cart\u2026' : '\u2713 Added to Cart') + '</b>' +
+        '<span class="cc-added-what">' + esc(what) + '</span><span class="cc-added-p">' + money(c.price) + '</span>' + (c.checkout && !c.pending ? '<a href="' + esc(c.checkout) + '" target="_blank" rel="noopener">Check out \u2197</a>' : '') + '</div>';
+    }
+    if (c.type === 'cart_action') return '<div class="cc-evt cc-cartact" data-gact="' + esc(c.action) + '" data-gline="' + esc(c.line_id) + '">' + (c.action === 'remove' ? '\ud83d\uded2 Removing ' : '\ud83d\uded2 Updating ') + esc(c.title || 'the line') + ' in your cart\u2026</div>';
     if (c.type === 'projects') return '<div class="cc-projs">' + (c.projects || []).map(project).join('') + '</div>';
     if (c.type === 'orders') {
       return '<div class="cc-orders">' + (c.orders || []).map(o =>
@@ -518,6 +524,16 @@
             ? ' You can <a href="' + esc(item.url) + '" target="_blank" rel="noopener">add it on the product page</a>.' : '');
           go.disabled = false; go.textContent = 'Try again'; return;
         }
+        // 1.20.109: a guest — the page saves the item in the browser cart; the chat waits for its answer
+        if (j.guest) {
+          const gc = opts.guestCart;
+          if (!gc || !gc.ready()) { msg.innerHTML = 'The cart on this page is not ready yet.' + (item.url && item.url !== '#' ? ' You can <a href="' + esc(item.url) + '" target="_blank" rel="noopener">add it on the product page</a>.' : ''); go.disabled = false; go.textContent = 'Try again'; return; }
+          go.textContent = 'Saving\u2026';
+          const res = await gc.add(j.item);
+          logEvent({ kind: 'cart', outcome: res.ok ? 'added' : 'failed', product: (j.added && j.added.product) || item.product, quantity: (j.added && j.added.quantity) || item.quantity, price: (j.added && j.added.price) || item.price, job_name: (j.added && j.added.job_name) || job.value, error: res.ok ? undefined : (res.error || 'the page refused it'), guest: true });
+          if (!res.ok) { msg.innerHTML = esc(res.error || 'That could not be added.') + (item.url && item.url !== '#' ? ' You can <a href="' + esc(item.url) + '" target="_blank" rel="noopener">add it on the product page</a>.' : ''); go.disabled = false; go.textContent = 'Try again'; return; }
+          j.preview = false; j.job_name_saved = undefined;
+        }
         row.remove();
         a.classList.add('done'); a.textContent = j.preview ? 'Preview \u2713' : '\u2713 In cart';
         if (!j.preview && j.cart) { a.dataset.cart = j.cart; a.title = 'Go to your cart'; IN_CART.set(cartKey(item), j.cart); }
@@ -661,6 +677,26 @@
         b.innerHTML = text + cardsNow.map(c => c.type === 'price' ? quote(c, R(c)) : card(c)).join('') + projNote;
         if (live && merged.length) paintPane();
       }
+      if (live) runGuestCards(b, cardsNow);
+    }
+    // 1.20.109: the guest-cart cards of a fresh answer are carried out through the page (add / remove / update) and the line updated
+    async function runGuestCards(b, cardsNow) {
+      const gc = opts.guestCart; if (!gc) return;
+      for (const c of cardsNow) {
+        if (c.type === 'cart_add_guest' && c.item) {
+          const el = b.querySelector('[data-gadd="' + (c.item.nova_request_id || '') + '"]'); if (!el) continue;
+          el.querySelector('b').textContent = 'Adding to your cart\u2026'; const link = el.querySelector('a'); if (link) link.remove();
+          const res = gc.ready() ? await gc.add(c.item) : { ok: false, error: 'The cart on this page is not ready.' };
+          logEvent({ kind: 'cart', outcome: res.ok ? 'added' : 'failed', product: c.product, quantity: c.quantity, price: c.price, job_name: c.job_name, error: res.ok ? undefined : (res.error || 'the page refused it'), guest: true });
+          if (res.ok) { el.querySelector('b').textContent = '\u2713 Added to Cart'; if (c.checkout) el.insertAdjacentHTML('beforeend', '<a href="' + esc(c.checkout) + '" target="_blank" rel="noopener">Check out \u2197</a>'); if (c.job_name) usedJobs.add(String(c.job_name).toLowerCase()); }
+          else { el.classList.add('err'); el.querySelector('b').textContent = 'Not added'; el.insertAdjacentHTML('beforeend', '<span class="cc-err">' + esc(res.error || 'The page could not add it.') + '</span>'); }
+        }
+        if (c.type === 'cart_action') {
+          const el = b.querySelector('[data-gact="' + c.action + '"][data-gline="' + c.line_id + '"]'); if (!el) continue;
+          const res = !gc.ready() ? { ok: false, error: 'The cart on this page is not ready.' } : c.action === 'remove' ? await gc.remove(c.line_id) : await gc.update(c.line_id, c.changes || {});
+          el.textContent = res.ok ? ('\ud83d\uded2 ' + (c.action === 'remove' ? 'Removed ' : 'Updated ') + (c.title || 'the line') + (c.action === 'remove' ? ' from' : ' in') + ' your cart') : ('\u26a0 ' + (res.error || 'That could not be changed.'));
+        }
+      }
     }
     // History: show an earlier conversation and carry on from it. Prices in it are
     // from that day; Edit -> Update price (or asking again) gives today's.
@@ -734,10 +770,13 @@
       }
       const b = add('ai', '<div class="typing-dots"><span></span><span></span><span></span></div>');
       try {
+        /* 1.20.109: a guest's browser cart goes with the message, so NovaAI answers "what is in my cart" and can change lines */
+        let cartLines;
+        if (opts.guestCart && opts.guestCart.ready()) { const cl = await opts.guestCart.get(); if (cl && cl.ok && Array.isArray(cl.lines)) cartLines = cl.lines.slice(0, 30); }
         const r = await fetch('/api/client-bot/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (opts.getToken ? opts.getToken() : '') },
-          body: JSON.stringify(Object.assign({ chat_id: chatId, message: text, files: sending.map(f => f.id) }, pageBody(), opts.extraBody ? opts.extraBody() : {}))
+          body: JSON.stringify(Object.assign({ chat_id: chatId, message: text, files: sending.map(f => f.id) }, cartLines ? { cart_lines: cartLines } : {}, pageBody(), opts.extraBody ? opts.extraBody() : {}))
         });
         const j = await r.json().catch(() => ({}));
         if (!j.ok) { b.innerHTML = '<p class="cc-err">' + esc(j.error || 'Something went wrong. Please try again.') + '</p>'; }

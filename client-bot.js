@@ -699,7 +699,7 @@ module.exports = function mountClientBot(app, deps) {
     input_schema: { type: 'object', properties: {} }
   }, {
     name: 'add_to_cart',
-    description: 'Put a priced product into the signed-in customer\'s axiomprint.com cart. ONLY after you read the order back (product, key options, quantity, job name, price) and the customer said yes. Same product_id / options / quantity / versions / size you priced it with.',
+    description: 'Put a priced product into the customer\'s axiomprint.com cart \u2014 signed in (their account cart) OR a guest (the cart in their browser, moved to their account when they sign in). ONLY after you read the order back (product, key options, quantity, job name, price) and the customer said yes. Same product_id / options / quantity / versions / size you priced it with.',
     input_schema: { type: 'object', properties: {
       product_id: { type: 'integer' },
       options: { type: 'object', additionalProperties: { type: 'string' }, description: 'The same options you priced it with.' },
@@ -711,6 +711,14 @@ module.exports = function mountClientBot(app, deps) {
       job_name: { type: 'string', description: 'Required by checkout. Suggest one from what the customer told you, with the quantity, e.g. "Grand Opening Cards - 500x"; different from earlier items in this chat. If they do not care, the product name and quantity.' },
       notes: { type: 'string' }
     }, required: ['product_id', 'job_name'] }
+  }, {
+    name: 'remove_cart_item',
+    description: 'GUESTS ONLY (not signed in): remove one line from the cart in their browser. line_id comes from the [CART …] note on their message. Confirm which line first when it is not obvious. Signed-in customers change their cart on the cart page.',
+    input_schema: { type: 'object', properties: { line_id: { type: 'integer' } }, required: ['line_id'] }
+  }, {
+    name: 'update_cart_item',
+    description: 'GUESTS ONLY: change the job name, notes or artwork notes of one line of the cart in their browser (line_id from the [CART …] note). Options, size, quantity or versions cannot be changed \u2014 for those remove the line and add_to_cart again with the new specs.',
+    input_schema: { type: 'object', properties: { line_id: { type: 'integer' }, job_name: { type: 'string' }, notes: { type: 'string' }, art_notes: { type: 'string' } }, required: ['line_id'] }
   }, {
     name: 'my_orders',
     description: 'The signed-in customer\'s own recent orders and quotes with their current status. Only works when the customer is signed in.',
@@ -1193,9 +1201,23 @@ module.exports = function mountClientBot(app, deps) {
   }
   // Price it again and add it. input: product_id, options, quantity | versions,
   // width, height, job_name, notes.
+  // 1.20.109: a GUEST's cart lives in their browser (docs/NOVA_GUEST_CART.md). Nova prices the item exactly as for a customer and
+  // hands the page the item to save: nova_request_id (the page adds the same id once), product_id, price (ours, never the model's),
+  // selectedOption (full option objects keyed by the variable titles), selectedMetric, jobName, customSize for a custom size,
+  // versionObject / totalQuantity for versions. The page fills in the product itself.
+  function guestItem(payload) {
+    const o = { nova_request_id: require('crypto').randomBytes(6).toString('hex'), product_id: payload.productId, price: payload.price, selectedOption: payload.selectedOption,
+      selectedMetric: payload.selectedMetric || 'inch', versionObject: payload.versionObject || [], totalQuantity: payload.totalQuantity || 0 };
+    if (payload.jobName) o.jobName = payload.jobName;
+    if (payload.artNotes) o.artNotes = payload.artNotes;
+    const sz = payload.selectedOption && payload.selectedOption.Size;
+    if (sz && /custom/i.test(String(sz.title || '')) && payload.customSize && payload.customSize.width) o.customSize = { width: Number(payload.customSize.width), height: Number(payload.customSize.height), depth: 0 };
+    if (payload.customQuantity) o.customQuantity = payload.customQuantity;
+    return o;
+  }
   async function addToCart(input, who, ctx) {
-    if (!who.customer) return { needs_signin: true };
-    const cid = parseInt(who.customer.id);
+    const guest = !who.customer;
+    const cid = guest ? null : parseInt(who.customer.id);
     const vs = Array.isArray(input.versions) ? input.versions : [];
     const one = Object.assign({}, input, { quantities: undefined,
       quantity: vs.length > 1 ? undefined : (parseInt(input.quantity) || (vs[0] && parseInt(vs[0].quantity)) || undefined),
@@ -1213,6 +1235,7 @@ module.exports = function mountClientBot(app, deps) {
       versions: card.versions || undefined, job_name: jobName,
       options: card.specs.map(sp => sp.field + ': ' + sp.value) };
     if (who.source === 'preview') return { preview: true, summary: summary, payload: payload };
+    if (guest) return { guest: true, summary: summary, item: guestItem(payload) };
     let r = await cartCall('POST', '/cart/add-item', payload);
     if (r.status === 404 && /user does not exist/i.test(r.text)) {
       // First time this customer uses the cart system: set them up, then add once more.
@@ -1803,11 +1826,22 @@ module.exports = function mountClientBot(app, deps) {
         contactPerson: who.customer.manager || (await contactFromDb(cid)) || null,
         account_pages: { settings: SITE_URLS.account, order_history: SITE_URLS.orders } };
     }
+    if (name === 'remove_cart_item' || name === 'update_cart_item') {
+      if (!ctx || !Array.isArray(ctx.cartLines)) return { error: who.customer ? 'Signed-in customers change their cart on the cart page: ' + SITE_URLS.cart + ' \u2014 say so.' : 'No cart is available in this conversation (the website page has not shared one). Point them to the cart page: ' + SITE_URLS.cart };
+      const lid = parseInt(input.line_id); const line = ctx.cartLines.find(l => Number(l.line_id) === lid);
+      if (!line) return { error: 'No line ' + input.line_id + ' in their cart. The lines are: ' + ctx.cartLines.map(l => '#' + l.line_id + ' ' + (l.title || '')).join(', ') };
+      const changes = {}; if (input.job_name != null) changes.jobName = String(input.job_name).slice(0, 120); if (input.notes != null) changes.notes = String(input.notes).slice(0, 1000); if (input.art_notes != null) changes.artNotes = String(input.art_notes).slice(0, 1000);
+      if (name === 'update_cart_item' && !Object.keys(changes).length) return { error: 'Nothing to change: only job_name, notes and art_notes can be updated. For options, size or quantity remove the line and add it again.' };
+      cards.push({ type: 'cart_action', action: name === 'remove_cart_item' ? 'remove' : 'update', line_id: lid, title: line.title || '', changes: name === 'update_cart_item' ? changes : undefined });
+      return { sent_to_page: true, line: { line_id: lid, title: line.title, price: line.price }, say: (name === 'remove_cart_item' ? 'Say the line is being removed from their cart' : 'Say the line is being updated') + ' \u2014 the page confirms it and the chat shows the result; one short sentence, no link.' };
+    }
     if (name === 'add_to_cart') {
-      if (!who.customer) return { needs_signin: 'The visitor is not signed in. Give the sign-in message: ' + SITE_URLS.login + ' then refresh the page.' };
       const r = await addToCart(input, who, Object.assign({}, ctx, { fromModel: true }));
-      if (r.needs_signin) return { needs_signin: 'Not signed in. Sign in at ' + SITE_URLS.login + ' and refresh the page.' };
       if (r.error) return { error: r.error, fallback: 'Apologise and point to the Add to Cart button on the quote, or the product page. Retry at most once.' };
+      if (r.guest) {
+        cards.push({ type: 'cart_add_guest', item: r.item, product: r.summary.product, quantity: r.summary.quantity, price: r.summary.price, job_name: r.summary.job_name, versions: r.summary.versions, checkout: SITE_URLS.checkout });
+        return { added_to_browser_cart: r.summary, say: 'Say it is in their cart \u2014 ' + r.summary.quantity + ' ' + r.summary.product + ', $' + usd2(Number(r.summary.price)) + ' \u2014 and that it stays with them when they sign in or check out at ' + SITE_URLS.checkout + '. The page confirms it; the chat shows the result.' };
+      }
       if (r.preview) {
         cards.push({ type: 'cart_added', preview: true, product: r.summary.product, quantity: r.summary.quantity, price: r.summary.price,
           job_name: r.summary.job_name, versions: r.summary.versions });
@@ -2034,8 +2068,9 @@ module.exports = function mountClientBot(app, deps) {
         (who.customer.first || String(who.customer.name || '').split(' ')[0] || 'their name') + '. ' +
         'Their own jobs are available through my_orders and order_status — and only theirs: status, what was ordered, quantities, dates. ' +
         'They can add to their cart (add_to_cart).'
-      : 'SIGN-IN: The visitor is NOT signed in (a guest). Products, options, prices, turnaround, files and shipping are fine. ' +
-        'Adding to the cart, order status / history, reorders, saved addresses, account pricing and their contact person need a sign-in.';
+      : 'SIGN-IN: The visitor is NOT signed in (a guest). Products, options, prices, turnaround, files, shipping AND adding to the cart all work: add_to_cart puts the item in the cart in their browser, which moves to their account when they sign in or check out \u2014 never tell a guest they must sign in to add to the cart. ' +
+        'Their message may carry a [CART in their browser: …] note \u2014 that is their cart right now; answer "what is in my cart" from it, and remove_cart_item / update_cart_item change those lines. ' +
+        'Order status / history, reorders, saved addresses, account pricing and their contact person still need a sign-in.';
     return [
       'You are NovaAI, AxiomPrint\'s AI assistant on axiomprint.com. Call yourself NovaAI. You are talking to a CUSTOMER, not staff.',
       '',
@@ -2065,7 +2100,7 @@ module.exports = function mountClientBot(app, deps) {
       '14. Quote cards tag each option Specified (the customer chose it) or Default (the website default). Questionable fields (left on the default but they change the price) are yellow dropdowns on the card, and an unstated quantity is a yellow box; the customer changes them there and the price updates by itself. Never ask about them in a question.',
       '15. LOGIN. Guests asking for something that needs a sign-in get: "Please sign in to your Axiom Print account first: https://axiomprint.com/login. After signing in, refresh the page and I\'ll pick up from there." New customers: https://axiomprint.com/register — forgot password: https://axiomprint.com/forgot-password. Do not push guests to sign in for anything else. Never ask for or accept a password, one-time code or card number in the chat — if someone types one, tell them not to share it here and to use the login page. Never say you can log anyone in, never confirm whether an email has an account.',
       '16. SIGNED-IN customers: first name only; repeat their email, phone, company or address only if they ask. Their contact person comes from get_customer. Their account discount is already in the quoted prices (the regular price shows struck through); never quote the percentage. Account settings: https://axiomprint.com/account — order history: https://axiomprint.com/account/order-history.',
-      '17. ADD TO CART puts the product, with the chosen options and quantity, into their axiomprint.com cart so they can upload artwork and check out. Signed-in customers only. Before adding: know the product, every option that matters, the quantity (or versions) and the turnaround; ask for a job name and suggest one (e.g. "Business Cards - Spring Promo"; if they do not care, the product name); read the order back with the price ("500 Business Cards, 16pt Matte, 2-sided, Standard turnaround, job \'Spring Promo\', $89.50. Add to your cart?") and wait for a clear yes. Then call add_to_cart with exactly what you priced. After: "Added \u2713 …, you can upload your artwork and check out here: https://axiomprint.com/checkout". If it fails: apologise, point to the product page, retry at most once. You cannot edit or remove cart items yet — send them to https://axiomprint.com/my-cart. A customer who used the Add to Cart button on a quote has already added it; do not add it again.',
+      '17. ADD TO CART puts the product, with the chosen options and quantity, into their axiomprint.com cart so they can upload artwork and check out \u2014 for signed-in customers AND guests (a guest\'s cart lives in their browser until they sign in or check out; never ask a guest to sign in first). Before adding: know the product, every option that matters, the quantity (or versions) and the turnaround; ask for a job name and suggest one (e.g. "Business Cards - Spring Promo"; if they do not care, the product name); read the order back with the price ("500 Business Cards, 16pt Matte, 2-sided, Standard turnaround, job \'Spring Promo\', $89.50. Add to your cart?") and wait for a clear yes. Then call add_to_cart with exactly what you priced. After: "Added \u2713 …, you can upload your artwork and check out here: https://axiomprint.com/checkout". If it fails: apologise, point to the product page, retry at most once. You cannot edit or remove cart items yet — send them to https://axiomprint.com/my-cart. A customer who used the Add to Cart button on a quote has already added it; do not add it again.',
       extra || '',
       '19. GRAPHIC DESIGN AND FILE CHANGES: when the customer asks you to design, create, draw, edit, fix or change artwork or a file, say plainly that NovaAI cannot design or edit files yet, and that AxiomPrint offers in-house graphic design at $' + usd2(Number(rules.design_min || DEFAULT_DESIGN_MIN)).replace(/\.00$/, '') + '\u2013$' + usd2(Number(rules.design_max || DEFAULT_DESIGN_MAX)).replace(/\.00$/, '') + ' per hour depending on the project. ' +
         'Turn their request into pieces and hours with the DESIGN SERVICES guide below and call estimate_design; give its estimate and hours in one or two lines (never your own arithmetic). Then offer to price the printing too (price first, as usual). ' +
@@ -2536,6 +2571,12 @@ module.exports = function mountClientBot(app, deps) {
     // The page each message was written on: the product they are looking at is what "this" and "it" mean.
     const page = cleanPage(req.body && req.body.page_url, req.body && req.body.page_title);
     const pageCid = who.customer ? who.customer.id : null;
+    // 1.20.109: a guest's browser cart rides with the message (the page is asked for it before each send): the model sees the lines
+    // as a [CART …] note and may remove / update them through the page. Never for a signed-in customer (their cart is on the server).
+    const cartLines = !who.customer && Array.isArray(req.body && req.body.cart_lines) ? req.body.cart_lines.slice(0, 30).filter(l => l && typeof l === 'object').map(l => ({
+      line_id: parseInt(l.line_id), product_id: parseInt(l.product_id) || null, title: String(l.title || '').slice(0, 120), price: Number(l.price) || 0, job_name: String(l.job_name || '').slice(0, 120),
+      options: l.options && typeof l.options === 'object' ? Object.keys(l.options).slice(0, 20).reduce((o, k) => { o[String(k).slice(0, 40)] = String(l.options[k]).slice(0, 60); return o; }, {}) : {}, total_quantity: Number(l.total_quantity) || 0 })).filter(l => l.line_id) : null;
+    const cartNote = cartLines ? (cartLines.length ? '[CART in their browser (' + cartLines.length + ' line' + (cartLines.length === 1 ? '' : 's') + '): ' + cartLines.map(l => '#' + l.line_id + ' ' + l.title + (l.options.Quantity ? ' \u00d7 ' + l.options.Quantity : '') + ' $' + usd2(l.price) + (l.job_name ? ' "' + l.job_name + '"' : '')).join(' \u00b7 ') + ']' : '[CART in their browser: empty]') : null;
     const nowNote = page ? pageNote(page, await pageProduct(page.url, pageCid), true) : null;
     const pastNote = {};
     let lastUrl = null;
@@ -2557,7 +2598,7 @@ module.exports = function mountClientBot(app, deps) {
       // The newest attachments first get the byte budget.
       // Picked from a product list: the price must carry what they said before the list (rule 9d).
       const pickNote = /\(product #\d+\)\.?\s*$/i.test(text) ? '[They picked this from the list. Price it with every spec they gave earlier in this conversation \u2014 page count, size, sides, color, paper, quantity \u2014 not the defaults.]' : null;
-      const current = userContent(text, files, true, [nowNote, pickNote].filter(Boolean));
+      const current = userContent(text, files, true, [nowNote, cartNote, pickNote].filter(Boolean));
       const messages = [];
       let notes = [];
       past.forEach(m => {
@@ -2640,7 +2681,7 @@ module.exports = function mountClientBot(app, deps) {
           // What the customer wrote lately (for the size unit: "8x10 ft" said a message earlier still counts).
           const saidLately = messages.filter(m => m.role === 'user').slice(-4).map(m => typeof m.content === 'string' ? m.content
             : (m.content || []).filter(b => b && b.type === 'text').map(b => b.text).join(' ')).join('\n').slice(-3000);
-          try { out = await runTool(tu.name, tu.input, who, cards, { chatId: chat.id, text: text, said: saidLately }); }
+          try { out = await runTool(tu.name, tu.input, who, cards, { chatId: chat.id, text: text, said: saidLately, cartLines: cartLines }); }
           catch (e) { out = { error: 'That lookup failed.' }; console.error('CLIENT_BOT tool', tu.name, e.message); }
           used.push({ tool: tu.name, input: tu.input, found: out && (out.error || out.not_found) ? (out.error || out.not_found) :
             (out && out.orders ? out.orders.length + ' order(s)' : out && out.results ? out.results.length + ' product(s)' : 'ok') });
@@ -2730,7 +2771,6 @@ module.exports = function mountClientBot(app, deps) {
     const who = await identify(req);
     if (!who) return res.status(401).json({ ok: false, error: 'Please reload the page.' });
     if (who.error) return res.status(who.status || 403).json({ ok: false, error: who.error });
-    if (!who.customer) return res.json({ ok: false, needs_signin: true, login: SITE_URLS.login });
     if (overLimit('cart:' + who.vid, who.source === 'preview' ? 100 : 20, 10 * 60 * 1000) ||
         (who.source === 'website' && overLimit('cartip:' + clientIp(req), 40, 10 * 60 * 1000))) {
       return res.status(429).json({ ok: false, error: 'Too many items at once — please wait a minute.' });
@@ -2746,11 +2786,11 @@ module.exports = function mountClientBot(app, deps) {
       const chat = parseInt(b.chat_id) ? await dbGet('SELECT id, visitor_id, customer_id, source FROM client_chats WHERE id = ?', [parseInt(b.chat_id)]) : null;
       if (ownsChat(chat, who)) {
         await dbRun('INSERT INTO client_messages (chat_id, role, content) VALUES (?,?,?)', [chat.id, 'note',
-          (r.preview ? '[Admin preview — not really added] ' : '') + 'The customer added to their cart with the Add to Cart button: ' +
+          (r.preview ? '[Admin preview — not really added] ' : r.guest ? '[Guest — the cart in their browser] ' : '') + 'The customer added to their cart with the Add to Cart button: ' +
           r.summary.quantity + ' ' + r.summary.product + ' (job "' + r.summary.job_name + '"), $' + usd2(Number(r.summary.price)) + '.']);
       }
-      res.json({ ok: true, preview: r.preview || undefined, would_send: r.preview ? r.payload : undefined,
-        added: r.summary, job_name_saved: r.preview ? undefined : r.job_name_saved, checkout: SITE_URLS.checkout, cart: SITE_URLS.cart });
+      res.json({ ok: true, preview: r.preview || undefined, would_send: r.preview ? r.payload : undefined, guest: r.guest || undefined, item: r.guest ? r.item : undefined,
+        added: r.summary, job_name_saved: r.preview || r.guest ? undefined : r.job_name_saved, checkout: SITE_URLS.checkout, cart: SITE_URLS.cart });
     } catch (e) {
       console.error('CLIENT_BOT cart', e.message);
       res.json({ ok: false, error: 'The cart could not be reached.' });

@@ -468,7 +468,23 @@
       if (d.type === 'nova-client:add-to-cart' && typeof CFG.addToCart === 'function') {
         Promise.resolve().then(function () { return CFG.addToCart(d.item); })
           .then(function (r) { say({ type: 'nova-client:cart-result', id: d.id, ok: r !== false }); },
-                function () { say({ type: 'nova-client:cart-result', id: d.id, ok: false }); });
+                function (e) { say({ type: 'nova-client:cart-result', id: d.id, ok: false, error: e && e.message }); });
+      }
+      // The guest cart (docs/NOVA_GUEST_CART.md): read, remove and update lines of the cart kept in this browser.
+      if (d.type === 'nova-client:cart-get' && typeof CFG.getCart === 'function') {
+        Promise.resolve().then(function () { return CFG.getCart(); })
+          .then(function (lines) { say({ type: 'nova-client:cart-list', id: d.id, ok: true, lines: lines }); },
+                function (e) { say({ type: 'nova-client:cart-list', id: d.id, ok: false, error: e && e.message }); });
+      }
+      if (d.type === 'nova-client:cart-remove' && typeof CFG.removeFromCart === 'function') {
+        Promise.resolve().then(function () { return CFG.removeFromCart(d.lineId); })
+          .then(function () { say({ type: 'nova-client:cart-result', id: d.id, ok: true }); },
+                function (e) { say({ type: 'nova-client:cart-result', id: d.id, ok: false, error: e && e.message }); });
+      }
+      if (d.type === 'nova-client:cart-update' && typeof CFG.updateCartItem === 'function') {
+        Promise.resolve().then(function () { return CFG.updateCartItem(d.lineId, d.changes); })
+          .then(function (line) { say({ type: 'nova-client:cart-result', id: d.id, ok: true, line: line }); },
+                function (e) { say({ type: 'nova-client:cart-result', id: d.id, ok: false, error: e && e.message }); });
       }
     });
 

@@ -2067,6 +2067,8 @@ body.nova-embed .calc-pane-body { padding: 12px; }
 .cc-added { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; margin-top: 6px; padding: 6px 12px;
   border: 1px solid #bbf7d0; background: #f0fdf4; border-radius: 999px; font-size: 12.5px; color: #14532d; white-space: nowrap; }
 .cc-added.preview { border-color: #fde68a; background: #fffbeb; color: #78350f; }
+.cc-added.err { border-color: #fecaca; background: #fef2f2; color: #991b1b; } .cc-added .cc-err { font-size: 12px; margin: 0; }
+.cc-cartact { font-size: 12.5px; }
 .cc-added b { font-weight: 700; flex: none; }
 .cc-added-what { overflow: hidden; text-overflow: ellipsis; min-width: 0; color: #3f3f46; }
 .cc-added-p { font-weight: 700; flex: none; }
