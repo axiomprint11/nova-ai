@@ -433,6 +433,28 @@ found in product / category / proof type / job name (12 each, up to 36), Tier 2 
 `GET /api/designer/history`) — **nothing is written to the CRM**; the row shows "picked in Nova … not in the CRM yet" until the web
 team provides an assignment endpoint.
 
+## ReportsAI (1.20.96)
+
+`reports-ai.js` (`require('./reports-ai')(app, { auth, adminOnly, serveVersionedHtml, runQuery, mysql })` in server.js, after designer-ai)
+mounts **ReportsAI** at `/reports-ai` (`public/reports-ai.html/.js`, left-menu item `reports`, admins only) — the owner's reports, one
+top tab per report, every one READ-ONLY on the CRM. **Onboarding** (the first): `GET /api/reports-ai/onboarding?from&to&all=1` reads the
+CRM's `customer_welcome_forms` (the Client onboarding form: `date_onboarded`, `created_by_manager_id` = the AM who did it,
+`onboarding_type` call / in_person / loom_video / other (+ `onboarding_type_other`) / did_not_onboard, `lead_rating` high_potential /
+developing_opportunity / limited_opportunity, `how_did_they_hear_about_us` + `hear_about_us_who` + `referred_by_manager_id`,
+`annual_print_budget`, `estimated_order_value`) joined to `customer` and `user` (AM name + `memberimage`, the referring team member).
+`sourceOf(f, refName)` folds the two lives of the "how did they hear about us" field — codes since Aug 2026 (`google`, `google_ads`,
+`chatgpt`, `existing_client` → **Client referral** from `hear_about_us_who`, `employee_referral` → **Team referral** from the referring
+user, `other` → the free text, `instagram`, `our_website`) and the old free text ("Google ", "Chat GPT", "Personal Referral", "word of
+mouth", "Repeat customer"…) — into `{kind, who, raw}`: Google · Google Ads · ChatGPT / AI · Client referral · Team referral · Referral ·
+Returning client · Social · Yelp · Reddit · Website · Outreach · Other · Unknown, `who` on the row's second line ("from Sean Sirisap").
+"Did not onboard" forms are left out unless `all=1` (the page's tick box). The page: period chips (This week / This month (default) /
+Last month / 30 / 90 / This year / All, `range()` in LA days), a search box, **AM tiles** (the leaderboard for the period — face, count,
+rank; click = only that AM), a **stacked bar chart per AM** with Daily / Weekly / Monthly (`buckets()` / `drawChart()`, own SVG, colours
+from `COLORS` in rank order, a tooltip with the split, a legend), and the table (NovaTable header filters: Onboarded date range, Client
+text, AM heads, Source, Onboarded via, Lead rating; Budget + est. value; pinned header): Onboarded · Client (company, person · email) ·
+AM (head + name) · Source (coloured pill + "from …") · Onboarded via (+ the "other" text) · Lead rating · Budget. Add a report = a tab
+button + a section in reports-ai.html, a route in reports-ai.js, a loader in reports-ai.js (public).
+
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 
 `website-knowledge.js` (`WebKnowledge = require('./website-knowledge')({ db })` in server.js, passed to client-bot as `deps.WebKnowledge`)

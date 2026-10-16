@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReportsAI · NovaAI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/axiom-shared.css">
+<style>
+  /* ReportsAI (1.20.96) — the owner's reports. Onboarding first. Admins only. */
+  body { margin: 0; font-family: Inter, system-ui, sans-serif; background: #f6f7fb; color: #1c1c28; }
+  .ra-top { flex: none; display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: #fff; flex-wrap: wrap; }
+  .ra-top h1 { font-size: 15px; margin: 0; display: flex; align-items: center; gap: 8px; } .ra-top h1 span { font-weight: 500; color: var(--muted); } .ra-top h1 svg { color: var(--indigo-dark); width: 18px; height: 18px; }
+  .ra-top .sp { flex: 1; }
+  .ra-tabs { display: flex; gap: 4px; } .ra-tabs button { border: 1px solid transparent; background: none; padding: 7px 13px; border-radius: 9px; font: 600 13px/1 inherit; color: var(--ink-soft); cursor: pointer; }
+  .ra-tabs button.on { background: var(--indigo-light); color: var(--indigo-dark); } .ra-tabs button .soon { font-size: 9px; font-weight: 700; letter-spacing: .04em; color: #92400e; background: #fef3c7; border-radius: 6px; padding: 2px 5px; margin-left: 5px; vertical-align: 1px; }
+  .ra-main { flex: 1; min-height: 0; overflow: auto; padding: 16px 18px 40px; }
+  .ra-view { display: none; } .ra-view.on { display: block; }
+  .ra-card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
+  .ra-card h2 { font-size: 13.5px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .ra-card h2 .sp { flex: 1; } .ra-card h2 .n { font-weight: 500; color: var(--muted); font-size: 12px; }
+  .ra-muted { color: var(--muted); font-size: 12px; }
+  .ra-sub { display: flex; gap: 6px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  .ra-sub button[data-p] { border: 1px solid var(--line); background: #fff; border-radius: 20px; padding: 6px 14px; font: 600 12.5px/1 inherit; cursor: pointer; color: var(--ink-soft); }
+  .ra-sub button[data-p].on { background: var(--indigo-light); border-color: var(--indigo); color: var(--indigo-dark); }
+  .ra-sub .sp { flex: 1; } .ra-sub label { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .ra-sub input.q { width: 260px; padding: 7px 10px; font: inherit; font-size: 13px; border: 1px solid var(--line); border-radius: 8px; }
+  /* AM tiles — the leaderboard */
+  .ra-ams { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .ra-am { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: #fff; cursor: pointer; position: relative; }
+  .ra-am.on { border-color: var(--indigo); background: #f5f3ff; } .ra-am .rank { position: absolute; top: 6px; right: 8px; font-size: 10.5px; font-weight: 700; color: var(--muted); }
+  .ra-am b { display: block; font-size: 20px; line-height: 1.1; font-variant-numeric: tabular-nums; } .ra-am small { display: block; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 110px; }
+  .ra-av { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex: none; border: 1px solid var(--line); display: inline-grid; place-items: center; font-size: 13px; font-weight: 700; color: #4338ca; background: #eef2ff; }
+  .ra-av.sm { width: 26px; height: 26px; font-size: 11px; }
+  .ra-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex: none; }
+  /* chart */
+  .ra-chart { position: relative; height: 210px; margin-top: 4px; } .ra-chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .ra-chart .grid { stroke: #ececf3; stroke-width: 1; shape-rendering: crispEdges; } .ra-chart .tick { fill: #9ca3af; font-size: 10.5px; font-variant-numeric: tabular-nums; }
+  .ra-chart rect.seg { transition: opacity .12s; } .ra-chart.hovering rect.seg { opacity: .4; } .ra-chart.hovering rect.seg.on { opacity: 1; }
+  .ra-tip { position: absolute; pointer-events: none; background: #111827; color: #fff; font-size: 12px; line-height: 1.4; padding: 7px 10px; border-radius: 8px; white-space: nowrap; transform: translate(-50%, calc(-100% - 8px)); z-index: 2; box-shadow: 0 6px 16px rgba(0,0,0,.18); }
+  .ra-tip .row { display: flex; align-items: center; gap: 6px; } .ra-tip b { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .ra-seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 9px; background: #f1f2f8; } .ra-seg button { border: 0; background: none; font: 600 12px/1 inherit; color: #4b5563; padding: 6px 11px; border-radius: 7px; cursor: pointer; } .ra-seg button.on { background: #fff; color: #3730a3; box-shadow: 0 1px 2px rgba(17,24,39,.08); }
+  .ra-legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11.5px; color: var(--ink-soft); margin-top: 6px; } .ra-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  /* table */
+  table.ra { width: 100%; border-collapse: collapse; font-size: 12.5px; background: #fff; }
+  table.ra th { text-align: left; font-size: 11.5px; color: var(--muted); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line); background: #fafafc; white-space: nowrap; }
+  table.ra td { padding: 9px 10px; border-bottom: 1px solid #f0f0f5; vertical-align: top; }
+  table.ra .sub { color: var(--muted); font-size: 11.5px; } table.ra b { font-weight: 600; }
+  .ra-who { display: flex; align-items: center; gap: 8px; }
+  .ra-src { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: #eef0f6; color: #3b3b4f; }
+  .ra-src.google, .ra-src.googleads { background: #e0f2fe; color: #075985; } .ra-src.chatgptai { background: #ede9fe; color: #5b21b6; } .ra-src.clientreferral, .ra-src.teamreferral, .ra-src.referral { background: #dcfce7; color: #166534; }
+  .ra-src.returningclient { background: #fef3c7; color: #92400e; } .ra-src.social { background: #fce7f3; color: #be185d; } .ra-src.unknown { background: #f3f4f6; color: #9ca3af; }
+  .ra-tag { display: inline-block; font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 6px; background: #f0f0f5; color: #555; } .ra-tag.hi { background: #fee2e2; color: #991b1b; } .ra-tag.dev { background: #fef3c7; color: #92400e; } .ra-tag.lo { background: #f3f4f6; color: #6b7280; } .ra-tag.no { background: #fee2e2; color: #991b1b; }
+  .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: #111827; color: #fff; padding: 9px 14px; border-radius: 9px; font-size: 13px; z-index: 50; }
+</style>
+</head>
+<body>
+<div class="ra-top">
+  <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><rect x="5" y="11" width="3" height="6" rx="1"/><rect x="10.5" y="6" width="3" height="11" rx="1"/><rect x="16" y="9" width="3" height="8" rx="1"/></svg> ReportsAI <span>· reports from the CRM</span></h1>
+  <span class="sp"></span>
+  <div class="ra-tabs"><button class="on" data-v="onboarding">Onboarding</button></div>
+</div>
+<div class="ra-main">
+  <section class="ra-view on" data-v="onboarding">
+    <div class="ra-sub" id="obPeriod">
+      <button data-p="week">This week</button><button data-p="month" class="on">This month</button><button data-p="last">Last month</button><button data-p="30">Last 30 days</button><button data-p="90">Last 90 days</button><button data-p="year">This year</button><button data-p="all">All</button>
+      <label title="Welcome forms whose onboarding method is 'did not onboard'"><input type="checkbox" id="obAll"> include "did not onboard"</label>
+      <span class="sp"></span><input class="q" id="obQ" placeholder="Search client, AM, source" autocomplete="off">
+    </div>
+    <div class="ra-ams" id="obAms"></div>
+    <div class="ra-card">
+      <h2>Onboardings by account manager <span class="n" id="obChartN"></span><span class="sp"></span><div class="ra-seg" id="obGrain"><button data-g="day">Daily</button><button data-g="week">Weekly</button><button data-g="month" class="on">Monthly</button></div></h2>
+      <div class="ra-chart" id="obChart"><svg></svg><div class="ra-tip" hidden></div></div>
+      <div class="ra-legend" id="obLegend"></div>
+    </div>
+    <div class="ra-card" id="obList"></div>
+  </section>
+</div>
+<script src="/nova-nav.js"></script>
+<script src="/nova-table.js"></script>
+<script>NovaNav.mount({ current: 'reports' });</script>
+<script src="/reports-ai.js"></script>
+</body>
+</html>
