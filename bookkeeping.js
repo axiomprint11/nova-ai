@@ -3392,7 +3392,7 @@ module.exports = function mountBookkeeping(app, deps) {
   app.delete('/api/bookkeeping/rules/:id', ...guard, async (req, res) => { await dbRun('UPDATE bk_rules SET active = 0 WHERE id = ?', [parseInt(req.params.id)]); await audit(userId(req), 'rule.remove', req.params.id); res.json({ ok: true }); });
   app.get('/api/bookkeeping/directory', ...guard, async (req, res) => {
     if (req.query.fresh !== '0') await syncDirectoryIfStale(userId(req), 10 * 60000);
-    const rows = await dbAll("SELECT v.*, CASE v.source WHEN 'suppliers' THEN 'supplier' WHEN 'vendors' THEN 'vendor' WHEN 'bill' THEN 'bill' WHEN 'nova' THEN 'nova' ELSE COALESCE(v.kind, 'other') END AS kind, (SELECT COUNT(*) FROM bk_transactions t WHERE t.vendor_id = v.id) AS txns, (SELECT COUNT(*) FROM bk_bills b WHERE b.vendor_id = v.id AND b.status <> ?) AS bills FROM bk_vendors v ORDER BY v.name", ['rejected']);
+    const rows = await dbAll("SELECT v.*, CASE WHEN v.kind = 'lender' THEN 'lender' WHEN v.source = 'suppliers' THEN 'supplier' WHEN v.source = 'vendors' THEN 'vendor' WHEN v.source = 'bill' THEN 'bill' WHEN v.source = 'nova' THEN 'nova' ELSE COALESCE(v.kind, 'other') END AS kind, (SELECT COUNT(*) FROM bk_transactions t WHERE t.vendor_id = v.id) AS txns, (SELECT COUNT(*) FROM bk_bills b WHERE b.vendor_id = v.id AND b.status <> ?) AS bills FROM bk_vendors v ORDER BY v.name", ['rejected']);
     const last = await dbGet("SELECT at FROM bk_audit WHERE action = 'directory.sync' ORDER BY id DESC LIMIT 1");
     const sup = await suppliesByVendor();
     rows.forEach(v => { const s = sup[v.id]; v.materials = s ? s.n : 0; v.geo_types = s ? topKeys(s.geo, 4) : []; });
