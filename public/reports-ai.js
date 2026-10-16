@@ -271,13 +271,27 @@
     $('prChartT').textContent = M.t; $('prChartN').textContent = 'top ' + rows.length + ' of ' + all.length + ' · thin bar = the period before · click a product for its jobs';
     document.querySelectorAll('#prKpis .ra-kpi[data-b]').forEach(k => k.classList.toggle('on', k.dataset.b === by));
     $('prChart').innerHTML = rows.length ? '<div class="h">Product</div><div class="h"></div>' + M.cols.map(c => '<div class="h r">' + c[0] + '</div>').join('') +
-      rows.map(p => '<div class="nm" data-pid="' + p.pid + '" title="' + esc(p.title) + ' — show the jobs">' + pimg(p) + '<span>' + esc(p.title) + '</span><i class="car">' + (openJobs === p.pid ? '▲' : '▼') + '</i></div><div class="bar"><i style="width:' + (M.v(p) / max * 100) + '%"></i><i class="prev" style="width:' + (M.pv(p) / max * 100) + '%"></i></div>' + M.cols.map(c => '<div class="c">' + c[1](p) + '</div>').join('') + (openJobs === p.pid ? '<div class="ra-jobs" data-jobs="' + p.pid + '"><span class="ra-muted">Reading the jobs…</span></div>' : '')).join('') : '<div class="ra-muted" style="grid-column:1/-1">Nothing in this view for the period.</div>';
-    $('prChart').querySelectorAll('.nm[data-pid]').forEach(el => el.onclick = () => { const pid = +el.dataset.pid; openJobs = openJobs === pid ? null : pid; drawChart(); });
+      rows.map(p => '<div class="nm" data-pid="' + p.pid + '" title="' + esc(p.title) + ' — show the jobs">' + pimg(p) + '<span>' + esc(p.title) + '</span><i class="car">' + (openJobs === p.pid ? '▲' : '▼') + '</i></div><div class="bar" data-pid="' + p.pid + '"><i style="width:' + (M.v(p) / max * 100) + '%"></i><i class="prev" style="width:' + (M.pv(p) / max * 100) + '%"></i></div>' + M.cols.map(c => '<div class="c" data-pid="' + p.pid + '" data-hover="1">' + c[1](p) + '</div>').join('') + (openJobs === p.pid ? '<div class="ra-jobs" data-jobs="' + p.pid + '"><span class="ra-muted">Reading the jobs…</span></div>' : '')).join('') : '<div class="ra-muted" style="grid-column:1/-1">Nothing in this view for the period.</div>';
+    /* the whole row opens the jobs; hovering a figure shows the E-numbers behind it (1.20.106) */
+    $('prChart').querySelectorAll('[data-pid]').forEach(el => { el.onclick = () => { const pid = +el.dataset.pid; openJobs = openJobs === pid ? null : pid; drawChart(); }; if (el.dataset.hover) el.onmouseenter = () => hoverJobs(+el.dataset.pid, el); });
     const box = $('prChart').querySelector('[data-jobs]'); if (box) loadJobs(+box.dataset.jobs, box);
+  }
+  const jobsCache = {};
+  async function fetchJobs(pid) {
+    const k = pid + ':' + data.from + ':' + data.to; if (jobsCache[k]) return jobsCache[k];
+    let j; try { const r = await fetch('/api/reports-ai/products/' + pid + '/jobs?from=' + data.from + '&to=' + data.to, { headers: H() }); j = await r.json(); } catch (e) { j = { ok: false, error: 'The CRM did not answer' }; }
+    if (j.ok) jobsCache[k] = j; return j;
+  }
+  async function hoverJobs(pid, el) {
+    if (el.title) return; el.title = 'Reading the jobs…';
+    const j = await fetchJobs(pid); if (!j.ok) { el.title = j.error || ''; return; }
+    const jobs = j.jobs.filter(x => !x.canceled && x.invoiced), prod = by === 'slow' || by === 'fast';
+    const list = (prod ? jobs.filter(x => x.prod_days != null).sort((a, b) => b.prod_days - a.prod_days) : jobs).slice(0, 25);
+    el.title = (prod ? list.length + ' timed jobs' : jobs.length + ' jobs') + ' — click for the full list\n' + list.map(x => x.e + (prod ? '  ' + x.prod_days + ' d' : '  ' + usd0(x.price)) + (x.client ? '  ' + x.client : '')).join('\n') + (jobs.length > list.length ? '\n…' : '');
   }
   const dt = (iso) => iso ? new Date(iso).toLocaleString('en-US', { month: '2-digit', day: '2-digit', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }) : '—';
   async function loadJobs(pid, box) {
-    let j; try { const r = await fetch('/api/reports-ai/products/' + pid + '/jobs?from=' + data.from + '&to=' + data.to, { headers: H() }); j = await r.json(); } catch (e) { j = { ok: false, error: 'The CRM did not answer' }; }
+    const j = await fetchJobs(pid);
     if (!box.isConnected) return;
     if (!j.ok) { box.innerHTML = '<span style="color:#b91c1c">' + esc(j.error || 'Could not load') + '</span>'; return; }
     const jobs = j.jobs.filter(x => !x.canceled), timed = jobs.filter(x => x.prod_days != null).length;

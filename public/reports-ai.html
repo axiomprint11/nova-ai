@@ -76,6 +76,7 @@
   .ra-bars { display: grid; grid-template-columns: 220px 60% repeat(3, minmax(60px, 1fr)); gap: 4px 10px; align-items: center; font-size: 12.5px; }
   .ra-bars .h { font-size: 11px; font-weight: 600; color: var(--muted); padding-bottom: 4px; border-bottom: 1px solid var(--line); } .ra-bars .h.r { text-align: right; }
   .ra-bars .nm { cursor: pointer; } .ra-bars .nm:hover span { color: var(--indigo-dark); text-decoration: underline; } .ra-bars .nm .car { color: var(--muted); font-size: 10px; flex: none; }
+  .ra-bars .bar, .ra-bars .c { cursor: pointer; } .ra-bars .c[data-hover]:hover { color: var(--indigo-dark); text-decoration: underline dotted; }
   .ra-bars .c { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-soft); white-space: nowrap; } .ra-bars .c b { color: var(--ink); }
   .ra-jobs { grid-column: 1 / -1; background: #fafafc; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin: 2px 0 8px; font-size: 12px; }
   .ra-jobs table { width: 100%; border-collapse: collapse; } .ra-jobs th { text-align: left; font-size: 11px; color: var(--muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; } .ra-jobs td { padding: 5px 8px; border-bottom: 1px solid #efeff5; vertical-align: top; } .ra-jobs td.n, .ra-jobs th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
