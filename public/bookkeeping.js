@@ -99,7 +99,7 @@
   const TEAMI = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/></svg>';
   // 1.19.130: a small notice bottom-centre that fades by itself ("Learned “emperor steel” · 3 more lines linked")
   function toast(html, ms) { const el = document.createElement('div'); el.className = 'bk-toast'; el.innerHTML = html; document.body.appendChild(el); requestAnimationFrame(() => el.classList.add('on')); setTimeout(() => { el.classList.remove('on'); setTimeout(() => el.remove(), 400); }, ms || 4500); }
-  const learnedNote = (r, who) => { if (!r || (!r.learned && !r.relinked)) return; toast((r.learned ? 'Read from the bank: <b>' + esc(String(r.learned).toUpperCase()) + '</b>' + (who ? ' → ' + esc(who) : '') : 'Bank names updated') + (r.relinked ? ' · <b>' + r.relinked + '</b> more line' + (r.relinked === 1 ? '' : 's') + ' linked' : '')); };
+  const learnedNote = (r, who) => { if (!r || (!r.learned && !r.relinked && !r.unlinked)) return; toast((r.learned ? 'Read from the bank: <b>' + esc(String(r.learned).toUpperCase()) + '</b>' + (who ? ' → ' + esc(who) : '') : 'Bank names updated') + (r.relinked ? ' · <b>' + r.relinked + '</b> more line' + (r.relinked === 1 ? '' : 's') + ' linked' : '') + (r.unlinked ? ' · <b>' + r.unlinked + '</b> line' + (r.unlinked === 1 ? '' : 's') + ' let go (the wording no longer names this company)' : '')); };   /* 1.20.140 */
   function ask(text, opt) {
     opt = opt || {};
     return new Promise((resolve) => {
@@ -2201,6 +2201,7 @@
       if (ev.target.dataset.force) { body.force = true; }
       const r = await post(isEdit ? '/api/bookkeeping/vendors/' + init.id : '/api/bookkeeping/vendors', body);
       if (!r.ok) { el.querySelector('#nvMsg').textContent = r.error + (r.duplicate ? ' — click again to add anyway.' : ''); if (r.duplicate) ev.target.dataset.force = '1'; return; }
+      if (isEdit) learnedNote(r, body.name);   /* 1.20.140: lines linked / let go by the new name or aliases */
       close(); if (onSaved) onSaved(r.vendor || Object.assign({}, init, body));
     };
   }
@@ -2336,7 +2337,7 @@
         last = now; const r = await post('/api/bookkeeping/vendors/' + id, { default_category: now }); flash(tr, r.ok); if (!r.ok) alert(r.error);
       });
       const al = tr.querySelector('.valias'); let lastAl = al.value;
-      al.addEventListener('change', async () => { if (al.value === lastAl) return; lastAl = al.value; const r = await post('/api/bookkeeping/vendors/' + id, { aliases: al.value.split('|').map(x => x.trim()).filter(Boolean).join('\n') }); flash(tr, r.ok); });
+      al.addEventListener('change', async () => { if (al.value === lastAl) return; lastAl = al.value; const r = await post('/api/bookkeeping/vendors/' + id, { aliases: al.value.split('|').map(x => x.trim()).filter(Boolean).join('\n') }); flash(tr, r.ok); learnedNote(r); });
       const md = tr.querySelector('select.vrmode'); if (md) md.addEventListener('change', async () => { const r = await post('/api/bookkeeping/vendors/' + id, { receive_mode: md.value }); flash(tr, r.ok); if (r.ok && r.swept) toast(r.swept + ' open purchase' + (r.swept === 1 ? '' : 's') + ' moved'); });   /* 1.20.139 */
     });
     v.querySelectorAll('[data-vappr]').forEach(a => a.onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/vendors/' + a.dataset.vappr, { approved: true }); if (!r.ok) alert(r.error); loadVendors(); });

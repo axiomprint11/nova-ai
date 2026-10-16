@@ -1190,6 +1190,21 @@ module.exports = function mountBookkeeping(app, deps) {
     }
     return n;
   }
+  // 1.20.140: the other direction — a company's name or bank aliases changed (or were made wrong in the first place: the
+  // Scodix lender was born "Axiomprint Inc." and took every Wells Fargo ACH that says AXIOMPRINT INC., then was renamed
+  // Signature Financial and kept them all). Every machine-made exact link to this company is re-read: when no wording of
+  // the line names the company any more, the link goes, and a rule-made category with it (back to Pending). Lines a person
+  // tied to a loan or a team member, or linked by hand, are never touched.
+  async function reverifyVendor(vid) {
+    dirCache.at = 0; let unlinked = 0, reset = 0;
+    for (const t of await dbAll("SELECT id, name, merchant, raw, vendor_id, category_source FROM bk_transactions WHERE vendor_id = ? AND vendor_by = 'auto' AND IFNULL(vendor_score, 1) >= 1 AND loan_id IS NULL AND team_id IS NULL AND status NOT IN ('removed', 'excluded')", [vid])) {
+      const real = await matchVendorAny(t).catch(() => null);
+      if (real && real.id === vid) continue;
+      await dbRun('UPDATE bk_transactions SET vendor_id = NULL, vendor_by = NULL, vendor_score = NULL WHERE id = ?', [t.id]); unlinked++;
+      if (t.category_source === 'rule' || t.category_source === 'vendor') { await dbRun("UPDATE bk_transactions SET category = NULL, category_source = NULL, rule_id = NULL, status = 'pending', updated_at = datetime('now') WHERE id = ?", [t.id]); reset++; }
+    }
+    return { unlinked, reset };
+  }
   const normV = (t) => String(t || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9 ]+/g, ' ').replace(/\b(inc|llc|corp|corporation|co|company|ltd|the)\b/g, ' ').replace(/\s+/g, ' ').trim();
   const domainOf = (e) => { const m = String(e || '').toLowerCase().match(/@([a-z0-9.-]+)/); return m ? m[1].replace(/^(www|mail|e)\./, '') : ''; };
   const FREE_MAIL = /^(gmail|yahoo|hotmail|outlook|aol|icloud|me|live|msn)\./;
@@ -2319,6 +2334,16 @@ module.exports = function mountBookkeeping(app, deps) {
         await audit('system', 'repair.bank_boilerplate', null, { unlinked, reset });
         console.log('BOOKKEEPER repair bank-boilerplate links: unlinked ' + unlinked + ', categories reset ' + reset);
       } catch (e2) { errlog('repair bank boilerplate', e2.message); }
+    });
+    db.get("SELECT key FROM bk_migrations WHERE key = 'nova_vendor_links_140'", [], async (e, row) => {
+      if (e || row) return;
+      try {
+        let unlinked = 0, reset = 0, vendors = 0;
+        for (const v of await dbAll("SELECT id FROM bk_vendors WHERE source IN ('nova', 'bill')")) { const r = await reverifyVendor(v.id); if (r.unlinked) { vendors++; unlinked += r.unlinked; reset += r.reset; } }
+        await dbRun("INSERT OR REPLACE INTO bk_migrations (key, at) VALUES ('nova_vendor_links_140', datetime('now'))");
+        await audit('system', 'repair.nova_vendor_links', null, { vendors, unlinked, reset });
+        console.log('BOOKKEEPER repair Nova-vendor links: vendors ' + vendors + ', unlinked ' + unlinked + ', categories reset ' + reset);
+      } catch (err) { errlog('repair nova_vendor_links', err.message); }
     });
     db.get("SELECT key FROM bk_migrations WHERE key = 'own_alias_158'", [], async (e, row) => {
       if (e || row) return;
@@ -3836,8 +3861,8 @@ module.exports = function mountBookkeeping(app, deps) {
     if (!sets.length) return res.json({ ok: false, error: 'Nothing to change' });
     await dbRun('UPDATE bk_vendors SET ' + sets.join(', ') + ' WHERE id = ?', args.concat([parseInt(req.params.id)]));
     dirCache.at = 0;
-    let relinked = 0; if (b.aliases !== undefined || b.name !== undefined) { try { relinked = await relinkVendor(parseInt(req.params.id)); } catch (e) { errlog('relink', e.message); } }   // 1.19.130: a bank name typed in links the open lines now
-    await audit(userId(req), 'vendor.update', req.params.id, Object.assign({ relinked, modeSwept }, b)); res.json({ ok: true, relinked, swept: modeSwept });
+    let relinked = 0, unlinked = 0; if (b.aliases !== undefined || b.name !== undefined) { try { relinked = await relinkVendor(parseInt(req.params.id)); const rv = await reverifyVendor(parseInt(req.params.id)); unlinked = rv.unlinked; } catch (e) { errlog('relink', e.message); } }   // 1.19.130: a bank name typed in links the open lines now; 1.20.140: and lines the new words no longer name are let go
+    await audit(userId(req), 'vendor.update', req.params.id, Object.assign({ relinked, unlinked, modeSwept }, b)); res.json({ ok: true, relinked, unlinked, swept: modeSwept });
   });
   app.get('/api/bookkeeping/activity', ...guard, async (req, res) => res.json({ ok: true, runs: await dbAll('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 40'), audit: await dbAll('SELECT * FROM bk_audit ORDER BY id DESC LIMIT 200'), briefs: await dbAll('SELECT day, stats, posted_at, post_error FROM bk_briefs ORDER BY day DESC LIMIT 30') }));
   app.post('/api/bookkeeping/settings', ...guard, async (req, res) => {
