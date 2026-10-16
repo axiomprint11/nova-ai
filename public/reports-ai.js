@@ -1,3 +1,29 @@
+// ReportsAI — the period chips every report shares (1.20.110): This week · This month · Last month · 30 · 90 · 6 months · 12 months ·
+// YTD · Custom (two dates); RaPeriod.range(state) gives [from, to] as LA calendar days ('' = open), RaPeriod.wire() runs the chips.
+window.RaPeriod = (function () {
+  const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  function range(st) {
+    const p = st.period, now = new Date(), d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (p === 'custom') return [st.from || '', st.to || ymd(d0)];
+    if (p === 'week') return [ymd(new Date(d0 - ((d0.getDay() + 6) % 7) * 864e5)), ymd(d0)];
+    if (p === 'month') return [ymd(new Date(now.getFullYear(), now.getMonth(), 1)), ymd(d0)];
+    if (p === 'last') return [ymd(new Date(now.getFullYear(), now.getMonth() - 1, 1)), ymd(new Date(now.getFullYear(), now.getMonth(), 0))];
+    if (p === 'year') return [ymd(new Date(now.getFullYear(), 0, 1)), ymd(d0)];
+    if (p === '180') return [ymd(new Date(now.getFullYear(), now.getMonth() - 6, now.getDate())), ymd(d0)];
+    if (p === '365') return [ymd(new Date(now.getFullYear() - 1, now.getMonth(), now.getDate() + 1)), ymd(d0)];
+    if (p === 'all') return ['', ''];
+    const n = parseInt(p) || 30; return [ymd(new Date(d0 - (n - 1) * 864e5)), ymd(d0)];
+  }
+  function wire(barId, st, onChange) {
+    const bar = document.getElementById(barId); if (!bar) return;
+    const cu = bar.querySelector('.ra-custom'), ins = cu ? cu.querySelectorAll('input') : [];
+    const paint = () => { bar.querySelectorAll('button[data-p]').forEach(x => x.classList.toggle('on', x.dataset.p === st.period)); if (cu) cu.hidden = st.period !== 'custom'; };
+    bar.querySelectorAll('button[data-p]').forEach(b => b.onclick = () => { st.period = b.dataset.p; paint(); if (st.period === 'custom') { if (ins[0] && !ins[0].value) { ins[0].focus(); return; } if (!(st.from && st.to)) return; } onChange(); });
+    ins.forEach(i => i.onchange = () => { st.from = ins[0].value; st.to = ins[1].value; if (st.from && st.to && st.from <= st.to) onChange(); });
+    paint();
+  }
+  return { range, wire };
+})();
 // ReportsAI — Onboarding (1.20.96): who onboarded whom, when, where the client came from; a chart per account manager.
 (function () {
   'use strict';
@@ -14,18 +40,9 @@
   const COLORS = ['#4f46e5', '#059669', '#d97706', '#db2777', '#0891b2', '#7c3aed', '#dc2626', '#65a30d', '#0d9488', '#9333ea', '#ea580c', '#2563eb'];
 
   // ---- period
-  let period = '30', grain = 'day';
-  function range(p) {
-    const now = new Date(), d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    if (p === 'week') return [ymd(new Date(d0 - ((d0.getDay() + 6) % 7) * 864e5)), ymd(d0)];
-    if (p === 'month') return [ymd(new Date(now.getFullYear(), now.getMonth(), 1)), ymd(d0)];
-    if (p === 'last') return [ymd(new Date(now.getFullYear(), now.getMonth() - 1, 1)), ymd(new Date(now.getFullYear(), now.getMonth(), 0))];
-    if (p === '30') return [ymd(new Date(d0 - 29 * 864e5)), ymd(d0)];
-    if (p === '90') return [ymd(new Date(d0 - 89 * 864e5)), ymd(d0)];
-    if (p === 'year') return [ymd(new Date(now.getFullYear(), 0, 1)), ymd(d0)];
-    return ['', ''];
-  }
-  document.querySelectorAll('#obPeriod button[data-p]').forEach(b => b.onclick = () => { period = b.dataset.p; document.querySelectorAll('#obPeriod button[data-p]').forEach(x => x.classList.toggle('on', x === b)); if (period === 'week' && grain === 'month') setGrain('day'); load(); });
+  const PS = { period: '30', from: '', to: '' }; let grain = 'day';
+  const range = () => RaPeriod.range(PS);
+  RaPeriod.wire('obPeriod', PS, () => { if (PS.period === 'week' && grain === 'month') setGrain('day'); load(); });
   document.querySelectorAll('#obGrain button').forEach(b => b.onclick = () => setGrain(b.dataset.g));
   function setGrain(g) { grain = g; document.querySelectorAll('#obGrain button').forEach(x => x.classList.toggle('on', x.dataset.g === g)); drawChart(); }
   $('obAll').onchange = load;
@@ -35,7 +52,7 @@
   let data = null, amPick = '';
   const OF = { date: { from: '', to: '', period: '' }, client: '', am: '', src: '', via: '', rating: '' };
   async function load() {
-    const [from, to] = range(period);
+    const [from, to] = range();
     $('obList').innerHTML = '<div class="ra-muted">Reading the welcome forms from the CRM…</div>';
     const j = await api('/api/reports-ai/onboarding?from=' + from + '&to=' + to + ($('obAll').checked ? '&all=1' : ''));
     if (!j.ok) { $('obList').innerHTML = '<div class="ra-muted" style="color:#b91c1c">' + esc(j.error || 'Could not load') + '</div>'; return; }
@@ -70,7 +87,7 @@
 
   // ---- the chart: stacked bars per AM, by day / week / month over the period
   function buckets(g) {
-    const keys = [], label = {}; const [from0, to0] = range(period);
+    const keys = [], label = {}; const [from0, to0] = range();
     const rows = data._base; if (!rows.length && !from0) return { keys, label };
     const from = from0 || rows.reduce((m, r) => r.date < m ? r.date : m, rows[0].date), to = to0 || ymd(new Date());
     const d = new Date(from + 'T12:00:00'), end = new Date(to + 'T12:00:00');
@@ -173,21 +190,15 @@
   });
   window.RaTabs = window.RaTabs || {};
 
-  let period = '30', by = 'rev', data = null;
+  const PS = { period: '30', from: '', to: '' }; let by = 'rev', data = null;
   const PF = { product: '', cat: '', orders: { from: '', to: '' }, rev: { from: '', to: '' }, trend: '', prod: { from: '', to: '' } };
-  function range(p) {
-    const now = new Date(), d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    if (p === 'month') return [ymd(new Date(now.getFullYear(), now.getMonth(), 1)), ymd(d0)];
-    if (p === 'last') return [ymd(new Date(now.getFullYear(), now.getMonth() - 1, 1)), ymd(new Date(now.getFullYear(), now.getMonth(), 0))];
-    if (p === 'year') return [ymd(new Date(now.getFullYear(), 0, 1)), ymd(d0)];
-    const n = parseInt(p) || 30; return [ymd(new Date(d0 - (n - 1) * 864e5)), ymd(d0)];
-  }
-  document.querySelectorAll('#prPeriod button[data-p]').forEach(b => b.onclick = () => { period = b.dataset.p; document.querySelectorAll('#prPeriod button[data-p]').forEach(x => x.classList.toggle('on', x === b)); load(); });
+  const range = () => RaPeriod.range(PS);
+  RaPeriod.wire('prPeriod', PS, load);
   document.querySelectorAll('#prBy button[data-b]').forEach(b => b.onclick = () => setBy(b.dataset.b));
   { let t = null; $('prQ').oninput = () => { clearTimeout(t); t = setTimeout(render, 250); }; }
 
   async function load() {
-    const [from, to] = range(period);
+    const [from, to] = range(); if (!from) { $('prList').innerHTML = '<div class="ra-muted">Pick a start date.</div>'; return; }
     $('prList').innerHTML = '<div class="ra-muted">Reading the orders from the CRM…</div>'; $('prKpis').innerHTML = ''; $('prChart').innerHTML = '';
     let j; try { const r = await fetch('/api/reports-ai/products?from=' + from + '&to=' + to, { headers: H() }); if (r.status === 401 || r.status === 403) { location.href = '/'; return; } j = await r.json(); } catch (e) { j = { ok: false, error: 'The CRM did not answer' }; }
     if (!j.ok) { $('prList').innerHTML = '<div class="ra-muted" style="color:#b91c1c">' + esc(j.error || 'Could not load') + '</div>'; return; }
@@ -401,17 +412,9 @@
   const refTag = (ref) => !ref ? '' : '<span class="ra-ref ' + ref.kind + '">' + (ref.kind === 'client' ? 'Client referral' : ref.kind === 'team' ? 'Axiom team' : 'Referral') + '</span>';
   const client = (r) => '<b>' + esc(r.company || r.person || ('Customer #' + r.id)) + '</b><div class="sub">' + esc([r.company ? r.person : '', r.email].filter(Boolean).join(' · ')) + '</div>';
   const orders = (r) => r.orders ? '<b>' + r.orders.n + '</b> · ' + usd0(r.orders.rev) + '<div class="sub">first ' + usD(r.orders.first) + '</div>' : '<span class="ra-muted">not yet</span>';
-  function range(p) {
-    const now = new Date(), d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    if (p === 'week') return [ymd(new Date(d0 - ((d0.getDay() + 6) % 7) * 864e5)), ymd(d0)];
-    if (p === 'month') return [ymd(new Date(now.getFullYear(), now.getMonth(), 1)), ymd(d0)];
-    if (p === 'last') return [ymd(new Date(now.getFullYear(), now.getMonth() - 1, 1)), ymd(new Date(now.getFullYear(), now.getMonth(), 0))];
-    if (p === 'year') return [ymd(new Date(now.getFullYear(), 0, 1)), ymd(d0)];
-    const n = parseInt(p) || 30; return [ymd(new Date(d0 - (n - 1) * 864e5)), ymd(d0)];
-  }
   const cache = {};
-  async function fetchClients(p) {
-    const [from, to] = range(p), k = from + ':' + to; if (cache[k]) return cache[k];
+  async function fetchClients(st) {
+    const [from, to] = RaPeriod.range(st), k = from + ':' + to; if (!from) return { ok: false, error: 'Pick a start date.' }; if (cache[k]) return cache[k];
     let j; try { const r = await fetch('/api/reports-ai/clients?from=' + from + '&to=' + to, { headers: H() }); if (r.status === 401 || r.status === 403) { location.href = '/'; return null; } j = await r.json(); } catch (e) { j = { ok: false, error: 'The CRM did not answer' }; }
     if (j.ok) cache[k] = j; return j;
   }
@@ -456,14 +459,15 @@
   };
 
   // ======== New Clients
-  const C = { period: 'month', grain: 'day', series: 'source', data: null, maker: '', F: { date: { from: '', to: '' }, client: '', made: '', src: '', am: '', ordered: '', ref: '' } };
-  document.querySelectorAll('#clPeriod button[data-p]').forEach(b => b.onclick = () => { C.period = b.dataset.p; document.querySelectorAll('#clPeriod button[data-p]').forEach(x => x.classList.toggle('on', x === b)); loadClients(); });
+  const C = { period: 'month', from: '', to: '', grain: 'day', series: 'source', revBy: 'source', data: null, maker: '', F: { date: { from: '', to: '' }, client: '', made: '', src: '', am: '', ordered: '', ref: '' } };
+  RaPeriod.wire('clPeriod', C, loadClients);
+  document.querySelectorAll('#clRevBy button').forEach(b => b.onclick = () => { C.revBy = b.dataset.r; document.querySelectorAll('#clRevBy button').forEach(x => x.classList.toggle('on', x === b)); renderClients(); });
   document.querySelectorAll('#clGrain button').forEach(b => b.onclick = () => { C.grain = b.dataset.g; document.querySelectorAll('#clGrain button').forEach(x => x.classList.toggle('on', x === b)); renderClients(); });
   document.querySelectorAll('#clSeries button').forEach(b => b.onclick = () => { C.series = b.dataset.s; document.querySelectorAll('#clSeries button').forEach(x => x.classList.toggle('on', x === b)); renderClients(); });
   { let t = null; $('clQ').oninput = () => { clearTimeout(t); t = setTimeout(renderClients, 250); }; }
   async function loadClients() {
     $('clList').innerHTML = '<div class="ra-muted">Reading the accounts from the CRM…</div>';
-    const j = await fetchClients(C.period); if (!j) return;
+    const j = await fetchClients(C); if (!j) return;
     if (!j.ok) { $('clList').innerHTML = '<div class="ra-muted" style="color:#b91c1c">' + esc(j.error || 'Could not load') + '</div>'; return; }
     C.data = j; $('clVs').textContent = usD(j.from) + ' – ' + usD(j.to) + ' · compared with ' + usD(j.prev.from) + ' – ' + usD(j.prev.to); renderClients();
   }
@@ -486,16 +490,28 @@
     const base = d.rows.filter(r => passesC(r, true)), rows = base.filter(r => !C.maker || madeKey(r) === C.maker);
     const web = base.filter(r => r.web).length, team = base.filter(r => r.made.kind === 'team').length, ordered = base.filter(r => r.orders).length, rev = base.reduce((a, r) => a + (r.orders ? r.orders.rev : 0), 0), refs = base.filter(r => r.referral).length;
     const K = (l, v, s) => '<div class="ra-kpi"><div class="l">' + l + '</div><div class="p" style="font-size:20px">' + v + '</div><div class="v">' + (s || '') + '</div></div>';
-    $('clKpis').innerHTML = K('New clients', base.length + ' ' + arrow(base.length, d.prev.n), 'the period before: ' + d.prev.n) + K('Signed up on the website', web + ' ' + arrow(web, d.prev.web), base.length ? Math.round(web / base.length * 100) + '% of new clients' : '') + K('Created by the team', team, base.length ? Math.round(team / base.length * 100) + '%' : '') + K('Already ordered', ordered, base.length ? Math.round(ordered / base.length * 100) + '% · ' + usd0(rev) + ' so far' : '') + K('Referrals', refs + ' ' + arrow(refs, d.prev.refs), base.filter(r => r.referral && r.referral.kind === 'client').length + ' from clients · ' + base.filter(r => r.referral && r.referral.kind === 'team').length + ' from the team');
+    const nOrders = base.reduce((a, r) => a + (r.orders ? r.orders.n : 0), 0);
+    $('clKpis').innerHTML = K('New clients', base.length + ' ' + arrow(base.length, d.prev.n), 'the period before: ' + d.prev.n) + K('Signed up on the website', web + ' ' + arrow(web, d.prev.web), base.length ? Math.round(web / base.length * 100) + '% of new clients' : '') + K('Created by the team', team, base.length ? Math.round(team / base.length * 100) + '%' : '') + K('Already ordered', ordered, base.length ? Math.round(ordered / base.length * 100) + '% · ' + nOrders + ' order' + (nOrders === 1 ? '' : 's') : '') +
+      K('Revenue from them so far', usd0(rev), (ordered ? usd0(rev / ordered) + ' per ordering client' : '') + (base.length ? ' · ' + usd0(rev / base.length) + ' per new client' : '')) + K('Referrals', refs + ' ' + arrow(refs, d.prev.refs), base.filter(r => r.referral && r.referral.kind === 'client').length + ' from clients · ' + base.filter(r => r.referral && r.referral.kind === 'team').length + ' from the team');
+    drawRevenue(base);
     // who created the accounts — team members, then the website as one tile
-    const by = {}; base.forEach(r => { const k = madeKey(r); if (!by[k]) by[k] = { key: k, id: r.made.id, name: r.made.kind === 'web' ? 'Website sign-ups' : r.made.name, photo: r.made.photo, n: 0, ordered: 0 }; by[k].n++; if (r.orders) by[k].ordered++; });
+    const by = {}; base.forEach(r => { const k = madeKey(r); if (!by[k]) by[k] = { key: k, id: r.made.id, name: r.made.kind === 'web' ? 'Website sign-ups' : r.made.name, photo: r.made.photo, n: 0, ordered: 0, rev: 0 }; by[k].n++; if (r.orders) { by[k].ordered++; by[k].rev += r.orders.rev; } });
     const makers = Object.values(by).sort((a, b) => b.n - a.n);
     $('clMakersN').textContent = makers.filter(m => m.key !== 'web' && m.key !== 'none').length + ' team members · ' + web + ' website';
-    leaderboard($('clMakers'), makers, C.maker, (k) => { C.maker = k; renderClients(); }, (a) => a.ordered + ' ordered');
+    leaderboard($('clMakers'), makers, C.maker, (k) => { C.maker = k; renderClients(); }, (a) => a.ordered + ' ordered · ' + usd0(a.rev));
     const keyOf = C.series === 'source' ? (r) => ({ k: r.source.kind, l: r.source.kind }) : C.series === 'maker' ? (r) => ({ k: madeKey(r), l: r.made.kind === 'web' ? 'Website' : r.made.name }) : C.series === 'how' ? (r) => r.web ? { k: 'web', l: 'Website sign-up' } : { k: 'team', l: 'Created by the team' } : (r) => ({ k: 'a' + (r.am ? r.am.id : 0), l: r.am ? r.am.name : 'No AM' });
-    const [from, to] = range(C.period); $('clChartN').textContent = rows.length + ' new client' + (rows.length === 1 ? '' : 's');
+    const [from, to] = RaPeriod.range(C); $('clChartN').textContent = rows.length + ' new client' + (rows.length === 1 ? '' : 's');
     stacked($('clChart'), $('clLegend'), rows, keyOf, C.grain, from, to);
     drawClientsTable(rows, base);
+  }
+  // 1.20.110: what the new clients have spent so far, by source / by who created the account / by AM — clients, ordered, revenue, per client
+  function drawRevenue(base) {
+    const keyOf = C.revBy === 'source' ? (r) => [r.source.kind, r.source.kind] : C.revBy === 'maker' ? (r) => [madeKey(r), r.made.kind === 'web' ? 'Website sign-ups' : r.made.name] : (r) => ['a' + (r.am ? r.am.id : 0), r.am ? r.am.name : 'No AM'];
+    const by = {}; base.forEach(r => { const [k, l] = keyOf(r); if (!by[k]) by[k] = { l, n: 0, ordered: 0, rev: 0 }; by[k].n++; if (r.orders) { by[k].ordered++; by[k].rev += r.orders.rev; } });
+    const rows = Object.values(by).sort((a, b) => b.rev - a.rev || b.n - a.n), max = rows.length ? Math.max(rows[0].rev, 1) : 1, total = rows.reduce((a, x) => a + x.rev, 0);
+    $('clRevN').textContent = usd0(total) + ' from ' + base.filter(r => r.orders).length + ' of ' + base.length + ' new clients';
+    $('clRev').innerHTML = rows.length ? '<div class="h">' + (C.revBy === 'source' ? 'Source' : C.revBy === 'maker' ? 'Created by' : 'Account manager') + '</div><div class="h"></div><div class="h r">Revenue</div><div class="h r">Clients</div><div class="h r">Ordered</div><div class="h r">Per client</div>' +
+      rows.map(x => '<div class="nm" title="' + esc(x.l) + '"><span>' + esc(x.l) + '</span></div><div class="bar"><i style="width:' + (x.rev / max * 100) + '%"></i></div><div class="c"><b>' + usd0(x.rev) + '</b>' + (total ? ' <span class="sub">' + Math.round(x.rev / total * 100) + '%</span>' : '') + '</div><div class="c">' + x.n + '</div><div class="c">' + x.ordered + (x.n ? ' <span class="sub">' + Math.round(x.ordered / x.n * 100) + '%</span>' : '') + '</div><div class="c">' + (x.n ? usd0(x.rev / x.n) : '—') + '</div>').join('') : '<div class="ra-muted" style="grid-column:1/-1">Nothing in this period.</div>';
   }
   function drawClientsTable(rows, base) {
     const F = C.F, uniq = (f) => base.map(f).filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).sort();
@@ -518,12 +534,12 @@
   }
 
   // ======== Referral Report
-  const R = { period: 'month', data: null, pick: '', F: { date: { from: '', to: '' }, client: '', kind: '', who: '', am: '', ordered: '' } };
-  document.querySelectorAll('#rfPeriod button[data-p]').forEach(b => b.onclick = () => { R.period = b.dataset.p; document.querySelectorAll('#rfPeriod button[data-p]').forEach(x => x.classList.toggle('on', x === b)); loadRefs(); });
+  const R = { period: 'month', from: '', to: '', data: null, pick: '', F: { date: { from: '', to: '' }, client: '', kind: '', who: '', am: '', ordered: '' } };
+  RaPeriod.wire('rfPeriod', R, loadRefs);
   { let t = null; $('rfQ').oninput = () => { clearTimeout(t); t = setTimeout(renderRefs, 250); }; }
   async function loadRefs() {
     $('rfList').innerHTML = '<div class="ra-muted">Reading the referrals from the CRM…</div>';
-    const j = await fetchClients(R.period); if (!j) return;
+    const j = await fetchClients(R); if (!j) return;
     if (!j.ok) { $('rfList').innerHTML = '<div class="ra-muted" style="color:#b91c1c">' + esc(j.error || 'Could not load') + '</div>'; return; }
     R.data = j; $('rfVs').textContent = usD(j.from) + ' – ' + usD(j.to) + ' · the period before had ' + j.prev.refs + ' referral' + (j.prev.refs === 1 ? '' : 's'); renderRefs();
   }

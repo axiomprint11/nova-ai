@@ -513,7 +513,13 @@ table (Created · New client · Kind · Referred by (+ title, where it was read 
 created the accounts, sources, AMs, referrers, every client) goes To `to` (gary@) CC `cc` (arsine@, luciana@) and, with `all_ams`,
 the same mail to every member of the CRM team **"Account Managers"** (`amTeam()`: `team.members` JSON, active users, cached 10 min;
 `GET /api/reports-ai/ams`) on the 1st at 07:00 LA; Notify kind `ra.clients` ("New Clients Report"). The page's **Email report card
-is shared** (`RaEmailCard.mount(box, labels)` on `.ra-emailcard[data-report]`; onboarding keeps `per_am`, clients has `all_ams`). 1.20.105: **`referrals`** is the third mail (`REFERRALS_DEFAULTS`: To gary@, CC luciana@ + arsine@, the 1st at 07:00; `referralsHtml` = numbers, top referring clients, Axiom team referrals, every referral; with `per_am` every AM who has any gets `amReferralHtml` — the referred clients on their account + the referrals they made themselves; Notify kind `ra.referrals`). Referrers are grouped by name (`refKey` / page `whoKey`), so two CRM accounts of one company count as one.
+is shared** (`RaEmailCard.mount(box, labels)` on `.ra-emailcard[data-report]`; onboarding keeps `per_am`, clients has `all_ams`). 1.20.105: **`referrals`** is the third mail (`REFERRALS_DEFAULTS`: To gary@, CC luciana@ + arsine@, the 1st at 07:00; `referralsHtml` = numbers, top referring clients, Axiom team referrals, every referral; with `per_am` every AM who has any gets `amReferralHtml` — the referred clients on their account + the referrals they made themselves; Notify kind `ra.referrals`). Referrers are grouped by name (`refKey` / page `whoKey`), so two CRM accounts of one company count as one. **1.20.110 — one period picker for every report**: `window.RaPeriod` (top of `public/reports-ai.js`) — chips This week · This month ·
+Last month · Last 30 days · Last 90 days · **6 months · 12 months · YTD · Custom** (two date inputs, `.ra-custom`; Onboarding keeps All) —
+`RaPeriod.range(state)` → `[from, to]` LA days from `state {period, from, to}`, `RaPeriod.wire(barId, state, onChange)` runs the chips
+(Custom loads once both dates are set); each report keeps its own state (`PS` on Onboarding / Product, `C` / `R` on New Clients /
+Referrals; `fetchClients(state)`). **Revenue on New Clients**: a "Revenue from them so far" tile (per ordering client · per new client)
+and a **Revenue from the new clients** card (`drawRevenue`, `.ra-bars-rev`: By source / By who created / By AM — revenue + share, clients,
+ordered %, per client, from the rows' `orders.rev` = every invoiced estimate of those customers to date); the creator tiles show "$".
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 

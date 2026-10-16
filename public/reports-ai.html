@@ -23,6 +23,7 @@
   .ra-sub { display: flex; gap: 6px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
   .ra-sub button[data-p] { border: 1px solid var(--line); background: #fff; border-radius: 20px; padding: 6px 14px; font: 600 12.5px/1 inherit; cursor: pointer; color: var(--ink-soft); }
   .ra-sub button[data-p].on { background: var(--indigo-light); border-color: var(--indigo); color: var(--indigo-dark); }
+  .ra-sub .ra-custom { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); } .ra-sub .ra-custom input { font: inherit; font-size: 12.5px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
   .ra-sub .sp { flex: 1; } .ra-sub label.ra-chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); white-space: nowrap; height: 30px; margin-left: 6px; } .ra-sub label.ra-chk input { width: 14px; height: 14px; margin: 0; }
   /* the email settings card */
   .ra-email { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 14px; align-items: end; } .ra-email label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--muted); }
@@ -62,6 +63,7 @@
   .ra-tag { display: inline-block; font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 6px; background: #f0f0f5; color: #555; } .ra-tag.hi { background: #fee2e2; color: #991b1b; } .ra-tag.dev { background: #fef3c7; color: #92400e; } .ra-tag.lo { background: #f3f4f6; color: #6b7280; } .ra-tag.no { background: #fee2e2; color: #991b1b; }
   /* New Clients + Referral Report (1.20.100) */
   .ra-two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; } @media (max-width: 1000px) { .ra-two { grid-template-columns: 1fr; } }
+  .ra-bars.ra-bars-rev { grid-template-columns: 220px 1fr repeat(4, minmax(70px, max-content)); }
   .ra-two .ra-card { margin-bottom: 14px; } .ra-two .ra-ams { margin-bottom: 0; }
   .ra-made { display: inline-flex; align-items: center; gap: 6px; } .ra-made .web { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: #e0f2fe; color: #075985; } .ra-made .web svg { width: 14px; height: 14px; }
   .ra-kpi .v .ra-tr { margin-left: 4px; }
@@ -100,7 +102,7 @@
 <div class="ra-main">
   <section class="ra-view on" data-v="onboarding">
     <div class="ra-sub" id="obPeriod">
-      <button data-p="month">This month</button><button data-p="last">Last month</button><button data-p="30" class="on">Last 30 days</button><button data-p="90">Last 90 days</button><button data-p="year">This year</button><button data-p="all">All</button>
+      <button data-p="week">This week</button><button data-p="month">This month</button><button data-p="last">Last month</button><button data-p="30" class="on">Last 30 days</button><button data-p="90">Last 90 days</button><button data-p="180">6 months</button><button data-p="365">12 months</button><button data-p="year">YTD</button><button data-p="all">All</button><button data-p="custom">Custom</button><span class="ra-custom" hidden><input type="date" aria-label="From"><span>–</span><input type="date" aria-label="To"></span>
       <label class="ra-chk" title="Welcome forms whose onboarding method is 'did not onboard'"><input type="checkbox" id="obAll"> include “did not onboard”</label>
       <span class="sp"></span><input class="q" id="obQ" placeholder="Search client, AM, source" autocomplete="off">
     </div>
@@ -115,11 +117,15 @@
   </section>
   <section class="ra-view" data-v="clients">
     <div class="ra-sub" id="clPeriod">
-      <button data-p="week">This week</button><button data-p="month" class="on">This month</button><button data-p="last">Last month</button><button data-p="30">Last 30 days</button><button data-p="90">Last 90 days</button><button data-p="year">This year</button><button data-p="365">Last 12 months</button>
+      <button data-p="week">This week</button><button data-p="month" class="on">This month</button><button data-p="last">Last month</button><button data-p="30">Last 30 days</button><button data-p="90">Last 90 days</button><button data-p="180">6 months</button><button data-p="365">12 months</button><button data-p="year">YTD</button><button data-p="custom">Custom</button><span class="ra-custom" hidden><input type="date" aria-label="From"><span>–</span><input type="date" aria-label="To"></span>
       <span class="ra-muted" id="clVs"></span>
       <span class="sp"></span><input class="q" id="clQ" placeholder="Search client, source, team member" autocomplete="off">
     </div>
     <div class="ra-kpis" id="clKpis"></div>
+    <div class="ra-card">
+      <h2>Revenue from the new clients <span class="n" id="clRevN"></span><span class="sp"></span><div class="ra-seg" id="clRevBy"><button data-r="source" class="on">By source</button><button data-r="maker">By who created</button><button data-r="am">By AM</button></div></h2>
+      <div class="ra-bars ra-bars-rev" id="clRev"></div>
+    </div>
     <div class="ra-card">
       <h2>Who created the accounts <span class="n" id="clMakersN"></span></h2>
       <div class="ra-ams" id="clMakers"></div>
@@ -134,7 +140,7 @@
   </section>
   <section class="ra-view" data-v="referrals">
     <div class="ra-sub" id="rfPeriod">
-      <button data-p="week">This week</button><button data-p="month" class="on">This month</button><button data-p="last">Last month</button><button data-p="30">Last 30 days</button><button data-p="90">Last 90 days</button><button data-p="year">This year</button><button data-p="365">Last 12 months</button>
+      <button data-p="week">This week</button><button data-p="month" class="on">This month</button><button data-p="last">Last month</button><button data-p="30">Last 30 days</button><button data-p="90">Last 90 days</button><button data-p="180">6 months</button><button data-p="365">12 months</button><button data-p="year">YTD</button><button data-p="custom">Custom</button><span class="ra-custom" hidden><input type="date" aria-label="From"><span>–</span><input type="date" aria-label="To"></span>
       <span class="ra-muted" id="rfVs"></span>
       <span class="sp"></span><input class="q" id="rfQ" placeholder="Search client or referrer" autocomplete="off">
     </div>
@@ -149,7 +155,7 @@
   </section>
   <section class="ra-view" data-v="products">
     <div class="ra-sub" id="prPeriod">
-      <button data-p="30" class="on">Last 30 days</button><button data-p="90">Last 90 days</button><button data-p="month">This month</button><button data-p="last">Last month</button><button data-p="year">This year</button><button data-p="365">Last 12 months</button>
+      <button data-p="week">This week</button><button data-p="month">This month</button><button data-p="last">Last month</button><button data-p="30" class="on">Last 30 days</button><button data-p="90">Last 90 days</button><button data-p="180">6 months</button><button data-p="365">12 months</button><button data-p="year">YTD</button><button data-p="custom">Custom</button><span class="ra-custom" hidden><input type="date" aria-label="From"><span>–</span><input type="date" aria-label="To"></span>
       <span class="ra-muted" id="prVs"></span>
       <span class="sp"></span><input class="q" id="prQ" placeholder="Search product or category" autocomplete="off">
     </div>
