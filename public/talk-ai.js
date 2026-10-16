@@ -188,6 +188,9 @@
   // The "Answered by" select: every TalkAI that can pick up — the three setups and each account manager's line.
   function fillVia() { callHead(); }   /* 1.20.92: the Answered by options are built from `lines` in callSpecs() */
   const firstName = (n) => String(n || '').trim().split(/\s+/)[0] || '';
+  // 1.20.113: handset with an incoming (down-left) / outgoing (up-right) arrow for the Call pill
+  const PHONE_IN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/><path d="M21 3l-6 6"/><path d="M15 4v5h5"/></svg>';
+  const PHONE_OUT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/><path d="M15 9l6-6"/><path d="M16 3h5v5"/></svg>';
   const SYS_ICON = {
     in: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 7L7 17"/><path d="M16 17H7V8"/></svg>',
     out: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7"/><path d="M8 7h9v9"/></svg>',
@@ -236,9 +239,13 @@
     const live = !test && cs.state === 'answered' && /^(ringing|in-progress|queued)$/.test(String(c.status || '')) && !c.duration_sec && !c.summary && !c.ai_summary && (Date.now() - when.getTime()) < 2 * 3600000;
     const stName = { answered: 'Answered', missed: 'Missed', voicemail: 'Voicemail', connected: 'Connected', test: 'Test' }[cs.state] || cs.state;
     const stTitle = cs.state === 'answered' ? (c.answered_by === 'forward' || c.answered_by === 'person' ? 'Answered by the team' : c.answered_by === 'pin' ? 'Account manager, by PIN' : 'Answered by NovaAI') : cs.state === 'voicemail' ? 'The closed message was played' : '';
-    const kind = test ? '<div class="cl-call"><span class="cl-dir test">' + SYS_ICON.test + '</span><div><small>Test</small><span class="tk-pillc st-test">' + (c.source === 'try' ? 'In text' : 'ElevenLabs') + '</span></div></div>'
-      : '<div class="cl-call"><span class="cl-dir ' + cs.dir + '" title="' + (cs.dir === 'out' ? 'Outbound' : 'Inbound') + '">' + (cs.dir === 'out' ? SYS_ICON.out : SYS_ICON.in) + '</span><div><small>' + (cs.dir === 'out' ? 'Outbound' : 'Inbound') + '</small>' +
-        '<span class="tk-pillc st-' + (live ? 'live' : esc(cs.state)) + '" title="' + esc(stTitle) + '">' + (live ? 'Live' : esc(stName)) + (cs.state === 'answered' && !live && (c.answered_by === 'forward' || c.answered_by === 'person') ? ' · team' : '') + '</span></div></div>';
+    /* 1.20.113: one pill, as in Dialpad — the handset's arrow says inbound / outbound, the colour says picked up (green) / missed (red)
+       (voicemail amber, live blue, tests grey); the state and who answered are in the tooltip. */
+    const st = live ? 'live' : cs.state;
+    const kind = test ? '<span class="tk-pillc cl-pill st-test" title="' + (c.source === 'try' ? 'Test in text' : 'ElevenLabs test') + '">' + SYS_ICON.test + ' Test</span>'
+      : '<span class="tk-pillc cl-pill st-' + esc(st) + '" title="' + esc((cs.dir === 'out' ? 'Outbound · ' : 'Inbound · ') + (live ? 'Live' : stName) + (stTitle ? ' — ' + stTitle : '')) + '">' +
+        (cs.dir === 'out' ? PHONE_OUT : PHONE_IN) + ' ' + (cs.dir === 'out' ? 'Outbound' : 'Inbound') +
+        (live ? ' · live' : '') + '</span>';     /* voicemail (amber) and "answered by the team" are in the tooltip — the column is narrow */
     const out = [];
     if (c.outcome === 'message') out.push('<span class="tk-tag msg">Message</span>');
     if (Number(c.callback) === 1 && !test) out.push('<span class="tk-tag msg">Call back</span>');
