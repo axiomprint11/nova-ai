@@ -59,6 +59,21 @@
   .ra-src.google, .ra-src.googleads { background: #e0f2fe; color: #075985; } .ra-src.chatgptai { background: #ede9fe; color: #5b21b6; } .ra-src.clientreferral, .ra-src.teamreferral, .ra-src.referral { background: #dcfce7; color: #166534; }
   .ra-src.returningclient { background: #fef3c7; color: #92400e; } .ra-src.social { background: #fce7f3; color: #be185d; } .ra-src.unknown { background: #f3f4f6; color: #9ca3af; }
   .ra-tag { display: inline-block; font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 6px; background: #f0f0f5; color: #555; } .ra-tag.hi { background: #fee2e2; color: #991b1b; } .ra-tag.dev { background: #fef3c7; color: #92400e; } .ra-tag.lo { background: #f3f4f6; color: #6b7280; } .ra-tag.no { background: #fee2e2; color: #991b1b; }
+  /* Product Report (1.20.98) */
+  .ra-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .ra-kpi { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: #fff; min-height: 86px; display: flex; flex-direction: column; gap: 4px; }
+  .ra-kpi .l { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); } .ra-kpi .l.up { color: #047857; } .ra-kpi .l.down { color: #b91c1c; }
+  .ra-kpi .p { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; line-height: 1.2; } .ra-kpi .p img { width: 30px; height: 30px; border-radius: 7px; object-fit: cover; flex: none; border: 1px solid var(--line); }
+  .ra-kpi .v { font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; } .ra-kpi .v b { color: var(--ink); }
+  .ra-bars { display: grid; grid-template-columns: 220px 1fr 150px; gap: 4px 10px; align-items: center; font-size: 12.5px; }
+  .ra-bars .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 7px; } .ra-bars .nm img { width: 22px; height: 22px; border-radius: 5px; object-fit: cover; border: 1px solid var(--line); flex: none; }
+  .ra-bars .bar { position: relative; height: 22px; } .ra-bars .bar i { position: absolute; left: 0; top: 3px; height: 16px; border-radius: 4px; background: #4f46e5; } .ra-bars .bar i.prev { top: 15px; height: 5px; background: #c7d2fe; }
+  .ra-bars .val { font-variant-numeric: tabular-nums; color: var(--ink-soft); white-space: nowrap; } .ra-bars .val b { color: var(--ink); }
+  .ra-tr { font-size: 11px; font-weight: 700; white-space: nowrap; } .ra-tr.up { color: #047857; } .ra-tr.down { color: #b91c1c; } .ra-tr.flat { color: #9ca3af; font-weight: 500; }
+  .ra-pimg { width: 34px; height: 34px; border-radius: 8px; object-fit: cover; border: 1px solid var(--line); float: left; margin-right: 8px; }
+  table.ra td.num, table.ra th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.ra.pr td.num { white-space: nowrap; } table.ra.pr td { padding: 8px 8px; font-size: 12px; } table.ra.pr th { padding: 8px 8px; } table.ra.pr td:first-child { min-width: 230px; } table.ra.pr td:first-child .sub { clear: none; }
+  .ra-help summary { cursor: pointer; font-weight: 600; font-size: 13.5px; } .ra-help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px 18px; margin-top: 12px; font-size: 12.5px; line-height: 1.5; color: var(--ink-soft); } .ra-help-grid b { color: var(--ink); }
   .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: #111827; color: #fff; padding: 9px 14px; border-radius: 9px; font-size: 13px; z-index: 50; }
 </style>
 </head>
@@ -66,7 +81,7 @@
 <div class="ra-top">
   <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><rect x="5" y="11" width="3" height="6" rx="1"/><rect x="10.5" y="6" width="3" height="11" rx="1"/><rect x="16" y="9" width="3" height="8" rx="1"/></svg> ReportsAI <span>· reports from the CRM</span></h1>
   <span class="sp"></span>
-  <div class="ra-tabs"><button class="on" data-v="onboarding">Onboarding</button></div>
+  <div class="ra-tabs"><button class="on" data-v="onboarding">Onboarding</button><button data-v="products">Product Report</button></div>
 </div>
 <div class="ra-main">
   <section class="ra-view on" data-v="onboarding">
@@ -95,6 +110,31 @@
       </div>
       <div class="ra-sent" id="obEmSent"></div>
     </div>
+  </section>
+  <section class="ra-view" data-v="products">
+    <div class="ra-sub" id="prPeriod">
+      <button data-p="30" class="on">Last 30 days</button><button data-p="90">Last 90 days</button><button data-p="month">This month</button><button data-p="last">Last month</button><button data-p="year">This year</button><button data-p="365">Last 12 months</button>
+      <span class="ra-muted" id="prVs"></span>
+      <span class="sp"></span><input class="q" id="prQ" placeholder="Search product or category" autocomplete="off">
+    </div>
+    <div class="ra-kpis" id="prKpis"></div>
+    <div class="ra-card">
+      <h2>Revenue by product <span class="n" id="prChartN"></span><span class="sp"></span><div class="ra-seg" id="prBy"><button data-b="rev" class="on">Revenue</button><button data-b="qty">Units</button><button data-b="orders">Orders</button><button data-b="new_clients">New clients</button></div></h2>
+      <div class="ra-bars" id="prChart"></div>
+    </div>
+    <div class="ra-card" id="prList"></div>
+    <details class="ra-card ra-help" id="prHelp">
+      <summary>How to read this report — and what it can tell you about pricing</summary>
+      <div class="ra-help-grid">
+        <div><b>Top sellers</b> — the Revenue / Units / Orders switch on the chart and the same columns in the table. A product high on Orders but low on Revenue is a traffic product (keep it cheap, it brings people in); high on Revenue with few orders is a margin product.</div>
+        <div><b>Cooling down / heating up</b> — every figure is compared with the period of the same length right before it (the arrows). A product whose orders fall while its <i>Per unit</i> price rose is price-sensitive — the last increase cost volume. Falling orders at the same price point to demand, competition or the website, not price.</div>
+        <div><b>Brings new clients</b> — <i>New</i> under Clients counts customers whose first ever order with us was this product. Those are the products to advertise and to keep competitively priced; raise prices on products that mostly serve existing clients (reorders, few new).</div>
+        <div><b>Room to raise the price</b> — a high <i>Reorders</i> share with a strong <i>Quotes → orders</i> conversion and rising orders: customers accept the price. Test a small increase there first. A low conversion (many quotes, few orders) says the price or the turnaround scares people off — look at the price ladder before cutting.</div>
+        <div><b>Express</b> share — customers paying the rush fee shows how much they value speed; a product with a high express share can carry a faster standard turnaround at a higher base price.</div>
+        <div><b>Production days</b> — median (typical) and average from the first production scan to the "complete" scan; <i>Order → ready</i> from the order itself (prepress and proofing included). The longest ones are where capacity, outsourcing or a price for the labour should be looked at; the shortest are the ones to promote as quick turnaround. <i>On time</i> = ready by the job's complete-by date.</div>
+        <div><b>Next things worth adding</b>: material cost per job (margin per product once bills are linked to jobs in BookkeeperAI), reprints per product (quality cost), discount and coupon share per product, which AMs sell which products, website vs CRM orders, and the quantity tiers people actually buy (where to put the price breaks).</div>
+      </div>
+    </details>
   </section>
 </div>
 <script src="/nova-nav.js"></script>

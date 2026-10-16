@@ -165,3 +165,148 @@
 
   load();
 })();
+
+// ---- Product Report (1.20.98): what sells, what is cooling down, what brings new clients, what takes longest in production.
+(function () {
+  'use strict';
+  const token = localStorage.getItem('axiom_token'); if (!token) return;
+  const H = () => ({ 'Authorization': 'Bearer ' + token });
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const $ = (id) => document.getElementById(id);
+  const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '/' + m[3] + '/' + m[1] : String(d || ''); };
+  const usd = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const usd0 = (n) => '$' + Math.round(Number(n || 0)).toLocaleString('en-US');
+  const num = (n) => Number(n || 0).toLocaleString('en-US');
+  const r1 = (n) => n == null ? '—' : Math.round(n * 10) / 10;
+  const unit = (n) => n == null ? '—' : n >= 10 ? usd(n) : '$' + Number(n).toFixed(n >= 1 ? 2 : 3);
+
+  // tabs
+  document.querySelectorAll('.ra-tabs button[data-v]').forEach(b => b.onclick = () => {
+    document.querySelectorAll('.ra-tabs button[data-v]').forEach(x => x.classList.toggle('on', x === b));
+    document.querySelectorAll('.ra-view').forEach(v => v.classList.toggle('on', v.dataset.v === b.dataset.v));
+    if (b.dataset.v === 'products' && !data) load();
+    try { history.replaceState(null, '', '?tab=' + b.dataset.v); } catch (e) { /* ignore */ }
+  });
+
+  let period = '30', by = 'rev', data = null;
+  const PF = { product: '', cat: '', orders: { from: '', to: '' }, rev: { from: '', to: '' }, trend: '', prod: { from: '', to: '' } };
+  function range(p) {
+    const now = new Date(), d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (p === 'month') return [ymd(new Date(now.getFullYear(), now.getMonth(), 1)), ymd(d0)];
+    if (p === 'last') return [ymd(new Date(now.getFullYear(), now.getMonth() - 1, 1)), ymd(new Date(now.getFullYear(), now.getMonth(), 0))];
+    if (p === 'year') return [ymd(new Date(now.getFullYear(), 0, 1)), ymd(d0)];
+    const n = parseInt(p) || 30; return [ymd(new Date(d0 - (n - 1) * 864e5)), ymd(d0)];
+  }
+  document.querySelectorAll('#prPeriod button[data-p]').forEach(b => b.onclick = () => { period = b.dataset.p; document.querySelectorAll('#prPeriod button[data-p]').forEach(x => x.classList.toggle('on', x === b)); load(); });
+  document.querySelectorAll('#prBy button[data-b]').forEach(b => b.onclick = () => { by = b.dataset.b; document.querySelectorAll('#prBy button[data-b]').forEach(x => x.classList.toggle('on', x === b)); drawChart(); });
+  { let t = null; $('prQ').oninput = () => { clearTimeout(t); t = setTimeout(render, 250); }; }
+
+  async function load() {
+    const [from, to] = range(period);
+    $('prList').innerHTML = '<div class="ra-muted">Reading the orders from the CRM…</div>'; $('prKpis').innerHTML = ''; $('prChart').innerHTML = '';
+    let j; try { const r = await fetch('/api/reports-ai/products?from=' + from + '&to=' + to, { headers: H() }); if (r.status === 401 || r.status === 403) { location.href = '/'; return; } j = await r.json(); } catch (e) { j = { ok: false, error: 'The CRM did not answer' }; }
+    if (!j.ok) { $('prList').innerHTML = '<div class="ra-muted" style="color:#b91c1c">' + esc(j.error || 'Could not load') + '</div>'; return; }
+    j.products.forEach(p => { p.trend_kind = trendKind(p); p.conv = p.cur.orders + p.cur.quotes ? Math.round(p.cur.orders / (p.cur.orders + p.cur.quotes) * 100) : null; });
+    data = j; $('prVs').textContent = usD(j.from) + ' – ' + usD(j.to) + ' · compared with ' + usD(j.prev_from) + ' – ' + usD(j.prev_to) + (j.ms ? ' · ' + (j.ms / 1000).toFixed(1) + ' s' : '');
+    render();
+  }
+  // rising = revenue up 25%+ on 3+ orders, cooling = down 25%+ from 3+ orders before, new = nothing in the period before, gone = nothing now
+  function trendKind(p) {
+    const c = p.cur, v = p.prev;
+    if (!v.orders && c.orders) return 'new'; if (v.orders && !c.orders) return 'gone'; if (!c.orders && !v.orders) return 'quotes';
+    if (c.orders >= 3 && p.trend.rev >= 25) return 'up'; if (v.orders >= 3 && p.trend.rev <= -25) return 'down'; return 'flat';
+  }
+  const TREND_L = { up: 'Heating up', down: 'Cooling down', flat: 'Steady', new: 'New this period', gone: 'No orders now', quotes: 'Quotes only' };
+  const arrow = (pct, suffix) => pct == null ? '<span class="ra-tr flat">new</span>' : pct === 0 ? '<span class="ra-tr flat">=</span>' : '<span class="ra-tr ' + (pct > 0 ? 'up' : 'down') + '" title="vs the period before">' + (pct > 0 ? '▲' : '▼') + Math.abs(pct) + '%' + (suffix || '') + '</span>';
+
+  function passes(p) {
+    const q = $('prQ').value.trim().toLowerCase();
+    if (q && (p.title + ' ' + p.category).toLowerCase().indexOf(q) < 0) return false;
+    if (PF.product && p.title.toLowerCase().indexOf(PF.product.toLowerCase()) < 0) return false;
+    if (PF.cat && p.category !== PF.cat) return false;
+    if (PF.trend && p.trend_kind !== PF.trend) return false;
+    if (PF.orders.from !== '' && p.cur.orders < +PF.orders.from) return false; if (PF.orders.to !== '' && p.cur.orders > +PF.orders.to) return false;
+    if (PF.rev.from !== '' && p.cur.rev < +PF.rev.from) return false; if (PF.rev.to !== '' && p.cur.rev > +PF.rev.to) return false;
+    if (PF.prod.from !== '' && (p.cur.prod_med == null || p.cur.prod_med < +PF.prod.from)) return false; if (PF.prod.to !== '' && (p.cur.prod_med == null || p.cur.prod_med > +PF.prod.to)) return false;
+    return true;
+  }
+  function render() {
+    if (!data) return;
+    const rows = data.products.filter(passes); data._rows = rows;
+    drawKpis(data.products); drawChart(); drawTable(rows);
+  }
+  const pimg = (p, cls) => p.image ? '<img class="' + (cls || '') + '" src="' + esc(p.image) + '" alt="" onerror="this.remove()">' : '';
+  function kpi(label, cls, p, value, sub) {
+    return '<div class="ra-kpi"><div class="l ' + (cls || '') + '">' + label + '</div>' + (p ? '<div class="p">' + pimg(p) + '<span>' + esc(p.title) + '</span></div><div class="v">' + value + (sub ? ' <span class="ra-muted">· ' + sub + '</span>' : '') + '</div>' : '<div class="ra-muted">Not enough data</div>') + '</div>';
+  }
+  function drawKpis(all) {
+    const sold = all.filter(p => p.cur.orders > 0);
+    const byRev = sold.slice().sort((a, b) => b.cur.rev - a.cur.rev)[0];
+    const byQty = sold.slice().sort((a, b) => b.cur.qty - a.cur.qty)[0];
+    const byOrders = sold.slice().sort((a, b) => b.cur.orders - a.cur.orders)[0];
+    const up = sold.filter(p => p.trend_kind === 'up' && p.prev.orders >= 2).sort((a, b) => (b.cur.rev - b.prev.rev) - (a.cur.rev - a.prev.rev))[0];
+    const down = all.filter(p => (p.trend_kind === 'down' || p.trend_kind === 'gone') && p.prev.orders >= 3).sort((a, b) => (a.cur.rev - a.prev.rev) - (b.cur.rev - b.prev.rev))[0];
+    const magnet = sold.filter(p => p.cur.new_clients > 0).sort((a, b) => b.cur.new_clients - a.cur.new_clients || b.cur.new_rev - a.cur.new_rev)[0];
+    const timed = sold.filter(p => p.cur.prod_n >= 3);
+    const slow = timed.slice().sort((a, b) => b.cur.prod_med - a.cur.prod_med)[0];
+    const fast = timed.slice().sort((a, b) => a.cur.prod_med - b.cur.prod_med)[0];
+    const d = (p) => p ? p.cur.prod_med + ' days typical' : '';
+    $('prKpis').innerHTML =
+      kpi('Top seller · revenue', '', byRev, byRev && '<b>' + usd0(byRev.cur.rev) + '</b>', byRev && byRev.cur.orders + ' orders ' + arrow(byRev.trend.rev)) +
+      kpi('Most units sold', '', byQty, byQty && '<b>' + num(byQty.cur.qty) + '</b> pcs', byQty && unit(byQty.cur.unit_price) + ' each') +
+      kpi('Most orders', '', byOrders, byOrders && '<b>' + byOrders.cur.orders + '</b> orders', byOrders && byOrders.cur.clients + ' clients ' + arrow(byOrders.trend.orders)) +
+      kpi('Heating up', 'up', up, up && '<b>' + usd0(up.cur.rev) + '</b> ' + arrow(up.trend.rev), up && 'was ' + usd0(up.prev.rev)) +
+      kpi('Cooling down', 'down', down, down && '<b>' + usd0(down.cur.rev) + '</b> ' + arrow(down.trend.rev), down && 'was ' + usd0(down.prev.rev) + ' · ' + down.prev.orders + ' orders') +
+      kpi('Brings new clients', '', magnet, magnet && '<b>' + magnet.cur.new_clients + '</b> first-time clients', magnet && usd0(magnet.cur.new_rev) + ' from them') +
+      kpi('Longest in production', 'down', slow, slow && '<b>' + d(slow) + '</b>', slow && 'avg ' + slow.cur.prod_avg + ' · ' + slow.cur.prod_n + ' jobs') +
+      kpi('Shortest in production', 'up', fast, fast && '<b>' + d(fast) + '</b>', fast && 'avg ' + fast.cur.prod_avg + ' · ' + fast.cur.prod_n + ' jobs');
+  }
+  const BY_L = { rev: 'Revenue', qty: 'Units', orders: 'Orders', new_clients: 'New clients' };
+  function drawChart() {
+    if (!data) return; const rows = (data._rows || []).filter(p => p.cur[by] > 0).sort((a, b) => b.cur[by] - a.cur[by]).slice(0, 15);
+    const max = rows.length ? Math.max(rows[0].cur[by], rows.reduce((m, p) => Math.max(m, p.prev[by]), 0)) : 0;
+    const f = by === 'rev' ? usd0 : num;
+    $('prChartN').textContent = BY_L[by] + ' · top ' + rows.length + ' of ' + (data._rows || []).length + ' · thin bar = the period before';
+    $('prChart').innerHTML = rows.map(p => '<div class="nm" title="' + esc(p.title) + '">' + pimg(p) + '<span>' + esc(p.title) + '</span></div><div class="bar"><i style="width:' + (p.cur[by] / max * 100) + '%"></i><i class="prev" style="width:' + (p.prev[by] / max * 100) + '%"></i></div><div class="val"><b>' + f(p.cur[by]) + '</b> ' + arrow(p.trend[by === 'new_clients' ? 'orders' : by]) + '</div>').join('') || '<div class="ra-muted">Nothing in this period.</div>';
+  }
+  function specs() {
+    const all = data.products, uniq = (f) => all.map(f).filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).sort();
+    return {
+      product: { type: 'text', value: PF.product },
+      cat: [{ v: '', l: 'Any category' }].concat(uniq(p => p.category).map(c => ({ v: c, l: c }))),
+      orders: { type: 'range', kind: 'number', presets: [{ v: '', l: 'Any' }], from: PF.orders.from, to: PF.orders.to },
+      rev: { type: 'range', kind: 'number', presets: [{ v: '', l: 'Any' }], from: PF.rev.from, to: PF.rev.to },
+      trend: [{ v: '', l: 'Any' }].concat(['up', 'down', 'flat', 'new', 'gone', 'quotes'].map(k => ({ v: k, l: TREND_L[k], sub: String(all.filter(p => p.trend_kind === k).length) }))),
+      prod: { type: 'range', kind: 'number', presets: [{ v: '', l: 'Any' }], from: PF.prod.from, to: PF.prod.to }
+    };
+  }
+  const cur = (k) => k === 'product' ? PF.product : k === 'cat' ? PF.cat : k === 'trend' ? PF.trend : '';
+  function drawTable(rows) {
+    const S = specs(), T = (k, l) => NovaTable.th(k, l, S[k], cur(k));
+    const tot = rows.reduce((a, p) => { a.orders += p.cur.orders; a.qty += p.cur.qty; a.rev += p.cur.rev; a.nc += p.cur.new_clients; a.po += p.prev.orders; a.prev += p.prev.rev; return a; }, { orders: 0, qty: 0, rev: 0, nc: 0, po: 0, prev: 0 });
+    const pct = (a, b) => b ? Math.round((a - b) / b * 100) : null;
+    $('prList').innerHTML = '<h2>Products <span class="n">' + rows.length + ' of ' + data.products.length + ' · ' + num(tot.orders) + ' orders · ' + usd0(tot.rev) + ' ' + arrow(pct(tot.rev, tot.prev)) + '</span></h2>' +
+      (rows.length ? '<table class="ra pr"><thead><tr id="prHead"><th>' + T('product', 'Product') + '</th><th>' + T('cat', 'Category') + '</th><th class="num">' + T('orders', 'Orders') + '</th><th class="num">Units</th><th class="num">' + T('rev', 'Revenue') + '</th><th class="num">Avg order</th><th class="num">Per unit</th><th class="num">Clients · new</th><th class="num">Reorders</th><th class="num">Quotes → orders</th><th>' + T('trend', 'Trend') + '</th><th class="num">' + T('prod', 'Production days') + '</th><th class="num">On time</th></tr></thead><tbody>' +
+        rows.map(p => { const c = p.cur, v = p.prev; return '<tr>' +
+          '<td>' + pimg(p, 'ra-pimg') + '<b>' + esc(p.title) + '</b><div class="sub">#' + p.pid + (p.active === false ? ' · inactive' : '') + (c.express ? ' · ' + c.express + ' express' : '') + (c.design ? ' · ' + c.design + ' with design fee' : '') + '</div></td>' +
+          '<td class="sub">' + esc(p.category) + '</td>' +
+          '<td class="num"><b>' + num(c.orders) + '</b><div class="sub">' + arrow(p.trend.orders) + ' <span title="the period before">' + num(v.orders) + '</span></div></td>' +
+          '<td class="num">' + num(c.qty) + '<div class="sub">' + arrow(p.trend.qty) + '</div></td>' +
+          '<td class="num"><b>' + usd0(c.rev) + '</b><div class="sub">' + arrow(p.trend.rev) + ' <span title="the period before">' + usd0(v.rev) + '</span></div></td>' +
+          '<td class="num">' + (c.avg_order != null ? usd0(c.avg_order) : '—') + '</td>' +
+          '<td class="num">' + unit(c.unit_price) + (p.trend.unit != null && p.trend.unit !== 0 ? '<div class="sub">' + arrow(p.trend.unit) + '</div>' : '') + '</td>' +
+          '<td class="num">' + c.clients + (c.new_clients ? ' · <b style="color:#047857" title="customers whose first ever order was this product">' + c.new_clients + ' new</b>' : '') + (c.new_rev ? '<div class="sub">' + usd0(c.new_rev) + ' from new</div>' : '') + '</td>' +
+          '<td class="num">' + (c.orders ? Math.round(c.reorders / c.orders * 100) + '%' : '—') + '<div class="sub">' + c.reorders + '</div></td>' +
+          '<td class="num">' + (p.conv != null ? p.conv + '%' : '—') + '<div class="sub">' + c.quotes + ' quote' + (c.quotes === 1 ? '' : 's') + '</div></td>' +
+          '<td><span class="ra-tr ' + (p.trend_kind === 'up' ? 'up' : p.trend_kind === 'down' || p.trend_kind === 'gone' ? 'down' : 'flat') + '">' + TREND_L[p.trend_kind] + '</span></td>' +
+          '<td class="num">' + (c.prod_med != null ? '<b>' + r1(c.prod_med) + '</b> <span class="sub">typical · avg ' + r1(c.prod_avg) + ' · max ' + r1(c.prod_max) + '</span><div class="sub">' + c.prod_n + ' timed job' + (c.prod_n === 1 ? '' : 's') + (c.o2r_med != null ? ' · order → ready ' + r1(c.o2r_med) + ' d' : '') + '</div>' : '<span class="sub">—</span>') + '</td>' +
+          '<td class="num">' + (c.ontime != null ? '<b style="color:' + (c.ontime >= 90 ? '#047857' : c.ontime >= 70 ? '#b45309' : '#b91c1c') + '">' + c.ontime + '%</b><div class="sub">of ' + c.timed + '</div>' : '—') + '</td></tr>'; }).join('') +
+        '<tr><td><b>Total</b></td><td></td><td class="num"><b>' + num(tot.orders) + '</b><div class="sub">' + arrow(pct(tot.orders, tot.po)) + '</div></td><td class="num">' + num(tot.qty) + '</td><td class="num"><b>' + usd0(tot.rev) + '</b><div class="sub">' + arrow(pct(tot.rev, tot.prev)) + '</div></td><td class="num">' + (tot.orders ? usd0(tot.rev / tot.orders) : '') + '</td><td></td><td class="num">' + tot.nc + ' new</td><td colspan="5"></td></tr></tbody></table>'
+        : '<div class="ra-muted">Nothing matches.</div>');
+    const tr = $('prHead'); if (!tr) return;
+    NovaTable.bind(tr, S, (k, v) => { if (k === 'orders' || k === 'rev' || k === 'prod') PF[k] = { from: v && v.from != null ? String(v.from) : '', to: v && v.to != null ? String(v.to) : '' }; else PF[k] = typeof v === 'string' ? v : ''; render(); });
+    NovaTable.pin(tr.closest('table'));
+  }
+  if (/[?&]tab=products/.test(location.search)) document.querySelector('.ra-tabs button[data-v="products"]').click();
+})();

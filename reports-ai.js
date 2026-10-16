@@ -69,6 +69,88 @@ module.exports = function mountReportsAi(app, deps) {
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
 
+  // ---------------------------------------------------------------- Product Report (1.20.98)
+  // What sells: per product, for the period and the equal period before it — invoiced jobs, units (the Quantity option; a custom
+  // quantity wins), revenue, clients, NEW clients (the customer's first invoiced job ever was this one), reorders, express, quotes
+  // that did not become orders, and production time (production_started_at → the last 'complete' QR scan; order → ready from the
+  // job's creation; on time = ready by complete_by). Canceled jobs (estimate_stage complete/canceled) are left out of everything.
+  // Every query is bounded by an estimate id floor (estimate.created has no index), the done scans by one pass over
+  // qr_scan_history (no estimate_id index there either — never a correlated subquery), the first-order-per-customer map cached 10 min.
+  const laBound = (day, end) => { const d = new Date(day + 'T12:00:00Z'); const off = (() => { const f = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour12: false, hour: '2-digit', timeZoneName: 'shortOffset' }).formatToParts(d).find(x => x.type === 'timeZoneName'); const m = /GMT([+-]\d+)/.exec(f ? f.value : ''); return m ? parseInt(m[1]) : -7; })(); const t = new Date(day + 'T00:00:00Z').getTime() - off * 3600e3 + (end ? 864e5 : 0); return new Date(t).toISOString().slice(0, 19).replace('T', ' '); };
+  const floors = {};
+  async function idFloorAt(dt) {
+    const k = String(dt).slice(0, 10); const f = floors[k]; if (f && Date.now() - f.at < 3600e3) return f.id;
+    const r = await runQuery('SELECT MIN(id) id FROM estimate WHERE created >= ' + mysql.escape(dt));
+    const id = (r[0] && Number(r[0].id)) || 0; floors[k] = { id, at: Date.now() }; return id;
+  }
+  let firstOrders = null, firstOrdersAt = 0;
+  async function firstOrderMap() {
+    if (firstOrders && Date.now() - firstOrdersAt < 600e3) return firstOrders;
+    const rows = await runQuery('SELECT estimate_clientid cid, MIN(id) id FROM estimate WHERE estimate_invoiceid > 0 AND estimate_clientid > 0 GROUP BY estimate_clientid');
+    const m = {}; rows.forEach(r => { m[r.cid] = Number(r.id); }); firstOrders = m; firstOrdersAt = Date.now(); return m;
+  }
+  const median = (a) => { if (!a.length) return null; const s = a.slice().sort((x, y) => x - y), h = Math.floor(s.length / 2); return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2; };
+  const r1 = (n) => n == null ? null : Math.round(n * 10) / 10;
+  async function productReport(from, to) {
+    // the period and the one before it, same length, back to back
+    const days = Math.max(1, Math.round((new Date(to + 'T12:00:00Z') - new Date(from + 'T12:00:00Z')) / 864e5) + 1);
+    const pFrom = new Date(new Date(from + 'T12:00:00Z').getTime() - days * 864e5).toISOString().slice(0, 10);
+    const b0 = laBound(pFrom), b1 = laBound(from), b2 = laBound(to, true);
+    const floor = await idFloorAt(b0);
+    const [rows, qtys, dones, cancels, first] = await Promise.all([
+      runQuery('SELECT e.id, e.estimate_productid pid, e.estimate_clientid cid, e.estimate_price price, e.created, e.estimate_type typ, e.express, e.estimate_invoiceid inv, e.production_started_at started, e.complete_by, e.design_price, e.outsource_cost, e.sample_only ' +
+        'FROM estimate e WHERE e.id >= ' + floor + ' AND e.created >= ' + mysql.escape(b0) + ' AND e.created < ' + mysql.escape(b2) + ' AND e.estimate_productid > 0'),
+      runQuery("SELECT estimate_id id, COALESCE(NULLIF(estimate_option_custom_value, ''), estimate_option_value) q FROM estimateoption WHERE estimate_id >= " + floor + " AND estimate_option_name = 'Quantity'"),
+      runQuery("SELECT estimate_id id, MAX(created_at) d FROM qr_scan_history WHERE estimate_id >= " + floor + " AND production_step = 'complete' GROUP BY estimate_id"),
+      runQuery("SELECT estimate_id id FROM estimate_stage WHERE estimate_id >= " + floor + " AND estimate_stage = 'complete' AND estimate_substage = 'canceled'"),
+      firstOrderMap()
+    ]);
+    const qty = {}; qtys.forEach(r => { const n = parseInt(String(r.q).replace(/[^\d]/g, '')); if (n > 0) qty[r.id] = n; });
+    const done = {}; dones.forEach(r => { done[r.id] = new Date(r.d).getTime(); });
+    const canceled = new Set(cancels.map(r => Number(r.id)));
+    const cur0 = new Date(b1.replace(' ', 'T') + 'Z').getTime();
+    const P = {}; const prod = (pid) => P[pid] || (P[pid] = { pid, cur: blank(), prev: blank() });
+    function blank() { return { orders: 0, qty: 0, rev: 0, clients: new Set(), new_clients: 0, new_rev: 0, reorders: 0, express: 0, quotes: 0, design: 0, outsource: 0, prod: [], o2r: [], ontime: 0, timed: 0, big: 0 }; }
+    rows.forEach(r => {
+      if (canceled.has(Number(r.id))) return;
+      const t = new Date(r.created).getTime(), side = t >= cur0 ? 'cur' : 'prev', s = prod(r.pid)[side];
+      if (!(r.inv > 0)) { if (!r.sample_only) s.quotes++; return; }
+      s.orders++; s.rev += Number(r.price) || 0; s.qty += qty[r.id] || 0; if (r.cid > 0) s.clients.add(r.cid);
+      if (r.cid > 0 && first[r.cid] === Number(r.id)) { s.new_clients++; s.new_rev += Number(r.price) || 0; }
+      if (r.typ === 'reorder') s.reorders++; if (r.express) s.express++; if (Number(r.design_price) > 0) s.design++; if (Number(r.outsource_cost) > 0) s.outsource++;
+      if ((Number(r.price) || 0) >= 1000) s.big++;
+      const d = done[r.id];
+      if (d) {
+        const st = r.started ? new Date(r.started).getTime() : null;
+        if (st && d > st) { const days = (d - st) / 864e5; if (days <= 90) s.prod.push(days); }
+        const o = (d - t) / 864e5; if (o > 0 && o <= 120) s.o2r.push(o);
+        if (r.complete_by) { s.timed++; if (d <= new Date(r.complete_by).getTime() + 7 * 3600e3) s.ontime++; }
+      }
+    });
+    const pids = Object.keys(P).map(Number); if (!pids.length) return { products: [], from, to, prev_from: pFrom, prev_to: new Date(new Date(from + 'T12:00:00Z').getTime() - 864e5).toISOString().slice(0, 10), days };
+    const info = await runQuery('SELECT p.id, COALESCE(NULLIF(p.public_title, \'\'), p.title) title, p.image, p.active, p.available_for_customers pub, pc.title category FROM product p LEFT JOIN productcategory pc ON pc.id = p.product_category_id WHERE p.id IN (' + pids.join(',') + ')');
+    const I = {}; info.forEach(r => { I[r.id] = r; });
+    const pack = (s) => ({ orders: s.orders, qty: s.qty, rev: Math.round(s.rev * 100) / 100, clients: s.clients.size, new_clients: s.new_clients, new_rev: Math.round(s.new_rev), reorders: s.reorders, express: s.express, quotes: s.quotes, design: s.design, outsource: s.outsource, big: s.big,
+      avg_order: s.orders ? Math.round(s.rev / s.orders * 100) / 100 : null, unit_price: s.qty ? Math.round(s.rev / s.qty * 10000) / 10000 : null,
+      prod_avg: s.prod.length ? r1(s.prod.reduce((a, b) => a + b, 0) / s.prod.length) : null, prod_med: r1(median(s.prod)), prod_n: s.prod.length, prod_max: s.prod.length ? r1(Math.max.apply(null, s.prod)) : null,
+      o2r_med: r1(median(s.o2r)), ontime: s.timed ? Math.round(s.ontime / s.timed * 100) : null, timed: s.timed });
+    const products = pids.map(pid => { const p = P[pid], i = I[pid] || {}; const cur = pack(p.cur), prev = pack(p.prev);
+      const pct = (a, b) => b ? Math.round((a - b) / b * 100) : (a ? null : 0);
+      return { pid, title: i.title || ('Product #' + pid), image: i.image || null, category: i.category || '', active: i.active == null ? null : !!Number(i.active), cur, prev,
+        trend: { orders: pct(cur.orders, prev.orders), rev: pct(cur.rev, prev.rev), qty: pct(cur.qty, prev.qty), unit: cur.unit_price && prev.unit_price ? Math.round((cur.unit_price - prev.unit_price) / prev.unit_price * 100) : null } };
+    }).filter(p => p.cur.orders || p.prev.orders || p.cur.quotes).sort((a, b) => b.cur.rev - a.cur.rev);
+    return { products, from, to, prev_from: pFrom, prev_to: new Date(new Date(from + 'T12:00:00Z').getTime() - 864e5).toISOString().slice(0, 10), days };
+  }
+  // GET /api/reports-ai/products?from&to (LA days; default the last 30 days)
+  app.get('/api/reports-ai/products', auth, adminOnly, async (req, res) => {
+    try {
+      const today = ymd(new Date()); const ok = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
+      const to = ok(req.query.to) ? req.query.to : today, from = ok(req.query.from) ? req.query.from : new Date(new Date(to + 'T12:00:00Z').getTime() - 29 * 864e5).toISOString().slice(0, 10);
+      if (from > to) return res.json({ ok: false, error: 'from is after to' });
+      const t0 = Date.now(); const out = await productReport(from, to); out.ms = Date.now() - t0; out.ok = true; res.json(out);
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+
   // ---------------------------------------------------------------- the monthly email (1.20.97)
   // Settings (SQLite ra_settings key 'onboarding_email'): enabled, span ('month' = the previous calendar month, '30' = the last 30
   // days, 'week' = the previous Mon–Sun week), day (day of month to send, 1), at ('07:00' LA), to (the owner), cc (comma list),

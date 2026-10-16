@@ -463,6 +463,20 @@ their own list) to the CRM `user.email`; every send logged in `ra_sent` (report,
 30:<day>, kind owner / am, to, cc, n); a one-minute clock sends on `day` at `at` (a Monday for `week`) once per period key
 (`REPORTS_CLOCK=0` turns it off); the Notify kind `ra.onboarding` ("Onboarding Report", group ReportsAI) gates it and may override
 the To address. `spanRange(span, today)` gives from / to / key / label.
+**Product Report** (1.20.98, second tab, `?tab=products`): `GET /api/reports-ai/products?from&to` → `productReport(from, to)` — per product,
+for the period AND the equal period right before it (`cur` / `prev`, `trend` = % change of orders / revenue / units / unit price): invoiced,
+non-canceled jobs (`estimate_stage` complete/canceled left out), units from the Quantity `estimateoption` (custom value wins), revenue
+(`estimate_price`), clients, **new clients** = customers whose first invoiced estimate ever is this one (`firstOrderMap()`: MIN(id) per
+`estimate_clientid`, cached 10 min), reorders (`estimate_type`), express, design-fee jobs, quotes (uninvoiced, non-sample → "Quotes →
+orders" conversion), and production time: `production_started_at` → the last `production_step = 'complete'` `qr_scan_history` row (ONE
+grouped pass — that table has no estimate_id index, a correlated subquery timed out), median / avg / max (≤ 90 d kept), order → ready
+from `created`, on time = done by `complete_by`. Every query is bounded by `idFloorAt(datetime)` (MIN(id) per day, cached an hour —
+`estimate.created` has no index) and LA day bounds (`laBound`). The page (`public/reports-ai.js`, second IIFE): period chips (Last 30 days
+default · 90 · this / last month · this year · 12 months), tiles (top seller $, most units, most orders, heating up / cooling down — revenue
+±25% with 3+ orders, `trendKind()` — brings new clients, longest / shortest in production by the typical days over 3+ timed jobs), a
+horizontal bar chart (Revenue / Units / Orders / New clients, thin bar = the period before), the NovaTable table (Product text · Category ·
+Orders range · Units · Revenue range · Avg order · Per unit · Clients · new · Reorders · Quotes → orders · Trend list · Production days
+range) and a "How to read this report" fold with the pricing reading. Read-only.
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 
