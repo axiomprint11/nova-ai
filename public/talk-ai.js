@@ -119,18 +119,22 @@
       call: CALL_OPTS,
       when: { type: 'range', kind: 'date', presets: [{ v: '', l: 'All time' }, { v: 'today', l: 'Today' }, { v: 'yesterday', l: 'Yesterday' }, { v: 'week', l: 'This week' }, { v: 'month', l: 'This month' }, { v: '30', l: 'Last 30 days' }], period: F.period, from: F.from, to: F.to },
       client: [{ v: '', l: 'Any client' }, { v: 'none', l: 'Not a client yet' }].concat(clientOpts),
-      am: [{ v: '', l: 'Any AM' }].concat(amOpts),
-      via: [{ v: '', l: 'Any TalkAI' }, { v: 'regular', l: 'Regular Hours TalkAI' }, { v: 'missed', l: 'Team Missed TalkAI' }, { v: 'after', l: 'After Hours TalkAI' }].concat(lines.map(l => ({ v: 'line:' + l.id, l: firstName(l.am_name) + '’s TalkAI', h: NovaTable.face(l.photo || '', firstName(l.am_name) + '’s TalkAI') }))).concat([{ v: 'tests', l: 'Tests' }]),
+      /* 1.20.95: one "Answered by" list — the TalkAIs (via=…) and the team members (am=<CRM user id>, the client's account manager) */
+      who: [{ v: '', l: 'Anyone' }, { v: 'via:regular', l: 'Regular Hours TalkAI', sub: 'TalkAI' }, { v: 'via:missed', l: 'Team Missed TalkAI', sub: 'TalkAI' }, { v: 'via:after', l: 'After Hours TalkAI', sub: 'TalkAI' }]
+        .concat(lines.map(l => ({ v: 'via:line:' + l.id, l: firstName(l.am_name) + '’s TalkAI', sub: 'TalkAI', h: NovaTable.face(l.photo || '', firstName(l.am_name) + '’s TalkAI') })))
+        .concat(amOpts.map(a => ({ v: 'am:' + a.v, l: a.l, sub: 'team', h: a.h })))
+        .concat([{ v: 'via:tests', l: 'Tests' }]),
       len: [{ v: '', l: 'Any length' }, { v: 'lt30', l: 'Under 30 s' }, { v: '30-120', l: '30 s – 2 min' }, { v: '120-300', l: '2 – 5 min' }, { v: 'gt300', l: 'Over 5 min' }]
     };
   }
   function callHead() {
     const tr = $('callHead'); if (!tr || !window.NovaTable) return;
-    const S = callSpecs(), T = (k, l) => NovaTable.th(k, l, S[k], k === 'call' ? callVal() : k === 'when' ? '' : F[k]);
-    tr.innerHTML = '<th>' + T('call', 'Call') + '</th><th>' + T('when', 'When') + '</th><th class="tk-th2">' + T('client', 'Client') + T('am', 'AM') + '</th><th>Phone</th><th>' + T('via', 'Answered by') + '</th><th>Outcome</th><th>' + T('len', 'Duration') + '</th><th>Rec</th><th>AI summary</th><th></th>';
+    const S = callSpecs(), T = (k, l) => NovaTable.th(k, l, S[k], k === 'call' ? callVal() : k === 'when' ? '' : k === 'who' ? (F.via ? 'via:' + F.via : F.am ? 'am:' + F.am : '') : F[k]);
+    tr.innerHTML = '<th>' + T('call', 'Call') + '</th><th>' + T('when', 'When') + '</th><th>' + T('client', 'Client / Contact') + '</th><th>Phone</th><th>' + T('who', 'Answered by') + '</th><th>Outcome</th><th>' + T('len', 'Duration') + '</th><th>Rec</th><th>AI summary</th><th></th>';
     NovaTable.bind(tr, S, (k, v) => {
       if (k === 'call') { F.dir = ''; F.state = ''; if (v === 'in' || v === 'out') F.dir = v; else F.state = v; }
       else if (k === 'when') { F.period = v.period || ''; F.from = v.from || ''; F.to = v.to || ''; }
+      else if (k === 'who') { F.via = ''; F.am = ''; if (v.indexOf('via:') === 0) F.via = v.slice(4); else if (v.indexOf('am:') === 0) F.am = v.slice(3); }
       else F[k] = v;
       via = F.via; loadCalls();
     });
