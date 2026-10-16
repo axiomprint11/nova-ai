@@ -2474,6 +2474,7 @@
   }
   async function loadLoans() {
     const v = $('vLoans');
+    const ord = (d) => d + (d % 10 === 1 && d !== 11 ? 'st' : d % 10 === 2 && d !== 12 ? 'nd' : d % 10 === 3 && d !== 13 ? 'rd' : 'th');   /* 1.20.131: the payment day on the row */
     if (!ov) await overview();
     const j = await api('/api/bookkeeping/loans'); if (!j.ok) { v.innerHTML = '<div class="bk-card bk-muted">' + esc(j.error || 'Could not load') + '</div>'; return; }
     const loans = j.loans || [], sheet = j.sheet || {};
@@ -2492,7 +2493,7 @@
     };
     const row = (l) => { const sch = l.schedule || {}, total = (sch.months_done || 0) + (sch.months_left || 0), pct = total ? Math.round(100 * (sch.months_done || 0) / total) : 0;
       return '<tr' + (l.status === 'paid' ? ' class="off"' : '') + '><td>' + pic(l) + '</td>' +
-        '<td><b>' + esc(l.name) + '</b> <span class="ln-kind ' + esc(l.kind) + '">' + esc(KIND[l.kind] || l.kind) + '</span>' + (l.source === 'equipment' ? '<div class="bk-dim">financing from the Equipment tab</div>' : l.equipment_name ? '<div class="bk-dim">for ' + esc(l.equipment_name) + '</div>' : '') + (l.source === 'loan' ? '<div class="bk-dim ln-docs-l"><a href="#" data-ldocs="' + l.id + '" title="' + (l.files ? 'Open the documents on this loan' : 'Add the signed contract, loan terms…') + '">' + (l.files ? l.files + ' doc' + (l.files === 1 ? '' : 's') : 'Add docs') + '</a></div>' : '') + (l.status === 'paid' ? '<div class="bk-dim">paid off</div>' : '') + '</td>' +
+        '<td><b>' + esc(l.name) + '</b> <span class="ln-kind ' + esc(l.kind) + '">' + esc(KIND[l.kind] || l.kind) + '</span>' + (l.source === 'equipment' ? '<div class="bk-dim">financing from the Equipment tab</div>' : l.equipment_name ? '<div class="bk-dim">for ' + esc(l.equipment_name) + '</div>' : '') + (l.pay_method ? '<div class="bk-dim">' + (l.pay_method === 'auto' ? 'Auto payment' + (l.pay_account ? ' from ' + esc(((j.banks || []).find(b => b.id === l.pay_account) || {}).label || (l.pay_account === 'other' ? 'another account' : l.pay_account)) : '') + (l.pay_day ? ' · the ' + ord(l.pay_day) : '') + (l.pay_amount ? ' · ' + usd(l.pay_amount) : '') : 'Bill' + (l.due_day ? ' · due the ' + ord(l.due_day) : '')) + '</div>' : '') + (l.source === 'loan' ? '<div class="bk-dim ln-docs-l"><a href="#" data-ldocs="' + l.id + '" title="' + (l.files ? 'Open the documents on this loan' : 'Add the signed contract, loan terms…') + '">' + (l.files ? l.files + ' doc' + (l.files === 1 ? '' : 's') : 'Add docs') + '</a></div>' : '') + (l.status === 'paid' ? '<div class="bk-dim">paid off</div>' : '') + '</td>' +
         '<td>' + esc(l.vendor_name || l.lender || '—') + '</td>' +
         '<td>' + (l.principal != null ? '<b>' + usd(l.principal) + '</b>' : '<span class="bk-dim">—</span>') + '<div class="bk-dim">' + esc(dateS(l.start_date)) + (l.math && l.math.down ? ' · ' + usd(l.math.down) + ' down' : '') + (l.term_months ? ' · ' + l.term_months + ' mo' : '') + (l.math && l.math.deferred ? ' after ' + l.math.deferred + ' skipped' : '') + (l.math && l.math.apr != null && l.kind !== 'lease' ? ' · ' + l.math.apr + '% APR' + (l.math.apr_given ? '' : ' (effective)') : l.apr != null && l.apr !== '' ? ' · ' + l.apr + '% APR' : '') + '</div>' + (l.math && l.math.total_payback ? '<div class="bk-dim">' + usd(l.math.total_payback) + ' back in all</div>' : '') + (l.math && l.math.sales_tax ? '<div class="bk-dim">' + usd(l.math.sales_tax) + ' sales tax ' + (l.math.tax_in ? 'financed' : 'paid separately') + '</div>' : '') + '</td>' +
         '<td class="num">' + (sch.monthly ? '<b>' + usd(sch.monthly) + '</b>' : '—') + (l.math && l.math.property_tax ? '<div class="bk-dim">+ ' + usd(l.math.property_tax) + ' property tax = ' + usd(l.math.payment) + '</div>' : '') + ((l.calendar && l.calendar.next_due) ? '<div class="bk-dim">next ' + esc(dateS(l.calendar.next_due)) + '</div>' : sch.next ? '<div class="bk-dim">next ' + esc(dateS(sch.next)) + '</div>' : '') + '</td>' +
@@ -2517,16 +2518,40 @@
     // 1.19.135: money fields are text with thousands separators ("395,000.00"); parsed on save
     const fmtMoney = (v) => { const n = Number(String(v == null ? '' : v).replace(/[$,\s]/g, '')); return v === '' || v == null || !isFinite(n) ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
     const money = (k, label, ph) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><input class="bk ln-money" name="' + k + '" type="text" inputmode="decimal" value="' + esc(fmtMoney(l[k])) + '"' + (ph ? ' placeholder="' + esc(ph) + '"' : '') + '></label>';
-    // 1.19.137: a compact six-column grid — `c` = how many columns a field takes
+    // 1.19.137: a compact grid — `c` = how many of its 12 columns a field takes (1.20.131: twelve, was six)
     const w = (html, c) => html.replace('<label class="nv-f">', '<label class="nv-f" style="grid-column:span ' + c + '">');
-    el.innerHTML = '<div class="bk-modal-box" style="width:min(760px,100%)"><div class="bk-modal-title" style="margin-bottom:12px">' + (isEdit ? 'Edit ' + esc(l.name) : 'New loan / lease') + '</div>' +
+    const ro = (k, label, title) => '<label class="nv-f ln-ro" style="grid-column:span 3" title="' + esc(title || '') + '"><span class="bk-muted">' + label + ' <i>auto</i></span><input class="bk ln-money" name="' + k + '" type="text" readonly tabindex="-1" value="' + esc(fmtMoney(l[k])) + '"></label>';
+    // 1.20.131: purchase price → financed price is worked out, the loan term is a pick, the total pay back is computed,
+    // property tax is a tick, and the loan says how it is paid (auto payment from a connected bank, or a bill)
+    const purchase = l.purchase_price != null && l.purchase_price !== '' ? l.purchase_price : (l.principal != null && l.principal !== '' ? Number(l.principal) + (Number(l.direct_down) || 0) : '');
+    const TERMS = [24, 36, 48, 60, 72, 84]; const termV = Number(l.term_months) || ''; const termCustom = termV && TERMS.indexOf(termV) < 0;
+    const days = (k, label, blank) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><select class="bk" name="' + k + '"><option value="">' + blank + '</option>' + Array.from({ length: 31 }, (_, i) => i + 1).map(d => '<option value="' + d + '"' + (String(l[k] || '') === String(d) ? ' selected' : '') + '>' + d + (d === 1 || d === 21 || d === 31 ? 'st' : d === 2 || d === 22 ? 'nd' : d === 3 || d === 23 ? 'rd' : 'th') + ' of every month</option>').join('') + '</select></label>';
+    const banks = (j.banks || []); const payAcc = l.pay_account || '';
+    const section = (t) => '<div class="ln-sec" style="grid-column:span 12">' + t + '</div>';
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(820px,100%)"><div class="bk-modal-title" style="margin-bottom:12px">' + (isEdit ? 'Edit ' + esc(l.name) : 'New loan / lease') + '</div>' +
       '<div class="nv-grid ln-grid">' +
-      w(f('name', 'Name', 'text', '', 'SBA EIDL · Line of credit · Van loan'), 3) + w(sel('kind', 'Kind', [['loan', 'Loan (amortized)'], ['lease', 'Lease (fixed payments)'], ['credit_line', 'Line of credit (open-ended)']]), 2) + w(sel('status', 'Status', [['active', 'Active'], ['paid', 'Paid off']]), 1) +
-      w(sel('vendor_id', 'Lender', [['', '— company —']].concat((j.vendors || []).map(x => [x.id, x.name]))), 2) + w(f('lender', 'Lender name (if not listed)', 'text', '', 'Screen GP Americas'), 2) + w(sel('equipment_id', 'Finances a machine', [['', '— none —']].concat((j.equipment || []).map(x => [x.id, x.name]))), 2) +
-      w(money('principal', 'Financed price', '395,000.00'), 2) + w(money('down_payment', 'Down payment', '39,500.00'), 2) + w(sel('down_to', 'Down payment to', [['finance', 'Financial company'], ['manufacturer', 'Manufacturer']]), 2) +
-      w(f('start_date', 'Date borrowed', 'date'), 2) + w(f('deferred_months', 'No pay (months)', 'number', ' step="1" min="0"', '0'), 1) + w(f('term_months', 'Loan term', 'number', ' step="1" min="0"', '72'), 1) + w(money('monthly', 'Monthly payment', '5,808.00'), 2) +
-      w(f('apr', 'Interest %', 'number', ' step="0.001" min="0"', 'computed'), 1) + w(money('total_payback', 'Total pay back', '457,676.00'), 2) + w(money('balloon', 'Balloon at the end', '0.00'), 2) + w(money('property_tax_monthly', 'Monthly property tax', '0.00'), 1) +
-      w(money('sales_tax', 'Sales tax', '34,000.00'), 2) + w(sel('tax_in', 'Sales tax is', [['1', 'Included in the financed price'], ['0', 'Excluded (paid separately)']]), 2) +
+      w(f('name', 'Name', 'text', '', 'SBA EIDL · Line of credit · Van loan'), 6) + w(sel('kind', 'Kind', [['loan', 'Loan (amortized)'], ['lease', 'Lease (fixed payments)'], ['credit_line', 'Line of credit (open-ended)']]), 4) + w(sel('status', 'Status', [['active', 'Active'], ['paid', 'Paid off']]), 2) +
+      w(sel('vendor_id', 'Lender', [['', '— company —']].concat((j.vendors || []).map(x => [x.id, x.name]))), 4) + w(f('lender', 'Lender name (if not listed)', 'text', '', 'Screen GP Americas'), 4) + w(sel('equipment_id', 'Finances a machine', [['', '— none —']].concat((j.equipment || []).map(x => [x.id, x.name]))), 4) +
+      section('Finance') +
+      w('<label class="nv-f"><span class="bk-muted">Purchase price</span><input class="bk ln-money" name="purchase_price" type="text" inputmode="decimal" value="' + esc(fmtMoney(purchase)) + '" placeholder="434,500.00"></label>', 3) +
+      w(money('direct_down', 'Direct down payment', '0.00').replace('<span class="bk-muted">', '<span class="bk-muted" title="Paid straight to the manufacturer / seller — not part of the loan">'), 3) +
+      ro('principal', 'Financed price', 'Purchase price − direct down payment: what the lender finances') +
+      w(money('down_payment', 'Loan down payment', '39,500.00').replace('<span class="bk-muted">', '<span class="bk-muted" title="The down payment paid to the lender at signing">'), 3) +
+      w(f('purchase_date', 'Purchase date', 'date'), 4) + w(f('arrival_date', 'Arrival date', 'date'), 4) + w(f('start_date', 'Loan start date', 'date'), 4) +
+      w(f('deferred_months', 'No payment months', 'number', ' step="1" min="0"', '0'), 3) +
+      '<label class="nv-f" style="grid-column:span 3"><span class="bk-muted">Loan term</span><span class="ln-term"><select class="bk" id="lnTermSel">' + [['', '— months —']].concat(TERMS.map(t => [t, t + ' months'])).concat([['custom', 'Custom…']]).map(o => '<option value="' + o[0] + '"' + ((termCustom && o[0] === 'custom') || (!termCustom && String(termV) === String(o[0])) ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' +
+        '<input class="bk" name="term_months" type="number" step="1" min="0" value="' + esc(termV) + '" placeholder="mo"' + (termCustom ? '' : ' hidden') + '></span></label>' +
+      w(money('monthly', 'Monthly payment', '5,808.00'), 3) + w(f('apr', 'Interest %', 'number', ' step="0.001" min="0"', 'computed'), 3) +
+      ro('total_payback', 'Total pay back', 'Loan down payment + monthly × term + due at the end') + w(money('balloon', 'Due at the end', '0.00'), 3) +
+      '<label class="nv-f ln-check" style="grid-column:span 6"><span class="bk-muted">Property tax</span><span class="ln-term"><label class="ln-tick"><input type="checkbox" name="property_tax_axiom" value="1"' + (Number(l.property_tax_axiom) ? ' checked' : '') + '> Axiom due</label>' +
+        '<input class="bk ln-money" name="property_tax_monthly" type="text" inputmode="decimal" value="' + esc(fmtMoney(l.property_tax_monthly)) + '" placeholder="per month"' + (Number(l.property_tax_axiom) ? '' : ' hidden') + '></span></label>' +
+      w(money('sales_tax', 'Sales tax', '34,000.00'), 3) + w(sel('tax_in', 'Sales tax is', [['0', 'Excluded — Axiom pays'], ['1', 'Included in the total sale']]), 5) +
+      section('Payment') +
+      w(sel('pay_method', 'Payment method', [['', '— not set —'], ['auto', 'Auto payment'], ['bill', 'Bill']]), 3) +
+      '<label class="nv-f ln-auto" style="grid-column:span 4"><span class="bk-muted">Auto payment from</span><select class="bk" name="pay_account"><option value="">— bank —</option>' + banks.map(b => '<option value="' + esc(b.id) + '"' + (payAcc === b.id ? ' selected' : '') + '>' + esc(b.label) + '</option>').join('') + '<option value="other"' + (payAcc === 'other' ? ' selected' : '') + '>Other</option></select></label>' +
+      days('pay_day', 'Scheduled payment date', '— day —').replace('<label class="nv-f">', '<label class="nv-f ln-auto" style="grid-column:span 3">') +
+      w(money('pay_amount', 'Auto payment amount', '5,808.00'), 2).replace('class="nv-f"', 'class="nv-f ln-auto"') +
+      days('due_day', 'Due', '— day —').replace('<label class="nv-f">', '<label class="nv-f ln-bill" style="grid-column:span 4">') +
       '</div>' +
       '<div class="bk-dim" id="lnCalc" style="margin:4px 0 10px"></div>' +
       '<label class="nv-f"><span class="bk-muted">Notes</span><textarea class="bk" name="notes" rows="2">' + esc(l.notes || '') + '</textarea></label>' +
@@ -2536,31 +2561,39 @@
     const close = () => el.remove(); el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
     document.body.appendChild(el); el.querySelector('[name=name]').focus();
     const num = (k) => { const v = Number(String(el.querySelector('[name=' + k + ']').value || '').replace(/[$,\s]/g, '')); return isFinite(v) ? v : 0; };
-    // live line under the fields: financed amount, monthly / APR (computed when blank), total back and interest
+    // the term pick ↔ the months box; the property-tax amount shows when Axiom pays it; the payment fields follow the method
+    const termSel = el.querySelector('#lnTermSel'), termIn = el.querySelector('[name=term_months]');
+    termSel.onchange = () => { if (termSel.value === 'custom') { termIn.hidden = false; termIn.focus(); } else { termIn.hidden = true; termIn.value = termSel.value; } recalc(); };
+    const propTick = el.querySelector('[name=property_tax_axiom]'), propIn = el.querySelector('[name=property_tax_monthly]');
+    propTick.onchange = () => { propIn.hidden = !propTick.checked; if (!propTick.checked) propIn.value = ''; else propIn.focus(); recalc(); };
+    const paySel = el.querySelector('[name=pay_method]');
+    const payShow = () => { const m = paySel.value; el.querySelectorAll('.ln-auto').forEach(x => x.style.display = m === 'auto' ? '' : 'none'); el.querySelectorAll('.ln-bill').forEach(x => x.style.display = m === 'bill' ? '' : 'none'); };
+    paySel.onchange = payShow; payShow();
+    // live: financed price and total pay back fill their boxes; the line under the fields explains monthly / APR / interest
     const recalc = () => {
-      const kind = el.querySelector('[name=kind]').value, P = num('principal'), down = num('down_payment'), term = num('term_months'), def = num('deferred_months'), balloon = num('balloon');
-      const aprV = el.querySelector('[name=apr]').value, apr = aprV === '' ? null : Number(aprV); let monthly = num('monthly'), total = num('total_payback');
+      const kind = el.querySelector('[name=kind]').value, price = num('purchase_price'), direct = num('direct_down'), down = num('down_payment'), term = num('term_months'), def = num('deferred_months'), balloon = num('balloon');
+      const P = Math.max(0, price - direct); el.querySelector('[name=principal]').value = price || direct ? fmtMoney(P) : '';
+      const aprV = el.querySelector('[name=apr]').value, apr = aprV === '' ? null : Number(aprV); let monthly = num('monthly');
       const fin = Math.max(0, P - down), out = el.querySelector('#lnCalc');
-      if (!monthly && total && term) monthly = Math.max(0, (total - down - balloon) / term);
       if (!monthly && apr != null && term && kind !== 'lease') { const i = apr / 100 / 12, g = fin * Math.pow(1 + i, def); monthly = i ? g * i / (1 - Math.pow(1 + i, -term)) : g / term; }
       let eff = apr;
       if (eff == null && monthly && term && fin && kind !== 'lease') {
         const pv = (i) => Math.pow(1 + i, -def) * (monthly * (1 - Math.pow(1 + i, -term)) / i + balloon * Math.pow(1 + i, -term));
         if (monthly * term + balloon <= fin + 0.005) eff = 0; else { let lo = 1e-7, hi = 0.1; for (let k = 0; k < 80; k++) { const mid = (lo + hi) / 2; if (pv(mid) > fin) lo = mid; else hi = mid; } eff = Math.round((lo + hi) / 2 * 12 * 100 * 1000) / 1000; }
       }
-      if (!total && monthly && term) total = down + monthly * term + balloon;
-      const tax = num('sales_tax'), taxIn = el.querySelector('[name=tax_in]').value !== '0', prop = num('property_tax_monthly');
+      const total = monthly && term ? down + monthly * term + balloon : 0; el.querySelector('[name=total_payback]').value = total ? fmtMoney(total) : '';
+      const tax = num('sales_tax'), taxIn = el.querySelector('[name=tax_in]').value !== '0', prop = propTick.checked ? num('property_tax_monthly') : 0;
       if (!P && !monthly) { out.innerHTML = ''; return; }
-      out.innerHTML = 'Financed <b>' + usd(fin) + '</b>' + (down ? ' after ' + usd(down) + ' down' : '') + (monthly ? ' · <b>' + usd(monthly) + '</b> × ' + term + (def ? ' after ' + def + ' month' + (def === 1 ? '' : 's') + ' with no payment' : '') : '') +
+      out.innerHTML = 'Financed <b>' + usd(fin) + '</b>' + (direct ? ' after ' + usd(direct) + ' paid direct' : '') + (down ? (direct ? ' and ' : ' after ') + usd(down) + ' down to the lender' : '') + (monthly ? ' · <b>' + usd(monthly) + '</b> × ' + term + (def ? ' after ' + def + ' month' + (def === 1 ? '' : 's') + ' with no payment' : '') : '') +
         (eff != null && kind !== 'lease' ? ' · <b>' + eff + '%</b> APR' + (apr == null ? ' (computed from the payments)' : '') : '') + (total ? ' · total back <b>' + usd(total) + '</b>' + (total - P > 0 ? ' (' + usd(total - P) + ' interest)' : '') : '') +
-        (tax ? '<br>Sales tax ' + usd(tax) + (taxIn ? ' is inside the financed amount' : ' paid separately, on top') : '') +
-        (prop ? '<br>Bank payment <b>' + usd(monthly + prop) + '</b> = ' + usd(monthly) + ' + ' + usd(prop) + ' property tax (not part of the loan; ' + usd(prop * term) + ' over the term)' : '');
+        (tax ? '<br>Sales tax ' + usd(tax) + (taxIn ? ' is inside the total sale' : ' is excluded — Axiom pays it separately') : '') +
+        (prop ? '<br>Bank payment <b>' + usd(monthly + prop) + '</b> = ' + usd(monthly) + ' + ' + usd(prop) + ' property tax (Axiom due; not part of the loan, ' + usd(prop * term) + ' over the term)' : '');
     };
     el.querySelectorAll('.ln-money').forEach(i => { i.addEventListener('blur', () => { i.value = fmtMoney(i.value); recalc(); }); i.addEventListener('input', recalc); });
-    el.querySelectorAll('[name=apr],[name=term_months],[name=deferred_months],[name=kind],[name=tax_in]').forEach(i => { i.addEventListener('input', recalc); i.addEventListener('change', recalc); });
+    el.querySelectorAll('[name=apr],[name=term_months],[name=deferred_months],[name=kind],[name=tax_in],[name=purchase_price],[name=direct_down]').forEach(i => { i.addEventListener('input', recalc); i.addEventListener('change', recalc); });
     recalc();
     el.querySelector('#lnSave').onclick = async () => {
-      const body = {}; el.querySelectorAll('[name]').forEach(i => { body[i.name] = i.classList.contains('ln-money') ? String(i.value).replace(/[$,\s]/g, '') : i.value; });
+      const body = {}; el.querySelectorAll('[name]').forEach(i => { body[i.name] = i.type === 'checkbox' ? (i.checked ? 1 : 0) : i.classList.contains('ln-money') ? String(i.value).replace(/[$,\s]/g, '') : i.value; });
       if (!body.name.trim()) { el.querySelector('#lnMsg').textContent = 'Give the loan a name.'; return; }
       const r = await post(isEdit ? '/api/bookkeeping/loans/' + l.id : '/api/bookkeeping/loans', body);
       if (!r.ok) { el.querySelector('#lnMsg').textContent = r.error || 'Could not save.'; return; }
