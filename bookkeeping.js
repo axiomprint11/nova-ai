@@ -2506,7 +2506,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (g('category')) { where.push('t.category = ?'); p.push(g('category')); }
     if (g('type')) { const subs = chartOf(await settings()).filter(c => c.parent === g('type')).map(c => c.name); if (subs.length) { where.push('t.category IN (' + subs.map(() => '?').join(',') + ')'); p.push(...subs); } else { where.push('t.category = ?'); p.push(g('type')); } }
     if (g('vendor_id')) { if (g('vendor_id') === 'none') where.push('t.vendor_id IS NULL'); else { where.push('t.vendor_id = ?'); p.push(parseInt(g('vendor_id')) || 0); } }
-    if (g('vkind')) { const src = { supplier: 'suppliers', vendor: 'vendors', nova: 'nova', bill: 'bill' }[g('vkind')]; if (g('vkind') === 'none') where.push('t.vendor_id IS NULL'); else if (src) { where.push('v.source = ?'); p.push(src); } }   // 1.19.63
+    if (g('vkind')) { const src = { supplier: 'suppliers', vendor: 'vendors', nova: 'nova', bill: 'bill' }[g('vkind')]; if (g('vkind') === 'none') where.push('t.vendor_id IS NULL'); else if (g('vkind') === 'lender') where.push("v.kind = 'lender'"); else if (src) { where.push('v.source = ?'); p.push(src); if (src === 'nova') where.push("IFNULL(v.kind, '') <> 'lender'"); } }   // 1.19.63; 1.20.145: lenders are their own kind
     if (g('source')) { where.push('t.category_source = ?'); p.push(g('source')); }
     if (g('min')) { where.push('ABS(t.amount) >= ?'); p.push(Number(g('min')) || 0); }
     if (g('max')) { where.push('ABS(t.amount) <= ?'); p.push(Number(g('max')) || 0); }
@@ -2607,8 +2607,14 @@ module.exports = function mountBookkeeping(app, deps) {
     if (activeLoans.length) for (const r of rows) {
       if (r.loan_id || r.transfer_of || r.refund_of || !(Number(r.amount) > 0)) continue;
       const amt = Number(r.amount);
-      const hit = loanFit(activeLoans.filter(l => r.vendor_id && l.vendor_id === r.vendor_id), amt, l => l.amts) || activeLoans.find(l => r.vendor_id && l.vendor_id === r.vendor_id && !l.monthly) || activeLoans.find(l => l.amts.some(a => Math.abs(a - amt) < 0.005));   // 1.20.141: the lender's closest loan within $5; 1.20.132: any step of a stepped schedule
+      const hit = loanFit(activeLoans.filter(l => r.vendor_id && l.vendor_id === r.vendor_id), amt, l => l.amts) || activeLoans.find(l => r.vendor_id && l.vendor_id === r.vendor_id && !l.monthly) || ((!r.vendor_id || r.vendor_kind === 'lender' || r.vendor_source === 'nova') ? loanFit(activeLoans, amt, l => l.amts) : null);   // 1.20.141: the lender's closest loan within $5; 1.20.145: else any active loan's payment within $5 — Match then checks the lender (conflict / pick)
       if (hit) r.loan_hint = { id: hit.id, name: hit.name };
+      else if (r.vendor_kind === 'lender' && r.vendor_id) {   /* 1.20.145: a lender's line that did not pair — say why, and offer the lender's loans */
+        const mine = activeLoans.filter(l => l.vendor_id === r.vendor_id);
+        if (!mine.length) r.loan_why = { why: 'no_loan', text: 'no loan has ' + (r.vendor_name || 'this lender') + ' as its lender yet' };
+        else r.loan_why = { why: 'amount', text: 'none of ' + (r.vendor_name || 'the lender') + "'s loans pays " + usd(amt) + ' (' + mine.map(l => l.name + ' ' + usd(l.monthly || 0)).join(' · ') + ')', loans: mine.map(l => ({ id: l.id, name: l.name, payment: l.monthly || 0 })) };
+        if (r.no_auto) r.loan_why.text += ' · uncategorized by hand, so Nova leaves it to you';
+      }
     }
     // 1.19.119: overseas team — a linked line carries the person (flag, department); an open Wise payout carries `team_hint`
     // (the candidates by pay, or everyone when nobody's pay matches) so the person can be picked in the row
@@ -3473,14 +3479,19 @@ module.exports = function mountBookkeeping(app, deps) {
   });
   const LOAN_F = ['name', 'kind', 'lender', 'vendor_id', 'equipment_id', 'principal', 'down_payment', 'deferred_months', 'start_date', 'term_months', 'apr', 'monthly', 'balloon', 'total_payback', 'sales_tax', 'tax_in', 'property_tax_monthly', 'down_to', 'purchase_price', 'direct_down', 'purchase_date', 'arrival_date', 'property_tax_axiom', 'pay_method', 'pay_account', 'pay_day', 'pay_amount', 'due_day', 'steps_json', 'notes', 'status'];   // down_to: who got the down payment — finance (the lender) or manufacturer (1.19.137)
   const loanBody = (b) => { const o = {}; LOAN_F.forEach(k => { if (b[k] === undefined) return; let v = b[k]; if (k === 'steps_json') { const st = loanSteps({ steps_json: v }); o[k] = st.length ? JSON.stringify(st) : null; return; } if (['vendor_id', 'equipment_id', 'term_months', 'deferred_months', 'tax_in', 'property_tax_axiom', 'pay_day', 'due_day'].indexOf(k) > -1) v = v === '' || v == null ? null : parseInt(String(v).replace(/[^0-9-]/g, '')); else if (['principal', 'apr', 'monthly', 'balloon', 'down_payment', 'total_payback', 'sales_tax', 'property_tax_monthly', 'purchase_price', 'direct_down', 'pay_amount'].indexOf(k) > -1) { v = v === '' || v == null ? null : Number(String(v).replace(/[$,\s]/g, '')); if (v != null && !isFinite(v)) v = null; } else v = v == null ? null : String(v).trim().slice(0, 500); o[k] = v; }); if (o.kind && ['loan', 'lease', 'credit_line'].indexOf(o.kind) < 0) o.kind = 'loan'; if (o.status && ['active', 'paid'].indexOf(o.status) < 0) o.status = 'active'; return o; };
+  // 1.20.145: a company picked as a loan's lender becomes a lender (kind) if it was a plain Nova vendor
+  const makeLender = async (vid) => { if (!vid) return; const v = await dbGet('SELECT id, source, kind FROM bk_vendors WHERE id = ?', [vid]); if (v && v.source === 'nova' && v.kind !== 'lender') { await dbRun("UPDATE bk_vendors SET kind = 'lender' WHERE id = ?", [vid]); dirCache.at = 0; } };
   app.post('/api/bookkeeping/loans', ...guard, async (req, res) => {
     const o = loanBody(req.body || {}); if (!o.name) return res.json({ ok: false, error: 'Give the loan a name.' });
+    await makeLender(o.vendor_id);
     const keys = Object.keys(o); const r = await dbRun('INSERT INTO bk_loans (' + keys.join(', ') + ', created_by, updated_at) VALUES (' + keys.map(() => '?').join(', ') + ', ?, ?)', keys.map(k => o[k]).concat([userId(req), nowIso()]));
     await audit(userId(req), 'loan.add', r.lastID, o); res.json({ ok: true, id: r.lastID });
   });
   app.post('/api/bookkeeping/loans/:id', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), o = loanBody(req.body || {}); const keys = Object.keys(o); if (!keys.length) return res.json({ ok: false, error: 'Nothing to change' });
+    await makeLender(o.vendor_id);
     await dbRun('UPDATE bk_loans SET ' + keys.map(k => k + ' = ?').join(', ') + ', updated_at = ? WHERE id = ?', keys.map(k => o[k]).concat([nowIso(), id]));
+    try { await applyLoans(); } catch (e) {}   /* 1.20.145: a lender set on the loan links its waiting payments at once */
     await audit(userId(req), 'loan.edit', id, o); res.json({ ok: true });
   });
   app.post('/api/bookkeeping/loans/:id/delete', ...guard, async (req, res) => {
