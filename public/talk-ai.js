@@ -323,7 +323,7 @@
       esc(staff.name || '\u201c' + staff.asked + '\u201d') + (staff.name ? (c.source === 'phone' ? ' \u00b7 relayed after the call' : ' \u00b7 test, not emailed') : ' \u00b7 not on the team list') + '</span>');
     if (c.emailed_to && !(c.emails || []).length) chips.push('<span class="tk-chip ok">Quote emailed to ' + esc(c.emailed_to) + '</span>');
     // Same avatar as the list: initials = a customer, dashed phone = a number on no account (no words needed).
-    const who = c.verified ? '<b>' + (c.verified_by === 'caller_id' ? 'Recognised by caller ID:' : c.verified_by === 'check+caller_id' ? 'Verified (number + email/ZIP):' : 'Verified:') + '</b> ' + esc(c.customer_name || '#' + c.customer_id) + (c.company ? ' (' + esc(c.company) + ')' : '') + ' <i>#' + esc(c.customer_id) + '</i>'
+    const who = c.verified ? '<b>' + (c.verified_by === 'caller_id' ? 'Recognised by caller ID:' : c.verified_by === 'check+caller_id' ? 'Verified (number + email/ZIP):' : 'Verified:') + '</b> ' + esc(c.customer_name || '#' + c.customer_id) + (c.company ? ' (' + esc(c.company) + ')' : '')
       : match ? '<b>Caller ID matches</b> ' + match + ' <i>— not verified on the call</i>' : '';
     let html = '<div class="tk-hd"><div class="tk-hd-acts">' +
       '<button type="button" class="tk-hd-btn" id="callUnread" title="Mark as unread"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><circle cx="19" cy="5" r="3" fill="#0a84ff" stroke="#fff" stroke-width="1.5"/></svg><span>Mark as unread</span></button>' +
