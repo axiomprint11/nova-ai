@@ -14,7 +14,7 @@
   const COLORS = ['#4f46e5', '#059669', '#d97706', '#db2777', '#0891b2', '#7c3aed', '#dc2626', '#65a30d', '#0d9488', '#9333ea', '#ea580c', '#2563eb'];
 
   // ---- period
-  let period = 'month', grain = 'month';
+  let period = '30', grain = 'month';
   function range(p) {
     const now = new Date(), d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     if (p === 'week') return [ymd(new Date(d0 - ((d0.getDay() + 6) % 7) * 864e5)), ymd(d0)];
@@ -142,6 +142,26 @@
     NovaTable.bind(tr, S, (k, v) => { if (k === 'date') OF.date = { from: (v && v.from) || '', to: (v && v.to) || '', period: '' }; else if (k === 'am') amPick = typeof v === 'string' ? v : ''; else OF[k] = typeof v === 'string' ? v : ''; render(); });
     NovaTable.pin(tr.closest('table'));
   }
+
+  // ---- the email report settings (1.20.97)
+  const post = async (url, body) => { const r = await fetch(url, { method: 'POST', headers: H(), body: JSON.stringify(body || {}) }); return r.json(); };
+  let em = null;
+  async function loadEmail() {
+    const j = await api('/api/reports-ai/onboarding/email'); if (!j.ok) { $('obEmMsg').textContent = j.error || ''; return; }
+    em = j.settings;
+    $('obEmSpan').value = em.span; $('obEmDay').innerHTML = Array.from({ length: 28 }, (_, i) => '<option value="' + (i + 1) + '">' + (i + 1) + (i === 0 ? 'st' : i === 1 ? 'nd' : i === 2 ? 'rd' : 'th') + ' of the month</option>').join(''); $('obEmDay').value = String(em.day || 1);
+    $('obEmAt').value = em.at || '07:00'; $('obEmTo').value = em.to || ''; $('obEmCc').value = em.cc || ''; $('obEmPer').checked = !!em.per_am;
+    $('obEmOn').classList.toggle('on', !!em.enabled);
+    $('obEmailWhen').textContent = (em.enabled ? 'if sent today it would cover ' : 'off — would cover ') + j.preview + (j.notify_on === false ? ' · switched off under Admin → Emails' : '');
+    $('obEmDay').parentElement.style.display = em.span === 'week' ? 'none' : '';
+    $('obEmSent').innerHTML = (j.sent || []).length ? '<div><b>Sent</b></div>' + j.sent.map(x => '<div>' + esc(usD(String(x.at).slice(0, 10))) + ' · ' + (x.kind === 'owner' ? 'report' : 'AM list') + ' → ' + esc(x.to_addr) + (x.cc ? ' cc ' + esc(x.cc) : '') + ' · ' + x.n + ' · ' + esc(String(x.period_key).replace(/^\w+:/, '')) + '</div>').join('') : '';
+  }
+  const emBody = () => ({ enabled: $('obEmOn').classList.contains('on'), span: $('obEmSpan').value, day: $('obEmDay').value, at: $('obEmAt').value.trim(), to: $('obEmTo').value.trim(), cc: $('obEmCc').value.trim(), per_am: $('obEmPer').checked });
+  $('obEmOn').onclick = async () => { $('obEmOn').classList.toggle('on'); const j = await post('/api/reports-ai/onboarding/email', emBody()); $('obEmMsg').textContent = j.ok ? 'Saved.' : (j.error || 'Could not save'); loadEmail(); };
+  $('obEmSpan').onchange = () => { $('obEmDay').parentElement.style.display = $('obEmSpan').value === 'week' ? 'none' : ''; };
+  $('obEmSave').onclick = async () => { $('obEmMsg').textContent = 'Saving…'; const j = await post('/api/reports-ai/onboarding/email', emBody()); $('obEmMsg').textContent = j.ok ? 'Saved.' : (j.error || 'Could not save'); if (j.ok) loadEmail(); };
+  $('obEmSend').onclick = async () => { if (!confirm('Send the onboarding report now, for the timespan above, to the addresses above' + ($('obEmPer').checked ? ' — and to each account manager who onboarded' : '') + '?')) return; $('obEmMsg').textContent = 'Sending…'; const j = await post('/api/reports-ai/onboarding/email/send', { span: $('obEmSpan').value }); $('obEmMsg').textContent = j.ok && j.sent ? 'Sent: ' + j.period + ' — ' + j.n + ' onboardings to ' + (j.owner && j.owner.to) + (j.ams && j.ams.length ? ' + ' + j.ams.length + ' AM' + (j.ams.length === 1 ? '' : 's') : '') : (j.error || 'Not sent'); loadEmail(); };
+  loadEmail();
 
   load();
 })();

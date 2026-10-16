@@ -453,7 +453,16 @@ rank; click = only that AM), a **stacked bar chart per AM** with Daily / Weekly 
 from `COLORS` in rank order, a tooltip with the split, a legend), and the table (NovaTable header filters: Onboarded date range, Client
 text, AM heads, Source, Onboarded via, Lead rating; Budget + est. value; pinned header): Onboarded · Client (company, person · email) ·
 AM (head + name) · Source (coloured pill + "from …") · Onboarded via (+ the "other" text) · Lead rating · Budget. Add a report = a tab
-button + a section in reports-ai.html, a route in reports-ai.js, a loader in reports-ai.js (public).
+button + a section in reports-ai.html, a route in reports-ai.js, a loader in reports-ai.js (public). **1.20.97**: Last 30 days is the
+default chip (no "This week"), and the **Email report** card at the foot of the tab: SQLite `ra_settings` key `onboarding_email`
+(`enabled`, `span` month = the previous calendar month / 30 = the last 30 days / week = the previous Mon–Sun, `day` 1–28, `at` LA
+"07:00", `to` gary@, `cc` luciana@, `per_am`), `GET/POST /api/reports-ai/onboarding/email`, **Send now** = `POST …/email/send
+{span?, owner_only?}` → `sendOnboardingReport(who, opts)`: the owner's mail (leaderboard per AM with faces, where the clients came
+from, every onboarding — `ownerHtml`) To `to` CC `cc`, then with `per_am` one mail per AM who onboarded (`amHtml`: their count, rank,
+their own list) to the CRM `user.email`; every send logged in `ra_sent` (report, `period_key` month:YYYY-MM / week:<monday> /
+30:<day>, kind owner / am, to, cc, n); a one-minute clock sends on `day` at `at` (a Monday for `week`) once per period key
+(`REPORTS_CLOCK=0` turns it off); the Notify kind `ra.onboarding` ("Onboarding Report", group ReportsAI) gates it and may override
+the To address. `spanRange(span, today)` gives from / to / key / label.
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 

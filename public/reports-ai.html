@@ -23,7 +23,15 @@
   .ra-sub { display: flex; gap: 6px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
   .ra-sub button[data-p] { border: 1px solid var(--line); background: #fff; border-radius: 20px; padding: 6px 14px; font: 600 12.5px/1 inherit; cursor: pointer; color: var(--ink-soft); }
   .ra-sub button[data-p].on { background: var(--indigo-light); border-color: var(--indigo); color: var(--indigo-dark); }
-  .ra-sub .sp { flex: 1; } .ra-sub label { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .ra-sub .sp { flex: 1; } .ra-sub label.ra-chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); white-space: nowrap; height: 30px; margin-left: 6px; } .ra-sub label.ra-chk input { width: 14px; height: 14px; margin: 0; }
+  /* the email settings card */
+  .ra-email { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 14px; align-items: end; } .ra-email label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--muted); }
+  .ra-email input, .ra-email select { font: inherit; font-size: 13px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+  .ra-email .chk { flex-direction: row; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink); height: 34px; white-space: nowrap; grid-column: span 2; } .ra-email .chk input { width: 15px; height: 15px; margin: 0; }
+  .ra-email .acts { display: flex; gap: 8px; align-items: center; grid-column: 1 / -1; } .ra-email .acts .msg { font-size: 12px; color: var(--muted); }
+  .bk-btn { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 7px 13px; font: 600 12.5px/1 inherit; cursor: pointer; color: var(--ink-soft); } .bk-btn.pri { background: var(--indigo); border-color: var(--indigo); color: #fff; }
+  .ra-sent { font-size: 11.5px; color: var(--muted); margin-top: 10px; } .ra-sent div { padding: 2px 0; }
+  .ra-switch { position: relative; width: 36px; height: 20px; border-radius: 10px; background: #d1d5db; cursor: pointer; flex: none; } .ra-switch.on { background: #4f46e5; } .ra-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .15s; } .ra-switch.on::after { left: 18px; }
   .ra-sub input.q { width: 260px; padding: 7px 10px; font: inherit; font-size: 13px; border: 1px solid var(--line); border-radius: 8px; }
   /* AM tiles — the leaderboard */
   .ra-ams { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; margin-bottom: 14px; }
@@ -63,8 +71,8 @@
 <div class="ra-main">
   <section class="ra-view on" data-v="onboarding">
     <div class="ra-sub" id="obPeriod">
-      <button data-p="week">This week</button><button data-p="month" class="on">This month</button><button data-p="last">Last month</button><button data-p="30">Last 30 days</button><button data-p="90">Last 90 days</button><button data-p="year">This year</button><button data-p="all">All</button>
-      <label title="Welcome forms whose onboarding method is 'did not onboard'"><input type="checkbox" id="obAll"> include "did not onboard"</label>
+      <button data-p="month">This month</button><button data-p="last">Last month</button><button data-p="30" class="on">Last 30 days</button><button data-p="90">Last 90 days</button><button data-p="year">This year</button><button data-p="all">All</button>
+      <label class="ra-chk" title="Welcome forms whose onboarding method is 'did not onboard'"><input type="checkbox" id="obAll"> include “did not onboard”</label>
       <span class="sp"></span><input class="q" id="obQ" placeholder="Search client, AM, source" autocomplete="off">
     </div>
     <div class="ra-ams" id="obAms"></div>
@@ -74,6 +82,19 @@
       <div class="ra-legend" id="obLegend"></div>
     </div>
     <div class="ra-card" id="obList"></div>
+    <div class="ra-card" id="obEmail">
+      <h2>Email report <span class="n" id="obEmailWhen"></span><span class="sp"></span><span class="ra-switch" id="obEmOn" title="Send the report"></span></h2>
+      <div class="ra-email">
+        <label>Timespan<select id="obEmSpan"><option value="month">Previous month</option><option value="30">Last 30 days</option><option value="week">Previous week (Mon–Sun)</option></select></label>
+        <label>Send on<select id="obEmDay"></select></label>
+        <label>At (Los Angeles)<input id="obEmAt" placeholder="07:00"></label>
+        <label>Send to<input id="obEmTo" placeholder="gary@axiomprint.com"></label>
+        <label>CC<input id="obEmCc" placeholder="luciana@axiomprint.com, …"></label>
+        <label class="chk"><input type="checkbox" id="obEmPer"> Also email each account manager their own onboardings</label>
+        <div class="acts"><button class="bk-btn pri" id="obEmSave">Save</button><button class="bk-btn" id="obEmSend" title="Send the report now for the timespan above, to the addresses above (and to each AM when ticked)">Send now</button><span class="msg" id="obEmMsg"></span></div>
+      </div>
+      <div class="ra-sent" id="obEmSent"></div>
+    </div>
   </section>
 </div>
 <script src="/nova-nav.js"></script>

@@ -17,6 +17,7 @@ module.exports = function (deps) {
     { kind: 'bk.alerts', group: 'Bookkeeping', name: 'Daily Purchases Alert', desc: 'Once a day — purchases waiting for the bank / not received, and what Nova filed on its own in the last 24 h.', where: 'Bookkeeping Settings → Alerts' },
     { kind: 'bk.loans', group: 'Bookkeeping', name: 'Missed Loan Payment', desc: 'A loan slot with no bank line after its due date (once per loan-month).', where: 'Bookkeeping Settings → Alerts' },
     { kind: 'bk.ar', group: 'Bookkeeping', name: 'Notify Accounts Receivable', desc: 'A customer deposit filed under an income category — sent when someone presses "Notify Accounts Receivable".', where: 'Bookkeeping Settings → Alerts (AR to / cc)' },
+    { kind: 'ra.onboarding', group: 'ReportsAI', name: 'Onboarding Report', desc: 'The client-onboarding report — the leaderboard per account manager, where the clients came from and every onboarding — sent on the configured day (the 1st of the month by default) for the previous period; each account manager who onboarded gets their own list when that is switched on.', where: 'ReportsAI → Onboarding → Email report' },
     { kind: 'backup', group: 'System', name: 'Backup Problems', desc: 'The nightly users.db backup failed, or its Google Drive upload did.', where: 'BACKUP_ALERT_TO' }
   ];
   db.run('CREATE TABLE IF NOT EXISTS notify_prefs (kind TEXT PRIMARY KEY, enabled INTEGER DEFAULT 1, recipients TEXT, updated_at TEXT, updated_by TEXT)');
