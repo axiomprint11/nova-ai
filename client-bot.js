@@ -775,7 +775,7 @@ module.exports = function mountClientBot(app, deps) {
   // Only this customer's rows: estimate_clientid is the session customer, and a
   // linked invoice must be theirs too (and not void).
   const ownOrdersSql = (cid) =>
-    'SELECT e.id, COALESCE(NULLIF(e.estimate_name,\'\'), p.title) AS name, p.title AS product, e.estimate_type, e.created, ' +
+    'SELECT e.id, COALESCE(NULLIF(e.estimate_name,\'\'), p.title) AS name, p.title AS product, e.estimate_type, e.sample_for, e.sample_quantity, e.created, ' +
     'COALESCE(e.new_total, e.estimate_price) AS total, i.id AS invoice_id, i.invoice_type, i.payment_status, ' +
     'e.estimate_proofimage AS proof, p.image AS product_image, e.estimate_name AS job_name, ' +
     'e.prepress_status, e.production_status, i.invoice_total_payment AS invoice_total, ' +
@@ -1342,6 +1342,22 @@ module.exports = function mountClientBot(app, deps) {
       runQuery("SELECT estimate_id, estimate_option_name AS f, COALESCE(NULLIF(selected,''), estimate_option_value) AS v FROM estimateoption " +
         "WHERE estimate_id IN (" + list + ") AND (estimate_option_name IN ('Size','Quantity') OR estimate_option_name LIKE 'Turnaround%')").catch(() => [])
     ]);
+    /* 1.20.108: a SAMPLE job (estimate_type 'sample', sample_for = the main order) is a few pieces made so the customer can
+       approve them — never "their print order". The main order's own state rides along so NovaAI can say where it stands. */
+    const parentIds = [...new Set(rows.filter(r => r.estimate_type === 'sample' && r.sample_for > 0).map(r => parseInt(r.sample_for)))];
+    const parents = {};
+    if (parentIds.length) {
+      const pr = await runQuery('SELECT e.id, COALESCE(NULLIF(e.estimate_name, \'\'), p.title) AS name, e.estimate_invoiceid AS inv, e.prepress_status, e.production_started_at, e.complete_by, ' +
+        '(SELECT s.estimate_stage FROM estimate_stage s WHERE s.estimate_id = e.id ORDER BY s.id DESC LIMIT 1) AS stage, (SELECT s.estimate_substage FROM estimate_stage s WHERE s.estimate_id = e.id ORDER BY s.id DESC LIMIT 1) AS substage, ' +
+        "(SELECT o.estimate_option_value FROM estimateoption o WHERE o.estimate_id = e.id AND o.estimate_option_name = 'Quantity' LIMIT 1) AS qty " +
+        'FROM estimate e LEFT JOIN product p ON p.id = e.estimate_productid WHERE e.id IN (' + parentIds.join(',') + ')').catch(() => []);
+      pr.forEach(x => {
+        const stage = String(x.stage || ''), sub = String(x.substage || '');
+        const state = sub === 'canceled' ? 'canceled' : stage === 'complete' ? 'finished' : x.production_started_at ? 'in production (started)' : !(x.inv > 0) ? 'NOT STARTED \u2014 not approved / not invoiced yet (waiting on the customer\u2019s go-ahead after the sample)' :
+          stage === 'order' ? 'NOT STARTED \u2014 ordered, not in production yet' : stage === 'prepress' ? 'in prepress (files / proof), not in production yet' : stage + (sub ? ' / ' + sub : '');
+        parents[x.id] = { order: 'E' + x.id, name: x.name || null, quantity: x.qty ? String(x.qty) : null, state: state, invoiced: x.inv > 0, due: x.complete_by ? day(x.complete_by) : null };
+      });
+    }
     return rows.map(r => {
       const s = st[r.id] || {};
       const h = handles.find(x => x.estimate_id === r.id) || {};
@@ -1384,6 +1400,7 @@ module.exports = function mountClientBot(app, deps) {
         invoice: invId ? 'INV' + invId : null,
         total: canceled ? null : (r.invoice_total != null ? Number(r.invoice_total) : (r.total != null ? Number(r.total) : null)),
         paid: canceled ? null : (r.payment_status || null), quote: isQuote, canceled: canceled || undefined,
+        sample: r.estimate_type === 'sample' || undefined, sample_of: r.estimate_type === 'sample' && r.sample_for > 0 ? (parents[r.sample_for] || { order: 'E' + r.sample_for, state: 'unknown' }) : undefined,
         finished: !canceled && (pr[0] === 'done' && (dv[0] === 'done' || String(r.substage || stg.estimate_substage || '') === 'done')) || undefined,
         past_due: late || undefined, days_late: late ? Math.max(1, Number(r.days_late) || 1) : undefined, waiting_on_customer: waiting || undefined,
         deadline: deadline,
@@ -1420,6 +1437,8 @@ module.exports = function mountClientBot(app, deps) {
   // What the model reads about the same projects (short).
   const projectsForModel = (list) => list.map(p => ({ order: p.order,
     status: p.canceled ? 'CANCELED \u2014 not an active order' : p.finished ? 'FINISHED' : p.quote ? 'QUOTE (not ordered)' : 'ACTIVE',
+    kind: p.sample ? 'SAMPLE \u2014 a sample run of a few pieces for the customer to approve, NOT the full order' : undefined,
+    main_order: p.sample_of ? Object.assign({ read_this: 'The full order this sample belongs to. Say where IT stands too: its quantity and that it has not started when state says NOT STARTED.' }, p.sample_of) : undefined,
     job_name: p.name, product: p.product, size: p.size, quantity: p.quantity,
     placed: p.placed, invoice: p.invoice, total: p.total, payment: p.paid,
     preflight: p.steps[0].status, production: p.steps[1].status, [p.steps[2].label.toLowerCase()]: p.steps[2].status,
@@ -2051,6 +2070,7 @@ module.exports = function mountClientBot(app, deps) {
       '19. GRAPHIC DESIGN AND FILE CHANGES: when the customer asks you to design, create, draw, edit, fix or change artwork or a file, say plainly that NovaAI cannot design or edit files yet, and that AxiomPrint offers in-house graphic design at $' + usd2(Number(rules.design_min || DEFAULT_DESIGN_MIN)).replace(/\.00$/, '') + '\u2013$' + usd2(Number(rules.design_max || DEFAULT_DESIGN_MAX)).replace(/\.00$/, '') + ' per hour depending on the project. ' +
         'Turn their request into pieces and hours with the DESIGN SERVICES guide below and call estimate_design; give its estimate and hours in one or two lines (never your own arithmetic). Then offer to price the printing too (price first, as usual). ' +
         'To go ahead with design, point them to ' + (rules.contact || DEFAULT_CONTACT) + '. Never claim you designed, edited or checked a file.',
+      '23. SAMPLES: an order whose kind says SAMPLE is a sample run (one or two pieces) made so the customer can approve the material and print BEFORE the full order is produced \u2014 it is never "your print order" or "your labels". Say the word sample every time ("your sample of the Clear Roll Labels is ready for pickup"), and in the same breath say where the main order stands from main_order ("the full order of 250 has not started yet \u2014 it starts once you approve the sample" / "is in prepress" / "is in production"). When they ask about "my order" or "my print" and the only live job is a sample, make sure they know it is the sample they are collecting, not the full run. If they say the sample looks good, tell them the full order is released by approving the proof / paying the invoice in their order history (or that their account manager will release it) \u2014 you cannot approve it for them.',
       '22. SHIPPING: when a customer asks what shipping costs, how long UPS / FedEx Ground takes, or when something would arrive at a ZIP or city, call shipping_rates with the ZIP and the product on the quote card (same product_id, quantity, options). The transit days come from UPS\'s own transit table for Glendale → that ZIP — quote them as data ("UPS Ground takes 3 business days to 10001"), never from memory. Business days start the day after the job is ready; checkout re-rates the exact order, so call the prices estimates. With no product, give the transit days and say the price depends on the job. For local delivery by our driver use estimate_delivery instead.',
       '21. PRINT / SAVE / EMAIL A QUOTE: every quote card has a **Download PDF** button (next to Edit) that saves the quote as a PDF with the options, prices, ready date and Order now links, and a **Send to me** button that emails it. When the customer asks to print, save, download, keep or email a quote or the prices, say exactly that in one sentence (e.g. "Press Download PDF on the quote card to print or save it, or Send to me to get it by email") — never suggest the browser\'s print function, never say you cannot. If they give you an email address, or they are signed in and ask you to email it, call email_quotes.',
       '',

@@ -596,6 +596,14 @@ pattern for any new report over a large log table. To add a report, add an entry
 
 ## Known quirks worth respecting
 
+- **Sample jobs** (1.20.108): `estimate.estimate_type = 'sample'` with `sample_for` = the main order's estimate id — one or two pieces made
+  for the customer's approval before the full run (E1181310 was the sample of E1181309, a 250-label order still at order / new_client with no
+  invoice; NovaAI read it out as "your Clear Roll Labels, ready today"). `projectCards()` (client bot `my_orders` / `order_status`, so TalkAi
+  too) marks them `sample` + `sample_of {order, name, quantity, state, invoiced, due}` (the main order's state: NOT STARTED — not approved /
+  invoiced yet · ordered, not in production · in prepress · in production · finished · canceled), `projectsForModel` sends `kind` + `main_order`,
+  TalkAi's `liveFor()` adds the same `kind` / `main_order` / `quantity` per job and a sentence to `say`; client rule 23 and the phone prompt's
+  SAMPLES line: say the word sample every time and where the full order stands in the same breath; the customer releases the full order by
+  approving the proof / paying — NovaAI never approves it.
 - **Canceled jobs** are `estimate_stage` = `complete` + `estimate_substage` = `canceled`. They keep their old prepress /
   production status, lose `estimate_invoiceid`, and their invoice stays only on the project (`invoice_projectid`, total 0,
   `payment_status` may still say paid). The client bot's `projectCards()` marks them CANCELED, `my_orders` returns

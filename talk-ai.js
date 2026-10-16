@@ -850,6 +850,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     try { accounts = JSON.parse(call.caller_match || '[]') || []; } catch (e) {}
     const first = call.caller_first || (c && (c.first || firstOf(c.name))) || '';
     const orders = 'Their orders are available: when they ask about their order or its status without a number, call live_projects, say how many live projects you see and ask which one; order_status gives one order\u2019s full status.';
+    const samples = '- SAMPLES: a job marked SAMPLE (kind) is a sample run of one or two pieces made so the customer can approve the material and print BEFORE the full order is produced \u2014 never call it "your print order" or "your labels". Say the word sample every time ("your sample of the Clear Roll Labels is ready for pickup") and, in the same breath, where the main order stands from main_order ("the full order of 250 has not started yet \u2014 it starts once you approve the sample" / "is in prepress" / "is in production"). When the only live job is a sample and they ask about "my print" or "my order", make sure they know it is the sample they are collecting, not the full run. If they say it looks good, the full order is released by approving the proof / paying the invoice in their order history or by their account manager \u2014 you cannot approve it for them.';
     if (c && call.verified_by === 'caller_id') {
       return 'RECOGNISED by their phone number (carrier-verified) as ' + (c.name || 'a customer') + (c.company ? ' (' + c.company + ')' : '') +
         (accounts.length > 1 ? '; ' + accounts.length + ' accounts use this number and all are theirs' : '') + '. You already greeted them as ' + (first || 'them') +
@@ -906,6 +907,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
       'HOW TO TALK:',
       '- SHORT and to the point: usually ONE sentence, two at most, then stop. No small talk, no repeating what the caller said, no "great question". Get them to the answer in as few steps as possible.',
       '- PRICE FIRST: as soon as you know which product, call price_product with what they said and the DEFAULTS for everything else (no quantity? price 1 for banners and signs, the usual quantity otherwise). At most ONE round of questions before the first price, and only to tell which product. Then say the price, name one or two defaults in a few words ("that\u2019s 13 ounce vinyl with hems and grommets") and ask if they want anything different. Look up their orders as soon as you can.',
+      samples,
       '- EVERYTHING THEY SAID counts when you price: pass every spec from the whole call (size, page count, sides, color, paper, quantity). A page count goes in the pages field (Pages, Pages_Per_Set), never in quantity. Plain printing of pages, sheets or documents (no binding) is Document Printing & Copies.',
       '- Spoken words only: no lists, bullets, numbering, headings, markdown, emojis, URLs or symbols like * # / |. Never read out a link — say "on axiomprint.com".',
       '- Say words in full, the way a person talks: day names ("Monday to Friday", "Saturday", never "Mon–Fri" or "Sat"), months, "to" instead of a dash, "and" instead of "&".',
@@ -1079,24 +1081,38 @@ module.exports = function mountTalkAi(app, deps, bot) {
     return { live_projects: projects.length, jobs: rows.length, projects: projects,
       say: 'Say how many live projects you see ("I see ' + projects.length + ' live project' + (projects.length === 1 ? '' : 's') + ' under your account"), name each one in a few words ' +
         '(with a date, say "estimated to be ready" on it, never "ready" or "will be ready") ' +
-        '(the project or job name, not the order number), and ask which one they are calling about. Then order_status on that order for the full status and deadline sentence. Never read the whole list of details.' };
+        '(the project or job name, not the order number), and ask which one they are calling about. Then order_status on that order for the full status and deadline sentence. Never read the whole list of details.' +
+        (rows.some(r => r.estimate_type === 'sample') ? ' A job marked SAMPLE is a sample run of a few pieces for their approval, not their order: say "your sample of the …", and in the same breath where the full order stands (main_order: quantity and state — "the full order of 250 has not started yet; it starts once you approve the sample").' : '') };
   }
   // The live jobs of these accounts, grouped by project.
   async function liveFor(ids) {
     const subs = Object.keys(LIVE).map(k => "'" + k + "'").join(',');
     const rows = await runQuery("SELECT e.id, e.estimate_clientid AS cid, e.estimate_projectid AS pid, pr.projectname, COALESCE(NULLIF(e.estimate_name,''), p.title) AS job, " +
-      "p.title AS product, s.estimate_substage AS sub, DATE_FORMAT(e.complete_by, '%a, %b %e') AS due_day, DATE_FORMAT(e.complete_by, '%l:%i %p') AS due_time " +
+      "p.title AS product, s.estimate_substage AS sub, e.estimate_type, e.sample_for, DATE_FORMAT(e.complete_by, '%a, %b %e') AS due_day, DATE_FORMAT(e.complete_by, '%l:%i %p') AS due_time, " +
+      "(SELECT o.estimate_option_value FROM estimateoption o WHERE o.estimate_id = e.id AND o.estimate_option_name = 'Quantity' LIMIT 1) AS qty " +
       'FROM estimate e JOIN estimate_stage s ON s.estimate_id = e.id LEFT JOIN product p ON p.id = e.estimate_productid LEFT JOIN project pr ON pr.id = e.estimate_projectid ' +
       'WHERE e.estimate_clientid IN (' + ids.map(x => parseInt(x)).join(',') + ") AND s.estimate_stage IN ('prepress','processing','handling') AND s.estimate_substage IN (" + subs + ') ' +
       // 1.19.134: a live project is a real order — invoiced (a quote or an abandoned duplicate has estimate_invoiceid 0) — that
       // has moved in the last 60 days. E1165965 sat in Tier 1 since May with no invoice and was read out as "live" on a call.
       'AND COALESCE(e.estimate_invoiceid, 0) > 0 AND (s.stage_in_date >= DATE_SUB(NOW(), INTERVAL 60 DAY) OR e.complete_by >= DATE_SUB(NOW(), INTERVAL 30 DAY)) ' +
       'ORDER BY e.id DESC LIMIT 80');
+    /* 1.20.108: a SAMPLE job (estimate_type 'sample', sample_for = the main order) is a few pieces for approval, not the order itself —
+       the main order's state rides along so NovaAI says "your sample is ready; the full order of 250 has not started yet". */
+    const parentIds = [...new Set(rows.filter(r => r.estimate_type === 'sample' && r.sample_for > 0).map(r => parseInt(r.sample_for)))];
+    const parents = {};
+    if (parentIds.length) {
+      const pr = await runQuery('SELECT e.id, e.estimate_invoiceid AS inv, e.production_started_at, (SELECT s.estimate_stage FROM estimate_stage s WHERE s.estimate_id = e.id ORDER BY s.id DESC LIMIT 1) AS stage, (SELECT s.estimate_substage FROM estimate_stage s WHERE s.estimate_id = e.id ORDER BY s.id DESC LIMIT 1) AS substage, ' +
+        "(SELECT o.estimate_option_value FROM estimateoption o WHERE o.estimate_id = e.id AND o.estimate_option_name = 'Quantity' LIMIT 1) AS qty FROM estimate e WHERE e.id IN (" + parentIds.join(',') + ')').catch(() => []);
+      pr.forEach(x => { const stage = String(x.stage || ''), sub = String(x.substage || '');
+        parents[x.id] = { order: 'E' + x.id, quantity: x.qty ? String(x.qty) : undefined, state: sub === 'canceled' ? 'canceled' : stage === 'complete' ? 'finished' : x.production_started_at ? 'in production' : !(x.inv > 0) ? 'NOT STARTED \u2014 waiting on the go-ahead after the sample (not approved / invoiced yet)' : stage === 'prepress' ? 'in prepress, not in production yet' : 'ordered, not in production yet' }; });
+    }
     const byProject = new Map();
     rows.forEach(r => {
       const key = parseInt(r.pid) || ('job' + r.id);
       if (!byProject.has(key)) byProject.set(key, { project: r.projectname || r.job || 'Project', jobs: [] });
-      byProject.get(key).jobs.push({ order: 'E' + r.id, job: r.job, product: r.product && r.product !== r.job ? r.product : undefined,
+      const sample = r.estimate_type === 'sample';
+      byProject.get(key).jobs.push({ order: 'E' + r.id, job: r.job, product: r.product && r.product !== r.job ? r.product : undefined, quantity: r.qty ? String(r.qty) : undefined,
+        kind: sample ? 'SAMPLE \u2014 a sample run for approval, NOT the full order; say the word sample' : undefined, main_order: sample ? (parents[r.sample_for] || undefined) : undefined,
         stage: (LIVE[r.sub] || [r.sub])[0], means: (LIVE[r.sub] || [])[1], estimated_ready: r.due_day ? r.due_day + (r.due_time ? ' by ' + String(r.due_time).trim() : '') : undefined });
     });
     const projects = [...byProject.values()].slice(0, 12).map(pj => {
