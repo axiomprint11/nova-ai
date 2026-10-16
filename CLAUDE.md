@@ -171,6 +171,8 @@ Answered by lists, and Acct Aging's AM list. **Acct Aging** has header filters t
 `thFilter` / `thFilterBind`): Customer (text over company / contact / email), AM (heads; the sub-bar select is gone), Due (number range),
 Days (oldest over 90 / 180 / 365); the sub-bar search stays.
 
+**Every page shows that it is loading (1.20.124) — `public/nova-loader.js`**, loaded before nova-nav.js on admin, bookkeeping (Nova AR too), chatbot, client-bot, designer-ai, reports-ai and talk-ai: (1) a 3px indigo **progress bar** across the top of the window while any `/api/` fetch is in flight (`window.fetch` is wrapped; shows after 180 ms, trickles, finishes on the last answer; background polls — unread counts, `/api/version`, `/api/me`, audio and file links — never show it; `NovaLoader.start() / done()` by hand, `X-Nova-Quiet` header to skip one call); (2) **lazy rows**: a MutationObserver watches every `<tbody>` and when one is drawn with 170+ rows only the first 120 stay visible — the rest keep their DOM nodes and handlers but `tr.nl-hide` (display none), with a `tr.nl-more` row "Showing 120 of 4,632 · more as you scroll · Show all" that an IntersectionObserver turns into the next 160 rows; typing in any text box or printing reveals everything (client-side searches that hide rows by style must see every row); `<table data-nolazy>` opts out; `NovaLazy.apply(tbody)` / `revealAll()`. No page had to change for either.
+
 Money is always shown as `$1,678.54`: use `usd2(n)` (defined in server.js, client-bot.js, chatbot.js, axiom-cards.js,
 order-assist.js and index.html), never `'$' + n.toFixed(2)`. The prompts tell the models the same.
 
