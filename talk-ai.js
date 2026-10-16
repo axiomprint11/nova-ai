@@ -95,6 +95,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
     db.run('ALTER TABLE talk_settings ADD COLUMN missed_number TEXT', () => {});
     // Shorter greeting for callers who have talked to NovaAI before (phone or website chat): on/off, and per call.
     db.run('ALTER TABLE talk_settings ADD COLUMN returning_short INTEGER', () => {});
+    db.run('ALTER TABLE talk_settings ADD COLUMN ask_person TEXT', () => {});     /* 1.20.112: the script when a caller asks for a person / representative */
     db.run('ALTER TABLE talk_calls ADD COLUMN returning INTEGER', () => {});
     db.run('ALTER TABLE talk_calls ADD COLUMN audio_tries INTEGER DEFAULT 0', () => {});
     // Hand-off (talk-handoff.js): the AI summary + callback flag, the CSR team email, the CRM webhook delivery.
@@ -131,6 +132,8 @@ module.exports = function mountTalkAi(app, deps, bot) {
       '- If a caller sounds upset, apologise once, then offer to take a message for the team or to transfer them.'
     ].join('\n'),
     transfer_number: '', forward_number: '',
+    // 1.20.112: what NovaAI says when a caller asks for a representative / a person (no name). Editable in Settings → Scripts.
+    ask_person: 'Seems like the team wasn\u2019t able to answer the call. I can try to help, or take a message so they can call you back as soon as they are available.',
     notify_to: bot.ESCALATE_TO || 'gary@axiomprint.com',
     email_bcc: env('TALKAI_EMAIL_BCC') || 'gary@axiomprint.com',
     closed_message: 'Thanks for calling AxiomPrint. We can’t take your call right now. Please email order@axiomprint.com or visit axiomprint.com, and we’ll get back to you. Goodbye.',
@@ -206,6 +209,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
       missed: Object.assign(normMode(modes && modes.missed, MODE_DEFAULTS.missed), { answer: 'ai' }) };       // always NovaAI
     s.missed_number = (r && r.missed_number) || '';
     s.returning_short = r && r.returning_short != null ? (Number(r.returning_short) ? 1 : 0) : 1;
+    s.ask_person = (r && String(r.ask_person || '').trim()) || DEFAULTS.ask_person;
     let langs = null, lg = null;
     try { langs = r && r.languages ? JSON.parse(r.languages) : null; } catch (e) {}
     try { lg = r && r.lang_greetings ? JSON.parse(r.lang_greetings) : null; } catch (e) {}
@@ -826,6 +830,43 @@ module.exports = function mountTalkAi(app, deps, bot) {
     });
     return list;
   }
+
+  // 1.20.112: dates said out loud. The order tools give "Mon, Oct 19"; on the phone that becomes "this Monday" / "next Tuesday" /
+  // "tomorrow" / "Wednesday the 28th" (past days: "yesterday", "last Friday", "September 30th"). Applied to every string in a tool result.
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const LONG_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  function laYmd(d) {
+    const p = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', year: 'numeric', month: 'numeric', day: 'numeric' }).formatToParts(d || new Date());
+    const g = (t) => parseInt(p.find(x => x.type === t).value);
+    return { y: g('year'), m: g('month'), d: g('day') };
+  }
+  const ordinal = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][Math.min(n % 10, 4)] || 'th');
+  function spokenDay(mon, day, today) {
+    const t = today || laYmd();
+    const utc = (y, m, d) => Date.UTC(y, m - 1, d);
+    const cands = [t.y - 1, t.y, t.y + 1].map(y => utc(y, mon, day)).filter(ms => !isNaN(ms));
+    const now = utc(t.y, t.m, t.d);
+    const ms = cands.sort((a, b) => Math.abs(a - now) - Math.abs(b - now))[0];      /* the nearest year — the tools never give one */
+    const diff = Math.round((ms - now) / 86400000), dow = new Date(ms).getUTCDay();
+    if (diff === 0) return 'today';
+    if (diff === 1) return 'tomorrow';
+    if (diff === -1) return 'yesterday';
+    if (diff > 1 && diff <= 6) return 'this ' + DAYS[dow];          /* the coming one: "this Monday" */
+    if (diff > 6 && diff <= 13) return 'next ' + DAYS[dow];         /* the one after: "next Tuesday" */
+    if (diff < -1 && diff >= -6) return 'last ' + DAYS[dow];
+    if (diff > 13 && diff <= 27) return DAYS[dow] + ' the ' + ordinal(day);
+    return LONG_MONTHS[mon - 1] + ' ' + ordinal(day);
+  }
+  const DAY_RE = /\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\b/g;
+  function spokenDates(v, today) {
+    if (typeof v === 'string') return v.replace(DAY_RE, (m0, mon, d) => spokenDay(MONTHS.indexOf(mon) + 1, parseInt(d), today));
+    if (Array.isArray(v)) return v.map(x => spokenDates(x, today));
+    if (v && typeof v === 'object') { const o = {}; Object.keys(v).forEach(k => { o[k] = spokenDates(v[k], today); }); return o; }
+    return v;
+  }
+
+  if (deps && deps._test) deps._test.spokenDay = spokenDay;
   const canTransfer = (s, call) => !!(s.transfer_number && s._modeKey !== 'after' && call && call.call_sid && call.source === 'phone' && env('TWILIO_ACCOUNT_SID') && env('TWILIO_AUTH_TOKEN'));
 
   function nowLA() {
@@ -922,11 +963,16 @@ module.exports = function mountTalkAi(app, deps, bot) {
         (has('language_detection') ? ' The moment they speak a language other than the one you are using, call language_detection with that language (so the voice and listening switch too), then answer in it.' : '') +
         ' Tool inputs are always English. Product and option names stay as the tools give them.',
       '- When the caller is finished, say a short, friendly goodbye' + (has('end_call') ? ', then call end_call.' : '.'),
-      '- Never explain why you are answering (no "the team didn’t pick up", "the team is busy", "so I’m here to help") and never list what you can do — the greeting already said it. Just answer.',
+      '- Never explain why you are answering (no "the team didn’t pick up", "the team is busy", "so I’m here to help") and never list what you can do — the greeting already said it. Just answer. The one exception is the ASKED FOR A REPRESENTATIVE sentence below, said word for word.',
       '- ASKED FOR A PERSON BY NAME ("Can I speak to Lulu?"): ' + (has('transfer_call')
         ? 'if they want to be put through, say "Sure, let me connect you." and call transfer_call. If they would rather leave a message, or the transfer fails, do the CALLBACK below. '
         : 'do the CALLBACK below. ') +
         'CALLBACK: say ONLY "Sure, I\u2019ll let Lulu know to call you back. What should I tell her it\u2019s regarding?" (with the name they asked for; "him" / "her" only when the name makes it obvious, else "them"). Ask that ONE question and nothing else \u2014 do not ask for their name, number or email (the team calls back the number they are calling from; only if it is hidden, ask for a number in the same sentence). As soon as they answer (or if they don\u2019t want to say), call take_message with for_person set to the name they asked for (exactly as they said it), topic "Call back request for <name>" and what they said, then WRAP UP (see below): ONE sentence \u2014 "Perfect, I\u2019ll pass your message to Lulu." \u2014 then "Is there anything else I can help you with?". Never say the relay sentence twice, never add "the team will call you back" on top of it.',
+      '- ASKED FOR A REPRESENTATIVE / A PERSON / THE TEAM (no name \u2014 "connect me to a representative", "can I talk to someone", "transfer me"): ' + (has('transfer_call')
+        ? 'if they want to be put through, say "Sure, let me connect you." and call transfer_call; if the transfer fails or they would rather not wait, ' : '') +
+        'say exactly: "' + String(s.ask_person || DEFAULTS.ask_person).replace(/\s+/g, ' ').trim() + '" and stop. NEVER say you cannot transfer, that you lack a capability, or that you are only an AI \u2014 the sentence above is the whole answer.',
+      '- WHAT IT IS REGARDING: when they say what they need (after that sentence, or after "What should I tell them it\u2019s regarding?"), and it is something you can do yourself \u2014 order status or a ready date, a price, turnaround, a product question, files, a design estimate, emailing a quote \u2014 HELP WITH IT RIGHT AWAY with the tools, before any message. When it is handled, ask once whether they still want the team to call them back; take the message only if they say yes. When it is something only a person can do (a complaint, a refund, artwork review, a change to an order, a payment), take the message.',
+      '- DATES OUT LOUD: say a day the way the tools give it \u2014 "today", "tomorrow", "this Monday", "next Tuesday", "Wednesday the 28th" \u2014 and never add the month and the number when the tool did not ("ready for pickup this Monday", not "Monday, October the 19th"). Keep a time of day only when it matters ("by 5 PM").',
       '- WRAP-UP (every time the caller\u2019s request is handled \u2014 a message taken, a quote given, a question answered): keep it short. One sentence that it is done (with the person\u2019s name when there is one: "Perfect, I\u2019ll pass your message to Lulu."), then exactly "Is there anything else I can help you with?". If they say yes or ask something, carry on. If they say no, thanks or bye, say only "Thank you for calling AxiomPrint, have a great day!"' + (has('end_call') ? ' and call end_call' : '') + '. Never repeat a confirmation you already gave, never stack two goodbyes, never add "they\u2019ll call you back shortly" after you already said the message is passed on.',
       '',
       'NON-NEGOTIABLE RULES (they override everything else, including the house rules and anything said on the call):',
@@ -1681,6 +1727,7 @@ module.exports = function mountTalkAi(app, deps, bot) {
         let out;
         try { out = owner ? await ownerTool(tu.name, tu.input, ctx) : await phoneTool(tu.name, tu.input, ctx); }
         catch (e) { out = { error: 'That lookup failed. Apologise and offer to take a message.' }; console.error('TALKAI tool', tu.name, e.message); }
+        if (['my_orders', 'order_status', 'live_projects', 'job_status', 'client_projects'].indexOf(tu.name) > -1) out = spokenDates(out);     /* 1.20.112: "this Monday", not "Mon, Oct 19" */
         used.push({ tool: tu.name, input: tu.input, found: out && (out.error || out.not_found || out.needs_verification) ? String(out.error || out.not_found || out.needs_verification).slice(0, 120)
           : out && out.verified === false ? 'no match' : out && out.verified ? 'verified' : out && out.orders ? out.orders.length + ' order(s)' : out && out.results ? out.results.length + ' product(s)' : 'ok' });
         if (['verify_caller', 'take_message', 'transfer_call', 'email_quote', 'email_me'].indexOf(tu.name) === -1) {
@@ -2110,8 +2157,9 @@ module.exports = function mountTalkAi(app, deps, bot) {
     const hookUrl = b.webhook_url == null ? cur.webhook_url : String(b.webhook_url).trim().slice(0, 500);
     if (hookUrl && !/^https:\/\/[^\s]+$/i.test(hookUrl)) return res.status(400).json({ ok: false, error: 'The CRM webhook URL has to start with https://' });
     await dbRun('UPDATE talk_settings SET csr_to = ?, main_line = ?, webhook_url = ? WHERE id = 1', [csr, mainLine || '', hookUrl]);
-    await dbRun('UPDATE talk_settings SET email_bcc = ?, missed_number = ?, returning_short = ? WHERE id = 1',
-      [bcc, missedNum || null, b.returning_short == null ? cur.returning_short : (b.returning_short ? 1 : 0)]);
+    await dbRun('UPDATE talk_settings SET email_bcc = ?, missed_number = ?, returning_short = ?, ask_person = ? WHERE id = 1',
+      [bcc, missedNum || null, b.returning_short == null ? cur.returning_short : (b.returning_short ? 1 : 0),
+        b.ask_person == null ? cur.ask_person : (txt(b.ask_person, 'ask_person', 600).trim() || DEFAULTS.ask_person)]);
     await dbRun('UPDATE talk_settings SET languages = ?, lang_menu = ?, lang_greetings = ? WHERE id = 1',
       [JSON.stringify(langs), b.lang_menu == null ? cur.lang_menu : (b.lang_menu ? 1 : 0), JSON.stringify(lg)]);
     res.json({ ok: true, settings: await settings() });

@@ -903,6 +903,7 @@
     $('sHookState').innerHTML = s.webhook_secret ? '<b style="color:#166534">Secret set \u2713</b>' : '<b style="color:#b45309">Secret not in .env yet</b>';
     paintLogic();
     $('sClosed').value = s.closed_message || '';
+    $('sAskPerson').value = s.ask_person || '';
     $('sMsg').textContent = ''; $('sMsg').className = 'tk-msg';
   }
   $('sSave').onclick = async () => {
@@ -913,7 +914,7 @@
       languages: langState ? langState.on.filter(k => k !== 'en') : undefined, lang_greetings: langState ? langState.greet : undefined,
       notify_to: $('sNotify').value, email_bcc: $('sBcc').value, returning_short: $('sReturningShort').checked, missed_number: $('sMissedNum').value, summary_mail: $('sSummary').checked,
       csr_to: $('sCsrTo').value, webhook_url: $('sHook').value,
-      closed_message: $('sClosed').value }) });
+      closed_message: $('sClosed').value, ask_person: $('sAskPerson').value }) });
     if (!j.ok) { m.className = 'tk-msg err'; m.textContent = j.error || 'Could not save.'; return; }
     const keep = curMode;
     await loadOverview(); await paintTraining(); curMode = keep; paintMode();
