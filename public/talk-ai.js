@@ -215,12 +215,23 @@
   }
   const nice = (n) => Number(n || 0).toLocaleString('en-US');
   function paintTiles(t) {
-    const faces = (rows) => rows.slice(0, 5).map(r => { const v = viaOf({ source: 'phone', line_id: r.line_id, line_name: r.line_name, hours_mode: r.hours_mode }); return '<span class="tk-face' + (r.line_id ? '' : ' sys') + '" title="' + esc(v.label) + '">' + v.av + esc(r.line_id ? firstName(r.line_name) : v.label.replace(' TalkAI', '')) + ' ' + r.n + '</span>'; }).join('') + (rows.length > 5 ? '<span class="tk-face sys">+' + (rows.length - 5) + '</span>' : '');
+    /* 1.20.117: head + number only, as the CRM's call tiles; hovering the row opens a breakdown card (name · count per TalkAI, "n more", the total) */
+    const faces = (rows, title, total) => {
+      if (!rows.length) return '';
+      const chip = (r) => { const v = viaOf({ source: 'phone', line_id: r.line_id, line_name: r.line_name, hours_mode: r.hours_mode }); return { v, name: r.line_id ? (r.line_name || v.label) : v.label, n: r.n }; };
+      const all = rows.map(chip), shown = all.slice(0, 5), rest = all.slice(5), restN = rest.reduce((a, r) => a + r.n, 0);
+      return '<span class="tk-fwrap">' + shown.map(c => '<span class="tk-face' + (c.v.av.indexOf('tk-av sys') > -1 ? ' sys' : '') + '" title="' + esc(c.name) + '">' + c.v.av + '<b>' + c.n + '</b></span>').join('') +
+        (rest.length ? '<span class="tk-face sys more" title="' + esc(rest.map(r => r.name + ' ' + r.n).join(' · ')) + '">+' + rest.length + '</span>' : '') +
+        '<span class="tk-fpop"><div class="tk-fpop-h"><span>' + esc(title) + '</span><b>' + nice(total) + '</b></div>' +
+        all.slice(0, 8).map(c => '<div class="tk-fpop-r">' + c.v.av + '<span>' + esc(c.name) + '</span><b>' + nice(c.n) + '</b></div>').join('') +
+        (all.length > 8 ? '<div class="tk-fpop-r"><span class="tk-av sys" style="visibility:hidden"></span><span>' + (all.length - 8) + ' more</span><b>' + nice(all.slice(8).reduce((a, r) => a + r.n, 0)) + '</b></div>' : '') +
+        '</span></span>';
+    };
     const talk = t.talk_today || { seconds: 0, calls: 0 }, avg = talk.calls ? Math.round(talk.seconds / talk.calls) : 0;
     const mmss = (s) => Math.floor(s / 60) + ':' + String(Math.round(s % 60)).padStart(2, '0');
     $('callTiles').innerHTML =
-      '<div class="tk-tile acc-g"><div class="k">Answered by TalkAI <small>' + t.yesterday + ' yesterday</small></div><div class="v"><b>' + nice(t.today) + '</b><span>today</span></div><div class="faces tk-cl">' + (faces(t.by_line_today || []) || '<span class="tk-face sys" style="opacity:.6">no calls yet today</span>') + '</div></div>' +
-      '<div class="tk-tile acc-b"><div class="k">This month <small>' + nice(t.last_month) + ' last month</small></div><div class="v"><b>' + nice(t.month) + '</b><span>calls · ' + nice(t.callers_month) + ' callers · ' + nice(t.week) + ' this week</span></div><div class="faces tk-cl">' + faces(t.by_line_month || []) + '</div></div>' +
+      '<div class="tk-tile acc-g"><div class="k">Answered by TalkAI <small>' + t.yesterday + ' yesterday</small></div><div class="v"><b>' + nice(t.today) + '</b><span>today</span></div><div class="faces tk-cl">' + (faces(t.by_line_today || [], 'Answered by TalkAI \u00b7 today', t.today) || '<span class="tk-face sys" style="opacity:.6">no calls yet today</span>') + '</div></div>' +
+      '<div class="tk-tile acc-b"><div class="k">This month <small>' + nice(t.last_month) + ' last month</small></div><div class="v"><b>' + nice(t.month) + '</b><span>calls · ' + nice(t.callers_month) + ' callers · ' + nice(t.week) + ' this week</span></div><div class="faces tk-cl">' + faces(t.by_line_month || [], 'Answered by TalkAI \u00b7 this month', t.month) + '</div></div>' +
       '<div class="tk-tile acc-a"><div class="k">Messages & call backs <small>today</small></div><div class="v"><b>' + nice(t.messages_today) + '</b><span>messages · <b style="font-size:15px">' + nice(t.callbacks_today) + '</b> call backs</span></div><div class="k" style="margin-top:8px"><small>' + nice(t.messages_month) + ' messages · ' + nice(t.callbacks_month) + ' call backs this month</small></div></div>' +
       '<div class="tk-tile acc-p"><div class="k">Quotes emailed <small>today</small></div><div class="v"><b>' + nice(t.quotes_today) + '</b><span>' + nice(t.quotes_month) + ' this month' + (t.transferred_today ? ' · ' + nice(t.transferred_today) + ' transferred today' : '') + '</span></div></div>' +
       '<div class="tk-tile"><div class="k">Avg talk <small>today</small></div><div class="v"><b>' + mmss(avg) + '</b><span>' + mmss(talk.seconds) + ' total · ' + nice(talk.calls) + ' calls</span></div></div>';

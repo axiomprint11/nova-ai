@@ -117,6 +117,14 @@
   .tk-tile .faces { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
   .tk-face { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px 2px 2px; font-size: 11.5px; font-weight: 600; background: #fff; }
   .tk-face .tk-av { width: 20px; height: 20px; font-size: 9px; } .tk-face.sys .tk-av { background: var(--indigo-light); color: var(--indigo-dark); }
+  /* 1.20.117: face + count chips with a hover breakdown */
+  .tk-face b { font-size: 12px; font-weight: 700; padding-right: 2px; } .tk-face.more { padding: 2px 8px; color: var(--muted); }
+  .tk-fwrap { position: relative; display: inline-flex; flex-wrap: wrap; gap: 6px; }
+  .tk-fpop { display: none; position: absolute; left: 0; top: calc(100% + 6px); z-index: 30; min-width: 230px; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 30px rgba(15, 23, 42, .14); padding: 8px 10px; font-size: 12.5px; }
+  .tk-fwrap:hover .tk-fpop { display: block; }
+  .tk-fpop-h { display: flex; justify-content: space-between; gap: 14px; font-weight: 700; white-space: nowrap; padding: 4px 2px 8px; border-bottom: 1px solid var(--line); margin-bottom: 4px; } .tk-fpop-h b { color: #15803d; }
+  .tk-fpop-r { display: flex; align-items: center; gap: 8px; padding: 4px 2px; } .tk-fpop-r .tk-av { width: 20px; height: 20px; font-size: 9px; flex: none; } .tk-fpop-r span:not(.tk-av) { flex: 1; color: var(--ink-soft); white-space: nowrap; } .tk-fpop-r b { font-weight: 700; }
+  .tk-tile .faces { overflow: visible; } .tk-tile { overflow: visible; }
   .tk-tablewrap { background: #fff; border: 1px solid var(--line); border-radius: 12px; }
   .tk-ctable { width: 100%; border-collapse: collapse; font-size: 13px; }
   .tk-ctable th { text-align: left; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 10px 12px; border-bottom: 1px solid var(--line); background: #fafafc; white-space: nowrap; }
