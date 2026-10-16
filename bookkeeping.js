@@ -3413,11 +3413,11 @@ module.exports = function mountBookkeeping(app, deps) {
   // 1.20.143 — Accounts → Lenders: the finance companies, their loans and bank lines, and every loan link the wording disagrees with
   app.get('/api/bookkeeping/lenders', ...guard, async (req, res) => {
     try {
-      const lenders = await dbAll("SELECT id, name, source, kind, photo, aliases, details, specialty, notes FROM bk_vendors WHERE kind = 'lender' ORDER BY name COLLATE NOCASE");
+      const lenders = await dbAll("SELECT id, name, source, kind, photo, aliases, details, specialty, notes, email, phone, contact, address, default_category, receive_mode FROM bk_vendors WHERE kind = 'lender' ORDER BY name COLLATE NOCASE");   /* 1.20.149: everything the edit form needs, so Edit opens at once */
       const loans = await dbAll('SELECT id, name, kind, status, vendor_id, lender, monthly, start_date, term_months, steps_json, property_tax_monthly, principal, apr, total_payback, down_payment, deferred_months, balloon FROM bk_loans ORDER BY status, name');
       const lines = {}; (await dbAll("SELECT vendor_id, COUNT(*) n, SUM(amount) total, MAX(date) last FROM bk_transactions WHERE vendor_id IS NOT NULL AND amount > 0 AND status NOT IN ('removed', 'excluded') GROUP BY vendor_id")).forEach(r => { lines[r.vendor_id] = r; });
       for (const v of lenders) {
-        v.website = (() => { try { return JSON.parse(v.details || '{}').website || null; } catch (e) { return null; } })(); delete v.details;
+        v.website = (() => { try { return JSON.parse(v.details || '{}').website || null; } catch (e) { return null; } })();
         v.statement = String(v.aliases || '').split('\n').filter(a => a && a.indexOf('@') < 0); v.auto_words = dotForms(v.name);
         v.loans = loans.filter(l => l.vendor_id === v.id).map(l => { const m = loanMath(l); return { id: l.id, name: l.name, kind: l.kind, status: l.status, payment: m.payment || m.monthly || 0, amounts: m.amounts || [] }; });
         v.lines = lines[v.id] ? { n: lines[v.id].n, total: Math.round(lines[v.id].total * 100) / 100, last: lines[v.id].last } : { n: 0, total: 0, last: null };
