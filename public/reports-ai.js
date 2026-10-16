@@ -403,6 +403,7 @@ window.RaPeriod = (function () {
   const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   const usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '/' + m[3] + '/' + m[1] : String(d || ''); };
   const usd0 = (n) => '$' + Math.round(Number(n || 0)).toLocaleString('en-US');
+  const usdK = (n) => { n = Number(n || 0); return n >= 1e6 ? '$' + (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M' : n >= 1000 ? '$' + (n / 1000).toFixed(n >= 1e4 ? 0 : 1).replace(/\.0$/, '') + 'k' : '$' + Math.round(n); };
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const COLORS = ['#4f46e5', '#059669', '#d97706', '#db2777', '#0891b2', '#7c3aed', '#dc2626', '#65a30d', '#0d9488', '#9333ea', '#ea580c', '#2563eb', '#6b7280'];
   const face = (p, cls) => { const ini = esc(String(p.name || '?').trim().charAt(0).toUpperCase()); return p.photo ? '<img class="ra-av ' + (cls || '') + '" src="' + esc(p.photo) + '" alt="" title="' + esc(p.name) + '" onerror="this.outerHTML=\'<span class=&quot;ra-av ' + (cls || '') + '&quot;>' + ini + '</span>\'">' : '<span class="ra-av ' + (cls || '') + '" title="' + esc(p.name) + '">' + ini + '</span>'; };
@@ -419,7 +420,9 @@ window.RaPeriod = (function () {
     if (j.ok) cache[k] = j; return j;
   }
   // a stacked bar chart by day / week / month — series picked by keyOf(row) → { k, l, color }
-  function stacked(box, legendEl, rows, keyOf, grain, from, to) {
+  /* 1.20.122: opts.value(r) sums a figure instead of counting (By revenue), opts.fmt formats the axis / tooltip; a series' `photo` (from keyOf) draws its head in the legend */
+  function stacked(box, legendEl, rows, keyOf, grain, from, to, opts) {
+    opts = opts || {}; const val = opts.value || (() => 1), fmt = opts.fmt || ((v) => String(Math.round(v)));
     const svg = box.querySelector('svg'), tip = box.querySelector('.ra-tip');
     const keys = [], label = {}; const d = new Date(from + 'T12:00:00'), end = new Date(to + 'T12:00:00');
     if (grain === 'day') { for (let x = new Date(d); x <= end; x.setDate(x.getDate() + 1)) { const k = ymd(x); keys.push(k); label[k] = MONTHS[x.getMonth()] + ' ' + x.getDate(); } }
@@ -428,15 +431,16 @@ window.RaPeriod = (function () {
     if (keys.length > 120) { const cut = keys.splice(0, keys.length - 120); cut.forEach(k => delete label[k]); }
     const bucketOf = (date) => { if (grain === 'day') return date; if (grain === 'month') return date.slice(0, 7); const x = new Date(date + 'T12:00:00'); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return ymd(x); };
     const idx = {}; keys.forEach((k, i) => { idx[k] = i; }); const cells = keys.map(() => ({})); const series = {}; let max = 0;
-    rows.forEach(r => { const i = idx[bucketOf(r.date)]; const sk = keyOf(r); if (!series[sk.k]) series[sk.k] = { k: sk.k, l: sk.l, n: 0 }; series[sk.k].n++; if (i == null) return; cells[i][sk.k] = (cells[i][sk.k] || 0) + 1; });
+    rows.forEach(r => { const i = idx[bucketOf(r.date)]; const sk = keyOf(r); const v = Number(val(r)) || 0; if (!series[sk.k]) series[sk.k] = { k: sk.k, l: sk.l, photo: sk.photo, n: 0 }; series[sk.k].n += v; if (i == null || !v) return; cells[i][sk.k] = (cells[i][sk.k] || 0) + v; });
     const S = Object.values(series).sort((a, b) => b.n - a.n); S.forEach((x, i) => { x.color = COLORS[i % COLORS.length]; });
     cells.forEach(c => { const t = Object.values(c).reduce((s, n) => s + n, 0); if (t > max) max = t; });
-    legendEl.innerHTML = S.map(a => '<span><i class="ra-dot" style="background:' + a.color + '"></i>' + esc(a.l) + ' · ' + a.n + '</span>').join('');
-    const W = Math.max(320, box.clientWidth || 800), Hh = 210, padL = 28, padB = 22, padT = 8, innerH = Hh - padT - padB, n = keys.length;
+    legendEl.innerHTML = S.map(a => '<span><i class="ra-dot" style="background:' + a.color + '"></i>' + (a.photo !== undefined ? face({ name: a.l, photo: a.photo }, 'xs') : '') + esc(a.l) + ' · ' + fmt(a.n) + '</span>').join('');
+    const W = Math.max(320, box.clientWidth || 800), Hh = 210, padL = opts.value ? 44 : 28, padB = 22, padT = 8, innerH = Hh - padT - padB, n = keys.length;
     if (!n || !max) { svg.innerHTML = '<text x="' + (W / 2) + '" y="' + (Hh / 2) + '" class="tick" text-anchor="middle">Nothing in this period</text>'; return; }
-    const top = Math.max(1, Math.ceil(max / 4) * 4), step = (W - padL) / n, bw = Math.max(3, Math.min(34, step * 0.66));
+    const nice4 = (m) => { const raw = m / 4, mag = Math.pow(10, Math.floor(Math.log10(Math.max(raw, 1)))), unit = [1, 2, 2.5, 5, 10].map(x => x * mag).find(x => x >= raw) || mag * 10; return unit * 4; };
+    const top = opts.value ? nice4(max) : Math.max(1, Math.ceil(max / 4) * 4), step = (W - padL) / n, bw = Math.max(3, Math.min(34, step * 0.66));
     let out = '';
-    for (let g = 0; g <= 4; g++) { const v = top * g / 4, y = padT + innerH - innerH * g / 4; out += '<line class="grid" x1="' + padL + '" y1="' + y + '" x2="' + W + '" y2="' + y + '"/><text class="tick" x="' + (padL - 6) + '" y="' + (y + 3.5) + '" text-anchor="end">' + v + '</text>'; }
+    for (let g = 0; g <= 4; g++) { const v = top * g / 4, y = padT + innerH - innerH * g / 4; out += '<line class="grid" x1="' + padL + '" y1="' + y + '" x2="' + W + '" y2="' + y + '"/><text class="tick" x="' + (padL - 6) + '" y="' + (y + 3.5) + '" text-anchor="end">' + fmt(v) + '</text>'; }
     const every = n > 40 ? Math.ceil(n / 20) : n > 16 ? 2 : 1;
     keys.forEach((k, i) => {
       const x = padL + step * i + (step - bw) / 2; let y = padT + innerH;
@@ -448,7 +452,7 @@ window.RaPeriod = (function () {
     svg.querySelectorAll('.hit').forEach(h => {
       h.onmouseenter = () => { const i = +h.dataset.i; box.classList.add('hovering'); svg.querySelectorAll('rect.seg').forEach(sg => sg.classList.toggle('on', +sg.dataset.i === i));
         const tot = Object.values(cells[i]).reduce((s, v) => s + v, 0);
-        tip.innerHTML = '<div><b style="margin:0">' + esc(label[keys[i]]) + '</b> · ' + tot + '</div>' + S.filter(a => cells[i][a.k]).map(a => '<div class="row"><i class="ra-dot" style="background:' + a.color + '"></i>' + esc(a.l) + '<b>' + cells[i][a.k] + '</b></div>').join('');
+        tip.innerHTML = '<div><b style="margin:0">' + esc(label[keys[i]]) + '</b> · ' + fmt(tot) + '</div>' + S.filter(a => cells[i][a.k]).map(a => '<div class="row"><i class="ra-dot" style="background:' + a.color + '"></i>' + esc(a.l) + '<b>' + fmt(cells[i][a.k]) + '</b></div>').join('');
         tip.hidden = false; const r = h.getBoundingClientRect(), b = box.getBoundingClientRect(); tip.style.left = (r.left - b.left + r.width / 2) + 'px'; tip.style.top = (padT + innerH - innerH * tot / top) * (b.height / Hh) + 'px'; };
       h.onmouseleave = () => { box.classList.remove('hovering'); tip.hidden = true; };
     });
@@ -499,19 +503,23 @@ window.RaPeriod = (function () {
     const makers = Object.values(by).sort((a, b) => b.n - a.n);
     $('clMakersN').textContent = makers.filter(m => m.key !== 'web' && m.key !== 'none').length + ' team members · ' + web + ' website';
     leaderboard($('clMakers'), makers, C.maker, (k) => { C.maker = k; renderClients(); }, (a) => a.ordered + ' ordered · ' + usd0(a.rev));
-    const keyOf = C.series === 'source' ? (r) => ({ k: r.source.kind, l: r.source.kind }) : C.series === 'maker' ? (r) => ({ k: madeKey(r), l: r.made.kind === 'web' ? 'Website' : r.made.name }) : C.series === 'how' ? (r) => r.web ? { k: 'web', l: 'Website sign-up' } : { k: 'team', l: 'Created by the team' } : (r) => ({ k: 'a' + (r.am ? r.am.id : 0), l: r.am ? r.am.name : 'No AM' });
-    const [from, to] = RaPeriod.range(C); $('clChartN').textContent = rows.length + ' new client' + (rows.length === 1 ? '' : 's');
-    stacked($('clChart'), $('clLegend'), rows, keyOf, C.grain, from, to);
+    const kMaker = (r) => ({ k: madeKey(r), l: r.made.kind === 'web' ? 'Website' : r.made.name, photo: r.made.kind === 'team' ? (r.made.photo || '') : undefined });
+    const kAm = (r) => ({ k: 'a' + (r.am ? r.am.id : 0), l: r.am ? r.am.name : 'No AM', photo: r.am ? (r.am.photo || '') : undefined });
+    const keyOf = C.series === 'source' ? (r) => ({ k: r.source.kind, l: r.source.kind }) : (C.series === 'maker' || C.series === 'rev') ? kMaker : C.series === 'how' ? (r) => r.web ? { k: 'web', l: 'Website sign-up' } : { k: 'team', l: 'Created by the team' } : kAm;
+    /* 1.20.122: By revenue — what the clients created in each month have ordered so far, in dollars, stacked by who created the account */
+    const sOpts = C.series === 'rev' ? { value: (r) => r.orders ? r.orders.rev : 0, fmt: usdK } : undefined;
+    const [from, to] = RaPeriod.range(C); $('clChartN').textContent = rows.length + ' new client' + (rows.length === 1 ? '' : 's') + (C.series === 'rev' ? ' · ' + usd0(rows.reduce((a, r) => a + (r.orders ? r.orders.rev : 0), 0)) + ' ordered so far' : '');
+    stacked($('clChart'), $('clLegend'), rows, keyOf, C.grain, from, to, sOpts);
     drawClientsTable(rows, base);
   }
   // 1.20.110: what the new clients have spent so far, by source / by who created the account / by AM — clients, ordered, revenue, per client
   function drawRevenue(base) {
-    const keyOf = C.revBy === 'source' ? (r) => [r.source.kind, r.source.kind] : C.revBy === 'maker' ? (r) => [madeKey(r), r.made.kind === 'web' ? 'Website sign-ups' : r.made.name] : (r) => ['a' + (r.am ? r.am.id : 0), r.am ? r.am.name : 'No AM'];
-    const by = {}; base.forEach(r => { const [k, l] = keyOf(r); if (!by[k]) by[k] = { l, n: 0, ordered: 0, rev: 0 }; by[k].n++; if (r.orders) { by[k].ordered++; by[k].rev += r.orders.rev; } });
+    const keyOf = C.revBy === 'source' ? (r) => [r.source.kind, r.source.kind] : C.revBy === 'maker' ? (r) => [madeKey(r), r.made.kind === 'web' ? 'Website sign-ups' : r.made.name, r.made.kind === 'team' ? (r.made.photo || '') : undefined] : (r) => ['a' + (r.am ? r.am.id : 0), r.am ? r.am.name : 'No AM', r.am ? (r.am.photo || '') : undefined];
+    const by = {}; base.forEach(r => { const [k, l, photo] = keyOf(r); if (!by[k]) by[k] = { l, photo, n: 0, ordered: 0, rev: 0 }; by[k].n++; if (r.orders) { by[k].ordered++; by[k].rev += r.orders.rev; } });
     const rows = Object.values(by).sort((a, b) => b.rev - a.rev || b.n - a.n), max = rows.length ? Math.max(rows[0].rev, 1) : 1, total = rows.reduce((a, x) => a + x.rev, 0);
     $('clRevN').textContent = usd0(total) + ' from ' + base.filter(r => r.orders).length + ' of ' + base.length + ' new clients';
     $('clRev').innerHTML = rows.length ? '<div class="h">' + (C.revBy === 'source' ? 'Source' : C.revBy === 'maker' ? 'Created by' : 'Account manager') + '</div><div class="h"></div><div class="h r">Revenue</div><div class="h r">Clients</div><div class="h r">Ordered</div><div class="h r">Per client</div>' +
-      rows.map(x => '<div class="nm" title="' + esc(x.l) + '"><span>' + esc(x.l) + '</span></div><div class="bar"><i style="width:' + (x.rev / max * 100) + '%"></i></div><div class="c"><b>' + usd0(x.rev) + '</b>' + (total ? ' <span class="sub">' + Math.round(x.rev / total * 100) + '%</span>' : '') + '</div><div class="c">' + x.n + '</div><div class="c">' + x.ordered + (x.n ? ' <span class="sub">' + Math.round(x.ordered / x.n * 100) + '%</span>' : '') + '</div><div class="c">' + (x.n ? usd0(x.rev / x.n) : '—') + '</div>').join('') : '<div class="ra-muted" style="grid-column:1/-1">Nothing in this period.</div>';
+      rows.map(x => '<div class="nm" title="' + esc(x.l) + '">' + (x.photo !== undefined ? face({ name: x.l, photo: x.photo }, 'sm') : '') + '<span>' + esc(x.l) + '</span></div><div class="bar"><i style="width:' + (x.rev / max * 100) + '%"></i></div><div class="c"><b>' + usd0(x.rev) + '</b>' + (total ? ' <span class="sub">' + Math.round(x.rev / total * 100) + '%</span>' : '') + '</div><div class="c">' + x.n + '</div><div class="c">' + x.ordered + (x.n ? ' <span class="sub">' + Math.round(x.ordered / x.n * 100) + '%</span>' : '') + '</div><div class="c">' + (x.n ? usd0(x.rev / x.n) : '—') + '</div>').join('') : '<div class="ra-muted" style="grid-column:1/-1">Nothing in this period.</div>';
   }
   function drawClientsTable(rows, base) {
     const F = C.F, uniq = (f) => base.map(f).filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).sort();

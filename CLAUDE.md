@@ -519,7 +519,7 @@ Last month · Last 30 days · Last 90 days · **6 months · 12 months · YTD · 
 (Custom loads once both dates are set); each report keeps its own state (`PS` on Onboarding / Product, `C` / `R` on New Clients /
 Referrals; `fetchClients(state)`). **Revenue on New Clients**: a "Revenue from them so far" tile (per ordering client · per new client)
 and a **Revenue from the new clients** card (`drawRevenue`, `.ra-bars-rev`: By source / By who created / By AM — revenue + share, clients,
-ordered %, per client, from the rows' `orders.rev` = every invoiced estimate of those customers to date); the creator tiles show "$".
+ordered %, per client, from the rows' `orders.rev` = every invoiced estimate of those customers to date); the creator tiles show "$". **1.20.122**: no "This week" chip on any report (`RaPeriod` still understands `week`); the New clients chart has **By revenue** (`C.series = 'rev'`: `stacked(..., opts)` with `opts.value` = the client's `orders.rev` and `opts.fmt = usdK`, stacked by who created, a $ axis with `nice4` steps, the title adds "$x ordered so far") — what the clients created in each month have ordered to date; the legend and the Revenue card's rows show the person's head (`keyOf` / `drawRevenue` return `photo` for team members and AMs, `face(…, 'xs' | 'sm')`).
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 
