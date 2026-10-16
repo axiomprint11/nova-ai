@@ -114,10 +114,11 @@ module.exports = function mountBookkeeping(app, deps) {
     db.run(`CREATE TABLE IF NOT EXISTS bk_files (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, ref_id INTEGER NOT NULL, name TEXT, mime TEXT, size INTEGER, file TEXT NOT NULL, label TEXT, uploaded_by TEXT, created_at TEXT NOT NULL)`);
     db.run('CREATE INDEX IF NOT EXISTS idx_bk_files_ref ON bk_files(kind, ref_id)', () => {});
     ['down_payment REAL', 'deferred_months INTEGER', 'total_payback REAL', 'sales_tax REAL', 'tax_in INTEGER', 'property_tax_monthly REAL', 'down_to TEXT'].forEach(c => db.run('ALTER TABLE bk_loans ADD COLUMN ' + c, () => {}));
+    // 1.20.132: steps_json = a stepped payment schedule — [{n, amount}] in order ("3 @ $99 then 57 @ $7,572"); the term is the sum of n
     // 1.20.131: the loan form's purchase side (purchase price, the down payment paid straight to the manufacturer, purchase / arrival dates),
     // whether Axiom pays the property tax, and how the loan is paid — auto payment from a connected bank (pay_account = Plaid account_id, or 'other')
     // on pay_day of every month for pay_amount, or a bill due on due_day of every month
-    ['purchase_price REAL', 'direct_down REAL', 'purchase_date TEXT', 'arrival_date TEXT', 'property_tax_axiom INTEGER', 'pay_method TEXT', 'pay_account TEXT', 'pay_day INTEGER', 'pay_amount REAL', 'due_day INTEGER'].forEach(c => db.run('ALTER TABLE bk_loans ADD COLUMN ' + c, () => {}));
+    ['purchase_price REAL', 'direct_down REAL', 'purchase_date TEXT', 'arrival_date TEXT', 'property_tax_axiom INTEGER', 'pay_method TEXT', 'pay_account TEXT', 'pay_day INTEGER', 'pay_amount REAL', 'due_day INTEGER', 'steps_json TEXT'].forEach(c => db.run('ALTER TABLE bk_loans ADD COLUMN ' + c, () => {}));
     // 1.19.119: the overseas team — people paid through Wise (graphic design, web development, customer service…).
     // Each member is also a Nova vendor (vendor_id) so the feed shows the person; `pay` per period and `wise_ref` match the
     // bank line (Wise puts no recipient name on the statement), `category` files it, `category_alt` is the web-dev
@@ -1225,11 +1226,12 @@ module.exports = function mountBookkeeping(app, deps) {
   }
   // 1.19.99: loan arithmetic. Standard amortization: balance after n payments of M on principal P at monthly rate i is
   // P(1+i)^n − M((1+i)^n − 1)/i; the interest part of payment k is the balance before it × i. A lease / 0% loan is straight-line.
-  const amort = (P, apr, term, monthly, n) => {
+  const amort = (P, apr, term, monthly, n, steps) => {   // 1.20.132: `steps` [{n, amount}] = a stepped schedule — payment k is read from it instead of `monthly`
     P = Number(P) || 0; const i = (Number(apr) || 0) / 100 / 12; term = Number(term) || 0; n = Math.max(0, Math.min(term || n, n));
     let M = Number(monthly) || 0; if (!M && term) M = i ? P * i / (1 - Math.pow(1 + i, -term)) : P / term;
+    const payAt = (k) => { if (!(steps && steps.length)) return M; let j = k; for (const x of steps) { if (j < x.n) return x.amount; j -= x.n; } return M; };
     let bal = P, interest = 0, principal = 0;
-    for (let k = 0; k < n; k++) { const int = i ? bal * i : 0; const pr = Math.min(bal, M - int); interest += int; principal += pr; bal = Math.max(0, bal - pr); if (bal <= 0.005) { bal = 0; break; } }
+    for (let k = 0; k < n; k++) { const int = i ? bal * i : 0; const pr = Math.min(bal, payAt(k) - int); interest += int; principal += pr; bal = Math.max(0, bal - pr); if (bal <= 0.005) { bal = 0; break; } }
     return { monthly: Math.round(M * 100) / 100, balance: Math.round(bal * 100) / 100, interest_paid: Math.round(interest * 100) / 100, principal_paid: Math.round(principal * 100) / 100,
       total_interest: term ? Math.round((M * term - P) * 100) / 100 : null };
   };
@@ -1246,16 +1248,33 @@ module.exports = function mountBookkeeping(app, deps) {
   }
   // what a loan row amounts to: financed principal, the monthly payment (given, or from the total, or from the APR),
   // the APR (given, or solved from the payments), the total to be paid back and the interest
+  // 1.20.132: a stepped schedule — [{n, amount}] in payment order; anything that is not a positive count + amount is dropped
+  function loanSteps(l) {
+    let st = l.steps_json; if (typeof st === 'string') { try { st = JSON.parse(st); } catch (e) { st = null; } }
+    return Array.isArray(st) ? st.map(x => ({ n: parseInt(x && x.n) || 0, amount: Math.round((Number(x && x.amount) || 0) * 100) / 100 })).filter(x => x.n > 0 && x.amount >= 0) : [];
+  }
+  // the effective APR of any schedule: financed grown over the deferred months = PV of the step payments + the balloon
+  function solveAprSteps(P, steps, deferred, balloon) {
+    P = Number(P) || 0; const total = steps.reduce((n, x) => n + x.n * x.amount, 0); if (!P || !steps.length) return null;
+    if (total + balloon <= P + 0.005) return 0;
+    const pv = (i) => { let v = 0, k = deferred; for (const x of steps) { for (let j = 0; j < x.n; j++) { k++; v += x.amount * Math.pow(1 + i, -k); } } return v + balloon * Math.pow(1 + i, -k); };
+    let lo = 1e-7, hi = 0.1; for (let q = 0; q < 80; q++) { const mid = (lo + hi) / 2; if (pv(mid) > P) lo = mid; else hi = mid; }
+    return Math.round((lo + hi) / 2 * 12 * 100 * 1000) / 1000;
+  }
+  const propTax0 = (l) => Number(l.property_tax_monthly) || 0;
   function loanMath(l) {
-    const principal = Number(l.principal) || 0, down = Number(l.down_payment) || 0, deferred = Number(l.deferred_months) || 0, term = Number(l.term_months) || 0, balloon = Number(l.balloon) || 0;
+    const steps = loanSteps(l);
+    const principal = Number(l.principal) || 0, down = Number(l.down_payment) || 0, deferred = Number(l.deferred_months) || 0, term = steps.length ? steps.reduce((n, x) => n + x.n, 0) : Number(l.term_months) || 0, balloon = Number(l.balloon) || 0;
     const financed = Math.max(0, principal - down);
     let monthly = Number(l.monthly) || 0, apr = l.apr === '' || l.apr == null ? null : Number(l.apr), total = Number(l.total_payback) || 0;
+    if (steps.length) { monthly = steps[steps.length - 1].amount; total = down + steps.reduce((n, x) => n + x.n * x.amount, 0) + balloon; if (apr == null) apr = solveAprSteps(financed, steps, deferred, balloon); }   // 1.20.132: the regular payment is the last step
     if (!monthly && total && term) monthly = Math.max(0, (total - down - balloon) / term);
     if (!monthly && apr != null && term) { const i = apr / 100 / 12; const g = financed * Math.pow(1 + i, deferred); monthly = i ? g * i / (1 - Math.pow(1 + i, -term)) : g / term; }
     let effective = apr; if (effective == null && monthly && term) effective = solveApr(financed, term, monthly, deferred, balloon);
     if (!total && monthly && term) total = down + monthly * term + balloon;
     const tax = Number(l.sales_tax) || 0, taxIn = tax ? (l.tax_in == null ? 1 : Number(l.tax_in) ? 1 : 0) : null, propTax = Number(l.property_tax_monthly) || 0;
-    return { principal, down, deferred, term, balloon, financed, monthly: Math.round(monthly * 100) / 100, apr: effective, apr_given: apr != null, total_payback: Math.round(total * 100) / 100, total_interest: Math.round((total - principal) * 100) / 100,
+    const amounts = (steps.length ? steps.map(x => x.amount) : [monthly]).filter(a => a > 0).reduce((o, a) => o.concat([a, a + propTax0(l)]), []);   // every figure the bank may show for this loan
+    return { principal, down, deferred, term, balloon, financed, steps, amounts: amounts.filter((a, i) => amounts.indexOf(a) === i).map(a => Math.round(a * 100) / 100), monthly: Math.round(monthly * 100) / 100, apr: effective, apr_given: l.apr !== '' && l.apr != null, total_payback: Math.round(total * 100) / 100, total_interest: Math.round((total - principal) * 100) / 100,
       sales_tax: tax, tax_in: taxIn, property_tax: propTax, payment: Math.round((monthly + propTax) * 100) / 100,   // payment = what leaves the bank each month
       total_cost: Math.round((total + (tax && !taxIn ? tax : 0) + propTax * term) * 100) / 100 };   // everything paid over the term: payback + separate tax + property tax
   }
@@ -1272,11 +1291,12 @@ module.exports = function mountBookkeeping(app, deps) {
     for (let i = 0; i < total; i++) {
       const due = at(i), ym = due.toISOString().slice(0, 7);
       if (i < m.deferred) { slots.push({ n: i + 1, month: ym, due: due.toISOString().slice(0, 10), state: 'skip' }); continue; }
+      const expect = (() => { if (!(m.steps || []).length) return null; let k = i - m.deferred; for (const x of m.steps) { if (k < x.n) return x.amount; k -= x.n; } return null; })();   // 1.20.132: what the step schedule says this month costs
       let best = null, bestGap = 1e9;
       for (const ln of lines) { if (used.has(ln.id)) continue; const gap = Math.abs((new Date(ln.date + 'T12:00:00Z') - due) / 86400000); if (gap <= 20 && gap < bestGap) { best = ln; bestGap = gap; } }
-      if (best) { used.add(best.id); slots.push({ n: i + 1, month: ym, due: due.toISOString().slice(0, 10), state: 'paid', date: best.date, amount: Math.abs(Number(best.amount)), txn_id: best.id }); continue; }
+      if (best) { used.add(best.id); slots.push({ n: i + 1, month: ym, due: due.toISOString().slice(0, 10), state: 'paid', date: best.date, amount: Math.abs(Number(best.amount)), txn_id: best.id, expect }); continue; }
       const daysPast = (today - due) / 86400000;
-      slots.push({ n: i + 1, month: ym, due: due.toISOString().slice(0, 10), state: daysPast > 7 ? 'missed' : daysPast >= 0 ? 'due' : 'upcoming' });
+      slots.push({ n: i + 1, month: ym, due: due.toISOString().slice(0, 10), state: daysPast > 7 ? 'missed' : daysPast >= 0 ? 'due' : 'upcoming', expect });
     }
     const extra = lines.filter(ln => !used.has(ln.id)).map(ln => ({ date: ln.date, amount: Math.abs(Number(ln.amount)), txn_id: ln.id }));   // payments that fit no slot (extra / double)
     const paidN = slots.filter(x => x.state === 'paid').length, missed = slots.filter(x => x.state === 'missed');
@@ -1290,7 +1310,7 @@ module.exports = function mountBookkeeping(app, deps) {
     const nFiles = {}; (await dbAll("SELECT ref_id, COUNT(*) AS n FROM bk_files WHERE kind = 'loan' GROUP BY ref_id")).forEach(r => { nFiles[r.ref_id] = r.n; });
     const out = own.map(l => {
       const lm = loanMath(l), done = Math.min((lm.term + lm.deferred) || 9999, monthsSince(l.start_date)), left = Math.max(0, (lm.term + lm.deferred) - done);
-      const a = l.kind === 'lease' ? { monthly: Number(l.monthly) || 0, balance: Math.round(left * (Number(l.monthly) || 0) * 100) / 100, interest_paid: 0, principal_paid: Math.round(done * (Number(l.monthly) || 0) * 100) / 100, total_interest: null } : (() => { const m = loanMath(l); const r = amort(m.financed, m.apr, m.term, m.monthly, Math.max(0, done - m.deferred)); r.monthly = m.monthly; r.total_interest = m.total_interest; return r; })();   // 1.19.135: down payment, deferred months, solved APR
+      const a = l.kind === 'lease' ? { monthly: Number(l.monthly) || 0, balance: Math.round(left * (Number(l.monthly) || 0) * 100) / 100, interest_paid: 0, principal_paid: Math.round(done * (Number(l.monthly) || 0) * 100) / 100, total_interest: null } : (() => { const m = loanMath(l); const r = amort(m.financed, m.apr, m.term, m.monthly, Math.max(0, done - m.deferred), m.steps); r.monthly = m.monthly; r.total_interest = m.total_interest; return r; })();   // 1.19.135: down payment, deferred months, solved APR
       const p = paid[l.id] || { n: 0, total: 0, last: null };
       return Object.assign({}, l, { source: 'loan', files: nFiles[l.id] || 0, math: loanMath(l), calendar: loanCalendar(l, lm, payLines[l.id] || []), schedule: { start: l.start_date, end: lm.term ? addMonths(l.start_date, lm.term + lm.deferred) : null, months_done: done, months_left: left, monthly: a.monthly, next: l.status === 'active' && left ? addMonths(l.start_date, done + 1) : null },
         balance: a.balance, interest_paid: a.interest_paid, principal_paid: a.principal_paid, total_interest: a.total_interest, payments: { n: p.n, total: Math.round((p.total || 0) * 100) / 100, last: p.last } });
@@ -2384,11 +2404,11 @@ module.exports = function mountBookkeeping(app, deps) {
       }
     }
     // 1.19.99: a money-out line that looks like a loan payment — the lender's company, or the exact monthly amount of an active loan
-    const activeLoans = (await dbAll("SELECT * FROM bk_loans WHERE status = 'active'")).map(l => { const m = loanMath(l); return Object.assign(l, { monthly: m.payment || m.monthly, monthly_base: m.monthly }); });   // 1.19.136: the bank sees monthly + property tax
+    const activeLoans = (await dbAll("SELECT * FROM bk_loans WHERE status = 'active'")).map(l => { const m = loanMath(l); return Object.assign(l, { monthly: m.payment || m.monthly, monthly_base: m.monthly, amts: m.amounts }); });   // 1.19.136: the bank sees monthly + property tax
     if (activeLoans.length) for (const r of rows) {
       if (r.loan_id || r.transfer_of || r.refund_of || !(Number(r.amount) > 0)) continue;
       const amt = Number(r.amount);
-      const hit = activeLoans.find(l => r.vendor_id && l.vendor_id === r.vendor_id && (!l.monthly || Math.abs(Number(l.monthly) - amt) <= Math.max(1, amt * 0.02))) || activeLoans.find(l => (l.monthly && Math.abs(Number(l.monthly) - amt) < 0.005) || (l.monthly_base && Math.abs(Number(l.monthly_base) - amt) < 0.005));
+      const hit = activeLoans.find(l => r.vendor_id && l.vendor_id === r.vendor_id && (!l.monthly || l.amts.some(a => Math.abs(a - amt) <= Math.max(1, amt * 0.02)))) || activeLoans.find(l => l.amts.some(a => Math.abs(a - amt) < 0.005));   // 1.20.132: any step of a stepped schedule
       if (hit) r.loan_hint = { id: hit.id, name: hit.name };
     }
     // 1.19.119: overseas team — a linked line carries the person (flag, department); an open Wise payout carries `team_hint`
@@ -3174,8 +3194,8 @@ module.exports = function mountBookkeeping(app, deps) {
         sheet: { equipment_value: Math.round(assets * 100) / 100, owed: Math.round(owed * 100) / 100, monthly: Math.round(monthly * 100) / 100, net: Math.round((assets - owed) * 100) / 100, loans: active.length } });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
-  const LOAN_F = ['name', 'kind', 'lender', 'vendor_id', 'equipment_id', 'principal', 'down_payment', 'deferred_months', 'start_date', 'term_months', 'apr', 'monthly', 'balloon', 'total_payback', 'sales_tax', 'tax_in', 'property_tax_monthly', 'down_to', 'purchase_price', 'direct_down', 'purchase_date', 'arrival_date', 'property_tax_axiom', 'pay_method', 'pay_account', 'pay_day', 'pay_amount', 'due_day', 'notes', 'status'];   // down_to: who got the down payment — finance (the lender) or manufacturer (1.19.137)
-  const loanBody = (b) => { const o = {}; LOAN_F.forEach(k => { if (b[k] === undefined) return; let v = b[k]; if (['vendor_id', 'equipment_id', 'term_months', 'deferred_months', 'tax_in', 'property_tax_axiom', 'pay_day', 'due_day'].indexOf(k) > -1) v = v === '' || v == null ? null : parseInt(String(v).replace(/[^0-9-]/g, '')); else if (['principal', 'apr', 'monthly', 'balloon', 'down_payment', 'total_payback', 'sales_tax', 'property_tax_monthly', 'purchase_price', 'direct_down', 'pay_amount'].indexOf(k) > -1) { v = v === '' || v == null ? null : Number(String(v).replace(/[$,\s]/g, '')); if (v != null && !isFinite(v)) v = null; } else v = v == null ? null : String(v).trim().slice(0, 500); o[k] = v; }); if (o.kind && ['loan', 'lease', 'credit_line'].indexOf(o.kind) < 0) o.kind = 'loan'; if (o.status && ['active', 'paid'].indexOf(o.status) < 0) o.status = 'active'; return o; };
+  const LOAN_F = ['name', 'kind', 'lender', 'vendor_id', 'equipment_id', 'principal', 'down_payment', 'deferred_months', 'start_date', 'term_months', 'apr', 'monthly', 'balloon', 'total_payback', 'sales_tax', 'tax_in', 'property_tax_monthly', 'down_to', 'purchase_price', 'direct_down', 'purchase_date', 'arrival_date', 'property_tax_axiom', 'pay_method', 'pay_account', 'pay_day', 'pay_amount', 'due_day', 'steps_json', 'notes', 'status'];   // down_to: who got the down payment — finance (the lender) or manufacturer (1.19.137)
+  const loanBody = (b) => { const o = {}; LOAN_F.forEach(k => { if (b[k] === undefined) return; let v = b[k]; if (k === 'steps_json') { const st = loanSteps({ steps_json: v }); o[k] = st.length ? JSON.stringify(st) : null; return; } if (['vendor_id', 'equipment_id', 'term_months', 'deferred_months', 'tax_in', 'property_tax_axiom', 'pay_day', 'due_day'].indexOf(k) > -1) v = v === '' || v == null ? null : parseInt(String(v).replace(/[^0-9-]/g, '')); else if (['principal', 'apr', 'monthly', 'balloon', 'down_payment', 'total_payback', 'sales_tax', 'property_tax_monthly', 'purchase_price', 'direct_down', 'pay_amount'].indexOf(k) > -1) { v = v === '' || v == null ? null : Number(String(v).replace(/[$,\s]/g, '')); if (v != null && !isFinite(v)) v = null; } else v = v == null ? null : String(v).trim().slice(0, 500); o[k] = v; }); if (o.kind && ['loan', 'lease', 'credit_line'].indexOf(o.kind) < 0) o.kind = 'loan'; if (o.status && ['active', 'paid'].indexOf(o.status) < 0) o.status = 'active'; return o; };
   app.post('/api/bookkeeping/loans', ...guard, async (req, res) => {
     const o = loanBody(req.body || {}); if (!o.name) return res.json({ ok: false, error: 'Give the loan a name.' });
     const keys = Object.keys(o); const r = await dbRun('INSERT INTO bk_loans (' + keys.join(', ') + ', created_by, updated_at) VALUES (' + keys.map(() => '?').join(', ') + ', ?, ?)', keys.map(k => o[k]).concat([userId(req), nowIso()]));
@@ -3297,7 +3317,7 @@ module.exports = function mountBookkeeping(app, deps) {
     let n = 0;
     for (const t of await dbAll("SELECT id, vendor_id, amount, name FROM bk_transactions WHERE loan_id IS NULL AND vendor_id IS NOT NULL AND amount > 0 AND status IN ('new', 'pending') AND IFNULL(no_auto, 0) = 0 AND transfer_of IS NULL AND refund_of IS NULL AND (category IS NULL OR category = '')")) {
       const amt = Number(t.amount);
-      const l = loans.find(x => x.vendor_id === t.vendor_id && [x._m.payment, x._m.monthly].some(m => m > 0 && Math.abs(m - amt) <= Math.max(1, m * 0.02)));
+      const l = loans.find(x => x.vendor_id === t.vendor_id && x._m.amounts.some(m => m > 0 && Math.abs(m - amt) <= Math.max(1, m * 0.02)));
       if (!l) continue;
       const r = await linkLoan(t.id, l.id, 'system', 'loan'); if (r.ok) n++;
     }

@@ -2493,8 +2493,15 @@
     };
     const row = (l) => { const sch = l.schedule || {}, total = (sch.months_done || 0) + (sch.months_left || 0), pct = total ? Math.round(100 * (sch.months_done || 0) / total) : 0;
       return '<tr' + (l.status === 'paid' ? ' class="off"' : '') + '><td>' + pic(l) + '</td>' +
-        '<td><b>' + esc(l.name) + '</b> <span class="ln-kind ' + esc(l.kind) + '">' + esc(KIND[l.kind] || l.kind) + '</span>' + (l.source === 'equipment' ? '<div class="bk-dim">financing from the Equipment tab</div>' : l.equipment_name ? '<div class="bk-dim">for ' + esc(l.equipment_name) + '</div>' : '') + (l.pay_method ? '<div class="bk-dim">' + (l.pay_method === 'auto' ? 'Auto payment' + (l.pay_account ? ' from ' + esc(((j.banks || []).find(b => b.id === l.pay_account) || {}).label || (l.pay_account === 'other' ? 'another account' : l.pay_account)) : '') + (l.pay_day ? ' · the ' + ord(l.pay_day) : '') + (l.pay_amount ? ' · ' + usd(l.pay_amount) : '') : 'Bill' + (l.due_day ? ' · due the ' + ord(l.due_day) : '')) + '</div>' : '') + (l.source === 'loan' ? '<div class="bk-dim ln-docs-l"><a href="#" data-ldocs="' + l.id + '" title="' + (l.files ? 'Open the documents on this loan' : 'Add the signed contract, loan terms…') + '">' + (l.files ? l.files + ' doc' + (l.files === 1 ? '' : 's') : 'Add docs') + '</a></div>' : '') + (l.status === 'paid' ? '<div class="bk-dim">paid off</div>' : '') + '</td>' +
+        '<td><b>' + esc(l.name) + '</b> <span class="ln-kind ' + esc(l.kind) + '">' + esc(KIND[l.kind] || l.kind) + '</span>' + (l.source === 'equipment' ? '<div class="bk-dim">financing from the Equipment tab</div>' : l.equipment_name ? '<div class="bk-dim">for ' + esc(l.equipment_name) + '</div>' : '') + (l.source === 'loan' ? '<div class="bk-dim ln-docs-l"><a href="#" data-ldocs="' + l.id + '" title="' + (l.files ? 'Open the documents on this loan' : 'Add the signed contract, loan terms…') + '">' + (l.files ? l.files + ' doc' + (l.files === 1 ? '' : 's') : 'Add docs') + '</a></div>' : '') + (l.status === 'paid' ? '<div class="bk-dim">paid off</div>' : '') + '</td>' +
         '<td>' + esc(l.vendor_name || l.lender || '—') + '</td>' +
+        (() => {   /* 1.20.132: how the loan is paid — Auto pay (bank logo + account, the day, the amount) or Bill (the due day) */
+          if (!l.pay_method) return '<td class="ln-payc"><span class="bk-dim">—</span></td>';
+          if (l.pay_method === 'bill') return '<td class="ln-payc"><span class="ln-pm bill">Bill</span>' + (l.due_day ? '<div class="bk-dim">due the ' + ord(l.due_day) + '</div>' : '') + '</td>';
+          const b = (j.banks || []).find(x => x.id === l.pay_account) || null;
+          return '<td class="ln-payc"><span class="ln-pm auto">Auto pay</span><div class="ln-pmb">' + (b && b.logo ? '<img src="' + esc(b.logo) + '" alt="">' : '') + '<span>' + esc(b ? b.label.split(' · ')[0] : l.pay_account === 'other' ? 'Other account' : '') + '</span></div>' +
+            '<div class="bk-dim">' + [l.pay_day ? 'the ' + ord(l.pay_day) : '', l.pay_amount ? usd(l.pay_amount) : ''].filter(Boolean).join(' · ') + '</div></td>';
+        })() +
         '<td>' + (l.principal != null ? '<b>' + usd(l.principal) + '</b>' : '<span class="bk-dim">—</span>') + '<div class="bk-dim">' + esc(dateS(l.start_date)) + (l.math && l.math.down ? ' · ' + usd(l.math.down) + ' down' : '') + (l.term_months ? ' · ' + l.term_months + ' mo' : '') + (l.math && l.math.deferred ? ' after ' + l.math.deferred + ' skipped' : '') + (l.math && l.math.apr != null && l.kind !== 'lease' ? ' · ' + l.math.apr + '% APR' + (l.math.apr_given ? '' : ' (effective)') : l.apr != null && l.apr !== '' ? ' · ' + l.apr + '% APR' : '') + '</div>' + (l.math && l.math.total_payback ? '<div class="bk-dim">' + usd(l.math.total_payback) + ' back in all</div>' : '') + (l.math && l.math.sales_tax ? '<div class="bk-dim">' + usd(l.math.sales_tax) + ' sales tax ' + (l.math.tax_in ? 'financed' : 'paid separately') + '</div>' : '') + '</td>' +
         '<td class="num">' + (sch.monthly ? '<b>' + usd(sch.monthly) + '</b>' : '—') + (l.math && l.math.property_tax ? '<div class="bk-dim">+ ' + usd(l.math.property_tax) + ' property tax = ' + usd(l.math.payment) + '</div>' : '') + ((l.calendar && l.calendar.next_due) ? '<div class="bk-dim">next ' + esc(dateS(l.calendar.next_due)) + '</div>' : sch.next ? '<div class="bk-dim">next ' + esc(dateS(sch.next)) + '</div>' : '') + '</td>' +
         '<td>' + calCell(l, sch, total, pct) + '</td>' +
@@ -2504,7 +2511,7 @@
     v.innerHTML = '<div class="bk-card"><h2>Loans &amp; leases ' + qHelp('loans', 'Loans & leases', 'Every amount the company owes: standalone loans you add here (SBA, line of credit, vehicle, owner loan) and the machines financed under Equipment. The balance is amortized from the principal, APR, term and monthly payment — the interest part of each payment shrinks over time. Link bank lines to a loan from the Bank feed ("Loan payment? Match") to see what was actually paid. The strip on top is the balance-sheet view: what the equipment is worth today (straight-line book value) against what is still owed.') + '</h2>' +
       '<div class="ln-sheet"><div class="ln-tile"><div class="k">Equipment, book value today</div><div class="v">' + usd(sheet.equipment_value || 0) + '</div></div><div class="ln-tile owe"><div class="k">Still owed on ' + (sheet.loans || 0) + ' loan' + (sheet.loans === 1 ? '' : 's') + ' / lease' + (sheet.loans === 1 ? '' : 's') + '</div><div class="v">' + usd(sheet.owed || 0) + '</div></div><div class="ln-tile"><div class="k">Monthly payments</div><div class="v">' + usd(sheet.monthly || 0) + '</div></div><div class="ln-tile net"><div class="k">Equipment net of loans</div><div class="v">' + usd(sheet.net || 0) + '</div></div></div>' +
       '<div class="bk-filters"><span class="bk-muted" style="flex:1">' + loans.length + ' loan' + (loans.length === 1 ? '' : 's') + ' and lease' + (loans.length === 1 ? '' : 's') + '</span><button class="bk-btn p" id="lnAdd">+ New loan / lease</button></div>' +
-      (loans.length ? '<table class="bk bk-dir"><thead><tr><th></th><th>Loan</th><th>Lender</th><th>Borrowed</th><th class="num">Monthly</th><th>Payments</th><th class="num">Balance</th><th class="num">Paid (bank)</th><th></th></tr></thead><tbody>' + loans.map(row).join('') + '</tbody></table>' : '<div class="bk-muted" style="padding:14px 0">No loans yet. Add one, or set a machine to "On a loan" / "Lease" under Equipment and it shows up here.</div>') + '</div>';
+      (loans.length ? '<table class="bk bk-dir"><thead><tr><th></th><th>Loan</th><th>Lender</th><th>Payment</th><th>Borrowed</th><th class="num">Monthly</th><th>Payments</th><th class="num">Balance</th><th class="num">Paid (bank)</th><th></th></tr></thead><tbody>' + loans.map(row).join('') + '</tbody></table>' : '<div class="bk-muted" style="padding:14px 0">No loans yet. Add one, or set a machine to "On a loan" / "Lease" under Equipment and it shows up here.</div>') + '</div>';
     $('lnAdd').onclick = () => loanForm({}, j, loadLoans);
     v.querySelectorAll('[data-ledit]').forEach(b => b.onclick = () => loanForm(loans.find(x => String(x.id) === b.dataset.ledit), j, loadLoans));
     v.querySelectorAll('[data-ldocs]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); loanForm(loans.find(x => String(x.id) === a.dataset.ldocs), j, loadLoans); setTimeout(() => { const d = document.querySelector('#lnDrop'); if (d) d.scrollIntoView({ block: 'center' }); }, 50); });
@@ -2524,7 +2531,10 @@
     // 1.20.131: purchase price → financed price is worked out, the loan term is a pick, the total pay back is computed,
     // property tax is a tick, and the loan says how it is paid (auto payment from a connected bank, or a bill)
     const purchase = l.purchase_price != null && l.purchase_price !== '' ? l.purchase_price : (l.principal != null && l.principal !== '' ? Number(l.principal) + (Number(l.direct_down) || 0) : '');
-    const TERMS = [24, 36, 48, 60, 72, 84]; const termV = Number(l.term_months) || ''; const termCustom = termV && TERMS.indexOf(termV) < 0;
+    const TERMS = [24, 36, 48, 60, 72, 84]; const termV = Number(l.term_months) || '';
+    // 1.20.132: a stepped schedule ("3 @ $99 then 57 @ $7,572") — [{n, amount}] kept in steps_json; the term is the sum, the regular payment the last step
+    let steps = []; try { steps = JSON.parse(l.steps_json || '[]'); } catch (e) { steps = []; } if (!Array.isArray(steps)) steps = [];
+    const termMode = steps.length ? 'steps' : termV && TERMS.indexOf(termV) < 0 ? 'custom' : String(termV); const termCustom = termMode === 'custom';
     const days = (k, label, blank) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><select class="bk" name="' + k + '"><option value="">' + blank + '</option>' + Array.from({ length: 31 }, (_, i) => i + 1).map(d => '<option value="' + d + '"' + (String(l[k] || '') === String(d) ? ' selected' : '') + '>' + d + (d === 1 || d === 21 || d === 31 ? 'st' : d === 2 || d === 22 ? 'nd' : d === 3 || d === 23 ? 'rd' : 'th') + ' of every month</option>').join('') + '</select></label>';
     const banks = (j.banks || []); const payAcc = l.pay_account || '';
     const section = (t) => '<div class="ln-sec" style="grid-column:span 12">' + t + '</div>';
@@ -2539,16 +2549,16 @@
       w(money('down_payment', 'Loan down payment', '39,500.00').replace('<span class="bk-muted">', '<span class="bk-muted" title="The down payment paid to the lender at signing">'), 3) +
       w(f('purchase_date', 'Purchase date', 'date'), 4) + w(f('arrival_date', 'Arrival date', 'date'), 4) + w(f('start_date', 'Loan start date', 'date'), 4) +
       w(f('deferred_months', 'No payment months', 'number', ' step="1" min="0"', '0'), 3) +
-      '<label class="nv-f" style="grid-column:span 3"><span class="bk-muted">Loan term</span><span class="ln-term"><select class="bk" id="lnTermSel">' + [['', '— months —']].concat(TERMS.map(t => [t, t + ' months'])).concat([['custom', 'Custom…']]).map(o => '<option value="' + o[0] + '"' + ((termCustom && o[0] === 'custom') || (!termCustom && String(termV) === String(o[0])) ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' +
+      '<label class="nv-f" style="grid-column:span 3"><span class="bk-muted">Loan term</span><span class="ln-term"><select class="bk" id="lnTermSel">' + [['', '— months —']].concat(TERMS.map(t => [t, t + ' months'])).concat([['custom', 'Custom months…'], ['steps', 'Stepped payments…']]).map(o => '<option value="' + o[0] + '"' + (termMode === String(o[0]) ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' +
         '<input class="bk" name="term_months" type="number" step="1" min="0" value="' + esc(termV) + '" placeholder="mo"' + (termCustom ? '' : ' hidden') + '></span></label>' +
+      '<div class="ln-steps" id="lnSteps" style="grid-column:span 12"' + (steps.length ? '' : ' hidden') + '><div class="bk-muted">Payment steps, in order — e.g. 3 payments @ $99.00, then 57 @ $7,572.00</div><div id="lnStepRows"></div><a href="#" id="lnStepAdd">+ Add a step</a><input type="hidden" name="steps_json" value="' + esc(steps.length ? JSON.stringify(steps) : '') + '"></div>' +
       w(money('monthly', 'Monthly payment', '5,808.00'), 3) + w(f('apr', 'Interest %', 'number', ' step="0.001" min="0"', 'computed'), 3) +
       ro('total_payback', 'Total pay back', 'Loan down payment + monthly × term + due at the end') + w(money('balloon', 'Due at the end', '0.00'), 3) +
-      '<label class="nv-f ln-check" style="grid-column:span 6"><span class="bk-muted">Property tax</span><span class="ln-term"><label class="ln-tick"><input type="checkbox" name="property_tax_axiom" value="1"' + (Number(l.property_tax_axiom) ? ' checked' : '') + '> Axiom due</label>' +
-        '<input class="bk ln-money" name="property_tax_monthly" type="text" inputmode="decimal" value="' + esc(fmtMoney(l.property_tax_monthly)) + '" placeholder="per month"' + (Number(l.property_tax_axiom) ? '' : ' hidden') + '></span></label>' +
+      '<label class="nv-f ln-check" style="grid-column:span 3"><span class="bk-muted">Property tax</span><label class="ln-tick" title="Tick when Axiom pays the property tax on the machine"><input type="checkbox" name="property_tax_axiom" value="1"' + (Number(l.property_tax_axiom) ? ' checked' : '') + '> Axiom due</label></label>' +
       w(money('sales_tax', 'Sales tax', '34,000.00'), 3) + w(sel('tax_in', 'Sales tax is', [['0', 'Excluded — Axiom pays'], ['1', 'Included in the total sale']]), 5) +
       section('Payment') +
-      w(sel('pay_method', 'Payment method', [['', '— not set —'], ['auto', 'Auto payment'], ['bill', 'Bill']]), 3) +
-      '<label class="nv-f ln-auto" style="grid-column:span 4"><span class="bk-muted">Auto payment from</span><select class="bk" name="pay_account"><option value="">— bank —</option>' + banks.map(b => '<option value="' + esc(b.id) + '"' + (payAcc === b.id ? ' selected' : '') + '>' + esc(b.label) + '</option>').join('') + '<option value="other"' + (payAcc === 'other' ? ' selected' : '') + '>Other</option></select></label>' +
+      '<label class="nv-f" style="grid-column:span 3"><span class="bk-muted">Payment method</span><span class="ln-seg" id="lnPay"><button type="button" data-m="auto"' + (l.pay_method === 'auto' ? ' class="on"' : '') + '>Auto pay</button><button type="button" data-m="bill"' + (l.pay_method === 'bill' ? ' class="on"' : '') + '>Bill</button></span><input type="hidden" name="pay_method" value="' + esc(l.pay_method || '') + '"></label>' +
+      '<label class="nv-f ln-auto" style="grid-column:span 4"><span class="bk-muted">Auto payment from</span><span class="ln-bank" id="lnBank"><button type="button" class="bk ln-bank-b"></button><div class="ln-bank-l" hidden></div></span><input type="hidden" name="pay_account" value="' + esc(payAcc) + '"></label>' +
       days('pay_day', 'Scheduled payment date', '— day —').replace('<label class="nv-f">', '<label class="nv-f ln-auto" style="grid-column:span 3">') +
       w(money('pay_amount', 'Auto payment amount', '5,808.00'), 2).replace('class="nv-f"', 'class="nv-f ln-auto"') +
       days('due_day', 'Due', '— day —').replace('<label class="nv-f">', '<label class="nv-f ln-bill" style="grid-column:span 4">') +
@@ -2556,19 +2566,46 @@
       '<div class="bk-dim" id="lnCalc" style="margin:4px 0 10px"></div>' +
       '<label class="nv-f"><span class="bk-muted">Notes</span><textarea class="bk" name="notes" rows="2">' + esc(l.notes || '') + '</textarea></label>' +
       '<div class="ln-docs"><div class="bk-muted" style="margin-bottom:6px">Documents — the signed agreement, terms, payment schedule</div>' +
-      (isEdit ? '<div class="ln-drop" id="lnDrop" tabindex="0">' + iconSvg('upload') + '<div><b>Drop files here</b> or click to choose · PDF, pictures, Word, Excel · up to 25 MB each</div><input type="file" id="lnFile" multiple accept=".pdf,.png,.jpg,.jpeg,.docx,.xlsx,application/pdf,image/png,image/jpeg" hidden></div><div id="lnFiles" class="ln-files"></div>' : '<div class="bk-dim">Add the loan first, then its documents.</div>') + '</div>' +
+      (isEdit ? '<div class="ln-drop" id="lnDrop" tabindex="0">' + iconSvg('upload') + '<div><b>Drop files here</b> or click to choose · PDF, pictures, Word, Excel · up to 25 MB each</div><input type="file" id="lnFile" multiple accept=".pdf,.png,.jpg,.jpeg,.docx,.xlsx,application/pdf,image/png,image/jpeg" hidden></div><div class="ln-uplabel bk-muted">Label the files I add as <select class="bk" id="lnUpLabel"><option value="">— pick —</option><option>Signed Contract</option><option>Signed Loan</option><option>Proposal</option><option>Wire Instructions</option><option>Other</option></select></div><div id="lnFiles" class="ln-files"></div>' : '<div class="bk-dim">Add the loan first, then its documents.</div>') + '</div>' +
       '<div class="bk-row nv-acts"><button class="bk-btn p" id="lnSave">' + (isEdit ? 'Save' : 'Add loan') + '</button><button class="bk-btn bk-x">Cancel</button>' + (isEdit ? '<span class="sp"></span><button class="bk-btn sm bad" id="lnDel">Delete</button>' : '') + '<span class="bk-muted" id="lnMsg"></span></div></div>';
     const close = () => el.remove(); el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
     document.body.appendChild(el); el.querySelector('[name=name]').focus();
     const num = (k) => { const v = Number(String(el.querySelector('[name=' + k + ']').value || '').replace(/[$,\s]/g, '')); return isFinite(v) ? v : 0; };
     // the term pick ↔ the months box; the property-tax amount shows when Axiom pays it; the payment fields follow the method
     const termSel = el.querySelector('#lnTermSel'), termIn = el.querySelector('[name=term_months]');
-    termSel.onchange = () => { if (termSel.value === 'custom') { termIn.hidden = false; termIn.focus(); } else { termIn.hidden = true; termIn.value = termSel.value; } recalc(); };
-    const propTick = el.querySelector('[name=property_tax_axiom]'), propIn = el.querySelector('[name=property_tax_monthly]');
-    propTick.onchange = () => { propIn.hidden = !propTick.checked; if (!propTick.checked) propIn.value = ''; else propIn.focus(); recalc(); };
-    const paySel = el.querySelector('[name=pay_method]');
-    const payShow = () => { const m = paySel.value; el.querySelectorAll('.ln-auto').forEach(x => x.style.display = m === 'auto' ? '' : 'none'); el.querySelectorAll('.ln-bill').forEach(x => x.style.display = m === 'bill' ? '' : 'none'); };
-    paySel.onchange = payShow; payShow();
+    const stepsBox = el.querySelector('#lnSteps'), stepRows = el.querySelector('#lnStepRows'), stepsIn = el.querySelector('[name=steps_json]'), monthlyIn = el.querySelector('[name=monthly]');
+    const readSteps = () => Array.from(stepRows.querySelectorAll('.ln-step')).map(r => ({ n: parseInt(r.querySelector('[data-n]').value) || 0, amount: Number(String(r.querySelector('[data-a]').value).replace(/[$,\s]/g, '')) || 0 })).filter(x => x.n > 0);
+    const stepsSync = () => {   /* the hidden field, the term (sum of the counts) and the regular payment (the last step) follow the rows */
+      const st = termSel.value === 'steps' ? readSteps() : []; stepsIn.value = st.length ? JSON.stringify(st) : '';
+      if (st.length) { termIn.value = st.reduce((n, x) => n + x.n, 0); monthlyIn.value = fmtMoney(st[st.length - 1].amount); }
+      termIn.readOnly = monthlyIn.readOnly = !!st.length; termIn.classList.toggle('ln-ro-in', !!st.length); monthlyIn.classList.toggle('ln-ro-in', !!st.length);
+      recalc();
+    };
+    const stepRow = (x) => { const d = document.createElement('div'); d.className = 'ln-step'; d.innerHTML = '<input class="bk" data-n type="number" min="1" step="1" value="' + (x && x.n ? x.n : '') + '" placeholder="3"><span>payments @</span><input class="bk ln-money" data-a type="text" inputmode="decimal" value="' + (x && x.amount != null && x.amount !== '' ? fmtMoney(x.amount) : '') + '" placeholder="99.00"><a href="#" data-x title="Remove">×</a>';
+      d.querySelector('[data-x]').onclick = (ev) => { ev.preventDefault(); d.remove(); stepsSync(); }; d.querySelectorAll('input').forEach(i => { i.addEventListener('input', stepsSync); i.addEventListener('blur', () => { if (i.classList.contains('ln-money')) i.value = fmtMoney(i.value); stepsSync(); }); }); return d; };
+    steps.forEach(x => stepRows.appendChild(stepRow(x)));
+    el.querySelector('#lnStepAdd').onclick = (ev) => { ev.preventDefault(); const r = stepRow(null); stepRows.appendChild(r); r.querySelector('[data-n]').focus(); };
+    termSel.onchange = () => {
+      const m = termSel.value; stepsBox.hidden = m !== 'steps';
+      if (m === 'custom') { termIn.hidden = false; termIn.focus(); } else { termIn.hidden = m !== 'steps'; if (m !== 'steps') termIn.value = m; }
+      if (m === 'steps' && !stepRows.children.length) { stepRows.appendChild(stepRow({ n: 3, amount: '' })); stepRows.appendChild(stepRow(null)); }
+      stepsSync();
+    };
+    if (steps.length) termIn.hidden = false;
+    const paySel = el.querySelector('[name=pay_method]'), seg = el.querySelector('#lnPay');
+    const payShow = () => { const m = paySel.value; seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.m === m)); el.querySelectorAll('.ln-auto').forEach(x => x.style.display = m === 'auto' ? '' : 'none'); el.querySelectorAll('.ln-bill').forEach(x => x.style.display = m === 'bill' ? '' : 'none'); };
+    seg.querySelectorAll('button').forEach(b => b.onclick = () => { paySel.value = paySel.value === b.dataset.m ? '' : b.dataset.m; payShow(); });   /* 1.20.132: a toggle — a second click on the lit one clears it */
+    payShow();
+    // the bank picker shows each connection's logo (a native select cannot)
+    const bankIn = el.querySelector('[name=pay_account]'), bankBtn = el.querySelector('.ln-bank-b'), bankList = el.querySelector('.ln-bank-l');
+    const bankOpts = [{ id: '', label: '— bank —' }].concat(banks).concat([{ id: 'other', label: 'Other' }]);
+    const bankHtml = (b) => (b.logo ? '<img src="' + esc(b.logo) + '" alt="">' : '<span class="ln-bank-i">' + (b.id && b.id !== 'other' ? iconSvg('landmark') : '') + '</span>') + '<span class="ln-bank-t">' + esc(b.label) + '</span>';
+    const bankPaint = () => { const b = bankOpts.find(x => x.id === bankIn.value) || bankOpts[0]; bankBtn.innerHTML = bankHtml(b) + '<i class="ln-bank-c">▾</i>'; };
+    bankList.innerHTML = bankOpts.map(b => '<div class="ln-bank-o" data-id="' + esc(b.id) + '">' + bankHtml(b) + '</div>').join('');
+    bankList.querySelectorAll('.ln-bank-o').forEach(o => o.onclick = () => { bankIn.value = o.dataset.id; bankList.hidden = true; bankPaint(); });
+    bankBtn.onclick = () => { bankList.hidden = !bankList.hidden; };
+    el.addEventListener('click', (ev) => { if (!ev.target.closest('.ln-bank')) bankList.hidden = true; });
+    bankPaint();
     // live: financed price and total pay back fill their boxes; the line under the fields explains monthly / APR / interest
     const recalc = () => {
       const kind = el.querySelector('[name=kind]').value, price = num('purchase_price'), direct = num('direct_down'), down = num('down_payment'), term = num('term_months'), def = num('deferred_months'), balloon = num('balloon');
@@ -2581,17 +2618,22 @@
         const pv = (i) => Math.pow(1 + i, -def) * (monthly * (1 - Math.pow(1 + i, -term)) / i + balloon * Math.pow(1 + i, -term));
         if (monthly * term + balloon <= fin + 0.005) eff = 0; else { let lo = 1e-7, hi = 0.1; for (let k = 0; k < 80; k++) { const mid = (lo + hi) / 2; if (pv(mid) > fin) lo = mid; else hi = mid; } eff = Math.round((lo + hi) / 2 * 12 * 100 * 1000) / 1000; }
       }
-      const total = monthly && term ? down + monthly * term + balloon : 0; el.querySelector('[name=total_payback]').value = total ? fmtMoney(total) : '';
-      const tax = num('sales_tax'), taxIn = el.querySelector('[name=tax_in]').value !== '0', prop = propTick.checked ? num('property_tax_monthly') : 0;
+      const st = termSel.value === 'steps' ? readSteps() : [];
+      if (st.length && fin && kind !== 'lease' && apr == null) {   /* 1.20.132: the APR behind a stepped schedule — PV of every payment in order */
+        const pv = (i) => { let v = 0, k = def; for (const x of st) for (let q = 0; q < x.n; q++) { k++; v += x.amount * Math.pow(1 + i, -k); } return v + balloon * Math.pow(1 + i, -k); };
+        if (st.reduce((n, x) => n + x.n * x.amount, 0) + balloon <= fin + 0.005) eff = 0; else { let lo = 1e-7, hi = 0.1; for (let k = 0; k < 80; k++) { const mid = (lo + hi) / 2; if (pv(mid) > fin) lo = mid; else hi = mid; } eff = Math.round((lo + hi) / 2 * 12 * 100 * 1000) / 1000; }
+      }
+      const total = st.length ? down + st.reduce((n, x) => n + x.n * x.amount, 0) + balloon : monthly && term ? down + monthly * term + balloon : 0; el.querySelector('[name=total_payback]').value = total ? fmtMoney(total) : '';
+      const tax = num('sales_tax'), taxIn = el.querySelector('[name=tax_in]').value !== '0', prop = 0, axiomTax = el.querySelector('[name=property_tax_axiom]').checked;
       if (!P && !monthly) { out.innerHTML = ''; return; }
-      out.innerHTML = 'Financed <b>' + usd(fin) + '</b>' + (direct ? ' after ' + usd(direct) + ' paid direct' : '') + (down ? (direct ? ' and ' : ' after ') + usd(down) + ' down to the lender' : '') + (monthly ? ' · <b>' + usd(monthly) + '</b> × ' + term + (def ? ' after ' + def + ' month' + (def === 1 ? '' : 's') + ' with no payment' : '') : '') +
+      out.innerHTML = 'Financed <b>' + usd(fin) + '</b>' + (direct ? ' after ' + usd(direct) + ' paid direct' : '') + (down ? (direct ? ' and ' : ' after ') + usd(down) + ' down to the lender' : '') + (st.length ? ' · ' + st.map(x => x.n + ' × <b>' + usd(x.amount) + '</b>').join(' then ') + ' (' + term + ' months)' : monthly ? ' · <b>' + usd(monthly) + '</b> × ' + term : '') + (def && (st.length || monthly) ? ' after ' + def + ' month' + (def === 1 ? '' : 's') + ' with no payment' : '') +
         (eff != null && kind !== 'lease' ? ' · <b>' + eff + '%</b> APR' + (apr == null ? ' (computed from the payments)' : '') : '') + (total ? ' · total back <b>' + usd(total) + '</b>' + (total - P > 0 ? ' (' + usd(total - P) + ' interest)' : '') : '') +
         (tax ? '<br>Sales tax ' + usd(tax) + (taxIn ? ' is inside the total sale' : ' is excluded — Axiom pays it separately') : '') +
-        (prop ? '<br>Bank payment <b>' + usd(monthly + prop) + '</b> = ' + usd(monthly) + ' + ' + usd(prop) + ' property tax (Axiom due; not part of the loan, ' + usd(prop * term) + ' over the term)' : '');
+        (axiomTax ? '<br>Property tax on the machine is Axiom\u2019s to pay' : '') + (prop ? '' : '');
     };
     el.querySelectorAll('.ln-money').forEach(i => { i.addEventListener('blur', () => { i.value = fmtMoney(i.value); recalc(); }); i.addEventListener('input', recalc); });
-    el.querySelectorAll('[name=apr],[name=term_months],[name=deferred_months],[name=kind],[name=tax_in],[name=purchase_price],[name=direct_down]').forEach(i => { i.addEventListener('input', recalc); i.addEventListener('change', recalc); });
-    recalc();
+    el.querySelectorAll('[name=apr],[name=term_months],[name=deferred_months],[name=kind],[name=tax_in],[name=purchase_price],[name=direct_down],[name=property_tax_axiom]').forEach(i => { i.addEventListener('input', recalc); i.addEventListener('change', recalc); });
+    stepsSync();
     el.querySelector('#lnSave').onclick = async () => {
       const body = {}; el.querySelectorAll('[name]').forEach(i => { body[i.name] = i.type === 'checkbox' ? (i.checked ? 1 : 0) : i.classList.contains('ln-money') ? String(i.value).replace(/[$,\s]/g, '') : i.value; });
       if (!body.name.trim()) { el.querySelector('#lnMsg').textContent = 'Give the loan a name.'; return; }
@@ -2604,11 +2646,14 @@
     if (isEdit) {
       const list = el.querySelector('#lnFiles'), drop = el.querySelector('#lnDrop'), pick = el.querySelector('#lnFile');
       const kb = (n) => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+      const LABELS = ['Signed Contract', 'Signed Loan', 'Proposal', 'Wire Instructions', 'Other'];   /* 1.20.132: what each document is */
+      const labelSel = (f) => '<select class="bk ln-label" data-label="' + f.id + '" title="What this document is"><option value="">— label —</option>' + LABELS.map(x => '<option' + (f.label === x ? ' selected' : '') + '>' + x + '</option>').join('') + (f.label && LABELS.indexOf(f.label) < 0 ? '<option selected>' + esc(f.label) + '</option>' : '') + '</select>';
       const fIcon = (f) => f.ext === 'pdf' ? '<span class="ln-fi pdf">PDF</span>' : f.ext === 'docx' ? '<span class="ln-fi doc">DOC</span>' : f.ext === 'xlsx' ? '<span class="ln-fi xls">XLS</span>' : '<span class="ln-fi img">IMG</span>';
       const paintFiles = async () => {
         const r = await api('/api/bookkeeping/loans/' + l.id + '/files'); const files = r.files || [];
         list.innerHTML = files.length ? files.map(f => '<div class="ln-file" data-f="' + f.id + '">' + fIcon(f) + '<div class="ln-fn"><a href="#" data-open="' + f.id + '" title="Open">' + esc(f.name) + '</a><div class="bk-dim">' + kb(f.size || 0) + (f.uploaded_by ? ' · ' + esc(f.uploaded_by.split('@')[0]) : '') + (f.created_at ? ' · ' + esc(new Date(f.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })) : '') + '</div></div>' +
-          '<a href="#" class="bk-dim" data-dl="' + f.id + '" title="Download">' + iconSvg('download') + '</a><a href="#" class="bk-dim" data-rm="' + f.id + '" title="Remove">×</a></div>').join('') : '<div class="bk-dim" style="padding:4px 2px">No documents yet.</div>';
+          labelSel(f) + '<a href="#" class="bk-dim" data-dl="' + f.id + '" title="Download">' + iconSvg('download') + '</a><a href="#" class="bk-dim" data-rm="' + f.id + '" title="Remove">×</a></div>').join('') : '<div class="bk-dim" style="padding:4px 2px">No documents yet.</div>';
+        list.querySelectorAll('[data-label]').forEach(sl => sl.onchange = () => post('/api/bookkeeping/files/' + sl.dataset.label, { label: sl.value }));
         list.querySelectorAll('[data-open]').forEach(a => a.onclick = async (ev) => { ev.preventDefault(); const rr = await fetch('/api/bookkeeping/files/' + a.dataset.open, { headers: { 'Authorization': 'Bearer ' + token } }); if (!rr.ok) return alert('File not available.'); window.open(URL.createObjectURL(await rr.blob()), '_blank', 'noopener'); });
         list.querySelectorAll('[data-dl]').forEach(a => a.onclick = async (ev) => { ev.preventDefault(); const f = files.find(x => String(x.id) === a.dataset.dl); const rr = await fetch('/api/bookkeeping/files/' + a.dataset.dl + '?dl=1', { headers: { 'Authorization': 'Bearer ' + token } }); if (!rr.ok) return alert('File not available.'); const u = URL.createObjectURL(await rr.blob()); const x = document.createElement('a'); x.href = u; x.download = f ? f.name : 'document'; document.body.appendChild(x); x.click(); x.remove(); });
         list.querySelectorAll('[data-rm]').forEach(a => a.onclick = async (ev) => { ev.preventDefault(); const f = files.find(x => String(x.id) === a.dataset.rm); if (!(await ask('Remove **' + (f ? f.name : 'this file') + '**?', { ok: 'Remove', danger: true }))) return; await post('/api/bookkeeping/files/' + a.dataset.rm + '/delete', {}); paintFiles(); });
@@ -2617,7 +2662,7 @@
         const msg = el.querySelector('#lnMsg'); let n = 0;
         for (const f of Array.from(fl || [])) {
           msg.textContent = 'Uploading ' + f.name + '…';
-          const r = await fetch('/api/bookkeeping/loans/' + l.id + '/files', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(f.name) }, body: f }).then(x => x.json()).catch(e => ({ ok: false, error: e.message }));
+          const r = await fetch('/api/bookkeeping/loans/' + l.id + '/files', { method: 'POST', headers: Object.assign({ 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(f.name) }, el.querySelector('#lnUpLabel').value ? { 'X-File-Label': el.querySelector('#lnUpLabel').value } : {}), body: f }).then(x => x.json()).catch(e => ({ ok: false, error: e.message }));
           if (!r.ok) { msg.textContent = f.name + ': ' + (r.error || 'could not upload'); continue; }
           n++;
         }
