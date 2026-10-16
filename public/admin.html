@@ -46,6 +46,14 @@ th { background: #f7f7fc; text-align: left; padding: 11px 14px; font-weight: 600
 #tabUsers .us-wrap { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .us-table { border: 0; border-radius: 0; overflow: visible; }
 .us-table th:last-child, .us-table td:last-child { min-width: 112px; }
+.us-d { font-size: 14px; font-weight: 600; color: var(--ink); white-space: nowrap; } .us-t { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+.us-acc { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 5px 12px 5px 9px; font: inherit; cursor: pointer; color: var(--muted); }
+.us-acc b { font-size: 14px; color: var(--ink); } .us-acc span { font-size: 11.5px; } .us-acc.on { border-color: #c7c7f5; color: var(--indigo-dark); background: #f5f3ff; } .us-acc.on b { color: var(--indigo-dark); } .us-acc:hover { border-color: var(--indigo); }
+.us-accpop { position: absolute; z-index: 90; width: 340px; background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 14px 36px rgba(15, 23, 42, .16); padding: 8px 10px 10px; }
+.us-accpop .h { display: flex; align-items: center; gap: 8px; padding: 6px 6px 8px; border-bottom: 1px solid var(--line); margin-bottom: 4px; } .us-accpop .h b { font-size: 14px; } .us-accpop .h span { font-size: 12px; color: var(--muted); flex: 1; }
+.us-accpop .h .x { border: 0; background: none; font-size: 18px; color: var(--muted); cursor: pointer; line-height: 1; }
+.us-accpop label { display: flex; align-items: flex-start; gap: 10px; padding: 8px 6px; border-radius: 8px; cursor: pointer; } .us-accpop label:hover { background: #f8f8fd; }
+.us-accpop input { width: 16px; height: 16px; margin: 2px 0 0; cursor: pointer; } .us-accpop label b { display: block; font-size: 13.5px; } .us-accpop label small { display: block; font-size: 11.5px; color: var(--muted); line-height: 1.35; }
 .us-count { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .hist-filters { align-items: center; min-height: 32px; margin-bottom: 8px; } .hist-filters .us-count { margin: 0; } .hist-table { overflow: visible; }
 td { padding: 11px 14px; border-bottom: 1px solid var(--line); }
@@ -501,6 +509,34 @@ NovaNav.mount({ into: document.getElementById('novaNav'), current: 'history', on
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtDate(s){ if(!s) return ''; const d=new Date(s.replace(' ','T')+'Z'); return d.toLocaleDateString()+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}); }
+/* 1.20.129: two lines — the date large, the time small under it */
+function fmtDate2(s){ if(!s) return ''; const d=new Date(s.replace(' ','T')+'Z'); return '<b class="us-d">'+d.toLocaleDateString()+'</b><div class="us-t">'+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</div>'; }
+const ACCESS_ROLES = [
+  { key: 'is_admin', label: 'Admin', set: (id, on) => setMemberAdmin(id, on), why: 'Everything: every page, every setting, every conversation.' },
+  { key: 'is_bookkeeper', label: 'Bookkeeper', set: (id, on) => setMemberBookkeeper(id, on), why: 'Bookkeeping AI — bank feed, bills, purchases, loans.' },
+  { key: 'is_ar', label: 'AR', set: (id, on) => setMemberAr(id, on), why: 'Nova AR — the customer-payment queue only, not the rest of Bookkeeping.' },
+  { key: 'is_aging', label: 'Acct Aging', set: (id, on) => setMemberAging(id, on), why: 'The Acct Aging report (open invoices by age) — account managers chase their own invoices with it.' }];
+let accOpen = null;
+function accessPop(id, anchor) {
+  if (accOpen && accOpen.id === id) { closeAccessPop(); return; }
+  closeAccessPop();
+  const pop = document.createElement('div'); pop.className = 'us-accpop'; document.body.appendChild(pop);
+  accOpen = { id, pop, anchor };
+  paintAccessPop();
+  const r = anchor.getBoundingClientRect(); pop.style.top = (r.bottom + window.scrollY + 6) + 'px';
+  pop.style.left = Math.max(12, Math.min(r.left + window.scrollX, window.innerWidth - pop.offsetWidth - 12)) + 'px';
+  setTimeout(() => document.addEventListener('click', accAway, true), 0);
+}
+function accAway(e) { if (accOpen && !accOpen.pop.contains(e.target)) closeAccessPop(); }
+function closeAccessPop() { if (!accOpen) return; accOpen.pop.remove(); document.removeEventListener('click', accAway, true); accOpen = null; }
+function paintAccessPop() {
+  if (!accOpen) return; const m = (usersCache || []).find(x => x.id === accOpen.id); if (!m) { closeAccessPop(); return; }
+  accOpen.pop.innerHTML = '<div class="h"><b>' + esc(m.display_name || m.email) + '</b><span>' + ACCESS_ROLES.filter(r => m[r.key]).length + ' of ' + ACCESS_ROLES.length + '</span><button type="button" class="x" aria-label="Close">×</button></div>' +
+    ACCESS_ROLES.map(r => '<label><input type="checkbox" data-role="' + r.key + '"' + (m[r.key] ? ' checked' : '') + '><span><b>' + r.label + '</b><small>' + r.why + '</small></span></label>').join('');
+  accOpen.pop.querySelector('.x').onclick = closeAccessPop;
+  accOpen.pop.querySelectorAll('input[data-role]').forEach(i => i.onchange = () => { const r = ACCESS_ROLES.find(x => x.key === i.dataset.role); i.disabled = true; r.set(m.id, i.checked); });
+}
+
 
 // "Today 5:35 PM" reads faster than "8/26/2026 5:35 PM" for anything recent,
 // which is most of what anyone scrolls through. Past a week the actual date is
@@ -866,13 +902,13 @@ const US_SPECS = () => ({
   login: [{ v: '', l: 'Any time' }, { v: '7', l: 'Last 7 days' }, { v: '30', l: 'Last 30 days' }, { v: '90', l: 'Last 90 days' }, { v: 'older', l: 'Over 90 days ago' }, { v: 'never', l: 'Never signed in' }],
   hist: [{ v: '', l: 'Any' }, { v: '7', l: 'Chatted this week' }, { v: '30', l: 'Chatted this month' }, { v: 'none', l: 'No chats' }],
   know: [{ v: '', l: 'Any' }, { v: 'none', l: 'No access' }, { v: 'own', l: 'Own area' }, { v: 'all', l: 'See all' }],
-  role: [{ v: '', l: 'Any' }, { v: 'is_admin', l: 'Admin' }, { v: 'is_bookkeeper', l: 'Bookkeeper' }, { v: 'is_ar', l: 'AR' }, { v: 'is_aging', l: 'Acct Aging' }, { v: 'none', l: 'No roles' }],
+  role: [{ v: '', l: 'Any' }, { v: 'is_admin', l: 'Admin' }, { v: 'is_bookkeeper', l: 'Bookkeeper' }, { v: 'is_ar', l: 'AR' }, { v: 'is_aging', l: 'Acct Aging' }, { v: 'none', l: 'No access' }],
   status: [{ v: '', l: 'Enabled' }, { v: '0', l: 'Disabled' }, { v: 'all', l: 'All — enabled and disabled' }]
 });
 function usersHead() {
   const S = US_SPECS(), T = (k, l) => '<th>' + NovaTable.th(k, l, S[k], UF[k]) + '</th>';
   const tr = document.getElementById('usersHead'); if (!tr || !window.NovaTable) return;
-  tr.innerHTML = '<th></th>' + T('name', 'Name') + T('username', 'Username') + T('email', 'Email') + T('login', 'Last login') + T('know', 'Knowledge') + T('role', 'Roles') + T('status', 'Status');
+  tr.innerHTML = '<th></th>' + T('name', 'Name') + T('username', 'Username') + T('email', 'Email') + T('login', 'Last login') + T('know', 'Knowledge') + T('role', 'Access') + T('status', 'Status');
   NovaTable.bind(tr, S, (k, v) => { UF[k] = typeof v === 'string' ? v : ''; renderUsers(); });
 }
 function usersFilter() { return UF; }
@@ -925,25 +961,22 @@ function renderUsers() {
         '<option value="own"' + (kacc==='own'?' selected':'') + '>Own area</option>' +
         '<option value="all"' + (kacc==='all'?' selected':'') + '>See all</option>' +
         '</select></td>';
-      const adminCell = '<td><label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#555;">' +
-        '<input type="checkbox" ' + (m.is_admin ? 'checked' : '') + ' onchange="setMemberAdmin(' + m.id + ', this.checked)" style="width:15px;height:15px;cursor:pointer;"> Admin</label>' +
-        '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#555;margin-left:10px;" title="Opens Bookkeeping AI (bank feed, bills, purchases, loans) to this person">' +
-        '<input type="checkbox" ' + (m.is_bookkeeper ? 'checked' : '') + ' onchange="setMemberBookkeeper(' + m.id + ', this.checked)" style="width:15px;height:15px;cursor:pointer;"> Bookkeeper</label>' +
-        '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#555;margin-left:10px;" title="Opens Nova AR (the customer-payment queue) to this person — the queue only, not the rest of Bookkeeping">' +
-        '<input type="checkbox" ' + (m.is_ar ? 'checked' : '') + ' onchange="setMemberAr(' + m.id + ', this.checked)" style="width:15px;height:15px;cursor:pointer;"> AR</label>' +
-        '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#555;margin-left:10px;" title="Opens the Acct Aging report (open invoices by age, per customer) to this person — the report only, no payment queue. Account managers chase their own invoices with it">' +
-        '<input type="checkbox" ' + (m.is_aging ? 'checked' : '') + ' onchange="setMemberAging(' + m.id + ', this.checked)" style="width:15px;height:15px;cursor:pointer;"> Acct Aging</label></td>';
+      /* 1.20.129: Access — a count that opens the role popup (Admin · Bookkeeper · AR · Acct Aging) */
+      const roles = ACCESS_ROLES.filter(r => m[r.key]);
+      const adminCell = '<td><button type="button" class="us-acc' + (roles.length ? ' on' : '') + '" data-acc="' + m.id + '" title="' + esc(roles.length ? roles.map(r => r.label).join(' · ') : 'No access yet') + ' — click to change">' +
+        '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M10.9 12.1 21 2M15 8l3 3M18 5l2 2"/></svg><b>' + roles.length + '</b><span>of ' + ACCESS_ROLES.length + '</span></button></td>';
       tr.innerHTML =
         '<td>' + avatar + '</td>' +
         '<td>' + esc(m.display_name || '-') + '</td>' +
         '<td>' + esc(m.username || '-') + '</td>' +
         '<td>' + esc(m.email) + '</td>' +
-        '<td>' + (m.last_login ? fmtDate(m.last_login) : '<span style="color:var(--muted)">never</span>') + '</td>' +
+        '<td>' + (m.last_login ? fmtDate2(m.last_login) : '<span style="color:var(--muted)">never</span>') + '</td>' +
         knowCell +
         adminCell +
         '<td title="' + (m.crm ? 'Axiom CRM status ' + m.crm.status + (m.crm.blocked ? ' · blocked' : '') + ' — enable or disable the account on the website' : 'Not matched to an Axiom CRM user') + '">' + (m.enabled ? '<span class="badge on">Enabled</span>' : '<span class="badge off">Disabled</span>') + '</td>';
       tb.appendChild(tr);
     });
+    tb.querySelectorAll('[data-acc]').forEach(b => b.onclick = (e) => { e.stopPropagation(); accessPop(Number(b.dataset.acc), b); });
   }
 }
 
@@ -976,7 +1009,7 @@ async function setKnowledgeAccess(id, level) {
 async function setMemberRole(url, body, label) {
   let r; try { r = await (await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify(body) })).json(); } catch (e) { r = { success: false, error: e.message }; }
   if (!r.success) alert('Could not save the ' + label + ' role: ' + (r.error || 'no answer from the server'));
-  loadUsers();
+  await loadUsers(); paintAccessPop();
 }
 function setMemberAr(id, on) { setMemberRole('/api/admin/members/set-ar', { id, is_ar: on }, 'AR'); }   // 1.19.153: Nova AR
 function setMemberAging(id, on) { setMemberRole('/api/admin/members/set-aging', { id, is_aging: on }, 'Acct Aging'); }   // 1.20.88: the aging report only
@@ -986,6 +1019,7 @@ async function setMemberAdmin(id, makeAdmin) {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
     body: JSON.stringify({ id, is_admin: makeAdmin })
   });
+  await loadUsers(); paintAccessPop();
 }
 
 // ===== Per-user agent access =====

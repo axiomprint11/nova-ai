@@ -98,11 +98,17 @@ window.RaChips = (function () {
     o = o || {};
     if (!items.length) { el.innerHTML = '<div class="ra-muted">' + (o.empty || 'Nothing in this period.') + '</div>'; return; }
     const total = o.total != null ? o.total : items.reduce((a, x) => a + x.n, 0);
-    el.innerHTML = '<div class="ra-fwrap">' + items.map((a, i) => '<button type="button" class="ra-fchip' + (o.pick === a.key ? ' on' : '') + '" data-k="' + esc(a.key) + '" title="#' + (i + 1) + ' ' + esc(a.name) + (o.sub && o.sub(a) ? ' · ' + esc(o.sub(a)) : '') + ' — click to see only ' + esc(a.name) + '">' + face(a) + '<b>' + nf(a.n) + '</b></button>').join('') +
+    el.innerHTML = '<div class="ra-fwrap">' + items.map((a, i) => '<button type="button" class="ra-fchip' + (o.pick === a.key ? ' on' : '') + '" data-k="' + esc(a.key) + '" data-i="' + i + '" aria-label="' + esc(a.name) + '">' + face(a) + '<b>' + nf(a.n) + '</b></button>').join('') +
       '<div class="ra-fpop"><div class="ra-fpop-h"><span>' + esc(o.title || '') + '</span><b>' + nf(total) + '</b></div>' +
-      items.slice(0, 12).map((a, i) => '<div class="ra-fpop-r' + (o.pick === a.key ? ' on' : '') + '"><i>#' + (i + 1) + '</i>' + face(a) + '<span>' + esc(a.name) + (o.sub && o.sub(a) ? '<small>' + esc(o.sub(a)) + '</small>' : '') + '</span><b>' + nf(a.n) + '</b></div>').join('') +
+      items.slice(0, 12).map((a, i) => '<div class="ra-fpop-r' + (o.pick === a.key ? ' on' : '') + '" data-r="' + i + '"><i>#' + (i + 1) + '</i>' + face(a) + '<span>' + esc(a.name) + (o.sub && o.sub(a) ? '<small>' + esc(o.sub(a)) + '</small>' : '') + '</span><b>' + nf(a.n) + '</b></div>').join('') +
       (items.length > 12 ? '<div class="ra-fpop-r"><i></i><span class="ra-av" style="visibility:hidden"></span><span>' + (items.length - 12) + ' more</span><b>' + nf(items.slice(12).reduce((a, x) => a + x.n, 0)) + '</b></div>' : '') + '</div></div>';
     el.querySelectorAll('[data-k]').forEach(x => x.onclick = () => o.onPick && o.onPick(o.pick === x.dataset.k ? '' : x.dataset.k));
+    /* the card opens under the chip being hovered (clamped to the row's width) and marks that person's line */
+    const wrap = el.querySelector('.ra-fwrap'), pop = el.querySelector('.ra-fpop');
+    el.querySelectorAll('.ra-fchip').forEach(ch => ch.onmouseenter = () => {
+      const left = Math.max(0, Math.min(ch.offsetLeft, wrap.clientWidth - pop.offsetWidth)); pop.style.left = left + 'px';
+      pop.querySelectorAll('[data-r]').forEach(r => r.classList.toggle('hov', r.dataset.r === ch.dataset.i));
+    });
   }
   return { render };
 })();
