@@ -500,7 +500,7 @@ table (Created · New client · Kind · Referred by (+ title, where it was read 
 created the accounts, sources, AMs, referrers, every client) goes To `to` (gary@) CC `cc` (arsine@, luciana@) and, with `all_ams`,
 the same mail to every member of the CRM team **"Account Managers"** (`amTeam()`: `team.members` JSON, active users, cached 10 min;
 `GET /api/reports-ai/ams`) on the 1st at 07:00 LA; Notify kind `ra.clients` ("New Clients Report"). The page's **Email report card
-is shared** (`RaEmailCard.mount(box, labels)` on `.ra-emailcard[data-report]`; onboarding keeps `per_am`, clients has `all_ams`).
+is shared** (`RaEmailCard.mount(box, labels)` on `.ra-emailcard[data-report]`; onboarding keeps `per_am`, clients has `all_ams`). 1.20.105: **`referrals`** is the third mail (`REFERRALS_DEFAULTS`: To gary@, CC luciana@ + arsine@, the 1st at 07:00; `referralsHtml` = numbers, top referring clients, Axiom team referrals, every referral; with `per_am` every AM who has any gets `amReferralHtml` — the referred clients on their account + the referrals they made themselves; Notify kind `ra.referrals`). Referrers are grouped by name (`refKey` / page `whoKey`), so two CRM accounts of one company count as one.
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 

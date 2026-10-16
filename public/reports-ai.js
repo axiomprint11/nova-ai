@@ -359,12 +359,13 @@
     q('[data-on]').onclick = async () => { q('[data-on]').classList.toggle('on'); const j = await api('/api/reports-ai/' + report + '/email', body()); q('[data-msg]').textContent = j.ok ? 'Saved.' : (j.error || 'Could not save'); load(); };
     q('[data-span]').onchange = () => { q('[data-day]').parentElement.style.display = q('[data-span]').value === 'week' ? 'none' : ''; };
     q('[data-save]').onclick = async () => { q('[data-msg]').textContent = 'Saving…'; const j = await api('/api/reports-ai/' + report + '/email', body()); q('[data-msg]').textContent = j.ok ? 'Saved.' : (j.error || 'Could not save'); if (j.ok) load(); };
-    q('[data-send]').onclick = async () => { if (!confirm((L.confirm || 'Send this report now, for the timespan above, to the addresses above') + (q('[data-flag]').checked ? ' — and ' + (flag === 'all_ams' ? 'to every account manager' : 'to each account manager who onboarded') : '') + '?')) return; q('[data-msg]').textContent = 'Sending…'; const j = await api('/api/reports-ai/' + report + '/email/send', { span: q('[data-span]').value }); q('[data-msg]').textContent = j.ok && j.sent ? 'Sent: ' + j.period + ' — ' + j.n + ' ' + (L.noun || 'rows') + ' to ' + (j.owner && j.owner.to) + (j.ams && j.ams.length ? ' + ' + j.ams.length + ' AM' + (j.ams.length === 1 ? '' : 's') : '') : (j.error || 'Not sent'); load(); };
+    q('[data-send]').onclick = async () => { if (!confirm((L.confirm || 'Send this report now, for the timespan above, to the addresses above') + (q('[data-flag]').checked ? ' — and ' + (L.am_part || (flag === 'all_ams' ? 'to every account manager' : 'to each account manager who onboarded')) : '') + '?')) return; q('[data-msg]').textContent = 'Sending…'; const j = await api('/api/reports-ai/' + report + '/email/send', { span: q('[data-span]').value }); q('[data-msg]').textContent = j.ok && j.sent ? 'Sent: ' + j.period + ' — ' + j.n + ' ' + (L.noun || 'rows') + ' to ' + (j.owner && j.owner.to) + (j.ams && j.ams.length ? ' + ' + j.ams.length + ' AM' + (j.ams.length === 1 ? '' : 's') : '') : (j.error || 'Not sent'); load(); };
     load();
   }
   window.RaEmailCard = { mount };
   mount(document.getElementById('obEmail'), { per_am: 'Also email each account manager their own onboardings', confirm: 'Send the onboarding report now, for the timespan above, to the addresses above', noun: 'onboardings' });
   mount(document.getElementById('clEmail'), { all_ams: 'Also send the same report to every account manager', confirm: 'Send the new-clients report now, for the timespan above, to the addresses above', noun: 'new clients' });
+  mount(document.getElementById('rfEmail'), { per_am: 'Also email each account manager their own referral list (the referred clients on their account + the referrals they made)', confirm: 'Send the referral report now, for the timespan above, to the addresses above', am_part: 'each account manager their own referral list', noun: 'referrals' });
 })();
 
 // ---- New Clients + Referral Report (1.20.100)
@@ -512,7 +513,7 @@
     if (!j.ok) { $('rfList').innerHTML = '<div class="ra-muted" style="color:#b91c1c">' + esc(j.error || 'Could not load') + '</div>'; return; }
     R.data = j; $('rfVs').textContent = usD(j.from) + ' – ' + usD(j.to) + ' · the period before had ' + j.prev.refs + ' referral' + (j.prev.refs === 1 ? '' : 's'); renderRefs();
   }
-  const whoKey = (r) => r.referral.kind + ':' + (r.referral.who_id || r.referral.who.toLowerCase());
+  const whoKey = (r) => r.referral.kind + ':' + String(r.referral.who || '').toLowerCase().trim();   /* by name — two CRM accounts of one company count as one referrer */
   function passesR(r, ignorePick) {
     const q = $('rfQ').value.trim().toLowerCase(), F = R.F;
     if (q && (r.company + ' ' + r.person + ' ' + r.email + ' ' + r.referral.who + ' ' + (r.am ? r.am.name : '')).toLowerCase().indexOf(q) < 0) return false;

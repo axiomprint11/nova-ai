@@ -265,12 +265,14 @@ module.exports = function mountReportsAi(app, deps) {
   // (the CRM team "Account Managers") gets the same report, the owner + CC get the copy.
   const EMAIL_DEFAULTS = { enabled: true, span: 'month', day: 1, at: '07:00', to: 'gary@axiomprint.com', cc: 'luciana@axiomprint.com', per_am: true };
   const CLIENTS_DEFAULTS = { enabled: true, span: 'month', day: 1, at: '07:00', to: 'gary@axiomprint.com', cc: 'arsine@axiomprint.com, luciana@axiomprint.com', all_ams: true };
-  const MAIL = { onboarding: { kind: 'ra.onboarding', defaults: EMAIL_DEFAULTS }, clients: { kind: 'ra.clients', defaults: CLIENTS_DEFAULTS } };
+  const REFERRALS_DEFAULTS = { enabled: true, span: 'month', day: 1, at: '07:00', to: 'gary@axiomprint.com', cc: 'luciana@axiomprint.com, arsine@axiomprint.com', per_am: true };
+  const MAIL = { onboarding: { kind: 'ra.onboarding', defaults: EMAIL_DEFAULTS }, clients: { kind: 'ra.clients', defaults: CLIENTS_DEFAULTS }, referrals: { kind: 'ra.referrals', defaults: REFERRALS_DEFAULTS } };
   const emailCaches = {};
   async function emailSettings(report) { report = MAIL[report] ? report : 'onboarding'; const r = await dbGet('SELECT value FROM ra_settings WHERE key = ?', [report + '_email']).catch(() => null); let v = {}; try { v = r && r.value ? JSON.parse(r.value) : {}; } catch (e) {} emailCaches[report] = Object.assign({}, MAIL[report].defaults, v); return emailCaches[report]; }
   function emailSettingsSync(report) { report = MAIL[report] ? report : 'onboarding'; return emailCaches[report] || MAIL[report].defaults; }
   Object.keys(MAIL).forEach(k => emailSettings(k).catch(() => {}));
   if (Notify) Notify.register('ra.clients', () => (emailSettingsSync('clients').to || 'gary@axiomprint.com'));
+  if (Notify) Notify.register('ra.referrals', () => (emailSettingsSync('referrals').to || 'gary@axiomprint.com'));
   const LA = 'America/Los_Angeles';
   const laParts = (d) => { const o = {}; new Intl.DateTimeFormat('en-US', { timeZone: LA, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(d || new Date()).forEach(x => { o[x.type] = x.value; }); return o; };
   const laDay = (d) => { const o = laParts(d); return o.year + '-' + o.month + '-' + o.day; };
@@ -338,6 +340,32 @@ module.exports = function mountReportsAi(app, deps) {
       '<h3 style="margin:0 0 6px;font-size:14px">Every new client</h3>' + tbl(th('Date') + th('Client') + th('Made by') + th('Source') + th('AM') + th('Orders', 1),
         rows.map(r => '<tr>' + td(usD(r.date)) + td('<b>' + esc(r.company || r.person || ('Customer #' + r.id)) + '</b>' + (r.company && r.person ? '<br><span style="color:#777">' + esc(r.person) + '</span>' : '')) + td(esc(r.made.name)) + td(esc(r.source.kind) + (r.referral ? '<br><span style="color:#777">' + (r.referral.kind === 'team' ? 'team: ' : 'from ') + esc(r.referral.who) + '</span>' : r.source.who ? '<br><span style="color:#777">' + esc(r.source.who) + '</span>' : '')) + td(esc(r.am ? r.am.name : '—')) + td(r.orders ? r.orders.n + ' · ' + money(r.orders.rev) : '—', 1) + '</tr>').join('')) + '</div>';
   }
+  // the Referral Report mail (1.20.105): every referral of the period — who sent them (clients, Axiom team), the new clients and
+  // whether they ordered; an AM's own mail = the referred clients given to them + the referrals they made themselves.
+  const refRows = (d) => d.rows.filter(r => r.referral).concat(d.older_referrals || []);
+  const refKey = (r) => r.referral.kind + ':' + String(r.referral.who || '').toLowerCase().trim();
+  function refTable(rows) {
+    const th = (t, right) => '<th align="' + (right ? 'right' : 'left') + '" style="padding:6px 8px">' + t + '</th>', td = (t, right) => '<td align="' + (right ? 'right' : 'left') + '" style="padding:6px 8px;border-top:1px solid #eee">' + t + '</td>';
+    return '<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:18px;font-size:13px;width:100%"><tr style="background:#f3f4f8;color:#555">' + th('Date') + th('New client') + th('Referred by') + th('Kind') + th('AM') + th('Orders', 1) + '</tr>' +
+      rows.map(r => '<tr>' + td(usD(r.date) + (r.older_account ? '<br><span style="color:#999">older account</span>' : '')) + td('<b>' + esc(r.company || r.person || ('Customer #' + r.id)) + '</b>' + (r.company && r.person ? '<br><span style="color:#777">' + esc(r.person) + '</span>' : '')) + td(esc(r.referral.who) + (r.referral.title ? '<br><span style="color:#777">' + esc(r.referral.title) + '</span>' : '')) + td(r.referral.kind === 'client' ? 'Client' : r.referral.kind === 'team' ? 'Axiom team' : 'Referral') + td(esc(r.am ? r.am.name : '—')) + td(r.orders ? r.orders.n + ' · ' + money(r.orders.rev) : '—', 1) + '</tr>').join('') + '</table>';
+  }
+  function referralsHtml(d, range) {
+    const rows = refRows(d), cl = rows.filter(r => r.referral.kind === 'client'), tm = rows.filter(r => r.referral.kind === 'team'), ordered = rows.filter(r => r.orders), rev = ordered.reduce((a, r) => a + r.orders.rev, 0);
+    const board = (list) => { const by = {}; list.forEach(r => { const k = refKey(r); if (!by[k]) by[k] = { who: r.referral.who, title: r.referral.title || '', n: 0, ordered: 0, rev: 0 }; by[k].n++; if (r.orders) { by[k].ordered++; by[k].rev += r.orders.rev; } }); return Object.values(by).sort((a, b) => b.n - a.n || a.who.localeCompare(b.who)); };
+    const th = (t, right) => '<th align="' + (right ? 'right' : 'left') + '" style="padding:6px 8px">' + t + '</th>', td = (t, right) => '<td align="' + (right ? 'right' : 'left') + '" style="padding:6px 8px;border-top:1px solid #eee">' + t + '</td>';
+    const tbl = (title, list) => '<h3 style="margin:0 0 6px;font-size:14px">' + title + '</h3><table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:18px;font-size:13px"><tr style="background:#f3f4f8;color:#555">' + th('#') + th('Referred by') + th('Clients sent', 1) + th('Ordered', 1) + th('Revenue', 1) + '</tr>' + list.map((x, i) => '<tr>' + td(i + 1) + td(esc(x.who) + (x.title ? ' <span style="color:#777">· ' + esc(x.title) + '</span>' : '')) + td('<b>' + x.n + '</b>', 1) + td(x.ordered, 1) + td(money(x.rev), 1) + '</tr>').join('') + '</table>';
+    return '<div style="font-family:Inter,Arial,sans-serif;color:#1c1c28;max-width:900px">' +
+      '<h2 style="margin:0 0 4px">Referrals — ' + esc(range.label) + '</h2><div style="color:#777;margin-bottom:14px">' + rows.length + ' referral' + (rows.length === 1 ? '' : 's') + ' of ' + d.rows.length + ' new clients' + (d.prev && d.prev.refs ? ' (' + d.prev.refs + ' the period before)' : '') + ' · <a href="https://nova.axiomprint.com/reports-ai?tab=referrals">open in NovaAI</a></div>' +
+      '<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:18px;font-size:13px"><tr>' + [['Referrals', rows.length], ['From clients', cl.length], ['From the Axiom team', tm.length], ['Already ordered', ordered.length + (rows.length ? ' · ' + Math.round(ordered.length / rows.length * 100) + '%' : '')], ['Revenue so far', money(rev)]].map(x => '<td style="padding:8px 14px 8px 0"><div style="font-size:11px;color:#777;text-transform:uppercase">' + x[0] + '</div><div style="font-size:20px;font-weight:700">' + x[1] + '</div></td>').join('') + '</tr></table>' +
+      tbl('Top referring clients', board(cl)) + tbl('Axiom team referrals', board(tm)) +
+      '<h3 style="margin:0 0 6px;font-size:14px">Every referral</h3>' + refTable(rows) + '</div>';
+  }
+  function amReferralHtml(a, given, made, range) {
+    return '<div style="font-family:Inter,Arial,sans-serif;color:#1c1c28;max-width:900px"><h2 style="margin:0 0 4px">Your referrals — ' + esc(range.label) + '</h2>' +
+      '<div style="color:#777;margin-bottom:16px">Hi ' + esc(a.name.split(' ')[0]) + ' — ' + given.length + ' referred client' + (given.length === 1 ? '' : 's') + ' came to you' + (made.length ? ', and you referred ' + made.length + ' yourself' : '') + '. Thank you!</div>' +
+      (given.length ? '<h3 style="margin:0 0 6px;font-size:14px">Referred clients on your account</h3>' + refTable(given) : '') +
+      (made.length ? '<h3 style="margin:0 0 6px;font-size:14px">Referrals you made</h3>' + refTable(made) : '') + '</div>';
+  }
   // Send a report for `today` (LA day). who = 'clock' | the admin's id. Returns what went out.
   async function sendReport(report, who, opts) {
     report = MAIL[report] ? report : 'onboarding'; const kind = MAIL[report].kind;
@@ -353,6 +381,21 @@ module.exports = function mountReportsAi(app, deps) {
       if (st.all_ams && !(opts && opts.owner_only)) {
         const seen = [to].concat(cc).map(x => x.toLowerCase());
         for (const a of await amTeam()) { if (seen.indexOf(a.email.toLowerCase()) > -1) continue; try { await sendMail({ to: a.email, subject: subj, html, text }); out.ams.push({ name: a.name, to: a.email, n: d.rows.length }); await log('am', a.email, '', d.rows.length); } catch (e) { out.ams.push({ name: a.name, to: a.email, error: e.message }); } }
+      }
+      return out;
+    }
+    if (report === 'referrals') {
+      const d = await clientsReport(range.from, range.to), rows = refRows(d); out.n = rows.length;
+      const subj = 'Referrals — ' + range.label + ' (' + rows.length + ')';
+      await sendMail({ to, cc: cc.join(', ') || undefined, subject: subj, html: referralsHtml(d, range), text: rows.length + ' referrals in ' + range.label + '.' }); await log('owner', to, cc.join(', '), rows.length); out.owner = { to, cc };
+      if (st.per_am && !(opts && opts.owner_only)) {
+        const ams = await amTeam();
+        for (const a of ams) {
+          const given = rows.filter(r => r.am && Number(r.am.id) === Number(a.id)), made = rows.filter(r => r.referral.kind === 'team' && (Number(r.referral.who_id) === Number(a.id) || (!r.referral.who_id && r.referral.who.toLowerCase() === a.name.toLowerCase())));
+          if (!given.length && !made.length) continue;
+          try { await sendMail({ to: a.email, subject: 'Your referrals — ' + range.label + ' (' + (given.length + made.length) + ')', html: amReferralHtml(a, given, made, range), text: given.length + ' referred clients came to you in ' + range.label + '.' }); out.ams.push({ name: a.name, to: a.email, n: given.length + made.length }); await log('am', a.email, '', given.length + made.length); }
+          catch (e) { out.ams.push({ name: a.name, to: a.email, error: e.message }); }
+        }
       }
       return out;
     }
