@@ -324,43 +324,61 @@
   }
   // "+ New category…": name + type of expense (an existing one or a new one); the new one is selected in the picker that asked.
   function newCategory(wrap) {
-    // 1.19.120: a proper picker — the types of expense as coloured tiles (as in the chart), a "+ New type" tile, the sub
-    // category name, and a live "Type › Name" preview; no native dropdown over the form behind
-    const tops = chart.filter(c => !c.parent && c.children).map(c => c.name);
+    // 1.20.152: the chart of accounts itself, in a popup — the types on the left (as on Accounts → Chart of Accounts), the picked
+    // type's sub categories and their sub-sub categories on the right, an input under every level to add there; a click on any
+    // row picks that category for the line, an add picks the new one. No more "type + name" form.
     const el = document.createElement('div'); el.className = 'bk-modal nc-modal';
-    let parent = '', newType = false;
-    const tileFor = (t) => { const st = styleOf(t); return '<button type="button" class="nc-tile" data-t="' + esc(t) + '" style="--c:' + esc(st.color) + '">' + tile(st.color, st.icon, 'xs', t.charAt(0)) + '<span>' + esc(t) + '</span></button>'; };
-    el.innerHTML = '<div class="bk-modal-box nc-box"><div class="bk-modal-title">New category</div><div class="bk-muted nc-sub">Where does it live in the chart of accounts?</div>' +
-      '<div class="nc-grid">' + tops.map(tileFor).join('') + '<button type="button" class="nc-tile nc-newt" data-t="" style="--c:#64748b"><span class="coa-ic xs" style="--c:#64748b"><b>+</b></span><span>New type…</span></button></div>' +
-      '<div id="ncNewTypeWrap" class="nc-field" hidden><label class="bk-muted">New type of expense</label><input class="bk" id="ncNewType" placeholder="e.g. Delivery"></div>' +
-      '<div class="nc-field"><label class="bk-muted">Sub category</label><input class="bk" id="ncName" placeholder="e.g. Local Delivery"></div>' +
-      '<div class="nc-preview bk-muted" id="ncPrev">Pick a type of expense above, then name the sub category.</div>' +
-      '<div class="bk-row nv-acts"><button class="bk-btn p" id="ncSave" disabled>Add category</button><button class="bk-btn bk-x">Cancel</button><span class="bk-muted" id="ncMsg"></span></div></div>';
+    el.innerHTML = '<div class="bk-modal-box nc-box nc-tree"><div class="bk-modal-title">New category</div><div class="bk-muted nc-sub">The chart of accounts — click a category to use it, or type a new one where it belongs.</div><div class="coa nc-coa"><div class="coa-list" id="ncList"></div><div class="coa-edit" id="ncEdit"></div></div>' +
+      '<div class="bk-row nv-acts"><button class="bk-btn bk-x">Close</button><span class="bk-muted" id="ncMsg"></span></div></div>';
     const close = () => el.remove();
     el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
+    el.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') close(); });
     document.body.appendChild(el);
-    const nameI = el.querySelector('#ncName'), typeI = el.querySelector('#ncNewType'), wrapT = el.querySelector('#ncNewTypeWrap'), prev = el.querySelector('#ncPrev'), save = el.querySelector('#ncSave');
-    const typeName = () => newType ? typeI.value.trim() : parent;
-    const paint = () => {
-      el.querySelectorAll('.nc-tile').forEach(b => b.classList.toggle('on', newType ? b.classList.contains('nc-newt') : (!!parent && b.dataset.t === parent)));
-      wrapT.hidden = !newType;
-      const t = typeName(), n = nameI.value.trim(); const st = t && !newType ? styleOf(t) : { color: '#64748b', icon: '' };
-      prev.innerHTML = t && n ? 'Will be filed as ' + '<span class="bk-cat-chip" style="--c:' + esc(st.color) + '">' + tile(st.color, st.icon, 'xs', t.charAt(0)) + '<small>' + esc(t) + ' ›</small> ' + esc(n) + '</span>' : t ? 'Now name the sub category under <b>' + esc(t) + '</b>.' : 'Pick a type of expense above, then name the sub category.';
-      save.disabled = !(t && n);
-    };
-    el.querySelectorAll('.nc-tile').forEach(b => b.onclick = () => { newType = b.classList.contains('nc-newt'); parent = newType ? '' : b.dataset.t; paint(); (newType ? typeI : nameI).focus(); });
-    nameI.oninput = paint; typeI.oninput = paint; paint();
-    el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !save.disabled) { ev.preventDefault(); save.click(); } if (ev.key === 'Escape') close(); });
-    save.onclick = async () => {
-      const name = nameI.value.trim(), par = typeName();
-      if (!name || !par) return;
-      const r = await post('/api/bookkeeping/categories', { name, parent: par });
-      if (!r.ok) { el.querySelector('#ncMsg').textContent = r.error; return; }
+    let tree = [], sel = 0;
+    const msg = (t, err) => { const m = el.querySelector('#ncMsg'); m.textContent = t || ''; m.style.color = err ? '#b91c1c' : ''; };
+    const taken = (n) => categories.indexOf(n) > -1 || tree.some(t => t.name === n || t.children.some(c => c.name === n || (c.children || []).some(g => g.name === n)));
+    const pick = (name) => { if (wrap && wrap.classList) { const vals = splitCats(wrap.querySelector('.ckp-val').value); ckpSet(wrap, wrap.classList.contains('multi') ? vals.filter(v => v !== name).concat([name]) : [name]); } close(); };
+    const add = async (name, parent) => {
+      name = String(name || '').trim(); if (!name) return;
+      if (taken(name)) { msg('"' + name + '" is already in the chart.', true); return; }
+      msg('Adding…');
+      const r = await post('/api/bookkeeping/categories', { name, parent: parent || '' });
+      if (!r.ok) { msg(r.error, true); return; }
       ov.chart = r.chart; ov.settings.categories = r.settings.categories; chart = r.chart;
       categories = chart.filter(c => c.parent || !c.children).map(c => c.name).filter((n, i, a) => a.indexOf(n) === i);
-      if (wrap && wrap.classList) { const vals = splitCats(wrap.querySelector('.ckp-val').value); ckpSet(wrap, wrap.classList.contains('multi') ? vals.concat([name]) : [name]); }
-      close();
+      if (!parent) { await load(name); msg('Type "' + name + '" added — now add a sub category under it.'); return; }   /* a new type is only a home — nothing is filed on a type with sub categories */
+      pick(name);
     };
+    const draw = () => {
+      const list = el.querySelector('#ncList'), ed = el.querySelector('#ncEdit'); if (!list) return;
+      list.innerHTML = tree.map((t, i) => '<div class="coa-t' + (i === sel ? ' on' : '') + '" data-i="' + i + '">' + tile(t.color, t.icon, '', t.name.charAt(0)) + '<span class="nm">' + esc(t.name) + '<small>' + (t.children.length ? t.children.length + ' sub categor' + (t.children.length === 1 ? 'y' : 'ies') : 'used as is') + '</small></span></div>').join('') +
+        '<div class="coa-add"><input class="bk" id="ncNewType" placeholder="New type of expense…"><button type="button" class="bk-btn sm p" id="ncAddType">Add</button></div>';
+      list.querySelectorAll('.coa-t').forEach(x => x.onclick = () => { sel = Number(x.dataset.i); draw(); });
+      const addType = () => add(el.querySelector('#ncNewType').value, '');
+      el.querySelector('#ncAddType').onclick = addType; el.querySelector('#ncNewType').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addType(); } };
+      const t = tree[sel];
+      if (!t) { ed.innerHTML = '<div class="bk-muted">Add a type of expense on the left.</div>'; return; }
+      const row = (node, cls, data, deep) => '<div class="coa-k nc-row ' + cls + '" ' + data + ' title="Use ' + esc(node.name) + '">' + (deep ? '<span class="coa-gl"></span>' : '') + tile(t.color, node.icon, iconKey(node.icon) ? '' : 'empty', '·') + '<span class="nc-nm">' + esc(node.name) + '</span><span class="use">' + esc(useText(coaUsage[node.name])) + '</span><span class="nc-use">Use</span></div>';
+      ed.innerHTML = '<div class="coa-head nc-head">' + tile(t.color, t.icon, 'big', t.name.charAt(0)) + '<span class="name">' + esc(t.name) + '</span>' + (t.children.length ? '' : '<button type="button" class="bk-btn sm nc-usetype" data-pick="' + esc(t.name) + '">Use "' + esc(t.name) + '" as is</button>') + '</div>' +
+        '<div class="bk-muted" style="margin:8px 0 4px">Sub categories' + (t.children.length ? '' : ' <span class="bk-dim">— none yet</span>') + '</div>' +
+        '<div class="nc-kids">' + t.children.map((k, i) => row(k, '', 'data-pick="' + esc(k.name) + '"', false) +
+          (k.children || []).map(g => row(g, 'coa-g', 'data-pick="' + esc(g.name) + '"', true)).join('') +
+          '<div class="coa-k coa-g coa-gadd"><span class="coa-gl"></span><input class="bk" data-gnew="' + esc(k.name) + '" placeholder="+ sub category under ' + esc(k.name) + '…"></div>').join('') + '</div>' +
+        '<div class="coa-foot"><input class="bk" id="ncNewKid" placeholder="New sub category under ' + esc(t.name) + '…"><button type="button" class="bk-btn sm p" id="ncAddKid">Add</button></div>';
+      ed.querySelectorAll('[data-pick]').forEach(x => x.onclick = () => pick(x.dataset.pick));
+      ed.querySelectorAll('[data-gnew]').forEach(inp => inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); add(inp.value, inp.dataset.gnew); } });
+      const addKid = () => add(el.querySelector('#ncNewKid').value, t.name);
+      el.querySelector('#ncAddKid').onclick = addKid; el.querySelector('#ncNewKid').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addKid(); } };
+      setTimeout(() => { const f = el.querySelector('#ncNewKid'); if (f && !el.contains(document.activeElement)) f.focus(); }, 0);
+    };
+    const load = async (selectName) => {
+      const j = await api('/api/bookkeeping/chart'); tree = j.tree || []; coaUsage = j.usage || coaUsage || {};
+      if (selectName) { const i = tree.findIndex(t => t.name === selectName); if (i > -1) sel = i; }
+      if (sel >= tree.length) sel = 0;
+      draw();
+    };
+    el.querySelector('#ncList').innerHTML = '<div class="bk-muted" style="padding:10px">Loading the chart…</div>';
+    load();
   }
   const conf = (c, reason) => '<span class="bk-conf' + (c < 0.75 ? ' lo' : '') + (reason ? ' why' : '') + '"' + (reason ? ' data-why="' + esc(reason) + '"' : '') + '>' + Math.round(c * 100) + '%</span>';
   // Hovering a confidence badge shows BookkeeperAI's reason for it.
