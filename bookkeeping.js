@@ -1205,6 +1205,10 @@ module.exports = function mountBookkeeping(app, deps) {
     }
     return { unlinked, reset };
   }
+  // 1.20.142: a company named after its website is written "NAPKINSDOTCOM" / "napkins dot com" on card statements (the merchant
+  // name has no dot) — "Napkins.com", "4over.com", "Uline.com" get those spellings as built-in aliases, so the compact match hits
+  // "SP NAPKINSDOTCOM OSHKOSH WI" and the near-match scorer sees the same words.
+  const dotForms = (name) => { const m = String(name || '').trim().match(/^([a-z0-9][a-z0-9 &'-]*?)\s*\.\s*(com|net|org|co|io|us|biz)$/i); if (!m) return []; const base = normV(m[1]).replace(/ /g, ''); return base.length >= 3 ? [base + 'dot' + m[2].toLowerCase(), base + ' dot ' + m[2].toLowerCase()] : []; };
   const normV = (t) => String(t || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9 ]+/g, ' ').replace(/\b(inc|llc|corp|corporation|co|company|ltd|the)\b/g, ' ').replace(/\s+/g, ' ').trim();
   const domainOf = (e) => { const m = String(e || '').toLowerCase().match(/@([a-z0-9.-]+)/); return m ? m[1].replace(/^(www|mail|e)\./, '') : ''; };
   const FREE_MAIL = /^(gmail|yahoo|hotmail|outlook|aol|icloud|me|live|msn)\./;
@@ -1526,7 +1530,7 @@ module.exports = function mountBookkeeping(app, deps) {
   async function directory() {
     if (Date.now() - dirCache.at < 60000) return dirCache.list;
     const rows = await dbAll('SELECT * FROM bk_vendors ORDER BY name');
-    dirCache = { at: Date.now(), list: rows.map(v => Object.assign({}, v, { _n: normV(v.name), _al: String(v.aliases || '').split('\n').filter(a => a.indexOf('@') < 0).map(normV).filter(Boolean), _als: String(v.aliases || '').split('\n').filter(a => a.indexOf('@') < 0).map(stableV).filter(a => a.length >= 6), _em: String(v.aliases || '').split('\n').map(a => a.trim().toLowerCase()).filter(a => a.indexOf('@') > 0), _dom: domainOf(v.email) })) };
+    dirCache = { at: Date.now(), list: rows.map(v => Object.assign({}, v, { _n: normV(v.name), _al: String(v.aliases || '').split('\n').filter(a => a.indexOf('@') < 0).map(normV).filter(Boolean).concat(dotForms(v.name)), _als: String(v.aliases || '').split('\n').filter(a => a.indexOf('@') < 0).map(stableV).filter(a => a.length >= 6), _em: String(v.aliases || '').split('\n').map(a => a.trim().toLowerCase()).filter(a => a.indexOf('@') > 0), _dom: domainOf(v.email) })) };
     return dirCache.list;
   }
   // The directory entry a bank line / bill belongs to: an alias or the full name inside the text, or the email domain.
@@ -1595,6 +1599,7 @@ module.exports = function mountBookkeeping(app, deps) {
           if (vn.startsWith(nn) || nn.startsWith(vn)) score = Math.max(score, 0.85);
           const al = (v._al || []).map(a => words(a).join(' '));
           if (al.indexOf(nn) > -1) score = 1;
+          if (!score) { const df = dotForms(v.name)[0]; if (df && W.some(w => w === df || (w.length >= 6 && w.indexOf(df) === 0))) score = 0.9; }   /* 1.20.142: "napkinsdotcom" ~ Napkins.com */
           // initials: "POA" ~ Pacific Office Automation
           if (!score && W.length === 1 && W[0].length >= 3 && VW.length >= 3 && VW.map(x => x[0]).join('') === W[0]) score = 0.7;
         }
