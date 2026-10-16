@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.136';
-const NOVA_BUILT = '10-16-2026 11:55am';
+const NOVA_VERSION = '1.20.137';
+const NOVA_BUILT = '10-16-2026 12:10pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -9559,7 +9559,7 @@ const clientBot = require('./client-bot')(app, { db, runQuery, mysql, jwt, crypt
   extractAttachmentText, relatedRules, sendMail, closedDays, officeHours, loadClientTraining, dataDir: __dirname });
 // TalkAi — NovaAI on the phone (Twilio + ElevenLabs), sharing the client bot's tools and rules (talk-ai.js).
 require('./talk-ai')(app, { db, runQuery, mysql, crypto, anthropic, model: MODEL_LIGHT, auth, adminOnly, serveVersionedHtml,
-  sendMail, dataDir: __dirname, loadTalkTraining, closedDays, officeHours, Notify }, clientBot);
+  sendMail, version: NOVA_VERSION, dataDir: __dirname, loadTalkTraining, closedDays, officeHours, Notify }, clientBot);
 
 // Bookkeeping AI — bank transactions, the accounting inbox, bill drafts, the Daily Brief (bookkeeping.js).
 const bookkeeping = require('./bookkeeping')(app, { db, crypto, jwt, anthropic, model: MODEL_MAIN, modelLight: MODEL_LIGHT, auth, serveVersionedHtml, google, runQuery, sendMail, Notify,

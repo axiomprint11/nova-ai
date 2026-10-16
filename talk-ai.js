@@ -362,7 +362,35 @@ module.exports = function mountTalkAi(app, deps, bot) {
   function hit(kind, ok, note) {
     hits.unshift({ at: new Date().toISOString(), kind: kind, ok: !!ok, note: String(note || '').slice(0, 240) });
     if (hits.length > 40) hits.pop();
-    if (!ok) console.error('TALKAI', kind, note);
+    if (!ok) { console.error('TALKAI', kind, note); alertFailure(kind, note); }
+  }
+  // 1.20.137: an email the moment a call turn fails. The first failure of a kind goes out at once; after that one email per
+  // ALERT_EVERY per kind with the count since (a broken prompt fails on every turn of every call — 50 emails would help nobody).
+  // Notify kind `talk.alert` (Admin → Emails), default TALKAI_ALERT_TO, gary@. Test calls (Try it) alert too — that is where a bad deploy shows first.
+  const ALERT_TO = process.env.TALKAI_ALERT_TO || 'gary@axiomprint.com', ALERT_EVERY = 30 * 60 * 1000;
+  const alertState = {};   /* kind → { last, count, first_note } */
+  if (deps.Notify) deps.Notify.register('talk.alert', () => ALERT_TO);
+  function alertFailure(kind, note) {
+    try {
+      if (!deps.sendMail || (deps.Notify && !deps.Notify.on('talk.alert'))) return;
+      const st = alertState[kind] || (alertState[kind] = { last: 0, count: 0, first_note: '' });
+      st.count++; if (!st.first_note) st.first_note = String(note || '');
+      const now = Date.now(); if (now - st.last < ALERT_EVERY) return;
+      const n = st.count, first = st.first_note; st.last = now; st.count = 0; st.first_note = '';
+      const to = deps.Notify ? deps.Notify.to('talk.alert', ALERT_TO) : ALERT_TO;
+      const when = new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
+      const what = kind === 'llm' ? 'NovaAI could not answer a caller — the caller heard “Sorry, I’m having trouble on my side”.' : 'A TalkAi step failed (' + kind + ').';
+      const html = '<div style="font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#1f2937;max-width:640px">' +
+        '<h2 style="margin:0 0 6px;font-size:17px;color:#b91c1c">TalkAi problem — ' + htmlEsc(kind) + '</h2>' +
+        '<p style="margin:0 0 10px">' + htmlEsc(what) + '</p>' +
+        '<p style="margin:0 0 10px"><b>Error:</b> <code style="background:#f3f4f6;padding:2px 6px;border-radius:4px">' + htmlEsc(String(note || '').slice(0, 400)) + '</code></p>' +
+        (n > 1 ? '<p style="margin:0 0 10px">' + n + ' failures since the last alert' + (first && first !== String(note) ? ' — the first was: <code>' + htmlEsc(first.slice(0, 200)) + '</code>' : '') + '.</p>' : '') +
+        '<p style="margin:0 0 10px;color:#6b7280">' + htmlEsc(when) + ' · Nova ' + htmlEsc(String(deps.version || '')) + ' · next alert for this kind in 30 minutes at the earliest</p>' +
+        '<p style="margin:0">Where to look: TalkAi → Setup → Recent activity, or <code>pm2 logs axiom-ai | grep "TALKAI answer"</code>. ' +
+        'A line that says <i>is not defined</i> / <i>is not a function</i> is a code error — roll back with the previous version’s deploy, or ask Claude for a hotfix with the error line.</p></div>';
+      Promise.resolve(deps.sendMail({ to: to, subject: '⚠ TalkAi: ' + (kind === 'llm' ? 'callers are not getting answers' : kind + ' failed') + ' — ' + String(note || '').slice(0, 60), html: html, text: what + '\n\n' + String(note || '') }))
+        .catch(e => console.error('TALKAI alert mail', e.message));
+    } catch (e) { console.error('TALKAI alert', e.message); }
   }
   const same = (a, b) => { a = String(a || ''); b = String(b || ''); return !!a && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b)); };
   const digits = (v) => String(v || '').replace(/\D/g, '');
