@@ -2601,7 +2601,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (activeLoans.length) for (const r of rows) {
       if (r.loan_id || r.transfer_of || r.refund_of || !(Number(r.amount) > 0)) continue;
       const amt = Number(r.amount);
-      const hit = activeLoans.find(l => r.vendor_id && l.vendor_id === r.vendor_id && (!l.monthly || l.amts.some(a => Math.abs(a - amt) <= Math.max(1, amt * 0.02)))) || activeLoans.find(l => l.amts.some(a => Math.abs(a - amt) < 0.005));   // 1.20.132: any step of a stepped schedule
+      const hit = loanFit(activeLoans.filter(l => r.vendor_id && l.vendor_id === r.vendor_id), amt, l => l.amts) || activeLoans.find(l => r.vendor_id && l.vendor_id === r.vendor_id && !l.monthly) || activeLoans.find(l => l.amts.some(a => Math.abs(a - amt) < 0.005));   // 1.20.141: the lender's closest loan within $5; 1.20.132: any step of a stepped schedule
       if (hit) r.loan_hint = { id: hit.id, name: hit.name };
     }
     // 1.19.119: overseas team — a linked line carries the person (flag, department); an open Wise payout carries `team_hint`
@@ -3527,13 +3527,22 @@ module.exports = function mountBookkeeping(app, deps) {
   }
   // the sweep: an uncategorized money-out line from a loan's lender for the loan's monthly payment (± 2%, or ± $1) is a
   // payment on that loan — linked with no click; a loan with no lender never auto-links (no guessing)
+  // 1.20.141: two machines financed by the same company (Mitsubishi HCC: $4,118.90 and $10,455.86) are told apart by the payment —
+  // of the lender's loans, the one whose payment (any step; with or without property tax) is nearest the line, within ± $5.
+  // The old ± 2% (± $209 on a $10k payment) could not separate them, and ± $1 missed a few-dollar difference.
+  const LOAN_TOL = 5;
+  function loanFit(loans, amt, amountsOf) {
+    let best = null, bestD = LOAN_TOL + 0.001;
+    for (const l of loans) for (const m of (amountsOf(l) || [])) { if (!(m > 0)) continue; const d = Math.abs(m - amt); if (d < bestD) { best = l; bestD = d; } }
+    return best;
+  }
   async function applyLoans() {
     const loans = (await dbAll("SELECT * FROM bk_loans WHERE status = 'active' AND vendor_id IS NOT NULL")).map(l => Object.assign(l, { _m: loanMath(l) })).filter(l => l._m.payment > 0 || l._m.monthly > 0);
     if (!loans.length) return 0;
     let n = 0;
     for (const t of await dbAll("SELECT id, vendor_id, amount, name FROM bk_transactions WHERE loan_id IS NULL AND vendor_id IS NOT NULL AND amount > 0 AND status IN ('new', 'pending') AND IFNULL(no_auto, 0) = 0 AND transfer_of IS NULL AND refund_of IS NULL AND (category IS NULL OR category = '')")) {
       const amt = Number(t.amount);
-      const l = loans.find(x => x.vendor_id === t.vendor_id && x._m.amounts.some(m => m > 0 && Math.abs(m - amt) <= Math.max(1, m * 0.02)));
+      const l = loanFit(loans.filter(x => x.vendor_id === t.vendor_id), amt, x => x._m.amounts);   /* 1.20.141: the closest of the lender's loans, within $5 */
       if (!l) continue;
       const r = await linkLoan(t.id, l.id, 'system', 'loan'); if (r.ok) n++;
     }
