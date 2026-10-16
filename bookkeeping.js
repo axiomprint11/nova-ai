@@ -2296,9 +2296,11 @@ module.exports = function mountBookkeeping(app, deps) {
     // 1.19.100: 90+ = not categorized and the bank date is older than 90 days (the backlog); Pending stops there
     // 1.19.111: Today = synced today (Los Angeles day); at midnight they move to Pending
     const cut = newCutoff();
-    if (st === 'pending') { where.push("t.status IN ('new', 'pending') AND t.created_at < ? AND t.date >= date('now', '-90 days')"); p.push(cut); }
+    // 1.20.138: the three open buckets are on the BANK DATE — Last 7 days (date ≥ 7 days back) · 7–90 days · 90+ — so a line moves
+    // bucket by its age, not by when Nova happened to sync it (the old Today = synced today emptied at midnight whatever the date)
+    if (st === 'pending') where.push("t.status IN ('new', 'pending') AND t.date < date('now', '-7 days') AND t.date >= date('now', '-90 days')");
     else if (st === 'old') where.push("t.status IN ('new', 'pending') AND t.date < date('now', '-90 days')");
-    else if (st === 'new') { where.push("t.status IN ('new', 'pending') AND t.created_at >= ?"); p.push(cut); }   // 1.19.115: Today = synced today and still open; a categorized line moves to Categorized
+    else if (st === 'new') where.push("t.status IN ('new', 'pending') AND t.date >= date('now', '-7 days')");
     else if (st === 'auto') where.push("t.status = 'categorized' AND t.category_source IN ('rule', 'team', 'loan') AND t.auto_reviewed_at IS NULL");   // 1.20.61: only what nobody has reviewed yet   // 1.20.12: Auto = filed by the system with no click (a rule, the overseas-team match, a loan sweep)
     else if (st) { where.push('t.status = ?'); p.push(st); }
     if (q) { where.push('(t.name LIKE ? OR t.merchant LIKE ? OR t.category LIKE ? OR v.name LIKE ?)'); p.push('%' + q + '%', '%' + q + '%', '%' + q + '%', '%' + q + '%'); }
@@ -2321,7 +2323,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (g('account')) { where.push('t.account_name = ?'); p.push(g('account')); }
     const by_status = Object.fromEntries((await dbAll("SELECT status, COUNT(*) n FROM bk_transactions WHERE status NOT IN ('removed', 'excluded') GROUP BY status")).map(r => [r.status, r.n]));
     by_status.new_status = by_status.new || 0;   // lines the AI has not rated yet
-    by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND created_at >= ?", [cut])).n;
+    by_status.new = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND status NOT IN ('removed', 'excluded') AND date >= date('now', '-7 days')")).n;   // 1.20.138: last 7 days by bank date
     by_status.new_open = by_status.new;
     by_status.old = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status IN ('new', 'pending') AND date < date('now', '-90 days')")).n;
     by_status.auto = (await dbGet("SELECT COUNT(*) n FROM bk_transactions WHERE status = 'categorized' AND category_source IN ('rule', 'team', 'loan') AND auto_reviewed_at IS NULL")).n;   // 1.20.12; 1.20.61: the unreviewed ones — "n new"
