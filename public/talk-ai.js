@@ -317,8 +317,8 @@
     const staff = c.for_staff || null, relayed = (c.emails || []).some(m => m.kind === 'relay' && m.ok);
     // Every email this call caused is shown in the conversation where it went out; the header only counts them.
     const nMail = (c.emails || []).length, nBad = (c.emails || []).filter(m => !m.ok).length;
-    if (nMail) chips.push('<button type="button" class="tk-mailbtn' + (nBad ? ' bad' : '') + '" id="jumpMail" title="Show the emails in the conversation">' +
-      '✉ ' + nMail + ' email' + (nMail > 1 ? 's' : '') + ' sent' + (nBad ? ' \u00b7 ' + nBad + ' failed' : '') + '</button>');
+    /* 1.20.115: no "n emails sent" chip — every email shows in the conversation below; only a failure is still flagged up here */
+    if (nBad) chips.push('<button type="button" class="tk-mailbtn bad" id="jumpMail" title="Show the emails in the conversation">\u2709 ' + nBad + ' email' + (nBad > 1 ? 's' : '') + ' failed</button>');
     if (staff && !relayed) chips.push('<span class="tk-chip warn" title="' + esc(staff.name ? staff.email : 'Not found on the team list') + '">Asked for ' +
       esc(staff.name || '\u201c' + staff.asked + '\u201d') + (staff.name ? (c.source === 'phone' ? ' \u00b7 relayed after the call' : ' \u00b7 test, not emailed') : ' \u00b7 not on the team list') + '</span>');
     if (c.emailed_to && !(c.emails || []).length) chips.push('<span class="tk-chip ok">Quote emailed to ' + esc(c.emailed_to) + '</span>');
