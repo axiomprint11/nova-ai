@@ -2342,6 +2342,17 @@ module.exports = function mountBookkeeping(app, deps) {
         console.log('BOOKKEEPER repair bank-boilerplate links: unlinked ' + unlinked + ', categories reset ' + reset);
       } catch (e2) { errlog('repair bank boilerplate', e2.message); }
     });
+    // 1.20.150: every Nova vendor (the landlord, software, the team, lenders) is "Nothing to receive" unless someone set a mode — the owner's call of Oct 16
+    db.get("SELECT key FROM bk_migrations WHERE key = 'nova_recv_none_150'", [], async (e, row) => {
+      if (e || row) return;
+      try {
+        const n = (await dbRun("UPDATE bk_vendors SET receive_mode = 'none' WHERE source = 'nova' AND receive_mode IS NULL")).changes;
+        const p = (await dbRun("UPDATE bk_purchases SET receive_mode = 'none', expects_delivery = 0, received = 'na', updated_at = datetime('now') WHERE vendor_id IN (SELECT id FROM bk_vendors WHERE source = 'nova' AND receive_mode = 'none') AND received IN ('no', 'na') AND cancelled = 0 AND receive_mode IS NULL")).changes;
+        await audit('system', 'repair.nova_recv_none', 0, { vendors: n, purchases: p });
+        await dbRun("INSERT OR REPLACE INTO bk_migrations (key, at) VALUES ('nova_recv_none_150', datetime('now'))");
+        console.log('BOOKKEEPING nova vendors set to nothing-to-receive:', n, 'purchases', p);
+      } catch (err) { console.error('BOOKKEEPING nova_recv_none_150 failed:', err.message); }
+    });
     db.get("SELECT key FROM bk_migrations WHERE key = 'nova_vendor_links_140'", [], async (e, row) => {
       if (e || row) return;
       try {
@@ -3392,7 +3403,7 @@ module.exports = function mountBookkeeping(app, deps) {
   app.delete('/api/bookkeeping/rules/:id', ...guard, async (req, res) => { await dbRun('UPDATE bk_rules SET active = 0 WHERE id = ?', [parseInt(req.params.id)]); await audit(userId(req), 'rule.remove', req.params.id); res.json({ ok: true }); });
   app.get('/api/bookkeeping/directory', ...guard, async (req, res) => {
     if (req.query.fresh !== '0') await syncDirectoryIfStale(userId(req), 10 * 60000);
-    const rows = await dbAll("SELECT v.*, CASE WHEN v.kind = 'lender' THEN 'lender' WHEN v.source = 'suppliers' THEN 'supplier' WHEN v.source = 'vendors' THEN 'vendor' WHEN v.source = 'bill' THEN 'bill' WHEN v.source = 'nova' THEN 'nova' ELSE COALESCE(v.kind, 'other') END AS kind, (SELECT COUNT(*) FROM bk_transactions t WHERE t.vendor_id = v.id) AS txns, (SELECT COUNT(*) FROM bk_bills b WHERE b.vendor_id = v.id AND b.status <> ?) AS bills FROM bk_vendors v ORDER BY v.name", ['rejected']);
+    const rows = await dbAll("SELECT v.*, CASE WHEN v.kind = 'lender' THEN 'lender' WHEN v.kind = 'team' THEN 'team' WHEN v.source = 'suppliers' THEN 'supplier' WHEN v.source = 'vendors' THEN 'vendor' WHEN v.source = 'bill' THEN 'bill' WHEN v.source = 'nova' THEN 'nova' ELSE COALESCE(v.kind, 'other') END AS kind, (SELECT COUNT(*) FROM bk_transactions t WHERE t.vendor_id = v.id) AS txns, (SELECT COUNT(*) FROM bk_bills b WHERE b.vendor_id = v.id AND b.status <> ?) AS bills FROM bk_vendors v ORDER BY v.name", ['rejected']);
     const last = await dbGet("SELECT at FROM bk_audit WHERE action = 'directory.sync' ORDER BY id DESC LIMIT 1");
     const sup = await suppliesByVendor();
     rows.forEach(v => { const s = sup[v.id]; v.materials = s ? s.n : 0; v.geo_types = s ? topKeys(s.geo, 4) : []; });
@@ -3881,7 +3892,7 @@ module.exports = function mountBookkeeping(app, deps) {
     try {
       const rows = await dbAll("SELECT v.*, (SELECT COUNT(*) FROM bk_transactions t WHERE t.vendor_id = v.id AND t.status NOT IN ('removed','excluded')) AS txns, (SELECT COUNT(*) FROM bk_bills b WHERE b.vendor_id = v.id AND b.status <> 'rejected') AS bills, " +
         "(SELECT SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) FROM bk_transactions t WHERE t.vendor_id = v.id AND t.status NOT IN ('removed','excluded')) AS spent, (SELECT MAX(date) FROM bk_transactions t WHERE t.vendor_id = v.id AND t.status NOT IN ('removed','excluded')) AS last_date, (SELECT MIN(date) FROM bk_transactions t WHERE t.vendor_id = v.id AND t.status NOT IN ('removed','excluded')) AS first_date " +
-        "FROM bk_vendors v WHERE v.source = 'nova' ORDER BY v.name COLLATE NOCASE");
+        "FROM bk_vendors v WHERE v.source = 'nova' AND COALESCE(v.kind, '') <> 'team' ORDER BY v.name COLLATE NOCASE");   /* 1.20.150: the overseas team has its own tab */
       for (const v of rows) {
         let d = {}; try { d = JSON.parse(v.details || '{}') || {}; } catch (e) {}
         const last = await dbGet("SELECT raw, account_name FROM bk_transactions WHERE vendor_id = ? AND status NOT IN ('removed','excluded') ORDER BY date DESC LIMIT 1", [v.id]);
