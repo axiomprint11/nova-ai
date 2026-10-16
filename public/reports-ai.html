@@ -27,7 +27,8 @@
   /* the email settings card */
   .ra-email { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 14px; align-items: end; } .ra-email label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--muted); }
   .ra-email input, .ra-email select { font: inherit; font-size: 13px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
-  .ra-email .chk { flex-direction: row; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink); height: 34px; white-space: nowrap; grid-column: span 2; } .ra-email .chk input { width: 15px; height: 15px; margin: 0; }
+  .ra-email .chk { flex-direction: row; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink); min-height: 34px; white-space: normal; grid-column: 1 / -1; line-height: 1.35; } .ra-email .chk input { width: 15px; height: 15px; margin: 0; flex: none; }
+  .ra-email { min-width: 0; } .ra-email label { min-width: 0; } .ra-email input { min-width: 0; width: 100%; box-sizing: border-box; }
   .ra-email .acts { display: flex; gap: 8px; align-items: center; grid-column: 1 / -1; } .ra-email .acts .msg { font-size: 12px; color: var(--muted); }
   .bk-btn { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 7px 13px; font: 600 12.5px/1 inherit; cursor: pointer; color: var(--ink-soft); } .bk-btn.pri { background: var(--indigo); border-color: var(--indigo); color: #fff; }
   .ra-sent { font-size: 11.5px; color: var(--muted); margin-top: 10px; } .ra-sent div { padding: 2px 0; }
