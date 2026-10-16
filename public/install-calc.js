@@ -154,7 +154,7 @@
         '<div class="ic-calc ic-out"><div class="ic-lines"></div><div class="ic-total"></div></div>' +
         '<div class="ic-notes"></div>' +
         '<div class="ic-actions">' +
-          '<button type="button" class="ic-btn small" data-act="live" title="Re-read the rates set in Admin → Installation Pricing">Latest rates</button>' +
+          '<button type="button" class="ic-btn small" data-act="live" title="Re-read the rates set in Admin → Price Estimator → Installation">Latest rates</button>' +
           '<button type="button" class="ic-btn small primary" data-act="copy">Copy quote</button>' +
         '</div>';
       recompute();

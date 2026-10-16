@@ -32,6 +32,7 @@ body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); c
 .dk-tab { background: none; border: none; border-bottom: 2px solid transparent; padding: 9px 16px; font-family: inherit; font-size: 13.5px; font-weight: 600; color: var(--muted); cursor: pointer; margin-bottom: -1px; transition: all .15s; }
 .dk-tab:hover { color: #4f46e5; }
 .dk-tab.active { color: #4f46e5; border-bottom-color: #4f46e5; }
+.pe-tabs { margin: 0 0 16px; } .dk-tab.soon { color: #b0b0c3; cursor: default; } .dk-tab.soon:hover { color: #b0b0c3; } .pe-soon { font-size: 9.5px; font-weight: 800; letter-spacing: .06em; background: #eef0f4; color: #8a8aa0; border-radius: 6px; padding: 2px 5px; margin-left: 4px; vertical-align: 1px; }
 input { padding: 11px 14px; border: 1.5px solid var(--line); border-radius: 10px; font-size: 14px; font-family: inherit; outline: none; background: #fcfcff; }
 input:focus { border-color: var(--indigo); box-shadow: 0 0 0 3px var(--indigo-light); }
 .add-row { display: flex; gap: 8px; margin-bottom: 8px; max-width: 480px; }
@@ -336,11 +337,6 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
           <div class="ci-hd"><b>Company info</b><span>What NovaAI tells customers in CRM Chat, the website chat and on the phone. Not the TalkAi call-routing hours.</span></div>
           <div class="ci-body" id="ciBody"><span style="color:var(--muted);font-size:13px">Loading…</span></div>
         </div>
-        <!-- Graphic design services (1.20.37): rates + the hours guide, shared by CRM Chat (design fees on a job), the website chat and TalkAi -->
-        <div class="ci-card" id="designInfo">
-          <div class="ci-hd"><b>Graphic design services</b><span>How every assistant prices in-house design — the CRM Chat's design fee on a job ("E1181735 how much can I charge for the designer fee"), the website chat's design quotes, TalkAi. Hours per kind of job × the hourly rates; the models never do the arithmetic themselves.</span></div>
-          <div class="ci-body" id="dsBody"><span style="color:var(--muted);font-size:13px">Loading…</span></div>
-        </div>
 
         <div class="dk-tabs">
           <button class="dk-tab active" id="dkTabDocs" onclick="dkSwitch('docs')">Documents</button>
@@ -417,9 +413,26 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
         </div>
       </div>
       <div id="tabPricing" style="display:none">
+        <!-- 1.20.130: Price Estimator — every price the assistants quote outside the product calculator, one sub-tab each -->
+        <h2 class="h2" style="margin-bottom:10px">Price Estimator</h2>
+        <div class="dk-tabs pe-tabs" id="peTabs">
+          <button class="dk-tab active" data-pe="install">Installation</button>
+          <button class="dk-tab" data-pe="design">Graphic Design</button>
+          <button class="dk-tab soon" data-pe="delivery" disabled>Delivery <span class="pe-soon">Soon</span></button>
+          <button class="dk-tab soon" data-pe="die" disabled>Die Fee <span class="pe-soon">Soon</span></button>
+          <button class="dk-tab soon" data-pe="fulfillment" disabled>Fulfillment <span class="pe-soon">Soon</span></button>
+        </div>
+        <div id="peDesign" style="display:none">
+        <!-- Graphic design services (1.20.37): rates + the hours guide, shared by CRM Chat (design fees on a job), the website chat and TalkAi -->
+        <div class="ci-card" id="designInfo">
+          <div class="ci-hd"><b>Graphic Design Estimator</b><span>How every assistant prices in-house design — the CRM Chat's design fee on a job ("E1181735 how much can I charge for the designer fee"), the website chat's design quotes, TalkAi. Hours per kind of job × the hourly rates; the models never do the arithmetic themselves.</span></div>
+          <div class="ci-body" id="dsBody"><span style="color:var(--muted);font-size:13px">Loading…</span></div>
+        </div>
+        </div>
+        <div id="peInstall">
         <div class="ip-top">
           <div>
-            <h2 class="h2" style="margin-bottom:6px">Installation Pricing</h2>
+            <h2 class="h2" style="margin-bottom:6px;font-size:16px">Installation Estimator</h2>
             <p class="ip-lede">The fixed prices behind every installation and local delivery quote. Nova's chat
               answers and the calculator card both read these the moment you save — no restart.</p>
             <div id="ipMeta" class="ip-meta"></div>
@@ -445,6 +458,7 @@ button.mini.danger { border-color: #fecaca; color: #b91c1c; }
               <button class="btn-mini" style="margin-top:10px" onclick="ipRestore(0)">Reset everything to training-doc defaults</button>
             </div>
           </aside>
+        </div>
         </div>
       </div>
       <div id="tabEmails" style="display:none">
@@ -588,6 +602,7 @@ async function checkAccess() {
     // Deep links: /admin?tab=agents&agent=talk-ai, /admin?tab=knowledge.
     const q = new URLSearchParams(location.search);
     const want = q.get('tab');
+    if (want === 'pricing' && /^(install|design)$/.test(q.get('sub') || '')) peActive = q.get('sub');     /* ?tab=pricing&sub=design */
     // Landing from the main page (?mine=1): everyone starts on their OWN chats (admins can pick another user).
     if (q.get('mine') === '1' && MY_KEY) pendingHistoryUser = MY_KEY;
     if (want === 'agents' && q.get('agent') && IS_ADMIN) { trainAgent(q.get('agent')); }
@@ -641,7 +656,7 @@ function tab(t) {
   }
   else if (t === 'connections') loadConnections();
   else if (t === 'emails') loadEmails();
-  else if (t === 'pricing') ipLoad();
+  else if (t === 'pricing') peSwitch(peActive);
   else if (t === 'agents') loadAgents();
   else if (t === 'knowledge') dkSwitch(dkActiveTab);
 }
@@ -1471,6 +1486,16 @@ async function loadCompanyInfo() {
   } catch (e) { box.textContent = 'Could not load.'; }
 }
 // Graphic design services (1.20.37): one store (company_info.design_services) read by every assistant
+/* 1.20.130: Price Estimator sub-tabs — Installation (the install / delivery price grid) · Graphic Design (rates + hours guide) · the rest Soon */
+let peActive = 'install';
+function peSwitch(k) {
+  peActive = k;
+  document.querySelectorAll('#peTabs .dk-tab').forEach(b => b.classList.toggle('active', b.dataset.pe === k));
+  document.getElementById('peInstall').style.display = k === 'install' ? 'block' : 'none';
+  document.getElementById('peDesign').style.display = k === 'design' ? 'block' : 'none';
+  if (k === 'install') ipLoad(); else if (k === 'design') loadDesignInfo();
+}
+document.querySelectorAll('#peTabs .dk-tab:not([disabled])').forEach(b => b.onclick = () => peSwitch(b.dataset.pe));
 async function loadDesignInfo() {
   const box = document.getElementById('dsBody'); if (!box) return;
   try {
@@ -1494,7 +1519,7 @@ async function loadDesignInfo() {
   } catch (e) { box.textContent = 'Could not load.'; }
 }
 async function loadKnowledge() {
-  loadCompanyInfo(); loadDesignInfo();
+  loadCompanyInfo();
   document.getElementById('knowledgeEditor').style.display = 'none';
   document.getElementById('knowledgeList').style.display = 'block';
   const box = document.getElementById('knowledgeList');

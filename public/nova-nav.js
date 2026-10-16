@@ -6,7 +6,7 @@
  *   NovaNav.setActive('users');  NovaNav.set('talk', 3);  NovaNav.refresh();
  *
  * Three groups: the conversations (CRM Chat, Client ChatBot, TalkAi — each with its unread count), the setup
- * (Users, Domain Knowledge, Connectors), and pricing & files (Installation Pricing, Delivery Pricing and Templates,
+ * (Users, Domain Knowledge, Connectors), and pricing & files (Price Estimator and Templates,
  * the last two coming soon). Members see CRM Chat (their own chats) and Domain Knowledge when they have access.
  * Wide: a 224px column. 761–1100px: icons only. Phones: a strip across the top.
  */
@@ -43,8 +43,7 @@
      ['knowledge', 'Domain Knowledge', '/admin?tab=knowledge', 'knowledge'],
      ['connections', 'Connectors', '/admin?tab=connections', 'admin'],
      ['emails', 'Emails', '/admin?tab=emails', 'admin']],
-    [['pricing', 'Installation Pricing', '/admin?tab=pricing', 'admin'],
-     ['delivery', 'Delivery Pricing', null, 'admin'],
+    [['pricing', 'Price Estimator', '/admin?tab=pricing', 'admin'],     /* 1.20.130: Installation · Graphic Design · Delivery / Die Fee / Fulfillment (soon) */
      ['templates', 'Templates', null, 'admin']]
   ];
   const UNREAD = {

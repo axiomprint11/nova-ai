@@ -577,10 +577,12 @@ never written to the draft — only told to the person (`ai_bot_note` keeps `shi
 
 ## Installation & local delivery pricing
 
+**1.20.130 — Admin → Price Estimator** (`/admin?tab=pricing`, nova-nav item `pricing`; the left menu's "Installation Pricing" and "Delivery Pricing (Soon)" items are gone): one tab with sub-tabs (`#peTabs`, `peSwitch(k)`, `?tab=pricing&sub=install|design`) — **Installation** (`#peInstall`, the price grid below, `ipLoad()`), **Graphic Design** (`#peDesign`, the Graphic Design Estimator card — the rates + hours guide that lived under Domain Knowledge → Company info, `loadDesignInfo()`, same `/api/design-services` store, nothing changed for the assistants), **Delivery · Die Fee · Fulfillment** (Soon, disabled). Every price the assistants quote outside the product calculator belongs here.
+
 Separate from the product formula engine, and **not** duplicated: `public/install-pricing.js` is one UMD file
 that `server.js` requires and the browser loads. Every rate lives in the config it is given — never put a price
 in code. The live config is the single row of SQLite `install_pricing` (history in `install_pricing_history`),
-cached in memory as `installPricing`, edited in Admin → Installation Pricing (`GET /api/install-pricing` for any
+cached in memory as `installPricing`, edited in Admin → Price Estimator → Installation (`GET /api/install-pricing` for any
 signed-in user; `POST /api/admin/install-pricing` and `/restore` for admins). Missing keys fall back to
 `DEFAULTS`, which mirror `docs/install-pricing-training.md`.
 
@@ -640,7 +642,7 @@ pattern for any new report over a large log table. To add a report, add an entry
 - **Graphic design services are company knowledge** (1.20.37): `design-services.js` (`DesignServices = require('./design-services')(db)`
   in server.js) keeps the hourly rates + the "hours per kind of job" guide in SQLite `company_info` key `design_services`
   (`{guide, min, max}`; the first `get()` migrates what was saved in `client_bot_rules.design / design_min / design_max`),
-  edited in Admin → Domain Knowledge → Company info → **Graphic design services** (`GET /api/design-services`,
+  edited in Admin → **Price Estimator → Graphic Design** (1.20.130; was Domain Knowledge → Company info) (`GET /api/design-services`,
   `POST /api/admin/design-services`; the Client ChatBot Training section still shows the same fields and its Save writes the
   shared store too). `DesignServices.estimate(pieces, {min, max})` is the one arithmetic (low hours × lowest rate to high hours
   × highest rate, whole dollars) — the website chat's `estimate_design` uses it, and the **staff ChatBot has `estimate_design`
