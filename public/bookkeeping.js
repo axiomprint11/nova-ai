@@ -35,7 +35,7 @@
   const BILL_SUBS = { all: ['draft', 'approved', 'scheduled', 'paid', 'rejected'], pending: ['draft'], approved: ['approved'], scheduled: ['scheduled'], paid: ['paid'], rejected: ['rejected'] };
   let billSub = 'pending';
   const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, equipment: loadEquipment, loans: loadLoans, team: loadTeam, chart: loadChart, rules: loadRules, materials: loadMaterials, nova: loadNovaVendors }, first: 'vendors' },
-    purchases: { bar: 'subPurchases', subs: { list: () => loadPurchases('list'), waiting: () => loadPurchases('waiting'), notreceived: () => loadPurchases('notreceived') }, first: 'list' },
+    purchases: { bar: 'subPurchases', subs: { toreceive: () => loadPurchases('toreceive'), shipped: () => loadPurchases('shipped'), received: () => loadPurchases('received'), na: () => loadPurchases('na'), list: () => loadPurchases('list'), waiting: () => loadPurchases('waiting'), notreceived: () => loadPurchases('notreceived') }, first: 'toreceive' },   /* 1.20.139: the receiving pipeline */
     bank: { bar: 'subBank', subs: { all: () => loadTxns(''), new: () => loadTxns('new'), pending: () => loadTxns('pending'), old: () => loadTxns('old'), categorized: () => loadTxns('categorized'), auto: () => loadTxns('auto'), stats: () => loadTxns('stats') }, first: 'pending' },   // 1.19.54: Bank feed is a top tab
     ar: { bar: 'subAr', subs: { open: () => loadAr('open'), done: () => loadAr('done'), rules: () => loadArRules() }, first: 'open' },   // 1.19.152: Nova AR
     aging: { bar: 'subAging', subs: { all: () => loadAging('all'), b0: () => loadAging('0-30'), b1: () => loadAging('31-60'), b2: () => loadAging('61-90'), b3: () => loadAging('90+') }, first: 'all' },   // 1.20.83: Acct Aging
@@ -528,33 +528,38 @@
   const puStatus = (p) => '<span class="pu-st ' + (p.late ? 'late' : p.status === 'closed' ? 'closed' : p.status === 'awaiting bank' ? 'bank' : /received/.test(p.status) ? 'recv' : '') + '">' + esc(p.status) + (p.late ? ' · ' + p.days + ' days' : '') + '</span>';
   // 1.19.141: the Purchases list has the Bank feed's column filters — Date (presets + From / To), Vendor (kind) + Company,
   // Amount (From / To), Category (type / sub category), Status (delivery) — kept in PF / localStorage bk_pu_filters.
-  let PF = { period: 'all', from: '', to: '', vendor_id: '', vendor_name: '', vkind: '', min: '', max: '', type: '', category: '', dstatus: '', pstatus: '' };   // 1.20.66: pstatus = the Payment column, dstatus = Received
+  let PF = { period: 'all', from: '', to: '', vendor_id: '', vendor_name: '', vkind: '', min: '', max: '', type: '', category: '', dstatus: '', pstatus: '', mode: '' };   // 1.20.66: pstatus = the Payment column, dstatus = Received
   try { PF = Object.assign(PF, JSON.parse(localStorage.getItem('bk_pu_filters') || '{}')); } catch (e) {}
   const savePF = () => { try { localStorage.setItem('bk_pu_filters', JSON.stringify(PF)); } catch (e) {} loadPurchases(lastSub.purchases || 'list'); };
   const P_SVG = (d) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
   const P_PEN = P_SVG('<path d="M4 20h4l10-10-4-4L4 16z"/><path d="M12.5 7.5l4 4"/>'), P_LINK = P_SVG('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5"/>');
   const RECV_L = { na: 'N/A', no: 'Not received', partial: 'Partially received', yes: 'Received' };   // 1.20.67: the pill's words
   const DELIV = [['na', 'Not applicable', 'Nothing to receive — a service, a fee, a subscription'], ['no', 'Not received', 'Goods ordered, nothing has arrived yet'], ['partial', 'Partially received', 'Some of it arrived'], ['yes', 'Received', 'All of it arrived']];
+  const puCounts = (c) => { c = c || {}; const set = (id, n) => { if ($(id)) $(id).textContent = n || 0; }; set('nWaiting', c.waiting); set('nToReceive', c.toreceive); set('nShipped', c.shipped); set('nReceived', c.received); set('nNa', c.na); set('nAllPu', c.all); if ($('nNotReceived')) $('nNotReceived').textContent = c.notreceived || 0; };   /* 1.20.139 */
   async function loadPurchases(view) {
-    const v = $(view === 'waiting' ? 'vPurchWaiting' : view === 'notreceived' ? 'vPurchNotReceived' : 'vPurchList');
+    const v = $('vPurch_' + view) || $('vPurch_list');
     if (!ov) await overview();
     const q = ($('puQ') || {}).value || '';
     const [pf, pt] = periodRange(PF.period);
-    const qs = ['from=' + (pf || ''), 'to=' + (pt || '')].concat(['vendor_id', 'vkind', 'min', 'max', 'type', 'category', 'dstatus', 'pstatus'].map(k => PF[k] ? k + '=' + encodeURIComponent(PF[k]) : '').filter(Boolean)).join('&');
+    const qs = ['from=' + (pf || ''), 'to=' + (pt || '')].concat(['vendor_id', 'vkind', 'min', 'max', 'type', 'category', 'dstatus', 'pstatus', 'mode'].map(k => PF[k] ? k + '=' + encodeURIComponent(PF[k]) : '').filter(Boolean)).join('&');
     const j = await api('/api/bookkeeping/purchases?view=' + view + '&q=' + encodeURIComponent(q) + '&' + qs); if (!j.ok) { v.innerHTML = '<div class="bk-card">' + esc(j.error) + '</div>'; return; }
     const rows = j.purchases || [];
-    $('nWaiting').textContent = j.counts.waiting || 0; $('nNotReceived').textContent = j.counts.notreceived || 0;
+    puCounts(j.counts);
     const S = ov.settings;
     const intro = view === 'waiting' ? 'Emails you marked Transaction: proof of a payment with no bank line yet. Nova proposes the bank line when it lands (same amount to the cent); you confirm. After ' + esc(S.waiting_days) + ' days they are emailed to ' + esc(S.alert_to) + '.'
       : view === 'notreceived' ? 'Goods bought (by category) with no arrival attached. Mark them received when they come, partly received with a note, or cancelled. After ' + esc(S.notreceived_days) + ' days they are emailed to ' + esc(S.alert_to) + '.'
-      : 'Everything we bought, one row per purchase, with its four slots: bill · bank line · confirmation · delivery. Hover a slot for what is in it; click the vendor for the emails and items behind it. Every column header is a filter.';
+      : view === 'toreceive' ? 'Goods paid for that are not here yet and nothing has been heard about. How each one gets confirmed depends on the vendor\u2019s Track receiving setting: via the Axiom job it was bought for (B2, 4over), via the shipped / delivered emails in accounting@ (Amazon, Uline, Kelly), or by hand at the dock. After ' + esc(S.notreceived_days) + ' days they are emailed to ' + esc(S.alert_to) + '.'
+      : view === 'shipped' ? 'A shipped or tracking email came in, no delivery seen yet.'
+      : view === 'received' ? 'Delivered — the Received cell says how Nova knows: the Axiom job shipped, a delivery email, a slip, or who confirmed it.'
+      : view === 'na' ? 'Nothing to receive — services, fees, subscriptions, rides. Paid is done. A vendor that lands here by mistake: set its Track receiving on the vendor card.'
+      : 'Everything we bought, one row per purchase. The small icons under the vendor are its paperwork: bill \u00b7 bank line \u00b7 confirmation \u00b7 delivery \u2014 hover one for what is in it, click for the details. Every column header is a filter.';
     const tm = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(ts) ? '' : 'Z')); return isNaN(d) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }); };
     const vlogo = (name, photo) => photo ? '<img class="bk-logo bk-vl" src="' + esc(photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;bk-logo bk-vl ph&quot;>' + esc(String(name || '?').charAt(0).toUpperCase()) + '</span>\'">' : '<span class="bk-logo bk-vl ph' + (name ? '' : ' none') + '">' + esc(name ? String(name).charAt(0).toUpperCase() : '?') + '</span>';
     const kindTag = (p) => p.vendor_source === 'suppliers' ? 'supplier' : p.vendor_source === 'vendors' ? 'vendor' : p.vendor_source === 'nova' ? 'Nova vendor' : (p.vendor_kind || 'from a bill');
     const kindPill = (p) => p.vendor_source === 'nova' ? '<span class="bk-src nova" title="Nova vendor — kept in Nova, not in the CRM">vendor' + AI_I + '</span>' : '<span class="bk-src ' + esc(p.vendor_source || '') + '">' + esc(kindTag(p)) + '</span>';
     // the Bank feed's vendor cell: photo + kind pill on the left, company name + change icon on the right; unlinked = Link icon + near matches
     const vendorCell = (p) => { const c = p.vendor_card, linked = c && c.kind !== 'bill', sg = p.suggestions || [];
-      const extra = (p.order_no || p.note ? '<div class="bk-muted">' + (p.order_no ? '#' + esc(p.order_no) : '') + (p.order_no && p.note ? ' · ' : '') + (p.note ? '<span class="bk-dim">' + esc(p.note) + '</span>' : '') + '</div>' : '') + puInfo(p);
+      const extra = (p.order_no || p.note ? '<div class="bk-muted">' + (p.order_no ? '#' + esc(p.order_no) : '') + (p.order_no && p.note ? ' · ' : '') + (p.note ? '<span class="bk-dim">' + esc(p.note) + '</span>' : '') + '</div>' : '') + puInfo(p) + slots(p);   /* 1.20.139: the paperwork icons live under the vendor now */
       if (linked) return '<div class="bl-vendor pu-vendor tx-vcell"><div class="tx-vleft"><a href="#" class="tx-vphoto" data-vcard="' + c.id + '" title="Vendor details">' + vlogo(c.name, c.photo) + '<span class="tx-vedit">' + P_PEN + '</span></a>' + kindPill(p) + '</div>' +
         '<div class="bl-vname"><b class="tx-vn"><a href="#" class="pu-vn" data-open="' + p.id + '">' + esc(c.name) + '</a></b> <a href="#" class="bl-vact tx-vico" data-pvlink="' + p.id + '" title="Change vendor">' + P_PEN + '</a>' +
         (p.vendor && p.vendor !== c.name ? '<div class="bk-dim">' + esc(p.vendor) + '</div>' : '') + extra + '</div></div>';
@@ -568,11 +573,31 @@
     const statusCell = (p) => { const money = p.cancelled ? '<span class="pu-st">cancelled</span>' : p.status === 'awaiting bank' || p.status === 'awaiting payment' ? puStatus(p) : p.status === 'closed' ? '<span class="pu-st closed">closed</span>' : '<span class="pu-st paid" title="Bank line matched — goods still to receive">paid</span>';
       // 1.20.67: Received is a nailed-down pill like Payment — it is set by the paperwork (a delivery email matched, the slip
       // uploaded) and only edited by hand through the pencil (`receivePop`); N/A when there is nothing to receive.
-      const sel = p.cancelled ? '' : '<span class="pu-recv-w"><span class="pu-st rv-' + esc(p.delivery || 'na') + '" title="' + esc((DELIV.find(d => d[0] === p.delivery) || DELIV[0])[2]) + '">' + esc(RECV_L[p.delivery] || 'N/A') + '</span><a href="#" class="pu-redit" data-redit="' + p.id + '" title="Received — match a delivery email, upload the slip, or set it by hand">' + iconSvg('pencil') + '</a></span>' + (p.late && /received/.test(p.status) ? '<div class="bk-dim pu-late">' + p.days + ' days</div>' : '') + (p.received_note ? '<div class="bk-dim pu-rnote" title="' + esc(p.received_note) + '">' + esc(p.received_note) + '</div>' : '');
+      // 1.20.139: the pill is the stage (To receive / Shipped / Received / Partially received / N/A) and the line under it the log —
+      // how Nova knows (the Axiom job shipped, a delivery email, a slip, who set it by hand) or, while open, how it is tracked and for how long
+      const stageL = p.stage === 'na' ? 'N/A' : p.stage === 'received' ? 'Received' : p.delivery === 'partial' ? 'Partially received' : p.stage === 'shipped' ? 'Shipped' : 'To receive';
+      const stageC = p.stage === 'na' ? 'na' : p.stage === 'received' ? 'yes' : p.delivery === 'partial' ? 'partial' : p.stage === 'shipped' ? 'shipped' : 'open';
+      const MODE_L = { none: 'nothing to receive', job: 'via Axiom job', email: 'via email', hand: 'by hand' };
+      const who = (by) => by ? esc(String(by).split('@')[0].replace(/^member:|^user:/, '')) : '';
+      const logLine = () => { const L = p.rlog; if (p.stage === 'na') return '';
+        // 1.20.139: an unsure shipment email Nova found for this purchase — one click says it is ours (or not)
+        const hint = (p.email_hints || []).length ? '<div class="pu-rlog pu-hint">' + p.email_hints.slice(0, 1).map(h => '<span title="' + esc((h.subject || '') + ' · ' + (h.why || '')) + '">' + (h.event === 'delivered' ? 'delivered' : 'shipped') + ' email?</span> <a href="#" class="pu-hyes" data-ship="' + p.id + '" data-eid="' + h.email_id + '">Match</a> · <a href="#" class="bk-dim" data-shipno="' + p.id + '" data-eid="' + h.email_id + '">not ours</a>').join('') + '</div>' : '';
+        if (L) { const src = L.source === 'job' ? 'from job ' + (L.job_id ? 'E' + L.job_id : '') + ' shipped' : L.source === 'email' ? 'delivery email' : L.source === 'slip' ? 'delivery slip' + (L.by ? ' · ' + who(L.by) : '') : L.source === 'dock' ? (who(L.by) || 'dock') + ' at the dock' : (who(L.by) ? who(L.by) + ' confirmed' : 'confirmed by hand');
+          return '<div class="pu-rlog">' + (L.at ? '<b>' + esc(usD(L.at)) + '</b> · ' : '') + src + (L.note ? ' · ' + esc(L.note) : '') + '</div>' + (p.delivery === 'partial' ? hint : ''); }
+        if (p.stage === 'shipped') return '<div class="pu-rlog"><b>' + esc(usD(p.shipped_at)) + '</b> shipped' + (p.tracking ? ' · <a href="' + esc(/^https?:/.test(p.tracking) ? p.tracking : 'https://www.google.com/search?q=' + encodeURIComponent(p.tracking)) + '" target="_blank" rel="noopener">tracking</a>' : '') + (p.ship_late ? ' · <span class="pu-late">no delivery seen</span>' : '') + '</div>' + hint;
+        const age = (p.days != null ? p.days + ' day' + (p.days === 1 ? '' : 's') : '') + (p.late ? ' <span class="pu-late">late</span>' : '');
+        if (p.mode === 'job') {   /* 1.20.139: via the Axiom job — linked (follows the job), candidates to pick, or nothing found */
+          if (p.job_id) return '<div class="pu-rlog"><span class="pu-mode">job</span><b>E' + p.job_id + '</b>' + (p.job_state ? ' · ' + esc(p.job_state) : '') + ' <a href="#" class="bk-dim" data-unjob="' + p.id + '" title="Not this job">×</a> · ' + age + '</div>';
+          if (p.job_cands && p.job_cands.length) return '<div class="pu-rlog"><span class="pu-mode">job</span>' + p.job_cands.length + ' jobs cost ' + usd(p.amount) + ': ' + p.job_cands.map(c => '<a href="#" data-pickjob="' + p.id + '" data-eid="' + c.id + '" title="' + esc((c.company || '') + ' · ' + (c.name || '') + ' · ' + c.created + ' · ' + c.state) + '">E' + c.id + '</a>').join(' · ') + '</div>';
+          return '<div class="pu-rlog"><span class="pu-mode">job</span>' + (p.job_checked ? 'no Axiom job with this cost' : 'looking for the job…') + ' · <a href="#" data-typejob="' + p.id + '">E-number…</a> · ' + age + '</div>' + hint;
+        }
+        return '<div class="pu-rlog"><span class="pu-mode" title="How this purchase gets confirmed received — set on the vendor card">' + esc(MODE_L[p.mode] || p.mode || '') + '</span>' + age + '</div>' + hint; };
+      const sel = p.cancelled ? '' : '<span class="pu-recv-w"><span class="pu-st rv-' + stageC + '" title="' + esc((DELIV.find(d => d[0] === p.delivery) || DELIV[0])[2]) + '">' + stageL + '</span><a href="#" class="pu-redit" data-redit="' + p.id + '" title="Received — match a delivery email, upload the slip, or set it by hand">' + iconSvg('pencil') + '</a></span>' + logLine();
       return '<td class="pu-status">' + money + '</td><td class="pu-status pu-recv">' + sel + '</td>'; };   // 1.20.66: Payment and Received are two columns
     const row = (p) => '<tr data-pid="' + p.id + '"><td class="pu-date">' + esc(usD(p.date)) + (tm(p.when) ? '<div class="bk-dim">' + esc(tm(p.when)) + '</div>' : '') + '</td><td>' + vendorCell(p) + '</td>' + amountCell(p) +
-      '<td data-pcat="' + p.id + '">' + catSelect(p.category || '', 'pu-cat', 'Choose…', { only: 'expense' }) + '</td><td>' + slots(p) + '</td>' + statusCell(p) +
+      '<td data-pcat="' + p.id + '">' + catSelect(p.category || '', 'pu-cat', 'Choose…', { only: 'expense' }) + '</td>' + statusCell(p) +
       '<td class="pu-acts">' + (p.status === 'awaiting bank' && p.suggest ? '<button class="bk-btn sm p" data-sug="' + p.id + '">' + p.suggest + ' bank line' + (p.suggest === 1 ? '' : 's') + ' match</button>' : p.status === 'awaiting bank' ? '<button class="bk-btn sm" data-sug="' + p.id + '">Pick bank line…</button>' : '') +
+        ((p.stage === 'open' || p.stage === 'shipped') && !p.cancelled ? '<button class="bk-btn sm p" data-redit="' + p.id + '" title="It arrived — all of it or part of it, with the slip if there is one">Receive</button>' : '') +   /* 1.20.139: the dock button */
         (!p.cancelled && p.status !== 'closed' ? '<button class="bk-btn sm" data-recv="' + p.id + '" data-s="cancel" title="Cancelled or refunded — stops the reminders">Cancel</button>' : p.cancelled ? '<button class="bk-btn sm" data-recv="' + p.id + '" data-s="reopen">Reopen</button>' : '') + '</td></tr>';
     const PERIODS = [['all', 'All time'], ['30', 'Last 30 days'], ['month', 'This month'], ['last', 'Last month'], ['90', 'Last 90 days'], ['year', 'This year']].map(([v, l]) => ({ v, l }));
     const inUse = {}; rows.forEach(p => { if (p.category) inUse[p.category] = (inUse[p.category] || 0) + 1; });
@@ -583,14 +608,15 @@
       amount: { type: 'range', kind: 'number', from: PF.min, to: PF.max },
       type: [{ v: '', l: 'All categories' }].concat(chart_types().filter(t => !t.income).map(t => ({ v: 'T:' + t.name, l: tile(t.color, t.icon, 'sm', '') + ' ' + esc(t.name) })), Object.keys(inUse).sort().map(c => ({ v: 'C:' + c, l: catLabel(c), n: inUse[c] }))),
       pstatus: [{ v: '', l: 'All' }, { v: 'bank', l: 'Awaiting bank / payment', t: 'Awaiting' }, { v: 'paid', l: 'Paid (bank line matched)', t: 'Paid' }, { v: 'cancelled', l: 'Cancelled' }],
-      dstatus: [{ v: '', l: 'All' }].concat(DELIV.map(d => ({ v: d[0], l: d[1] })))
+      dstatus: [{ v: '', l: 'All' }, { v: 'no', l: 'To receive' }, { v: 'shipped', l: 'Shipped' }, { v: 'partial', l: 'Partially received' }, { v: 'yes', l: 'Received' }, { v: 'na', l: 'N/A — nothing to receive' }],
+      mode: [{ v: '', l: 'Any' }, { v: 'job', l: 'Via Axiom job' }, { v: 'email', l: 'Via email' }, { v: 'hand', l: 'By hand' }, { v: 'none', l: 'Nothing to receive' }]
     };
-    const anyF = PF.period !== 'all' || PF.from || PF.to || PF.vendor_id || PF.vkind || PF.min || PF.max || PF.type || PF.category || PF.dstatus || PF.pstatus;
-    const title = view === 'waiting' ? 'Waiting for the bank' : view === 'notreceived' ? 'Not received' : 'Purchases';
+    const anyF = PF.period !== 'all' || PF.from || PF.to || PF.vendor_id || PF.vkind || PF.min || PF.max || PF.type || PF.category || PF.dstatus || PF.pstatus || PF.mode;
+    const title = view === 'waiting' ? 'Waiting for the bank' : view === 'notreceived' ? 'Not received' : view === 'toreceive' ? 'To receive' : view === 'shipped' ? 'Shipped' : view === 'received' ? 'Received' : view === 'na' ? 'Nothing to receive' : 'Purchases';
     v.innerHTML = '<div class="bk-card"><h2>' + title + ' ' + qHelp('purch_' + view, title, intro) + '<span class="sp"></span>' + (anyF ? '<button class="bk-btn sm" id="pfClear" title="Remove every column filter">× Clear filters</button>' : '') + '<span class="bk-muted">' + rows.length + ' purchase' + (rows.length === 1 ? '' : 's') + '</span></h2>' +
-      '<table class="bk pu-table"><thead><tr><th class="tx-date">' + thFilter('date', 'Date', FO.date) + '</th><th class="tx-vth">' + thFilter('vkind', 'Vendor', FO.vkind, PF.vkind) + thFilter('vendor', 'Company', FO.vendor, PF.vendor_id) + '</th><th class="num">' + thFilter('amount', 'Amount', FO.amount) + '</th><th>' + thFilter('type', 'Category', FO.type, PF.type ? 'T:' + PF.type : PF.category ? 'C:' + PF.category : '') + '</th><th>Paperwork</th><th>' + thFilter('pstatus', 'Payment', FO.pstatus, PF.pstatus) + '</th><th>' + thFilter('dstatus', 'Received', FO.dstatus, PF.dstatus) + '</th><th></th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table>' +
+      '<table class="bk pu-table"><thead><tr><th class="tx-date">' + thFilter('date', 'Date', FO.date) + '</th><th class="tx-vth">' + thFilter('vkind', 'Vendor', FO.vkind, PF.vkind) + thFilter('vendor', 'Company', FO.vendor, PF.vendor_id) + '</th><th class="num">' + thFilter('amount', 'Amount', FO.amount) + '</th><th>' + thFilter('type', 'Category', FO.type, PF.type ? 'T:' + PF.type : PF.category ? 'C:' + PF.category : '') + '</th><th>' + thFilter('pstatus', 'Payment', FO.pstatus, PF.pstatus) + '</th><th>' + thFilter('dstatus', 'Received', FO.dstatus, PF.dstatus) + thFilter('mode', 'Tracked', FO.mode, PF.mode) + '</th><th></th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table>' +
       (!rows.length ? '<div class="bk-muted" style="padding:14px 0">' + (view === 'list' && !anyF && !q ? 'No purchases yet. They appear when you press Bill, Transaction or Arrival on an email, or when a bank line is categorized.' : 'Nothing matches.') + '</div>' : '') + '</div>';
-    if ($('pfClear')) $('pfClear').onclick = () => { Object.assign(PF, { period: 'all', from: '', to: '', vendor_id: '', vendor_name: '', vkind: '', min: '', max: '', type: '', category: '', dstatus: '', pstatus: '' }); savePF(); };
+    if ($('pfClear')) $('pfClear').onclick = () => { Object.assign(PF, { period: 'all', from: '', to: '', vendor_id: '', vendor_name: '', vkind: '', min: '', max: '', type: '', category: '', dstatus: '', pstatus: '', mode: '' }); savePF(); };
     thFilterBind(v, FO, (key, val) => {
       if (key === 'type') { PF.type = val.startsWith('T:') ? val.slice(2) : ''; PF.category = val.startsWith('C:') ? val.slice(2) : ''; }
       else if (key === 'vendor') { PF.vendor_id = val; const o = FO.vendor.find(x => x.v === val); PF.vendor_name = o && val && val !== 'none' ? o.l : ''; }
@@ -602,9 +628,16 @@
     const setPV = async (pid, vid) => { const r = await post('/api/bookkeeping/purchases/' + pid + '/vendor', { vendor_id: vid, remember: true }); if (!r.ok) return alert(r.error); loadPurchases(view); };
     v.querySelectorAll('[data-pvlink]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); const p = rows.find(x => String(x.id) === a.dataset.pvlink); vendorPicker(a, { vendor: p.vendor || '', suggestions: p.suggestions || [] }, (vid) => setPV(p.id, vid)); });
     v.querySelectorAll('[data-pvpair]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); setPV(a.dataset.pvpair, Number(a.dataset.vid)); });
-    v.querySelectorAll('.pu-slots').forEach(sl => { sl.onclick = (ev) => { ev.preventDefault(); const tr = sl.closest('tr'); paperworkPop(sl, Number(tr.dataset.pid)); }; });
+    v.querySelectorAll('.pu-slots').forEach(sl => { sl.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); const tr = sl.closest('tr'); paperworkPop(sl, Number(tr.dataset.pid)); }; });
     // the receiving dropdown — Partially received asks what came
     v.querySelectorAll('[data-redit]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); const p = rows.find(x => String(x.id) === a.dataset.redit); receivePop(a, p, () => { loadPurchases(view); overview(); }); });   // 1.20.67
+    // 1.20.139: the Axiom job behind a job-tracked purchase — pick a candidate, type an E-number, or unlink
+    const setJob = async (pid, eid) => { const r = await post('/api/bookkeeping/purchases/' + pid + '/job', { estimate_id: eid }); if (!r.ok) return alert(r.error); if (r.job) toast('E' + r.job.id + ' · ' + r.job.state + (r.job.arrived ? ' → received' : '')); loadPurchases(view); overview(); };
+    v.querySelectorAll('[data-pickjob]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); setJob(a.dataset.pickjob, a.dataset.eid); });
+    v.querySelectorAll('[data-unjob]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); setJob(a.dataset.unjob, null); });
+    v.querySelectorAll('[data-typejob]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); const e = prompt('Which Axiom job was this bought for? (E-number)'); if (e && e.trim()) setJob(a.dataset.typejob, e.trim()); });
+    v.querySelectorAll('[data-ship]').forEach(a => a.onclick = async (ev) => { ev.preventDefault(); const r = await post('/api/bookkeeping/purchases/' + a.dataset.ship + '/shipment', { email_id: Number(a.dataset.eid) }); if (!r.ok) return alert(r.error); toast(r.event === 'delivered' ? 'Received — from the delivery email' : 'Shipped — from the email'); loadPurchases(view); overview(); });
+    v.querySelectorAll('[data-shipno]').forEach(a => a.onclick = async (ev) => { ev.preventDefault(); await post('/api/bookkeeping/purchases/' + a.dataset.shipno + '/shipment', { email_id: Number(a.dataset.eid), no: true }); loadPurchases(view); });
     // the category picker sets it on the spot — on the purchase and the bank lines behind it
     v.querySelectorAll('td[data-pcat]').forEach(td => { const wrap = td.querySelector('.ckp'), inp = td.querySelector('input.pu-cat'); if (!wrap || !inp) return; let last = inp.value;
       wrap.addEventListener('change', async () => { if (inp.value === last || !inp.value) return; last = inp.value; const r = await post('/api/bookkeeping/purchases/' + td.dataset.pcat + '/category', { category: inp.value }); const tr = td.closest('tr'); tr.classList.add(r.ok ? 'saved' : 'failed'); setTimeout(() => tr.classList.remove('saved', 'failed'), 1200); if (!r.ok) alert(r.error); else loadPurchases(view); }); });
@@ -691,7 +724,7 @@
     const v = $('vTxns');
     if (!ov) await overview();
     const st = txnSt, q = (($('txQ') || {}).value || '').trim(); txQLast = q;
-    if (!$('nWaiting').textContent) api('/api/bookkeeping/purchases?view=list').then(j => { if (j.ok) { $('nWaiting').textContent = j.counts.waiting || 0; $('nNotReceived').textContent = j.counts.notreceived || 0; } });
+    if (!$('nWaiting').textContent) api('/api/bookkeeping/purchases?view=list').then(j => { if (j.ok) puCounts(j.counts); });
     const cat = st === 'categorized' || st === 'auto';   // 1.20.12: Auto is the Categorized view narrowed to what the system filed by itself
     // 1.19.49: the header filters work in every view (date defaults to the last 30 days); the status is a filter on the Category column.
     let qs = '?status=' + encodeURIComponent(st) + '&q=' + encodeURIComponent(q) + '&lists=1';
@@ -2129,6 +2162,7 @@
       '<label class="nv-f"><span class="bk-muted">What we buy from them</span><input class="bk" id="nvSpec" value="' + esc(init.specialty || '') + '" placeholder="Rent for the shop · Job ads · Cleaning twice a month"></label>' +
       '<div class="nv-f"><span class="bk-muted">Usual category (chart of accounts)</span><div id="nvCat">' + catSelect(init.default_category || '', 'nvcat', 'not set', { multi: true }) + '</div></div>' +
       F('nvAlias', 'On the bank statement as', String(init.aliases || '').split('\n').join(' | '), 'HEVAC INC | HEVAC*RENT — separate with |') +
+      '<div class="nv-f"><span class="bk-muted">Track receiving</span>' + modeSel('nvMode', init.receive_mode) + '</div>' +
       '<label class="nv-f"><span class="bk-muted">Notes</span><textarea class="bk" id="nvNotes" rows="2">' + esc(init.notes || '') + '</textarea></label>' +
       '<div class="bk-row nv-acts"><button class="bk-btn p" id="nvSave">' + (isEdit ? 'Save' : 'Add vendor') + '</button><button class="bk-btn bk-x">Cancel</button><span class="bk-muted" id="nvMsg"></span></div></div>';
     const close = () => el.remove();
@@ -2162,7 +2196,7 @@
     el.querySelector('#nvSave').onclick = async (ev) => {
       let force = false;
       const body = { photo, name: el.querySelector('#nvName').value.trim(), website: el.querySelector('#nvWeb').value.trim(), email: el.querySelector('#nvEmail').value.trim(), phone: el.querySelector('#nvPhone').value.trim(), contact: el.querySelector('#nvContact').value.trim(), address: el.querySelector('#nvAddr').value.trim(),
-        specialty: el.querySelector('#nvSpec').value.trim(), default_category: el.querySelector('#nvCat .ckp-val').value, aliases: el.querySelector('#nvAlias').value.split('|').map(x => x.trim()).filter(Boolean).join('\n'), notes: el.querySelector('#nvNotes').value.trim() };
+        specialty: el.querySelector('#nvSpec').value.trim(), default_category: el.querySelector('#nvCat .ckp-val').value, aliases: el.querySelector('#nvAlias').value.split('|').map(x => x.trim()).filter(Boolean).join('\n'), notes: el.querySelector('#nvNotes').value.trim(), receive_mode: el.querySelector('select.nvMode').value };
       if (!body.name) { el.querySelector('#nvMsg').textContent = 'Give the company a name.'; return; }
       if (ev.target.dataset.force) { body.force = true; }
       const r = await post(isEdit ? '/api/bookkeeping/vendors/' + init.id : '/api/bookkeeping/vendors', body);
@@ -2171,6 +2205,10 @@
     };
   }
   // 1.19.69: open a vendor from anywhere — Nova / bill vendors get the edit form, CRM companies a details card
+  // 1.20.139: Track receiving — how a purchase from this company is confirmed received
+  const RMODES = [['', 'Decide by category / kind'], ['none', 'Nothing to receive'], ['job', 'Via Axiom job (B2, 4over)'], ['email', 'Via email (shipped / delivered)'], ['hand', 'By hand at the dock']];
+  const RMODE_T = 'How a purchase from this company gets confirmed received. Nothing to receive: paid is done (rides, fees, subscriptions). Via Axiom job: the purchase is linked to the job it was bought for and counts as received once that job ships. Via email: shipped / delivered emails in accounting@ move it along. By hand: someone at the dock confirms. Not set: Nova decides from the category and the kind of company.';
+  const modeSel = (cls, cur) => '<select class="bk vmode ' + cls + '" title="' + esc(RMODE_T) + '">' + RMODES.map(m => '<option value="' + m[0] + '"' + ((cur || '') === m[0] ? ' selected' : '') + '>' + m[1] + '</option>').join('') + '</select>';
   async function vendorCard(id, onDone) {
     const j = await api('/api/bookkeeping/directory?fresh=0');
     const x = (j.vendors || []).find(v => v.id === id); if (!x) { alert('Vendor not found'); return; }
@@ -2182,11 +2220,12 @@
       line('Contact', esc(x.contact || '')) + line('Email', esc(x.email || '')) + line('Phone', esc(x.phone || '')) + line('Specialty', esc(x.specialty || '')) + line('Address', esc([d.address, d.city, d.state, d.zip].filter(Boolean).join(', '))) +
       '<div class="nv-f" style="margin-top:10px"><span class="bk-muted">Usual category (Nova)</span><div id="vcCat">' + catSelect(x.default_category || '', 'vccat', 'not set', { multi: true }) + '</div></div>' +
       '<label class="nv-f"><span class="bk-muted">On the bank statement as (Nova)</span><input class="bk" id="vcAlias" value="' + esc(String(x.aliases || '').split('\n').join(' | ')) + '" placeholder="separate with |"></label>' +
+      '<div class="nv-f"><span class="bk-muted">Track receiving (Nova)</span>' + modeSel('vcMode', x.receive_mode) + '</div>' +
       '<div class="bk-muted" style="margin-top:8px">From the CRM ' + esc(d.list || x.source || '') + ' list — name and contacts are edited in the CRM; the category and bank names live here.</div>' +
       '<div class="bk-row" style="margin-top:12px"><button class="bk-btn p" id="vcSave">Save</button><button class="bk-btn bk-x">Close</button></div></div>';
     const close = () => el.remove(); el.onclick = (ev) => { if (ev.target === el || ev.target.classList.contains('bk-x')) close(); };
     document.body.appendChild(el);
-    el.querySelector('#vcSave').onclick = async () => { const r = await post('/api/bookkeeping/vendors/' + x.id, { default_category: el.querySelector('#vcCat .ckp-val').value, aliases: el.querySelector('#vcAlias').value.split('|').map(t => t.trim()).filter(Boolean).join('\n') }); if (!r.ok) return alert(r.error); learnedNote(r, x.name); close(); if (onDone) onDone(); };
+    el.querySelector('#vcSave').onclick = async () => { const r = await post('/api/bookkeeping/vendors/' + x.id, { default_category: el.querySelector('#vcCat .ckp-val').value, aliases: el.querySelector('#vcAlias').value.split('|').map(t => t.trim()).filter(Boolean).join('\n'), receive_mode: el.querySelector('select.vcMode').value }); if (!r.ok) return alert(r.error); learnedNote(r, x.name); close(); if (onDone) onDone(); };
   }
   async function loadNovaVendors() {
     const v = $('vNova');
@@ -2246,6 +2285,7 @@
     const row = (x) => '<tr data-vid="' + x.id + '" data-kind="' + esc(x.kind || 'other') + '" data-ap="' + (x.approved ? 1 : 0) + '" data-cats="' + esc('|' + splitCats(x.default_category).join('|') + '|') + '" data-q="' + esc((x.name + ' ' + (x.contact || '') + ' ' + (x.email || '') + ' ' + (x.specialty || '') + ' ' + (x.aliases || '')).toLowerCase()) + '" data-name="' + esc(String(x.name || '').toLowerCase()) + '" data-contact="' + esc(((x.contact || '') + ' ' + (x.email || '') + ' ' + (x.phone || '')).toLowerCase()) + '" data-spec="' + esc(String(x.specialty || '').toLowerCase()) + '"><td class="vcell"><a href="#" class="bk-open" data-vopen="' + x.id + '" title="Full details">' + logo(x) + '</a><div class="vkind">' + kindTag(x) + '</div></td>' +
       '<td><a href="#" class="bk-open bk-name" data-vopen="' + x.id + '" title="Full details">' + esc(x.name) + '</a>' + (x.contact ? '<div class="bk-muted">' + esc(x.contact) + '</div>' : '') + '</td><td class="bk-muted">' + esc(x.email || '') + (x.phone ? '<br>' + esc(x.phone) : '') + '</td><td class="bk-muted">' + esc(x.specialty || '') + (x.materials ? '<div class="bk-dim"><a href="#" data-mats="' + x.id + '" title="See the materials in the catalog">' + x.materials + ' material' + (x.materials == 1 ? '' : 's') + '</a>: ' + esc((x.geo_types || []).join(', ')) + '</div>' : '') + '</td>' +
       '<td>' + catSelect(x.default_category || '', 'vcat', 'not set', { multi: true }) + '</td><td><input type="text" class="bk valias" placeholder="bank names, one per line" value="' + esc(String(x.aliases || '').split('\n').join(' | ')) + '" title="How this vendor appears on bank statements (separate with |)"></td>' +
+      '<td>' + modeSel('vrmode', x.receive_mode) + '</td>' +
       '<td class="num bk-muted" title="How many bank transactions and bills are linked to this company">' + (x.txns || 0) + ' <span class="bk-dim">txn' + (x.txns == 1 ? '' : 's') + '</span><br>' + (x.bills || 0) + ' <span class="bk-dim">bill' + (x.bills == 1 ? '' : 's') + '</span></td></tr>';
     // Full CRM record in a popup (everything the CRM holds for the company; edit it in the CRM).
     const openVendor = (x) => {
@@ -2267,7 +2307,7 @@
     };
     const unapproved = all.filter(x => !x.approved).length;
     v.innerHTML = '<div class="bk-card">' + (j.sync_error ? '<div class="bk-muted" style="color:#b91c1c;margin-bottom:8px" title="' + esc(j.sync_error) + '">CRM sync failed — ' + esc(j.sync_error) + '</div>' : '') +
-            (all.length ? '<table class="bk bk-dir"><thead><tr><th>' + thFilter('kind', 'Type', FOPTS.kind, F.kind) + '</th><th>' + thFilter('name', 'Name', FOPTS.name) + '</th><th>' + thFilter('contact', 'Contact', FOPTS.contact) + '</th><th>' + thFilter('spec', 'Specialty', FOPTS.spec) + '</th><th>' + thFilter('cat', 'Usual category', FOPTS.cat, F.cat) + '</th><th title="How this company appears on bank statements">Bank name</th>' +
+            (all.length ? '<table class="bk bk-dir"><thead><tr><th>' + thFilter('kind', 'Type', FOPTS.kind, F.kind) + '</th><th>' + thFilter('name', 'Name', FOPTS.name) + '</th><th>' + thFilter('contact', 'Contact', FOPTS.contact) + '</th><th>' + thFilter('spec', 'Specialty', FOPTS.spec) + '</th><th>' + thFilter('cat', 'Usual category', FOPTS.cat, F.cat) + '</th><th title="How this company appears on bank statements">Bank name</th><th title="' + esc(RMODE_T) + '">Receiving</th>' +
         '<th class="num" title="Bank transactions and bills linked to this company">Linked</th></tr></thead><tbody>' + all.map(row).join('') + '</tbody></table><div class="bk-muted" id="vNone" style="display:none;padding:14px 0">Nothing matches.</div>'
         : '<div class="bk-muted">Nothing synced from the CRM yet — it syncs itself within the hour.</div>') + '</div>';
     const filter = () => {
@@ -2297,6 +2337,7 @@
       });
       const al = tr.querySelector('.valias'); let lastAl = al.value;
       al.addEventListener('change', async () => { if (al.value === lastAl) return; lastAl = al.value; const r = await post('/api/bookkeeping/vendors/' + id, { aliases: al.value.split('|').map(x => x.trim()).filter(Boolean).join('\n') }); flash(tr, r.ok); });
+      const md = tr.querySelector('select.vrmode'); if (md) md.addEventListener('change', async () => { const r = await post('/api/bookkeeping/vendors/' + id, { receive_mode: md.value }); flash(tr, r.ok); if (r.ok && r.swept) toast(r.swept + ' open purchase' + (r.swept === 1 ? '' : 's') + ' moved'); });   /* 1.20.139 */
     });
     v.querySelectorAll('[data-vappr]').forEach(a => a.onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/vendors/' + a.dataset.vappr, { approved: true }); if (!r.ok) alert(r.error); loadVendors(); });
   }
@@ -2851,5 +2892,5 @@
     return;
   }
   if (want === 'ar') { location.replace('/nova-ar' + (qs.get('sub') ? '?sub=' + qs.get('sub') : '')); return; }
-  show(['brief', 'purchases', 'list', 'bank', 'waiting', 'notreceived', 'bills', 'ar', 'inbox', 'accounts', 'vendors', 'chart', 'rules', 'materials', 'conn', 'activity'].indexOf(want) > -1 ? (want === 'txns' ? 'purchases' : want === 'purchases' && qs.get('sub') === 'bank' ? 'bank' : want) : 'brief', qs.get('sub') === 'bank' ? 'pending' : qs.get('sub'));
+  show(['brief', 'purchases', 'list', 'bank', 'waiting', 'notreceived', 'toreceive', 'shipped', 'received', 'na', 'bills', 'ar', 'inbox', 'accounts', 'vendors', 'chart', 'rules', 'materials', 'conn', 'activity'].indexOf(want) > -1 ? (want === 'txns' ? 'purchases' : want === 'purchases' && qs.get('sub') === 'bank' ? 'bank' : want) : 'brief', qs.get('sub') === 'bank' ? 'pending' : qs.get('sub'));
 })();

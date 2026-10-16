@@ -164,6 +164,12 @@ module.exports = function mountBookkeeping(app, deps) {
       expects_delivery INTEGER, received TEXT DEFAULT 'no', received_at TEXT, received_note TEXT, no_paperwork INTEGER DEFAULT 0,
       cancelled INTEGER DEFAULT 0, note TEXT, created_by TEXT, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT, alerted_at TEXT)`);
     ['bk_emails', 'bk_bills', 'bk_transactions'].forEach(t => db.run('ALTER TABLE ' + t + ' ADD COLUMN purchase_id INTEGER', () => {}));
+    // 1.20.139: receiving, per vendor and per purchase. bk_vendors.receive_mode = how a purchase from this company is confirmed received:
+    // none (nothing to receive) · job (follows the Axiom job it was bought for — B2, 4over) · email (shipped / delivered emails in
+    // accounting@) · hand (someone at the dock) — NULL = decide from the category and the kind of company. bk_purchases keeps the
+    // mode it was born with, the shipped stage (shipped_at + tracking) and the receiving log (received_source / _by / _ref / job_id).
+    db.run('ALTER TABLE bk_vendors ADD COLUMN receive_mode TEXT', () => {});
+    ['receive_mode TEXT', 'shipped_at TEXT', 'tracking TEXT', 'received_source TEXT', 'received_by TEXT', 'received_ref TEXT', 'job_id INTEGER'].forEach(c => db.run('ALTER TABLE bk_purchases ADD COLUMN ' + c, () => {}));
     ['kind TEXT', 'confidence REAL', 'triaged_at TEXT', 'read_by TEXT', 'body_html TEXT', 'aside INTEGER DEFAULT 0', 'vendor_id INTEGER', 'matched_bill_id INTEGER', 'matched_txn_id INTEGER', 'decided_kind TEXT', 'decided_by TEXT', 'decided_at TEXT'].forEach(c => db.run('ALTER TABLE bk_emails ADD COLUMN ' + c, () => {}));
     db.run(`CREATE TABLE IF NOT EXISTS bk_proposals (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, ref_table TEXT, ref_id INTEGER, title TEXT,
       payload TEXT, confidence REAL, reason TEXT, status TEXT DEFAULT 'pending', decided_by TEXT, decided_at TEXT, decision TEXT,
@@ -218,7 +224,7 @@ module.exports = function mountBookkeeping(app, deps) {
     triage_auto: 0,   // 0 = BookkeeperAI only RATES emails; a person sets them aside ("Set aside all ads"). 1 = it sets aside by itself above the thresholds.
     categories: DEFAULT_CATEGORIES.join('\n'), chat_webhook: env('BOOKKEEPER_CHAT_WEBHOOK') || '', chat_space: '',
     backfill_days: parseInt(env('BOOKKEEPER_BACKFILL_DAYS')) || 30,
-    notreceived_days: 30, waiting_days: 30, alert_to: env('BOOKKEEPER_ALERT_TO') || 'gary@axiomprint.com', alert_at: '08:00', ar_to: env('BOOKKEEPER_AR_TO') || 'gary@axiomprint.com', ar_cc: env('BOOKKEEPER_AR_CC') || 'paymentsupport@axiomprint.com', gmail_history_id: '', gmail_watch_expires: '',
+    notreceived_days: 30, waiting_days: 30, shipped_days: 10, alert_to: env('BOOKKEEPER_ALERT_TO') || 'gary@axiomprint.com', alert_at: '08:00', ar_to: env('BOOKKEEPER_AR_TO') || 'gary@axiomprint.com', ar_cc: env('BOOKKEEPER_AR_CC') || 'paymentsupport@axiomprint.com', gmail_history_id: '', gmail_watch_expires: '',
     notes: 'AxiomPrint is a print shop in Glendale, CA. Inks, paper, printing supplies and outsourced printing are cost of goods. Equipment over $2,500 is a fixed asset, not an expense. Transfers between our own accounts and credit card payments are not expenses.'
   };
   let settingsCache = null;
@@ -599,11 +605,24 @@ module.exports = function mountBookkeeping(app, deps) {
   const jarr = (t) => { try { const a = JSON.parse(t || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
   async function expectsDelivery(category) { if (!category) return null; const c = chartOf(await settings()).find(x => x.name === category); return c ? (c.delivery ? 1 : 0) : null; }
   const today = () => nowIso().slice(0, 10);
+  // 1.20.139: how a purchase gets confirmed received. The vendor's own setting wins; else a category the chart says is not a delivery
+  // is 'none'; else by the kind of company — Axiom suppliers ship goods (email), Axiom vendors are outsourcers paid per job (job),
+  // Nova / bill vendors: email. The names match the picker on the vendor card (RECEIVE_MODES).
+  const RECEIVE_MODES = ['none', 'job', 'email', 'hand'];
+  async function receiveModeFor(vendorId, category) {
+    const v = vendorId ? (await directory()).find(x => x.id === vendorId) : null;
+    if (v && RECEIVE_MODES.indexOf(v.receive_mode) > -1) return v.receive_mode;
+    const exp = await expectsDelivery(category);
+    if (exp === 0) return 'none';
+    if (!v) return exp ? 'email' : 'none';
+    return v.source === 'vendors' ? 'job' : 'email';
+  }
   async function newPurchase(f, who) {
-    const exp = f.expects_delivery != null ? (f.expects_delivery ? 1 : 0) : await expectsDelivery(f.category);
-    const r = await dbRun('INSERT INTO bk_purchases (vendor_id, vendor, amount, date, order_no, category, bill_id, confirm_email_id, txn_ids, arrival_email_ids, expects_delivery, received, no_paperwork, note, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    const mode = f.receive_mode || await receiveModeFor(f.vendor_id, f.category);
+    const exp = f.expects_delivery != null ? (f.expects_delivery ? 1 : 0) : (mode === 'none' ? 0 : 1);
+    const r = await dbRun('INSERT INTO bk_purchases (vendor_id, vendor, amount, date, order_no, category, bill_id, confirm_email_id, txn_ids, arrival_email_ids, expects_delivery, received, no_paperwork, note, created_by, receive_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       [f.vendor_id || null, f.vendor || null, f.amount != null ? Math.abs(Number(f.amount)) || 0 : null, f.date || today(), f.order_no || null, f.category || null, f.bill_id || null, f.confirm_email_id || null,
-       JSON.stringify(f.txn_ids || []), JSON.stringify(f.arrival_email_ids || []), exp, exp ? 'no' : 'na', f.no_paperwork ? 1 : 0, f.note || null, who || null]);
+       JSON.stringify(f.txn_ids || []), JSON.stringify(f.arrival_email_ids || []), exp, exp ? 'no' : 'na', f.no_paperwork ? 1 : 0, f.note || null, who || null, mode]);
     const id = r.lastID;
     if (f.bill_id) await dbRun('UPDATE bk_bills SET purchase_id = ? WHERE id = ?', [id, f.bill_id]);
     if (f.confirm_email_id) await dbRun('UPDATE bk_emails SET purchase_id = ? WHERE id = ?', [id, f.confirm_email_id]);
@@ -622,10 +641,136 @@ module.exports = function mountBookkeeping(app, deps) {
       if (tx) { if (!p.category && tx.category) { sets.push('category = ?'); args.push(tx.category); const exp = await expectsDelivery(tx.category); if (p.expects_delivery == null && exp != null) { sets.push('expects_delivery = ?'); args.push(exp); sets.push('received = ?'); args.push(exp ? (p.received === 'na' ? 'no' : p.received) : 'na'); } }
         if (!p.vendor_id && tx.vendor_id) { sets.push('vendor_id = ?'); args.push(tx.vendor_id); } if (p.amount == null) { sets.push('amount = ?'); args.push(Math.abs(tx.amount)); } } }
     if (a.arrival_email_id) { const e = jarr(p.arrival_email_ids); if (e.indexOf(a.arrival_email_id) < 0) e.push(a.arrival_email_id); sets.push('arrival_email_ids = ?'); args.push(JSON.stringify(e)); await dbRun('UPDATE bk_emails SET purchase_id = ? WHERE id = ?', [pid, a.arrival_email_id]);
-      if (a.received) { sets.push('received = ?'); args.push(a.received); sets.push('received_at = ?'); args.push(today()); if (a.note) { sets.push('received_note = ?'); args.push(a.note); } if (p.expects_delivery == null) { sets.push('expects_delivery = 1'); } } }
+      if (a.received) { sets.push('received = ?'); args.push(a.received); sets.push('received_at = ?'); args.push(today()); if (a.note) { sets.push('received_note = ?'); args.push(a.note); } if (p.expects_delivery == null) { sets.push('expects_delivery = 1'); } sets.push('received_source = ?, received_by = ?, received_ref = ?'); args.push('email', who || null, 'email:' + a.arrival_email_id); } }   /* 1.20.139: the log says a delivery email did it */
     if (a.category && !p.category) { sets.push('category = ?'); args.push(a.category); }
     if (sets.length) { sets.push("updated_at = datetime('now')"); await dbRun('UPDATE bk_purchases SET ' + sets.join(', ') + ' WHERE id = ?', args.concat([pid])); }
     await audit(who, 'purchase.attach', pid, a);
+  }
+  // ---------------------------------------------------------------- 1.20.139: receiving via the Axiom job (B2 Sign, 4over, any outsourcer)
+  // The team types what the outsourcer charged into `estimate.outsource_cost` (the only outsourcing field in use — purchase_orders is
+  // empty). A purchase from a job-tracked vendor is matched to the estimate with that exact cost created in the 60 days before the
+  // bank date (or up to 7 days after — the card is sometimes charged before the job is entered): one hit links it (job_id), several
+  // are kept as candidates (job_cands) for a click, none says so. Linked, the purchase follows the job: once it reaches packing,
+  // handling (shipping / pickup) or complete (not canceled) the goods had to be in-house → Received, source 'job'.
+  db.run('ALTER TABLE bk_purchases ADD COLUMN job_cands TEXT', () => {});
+  db.run('ALTER TABLE bk_purchases ADD COLUMN job_checked_at TEXT', () => {});
+  const jobArrived = (stage, sub) => (stage === 'processing' && sub === 'packing') || stage === 'handling' || (stage === 'complete' && sub !== 'canceled');
+  const jobState = (stage, sub) => stage === 'complete' ? (sub === 'canceled' ? 'canceled' : 'done') : stage === 'handling' ? (sub === 'pickup' ? 'ready for pickup' : 'shipping') : stage === 'processing' ? (sub === 'packing' ? 'packing' : 'in production') : stage === 'prepress' ? 'in prepress' : (stage || 'ordered');
+  let jobFloorCache = { day: '', id: 0 };
+  async function jobIdFloor() {   /* estimate.created has no index — MIN(id) 90 days back, once a day, keeps the cost look-up on the primary key */
+    const day = today(); if (jobFloorCache.day === day && jobFloorCache.id) return jobFloorCache.id;
+    const r = await runQuery('SELECT MIN(id) AS id FROM estimate WHERE created >= DATE_SUB(NOW(), INTERVAL 95 DAY)');
+    jobFloorCache = { day, id: (r && r[0] && r[0].id) || 0 }; return jobFloorCache.id;
+  }
+  async function jobsForCost(amount, date) {
+    const floor = await jobIdFloor(); if (!floor) return [];
+    const rows = await runQuery('SELECT e.id, e.estimate_name AS name, e.created, e.estimate_clientid, es.estimate_stage, es.estimate_substage, c.company_name AS company FROM estimate e LEFT JOIN estimate_stage es ON es.estimate_id = e.id LEFT JOIN customer c ON c.id = e.estimate_clientid WHERE e.id >= ' + parseInt(floor) + ' AND e.outsource_cost = ' + mysql.escape(Math.round(Number(amount) * 100) / 100) + ' ORDER BY e.id DESC LIMIT 12');
+    const d = new Date(String(date || today()) + 'T12:00:00Z').getTime();
+    return rows.filter(r => { const c = new Date(r.created).getTime(); return c >= d - 60 * 86400000 && c <= d + 7 * 86400000; }).map(r => ({ id: r.id, name: r.name, company: r.company, created: String(r.created).slice(0, 10), stage: r.estimate_stage, sub: r.estimate_substage, state: jobState(r.estimate_stage, r.estimate_substage), arrived: jobArrived(r.estimate_stage, r.estimate_substage) }));
+  }
+  const jobStateCache = {};   /* estimate id → state text, filled by the sweep so the list never queries the CRM per row */
+  async function jobById(id) {
+    const rows = await runQuery('SELECT e.id, e.estimate_name AS name, e.created, es.estimate_stage, es.estimate_substage, c.company_name AS company FROM estimate e LEFT JOIN estimate_stage es ON es.estimate_id = e.id LEFT JOIN customer c ON c.id = e.estimate_clientid WHERE e.id = ' + parseInt(id));
+    const r = rows && rows[0]; if (!r) return null;
+    jobStateCache[r.id] = jobState(r.estimate_stage, r.estimate_substage);
+    return { id: r.id, name: r.name, company: r.company, created: String(r.created).slice(0, 10), stage: r.estimate_stage, sub: r.estimate_substage, state: jobState(r.estimate_stage, r.estimate_substage), arrived: jobArrived(r.estimate_stage, r.estimate_substage) };
+  }
+  async function linkJob(pid, job, who, source) {
+    const sets = ['job_id = ?', "job_cands = NULL", "received_ref = ?", "updated_at = datetime('now')"], args = [job.id, 'job:' + job.id];
+    if (job.arrived) { sets.push("received = 'yes'", 'received_at = ?', "received_source = 'job'", 'received_by = ?'); args.push(today(), who || 'nova'); }
+    jobStateCache[job.id] = job.state;
+    await dbRun('UPDATE bk_purchases SET ' + sets.join(', ') + ' WHERE id = ?', args.concat([pid]));
+    await audit(who || 'nova', 'purchase.job', pid, { estimate_id: job.id, state: job.state, received: !!job.arrived, source: source || 'auto' });
+  }
+  let jobSweptAt = 0;
+  async function applyJobTracking(force) {
+    if (!force && Date.now() - jobSweptAt < 60000) return { linked: 0, received: 0 }; jobSweptAt = Date.now();
+    const out = { linked: 0, received: 0, checked: 0 };
+    const rows = await dbAll("SELECT p.id, p.amount, p.date, p.job_id, p.received, p.receive_mode, p.job_checked_at, v.receive_mode AS vendor_mode, v.source AS vendor_source FROM bk_purchases p LEFT JOIN bk_vendors v ON v.id = p.vendor_id WHERE p.cancelled = 0 AND p.expects_delivery = 1 AND p.received IN ('no', 'partial') AND COALESCE(p.receive_mode, v.receive_mode, CASE WHEN v.source = 'vendors' THEN 'job' ELSE '' END) = 'job' AND p.amount > 0 ORDER BY p.id DESC LIMIT 150");
+    for (const p of rows) {
+      try {
+        if (p.job_id) { const j = await jobById(p.job_id); out.checked++; if (j && j.arrived) { await linkJob(p.id, j, 'nova', 'follow'); out.received++; } continue; }
+        if (p.job_checked_at && Date.now() - new Date(p.job_checked_at.replace(' ', 'T') + 'Z').getTime() < 6 * 3600000) continue;   /* an unmatched one is retried every 6 h (the team may enter the cost later) */
+        const cands = await jobsForCost(p.amount, p.date); out.checked++;
+        if (cands.length === 1) { await linkJob(p.id, cands[0], 'nova', 'cost'); out.linked++; if (cands[0].arrived) out.received++; }
+        else await dbRun("UPDATE bk_purchases SET job_cands = ?, job_checked_at = datetime('now') WHERE id = ?", [cands.length ? JSON.stringify(cands.slice(0, 6)) : null, p.id]);
+      } catch (e) { errlog('job tracking', e.message); break; }
+    }
+    return out;
+  }
+  // ---------------------------------------------------------------- 1.20.139: receiving via email (Amazon, Uline, Kelly Paper, Avery…)
+  // Every triaged arrival / receipt email whose subject or text talks about a shipment is read once by the light model
+  // (`extractShipment`: event shipped / delivered / confirmation, vendor, order number, tracking, amount, date — kept in
+  // bk_emails.ship_json) and matched to an open purchase: the same order number (strongest), else the same vendor + the same amount,
+  // else the same vendor with only one open purchase in the window. A sure match (≥ 0.75) acts by itself — a shipped email sets the
+  // Shipped stage (shipped_at + tracking), a delivered one sets Received (source 'email') — and attaches the email; an unsure one is
+  // kept as a hint the row shows ("delivery email? Match"). Nothing here touches Gmail's read state.
+  ['ship_json TEXT', 'ship_checked_at TEXT'].forEach(c => db.run('ALTER TABLE bk_emails ADD COLUMN ' + c, () => {}));
+  const SHIP_RE = /\b(shipped|shipping confirmation|on its way|on the way|out for delivery|delivered|delivery (confirmation|notification|update)|tracking (number|#|info)|has arrived|your package|your order (has|was|is)|dispatched|en route|proof of delivery|pod\b)/i;
+  async function extractShipment(em) {
+    const text = 'From: ' + em.from_addr + '\nSubject: ' + em.subject + '\nDate: ' + em.received_at + '\n\n' + String(em.body || em.snippet || '').slice(0, 4000);
+    const r = await anthropic.messages.create({ model: MODEL_LIGHT, max_tokens: 300, system: 'You read one email from the accounting inbox of a print shop and say what it tells about a shipment. Return ONLY JSON.',
+      messages: [{ role: 'user', content: text + '\n\nReturn ONLY JSON: {"event": "shipped"|"delivered"|"confirmation"|"other", "vendor": "<the company that sells / ships>", "order_no": "<order or confirmation number, or empty>", "tracking": "<tracking number or tracking URL, or empty>", "carrier": "<UPS / FedEx / USPS / freight / empty>", "amount": <order total as a number, or null>, "date": "YYYY-MM-DD of the shipment / delivery, or null"}. shipped = it left the vendor or is in transit; delivered = it arrived (delivered, left at the door, signed for, picked up); confirmation = an order placed / receipt with nothing shipped yet; other = none of these.' }] });
+    const j = jsonOf((r.content || []).filter(b => b.type === 'text').map(b => b.text).join('')) || {};
+    return { event: ['shipped', 'delivered', 'confirmation', 'other'].indexOf(j.event) > -1 ? j.event : 'other', vendor: String(j.vendor || '').slice(0, 120), order_no: String(j.order_no || '').trim().slice(0, 60), tracking: String(j.tracking || '').trim().slice(0, 200), carrier: String(j.carrier || '').slice(0, 30),
+      amount: j.amount != null && isFinite(Number(j.amount)) ? Math.round(Math.abs(Number(j.amount)) * 100) / 100 : null, date: /^\d{4}-\d{2}-\d{2}$/.test(String(j.date || '')) ? j.date : laDayOf(em.received_at) };
+  }
+  const normOrder = (o) => String(o || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  // the open purchases a shipment email could belong to, scored
+  async function shipCandidates(em, x) {
+    const open = await dbAll("SELECT p.*, v.name AS vendor_name, v.email AS vendor_email, v.aliases FROM bk_purchases p LEFT JOIN bk_vendors v ON v.id = p.vendor_id WHERE p.cancelled = 0 AND p.expects_delivery = 1 AND p.received IN ('no', 'partial') AND p.date >= date('now', '-120 days') AND COALESCE(p.receive_mode, v.receive_mode, '') <> 'none'");
+    const emVendor = em.vendor_id || null, vname = normName(x.vendor), domain = (String(em.from_addr || '').match(/@([a-z0-9.-]+)/i) || [])[1] || '';
+    const sameVendor = (p) => (emVendor && p.vendor_id === emVendor) || (vname && normName(p.vendor_name || p.vendor).indexOf(vname.split(' ')[0]) === 0 && vname.split(' ')[0].length >= 4) || (domain && p.vendor_email && String(p.vendor_email).toLowerCase().indexOf('@' + domain.toLowerCase()) > -1);
+    const d = new Date(x.date + 'T12:00:00Z').getTime();
+    const scored = open.map(p => {
+      let score = 0, why = '';
+      if (x.order_no && p.order_no && normOrder(x.order_no) && normOrder(x.order_no) === normOrder(p.order_no)) { score = 1; why = 'order #' + x.order_no; }
+      else if (sameVendor(p) && x.amount != null && p.amount != null && Math.abs(Number(p.amount) - x.amount) < 0.005) { score = 0.9; why = 'same vendor, same amount'; }
+      else if (sameVendor(p)) { const days = Math.abs((new Date(p.date + 'T12:00:00Z').getTime() - d) / 86400000); score = days <= 21 ? 0.5 : 0.3; why = 'same vendor, ' + Math.round(days) + ' days apart'; }
+      return { id: p.id, score, why, vendor: p.vendor_name || p.vendor, amount: p.amount, date: p.date };
+    }).filter(c => c.score > 0).sort((a, b) => b.score - a.score);
+    // one open purchase of the vendor in the window is a safe enough match
+    if (scored.length === 1 && scored[0].score === 0.5) scored[0].score = 0.75;
+    return scored.slice(0, 5);
+  }
+  async function applyShipment(pid, em, x, who, sure) {
+    const p = await dbGet('SELECT * FROM bk_purchases WHERE id = ?', [pid]); if (!p) return;
+    const arr = jarr(p.arrival_email_ids); if (arr.indexOf(em.id) < 0) arr.push(em.id);
+    const sets = ['arrival_email_ids = ?', "updated_at = datetime('now')"], args = [JSON.stringify(arr)];
+    if (x.event === 'shipped') { if (!p.shipped_at || p.shipped_at < x.date) { sets.push('shipped_at = ?'); args.push(x.date); } if (x.tracking && !p.tracking) { sets.push('tracking = ?'); args.push(x.tracking); } }
+    if (x.event === 'delivered' && p.received !== 'yes') { sets.push("received = 'yes'", 'received_at = ?', "received_source = 'email'", 'received_by = ?', 'received_ref = ?'); args.push(x.date, who || 'nova', 'email:' + em.id); if (!p.shipped_at) { sets.push('shipped_at = ?'); args.push(x.date); } }
+    if (!p.order_no && x.order_no) { sets.push('order_no = ?'); args.push(x.order_no); }
+    await dbRun('UPDATE bk_purchases SET ' + sets.join(', ') + ' WHERE id = ?', args.concat([pid]));
+    await dbRun('UPDATE bk_emails SET purchase_id = ? WHERE id = ?', [pid, em.id]);
+    await audit(who || 'nova', 'purchase.' + (x.event === 'delivered' ? 'delivered' : 'shipped'), pid, { email_id: em.id, order_no: x.order_no, tracking: x.tracking, sure: !!sure });
+  }
+  let shipSweptAt = 0;
+  async function applyEmailTracking(force) {
+    if (!force && Date.now() - shipSweptAt < 5 * 60000) return { read: 0, shipped: 0, delivered: 0, hints: 0 }; shipSweptAt = Date.now();
+    const out = { read: 0, shipped: 0, delivered: 0, hints: 0 };
+    const rows = await dbAll("SELECT * FROM bk_emails WHERE ship_checked_at IS NULL AND triaged_at IS NOT NULL AND kind IN ('arrival', 'receipt', 'other') AND received_at >= datetime('now', '-60 days') ORDER BY id DESC LIMIT 40");
+    for (const em of rows) {
+      try {
+        const looks = SHIP_RE.test(String(em.subject || '')) || em.kind === 'arrival' || SHIP_RE.test(String(em.snippet || em.body || '').slice(0, 1500));
+        if (!looks) { await dbRun("UPDATE bk_emails SET ship_checked_at = datetime('now') WHERE id = ?", [em.id]); continue; }
+        const x = await extractShipment(em); out.read++;
+        if (x.event !== 'shipped' && x.event !== 'delivered') { await dbRun("UPDATE bk_emails SET ship_json = ?, ship_checked_at = datetime('now') WHERE id = ?", [JSON.stringify(x), em.id]); continue; }
+        const cands = em.purchase_id ? [{ id: em.purchase_id, score: 1, why: 'already on this purchase' }] : await shipCandidates(em, x);
+        x.cands = cands;
+        await dbRun("UPDATE bk_emails SET ship_json = ?, ship_checked_at = datetime('now') WHERE id = ?", [JSON.stringify(x), em.id]);
+        if (cands.length && cands[0].score >= 0.75 && (cands.length === 1 || cands[0].score > cands[1].score)) { await applyShipment(cands[0].id, em, x, 'nova', true); out[x.event]++; }
+        else if (cands.length) out.hints++;
+      } catch (e) { errlog('email tracking', em.id, e.message); break; }
+    }
+    return out;
+  }
+  // the unsure shipment emails per open purchase (for the row's "delivery email? Match" hint)
+  async function shipHints() {
+    const rows = await dbAll("SELECT id, subject, received_at, ship_json FROM bk_emails WHERE purchase_id IS NULL AND ship_json IS NOT NULL AND received_at >= datetime('now', '-60 days') ORDER BY id DESC LIMIT 200");
+    const by = {};
+    rows.forEach(e => { let x = null; try { x = JSON.parse(e.ship_json); } catch (er) {} if (!x || !x.cands || (x.event !== 'shipped' && x.event !== 'delivered')) return;
+      x.cands.forEach(c => { (by[c.id] = by[c.id] || []).push({ email_id: e.id, subject: e.subject, at: e.received_at, event: x.event, score: c.score, why: c.why, order_no: x.order_no, tracking: x.tracking }); }); });
+    return by;
   }
   // Derived status for a row.
   function purchaseStatus(p, bill) {
@@ -752,11 +897,20 @@ module.exports = function mountBookkeeping(app, deps) {
   async function purchaseRows(view, q, f) {
     f = f || {};
     await ensureTxnPurchases();
+    try { await applyJobTracking(); } catch (e) { errlog('job sweep', e.message); }   /* 1.20.139 */
+    try { await applyEmailTracking(); } catch (e) { errlog('email sweep', e.message); }
+    const hints = await shipHints().catch(() => ({}));
     const s = await settings();
     const dir = await directory();
     const where = ['1=1'], args = [];
     if (view === 'waiting') where.push("p.confirm_email_id IS NOT NULL AND p.txn_ids = '[]' AND p.cancelled = 0");
     if (view === 'notreceived') where.push("p.expects_delivery = 1 AND p.received IN ('no', 'partial') AND p.cancelled = 0");
+    // 1.20.139: the chips are the receiving pipeline — To receive (open, nothing heard) · Shipped (a shipped / tracking email,
+    // not delivered yet) · Received · N/A (nothing to receive) · All
+    if (view === 'toreceive') where.push("p.expects_delivery = 1 AND p.received IN ('no', 'partial') AND p.shipped_at IS NULL AND p.cancelled = 0");
+    if (view === 'shipped') where.push("p.expects_delivery = 1 AND p.received IN ('no', 'partial') AND p.shipped_at IS NOT NULL AND p.cancelled = 0");
+    if (view === 'received') where.push("p.received = 'yes' AND p.cancelled = 0");
+    if (view === 'na') where.push('COALESCE(p.expects_delivery, 0) = 0 AND p.cancelled = 0');
     if (q) { where.push('(LOWER(COALESCE(p.vendor, \'\')) LIKE ? OR LOWER(COALESCE(p.order_no, \'\')) LIKE ? OR LOWER(COALESCE(p.category, \'\')) LIKE ? OR LOWER(COALESCE(v.name, \'\')) LIKE ?)'); const l = '%' + q.toLowerCase() + '%'; args.push(l, l, l, l); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(f.from || '')) { where.push('p.date >= ?'); args.push(f.from); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(f.to || '')) { where.push('p.date <= ?'); args.push(f.to); }
@@ -774,8 +928,10 @@ module.exports = function mountBookkeeping(app, deps) {
     else if (ps === 'bank') where.push("p.txn_ids = '[]' AND p.no_paperwork = 0 AND p.cancelled = 0");
     else if (ps === 'paid') where.push("p.txn_ids <> '[]' AND p.cancelled = 0");
     if (f.dstatus === 'na') where.push('COALESCE(p.expects_delivery, 0) = 0 AND p.cancelled = 0');
+    else if (f.dstatus === 'shipped') where.push("p.expects_delivery = 1 AND p.received IN ('no', 'partial') AND p.shipped_at IS NOT NULL AND p.cancelled = 0");
     else if (['no', 'partial', 'yes'].indexOf(f.dstatus) > -1) { where.push('p.expects_delivery = 1 AND p.received = ? AND p.cancelled = 0'); args.push(f.dstatus); }
-    const rows = await dbAll('SELECT p.*, v.name AS vendor_name, v.photo AS vendor_photo, v.source AS vendor_source, v.kind AS vendor_kind FROM bk_purchases p LEFT JOIN bk_vendors v ON v.id = p.vendor_id WHERE ' + where.join(' AND ') + ' ORDER BY p.date DESC, p.id DESC LIMIT 400', args);
+    if (f.mode && RECEIVE_MODES.indexOf(f.mode) > -1) { where.push("COALESCE(p.receive_mode, CASE WHEN COALESCE(p.expects_delivery, 0) = 0 THEN 'none' WHEN v.source = 'vendors' THEN 'job' ELSE 'email' END) = ?"); args.push(f.mode); }
+    const rows = await dbAll('SELECT p.*, v.name AS vendor_name, v.photo AS vendor_photo, v.source AS vendor_source, v.kind AS vendor_kind, v.receive_mode AS vendor_mode FROM bk_purchases p LEFT JOIN bk_vendors v ON v.id = p.vendor_id WHERE ' + where.join(' AND ') + ' ORDER BY p.date DESC, p.id DESC LIMIT 400', args);
     const out = [];
     const nFiles = {}; (await dbAll("SELECT ref_id, COUNT(*) n FROM bk_files WHERE kind = 'purchase' GROUP BY ref_id")).forEach(r => { nFiles[r.ref_id] = r.n; });   // 1.20.67
     for (const p of rows) {
@@ -797,7 +953,15 @@ module.exports = function mountBookkeeping(app, deps) {
       const when = (confirm && confirm.received_at) || firstArr || p.created_at;
       const delivery = p.cancelled ? 'cancelled' : !p.expects_delivery ? 'na' : (p.received === 'yes' ? 'yes' : p.received === 'partial' ? 'partial' : 'no');   // 1.19.141: the receiving dropdown's value
       const paid_on = tx.length ? tx.map(t => t.date).sort().slice(-1)[0] : null;
-      out.push(Object.assign({}, p, { vendor: p.vendor_name || p.vendor, vendor_card, suggestions, when, bill, txns: tx, confirm, arrivals: arr.length, files: nFiles[p.id] || 0, status, days: age, paired: tx.length > 0, delivery, paid_on,
+      // 1.20.139: the receiving mode (the purchase's own, else the vendor's, else as receiveModeFor decides) and the log behind the Received pill
+      const mode = p.receive_mode || (RECEIVE_MODES.indexOf(p.vendor_mode) > -1 ? p.vendor_mode : null) || (!p.expects_delivery ? 'none' : p.vendor_source === 'vendors' ? 'job' : 'email');
+      const stage = p.cancelled ? 'cancelled' : !p.expects_delivery ? 'na' : p.received === 'yes' ? 'received' : p.shipped_at ? 'shipped' : 'open';
+      const rlog = p.received === 'yes' || p.received === 'partial' ? { source: p.received_source || 'hand', by: p.received_by || null, at: p.received_at || null, ref: p.received_ref || null, note: p.received_note || null, job_id: p.job_id || null } : null;
+      let job_cands = null; if (!p.job_id && p.job_cands) { try { job_cands = JSON.parse(p.job_cands); } catch (e) {} }
+      const email_hints = stage === 'open' || stage === 'shipped' ? (hints[p.id] || []).slice(0, 3) : [];
+      const shipLate = stage === 'shipped' && p.shipped_at && (Date.now() - new Date(p.shipped_at + 'T12:00:00Z').getTime()) / 86400000 >= (s.shipped_days || 10);
+      const job_state = p.job_id && jobStateCache[p.job_id] ? jobStateCache[p.job_id] : null;
+      out.push(Object.assign({}, p, { vendor: p.vendor_name || p.vendor, vendor_card, suggestions, when, bill, txns: tx, confirm, arrivals: arr.length, files: nFiles[p.id] || 0, status, days: age, paired: tx.length > 0, delivery, paid_on, mode, stage, rlog, job_cands, job_state, job_checked: !!p.job_checked_at, email_hints, ship_late: shipLate,
         emails: ems.length + (bill && bill.id ? 1 : 0), email_subjects: ems.map(e => e.subject).slice(0, 5), attachments: atts, items: its ? its.items || 0 : 0, items_linked: its ? its.linked || 0 : 0,
         late: (status === 'awaiting bank' && age >= s.waiting_days) || ((status === 'not received' || status === 'partly received') && age >= s.notreceived_days),
         suggest: status === 'awaiting bank' ? (await suggestTxns(p)).length : 0 }));
@@ -831,16 +995,17 @@ module.exports = function mountBookkeeping(app, deps) {
   async function alertOverdue(who) {
     const s = await settings();
     try { await loanAlerts(who); } catch (e) { errlog('loan alerts', e.message); }
-    const rows = (await purchaseRows('all', '')).filter(r => r.late);
+    const rows = (await purchaseRows('all', '')).filter(r => r.late || r.ship_late);
     const auto = await autoFiled(24);   // 1.20.12: the daily email also carries what Nova filed by itself since yesterday
     if ((!rows.length && !auto.rows.length) || !sendMail) return { sent: 0, n: 0 };
     const line = (r) => '• ' + (r.vendor || '?') + ' — ' + (r.amount != null ? '$' + Number(r.amount).toFixed(2) : 'no amount') + (r.order_no ? ' · #' + r.order_no : '') + ' · ' + r.date + ' · ' + r.status + ' for ' + r.days + ' days';
-    const waiting = rows.filter(r => r.status === 'awaiting bank'), notrec = rows.filter(r => r.status !== 'awaiting bank');
+    const waiting = rows.filter(r => r.status === 'awaiting bank'), notrec = rows.filter(r => r.status !== 'awaiting bank' && !r.ship_late), shippedLate = rows.filter(r => r.ship_late);   /* 1.20.139 */
     const text = 'BookkeeperAI — daily\n\n' +
       (auto.rows.length ? auto.head + '\n' + auto.lines.slice(0, 40).join('\n') + (auto.rows.length > 40 ? '\n• …and ' + (auto.rows.length - 40) + ' more' : '') + '\nSee them: ' + NOVA_URL + '/bookkeeping?tab=bank&sub=auto\n\n' : '') +
       (rows.length ? 'Purchases waiting more than ' + s.waiting_days + ' / ' + s.notreceived_days + ' days\n' : '') +
       (waiting.length ? 'WAITING FOR THE BANK (' + waiting.length + ')\n' + waiting.map(line).join('\n') + '\n\n' : '') +
       (notrec.length ? 'NOT RECEIVED (' + notrec.length + ')\n' + notrec.map(line).join('\n') + '\n\n' : '') +
+      (shippedLate.length ? 'SHIPPED, NO DELIVERY SEEN FOR ' + s.shipped_days + '+ DAYS (' + shippedLate.length + ')\n' + shippedLate.map(r => '• ' + (r.vendor || '?') + ' — ' + (r.amount != null ? '$' + Number(r.amount).toFixed(2) : '') + ' · shipped ' + r.shipped_at + (r.tracking ? ' · ' + r.tracking : '')).join('\n') + '\n\n' : '') +
       (rows.length ? 'Open Purchases: ' + NOVA_URL + '/bookkeeping?tab=purchases\n' : '') + 'This email goes out once a day. Change the time or the address under Bookkeeping → Settings → Alerts.';
     const subject = 'BookkeeperAI: ' + [auto.rows.length ? auto.rows.length + ' auto-categorized' : '', rows.length ? rows.length + ' purchase' + (rows.length === 1 ? '' : 's') + ' overdue' : ''].filter(Boolean).join(' · ');
     if (Notify && !Notify.on('bk.alerts')) return { sent: 0, n: rows.length, off: true };   // 1.20.74: Admin → Emails
@@ -1562,6 +1727,7 @@ module.exports = function mountBookkeeping(app, deps) {
   }
   async function parseNewEmails(who) {
     const triage = await triageEmails(who);
+    try { triage.shipping = await applyEmailTracking(true); } catch (e) { errlog('email tracking', e.message); }   /* 1.20.139 */
     const s = await settings();
     // Nothing becomes a bill by itself: a person presses Bill (or Turn all) in the inbox. Only triage_auto (off) reads
     // everything in full. The AI's rating and the person's decision are both kept (bk_emails.kind vs decided_kind).
@@ -2916,19 +3082,42 @@ module.exports = function mountBookkeeping(app, deps) {
   // Purchases views + actions.
   app.get('/api/bookkeeping/purchases', ...guard, async (req, res) => { try {
     const view = String(req.query.view || 'all'); const q = String(req.query.q || '').trim();
-    const f = {}; ['from', 'to', 'vendor_id', 'vkind', 'min', 'max', 'type', 'category', 'dstatus', 'pstatus'].forEach(k => { if (req.query[k] != null && req.query[k] !== '') f[k] = String(req.query[k]); });
+    const f = {}; ['from', 'to', 'vendor_id', 'vkind', 'min', 'max', 'type', 'category', 'dstatus', 'pstatus', 'mode'].forEach(k => { if (req.query[k] != null && req.query[k] !== '') f[k] = String(req.query[k]); });
     const filtered = Object.keys(f).length > 0;
     const rows = await purchaseRows(view, q, f);
     const all = view === 'list' && !q && !filtered ? rows : await purchaseRows('list', '');
     const vendors = await dbAll('SELECT DISTINCT v.id, v.name FROM bk_purchases p JOIN bk_vendors v ON v.id = p.vendor_id ORDER BY v.name COLLATE NOCASE');   // 1.19.141: the Company filter's list
-    res.json({ ok: true, purchases: rows, vendors, counts: { waiting: all.filter(r => r.status === 'awaiting bank').length, notreceived: all.filter(r => r.status === 'not received' || r.status === 'partly received').length } });
+    res.json({ ok: true, purchases: rows, vendors, counts: { waiting: all.filter(r => r.status === 'awaiting bank').length, notreceived: all.filter(r => r.status === 'not received' || r.status === 'partly received').length,
+      toreceive: all.filter(r => r.stage === 'open').length, shipped: all.filter(r => r.stage === 'shipped').length, received: all.filter(r => r.stage === 'received').length, na: all.filter(r => r.stage === 'na').length, all: all.filter(r => !r.cancelled).length } });   /* 1.20.139 */
   } catch (e) { res.json({ ok: false, error: e.message }); } });
+  // 1.20.139: link a purchase to the Axiom job it was bought for (a candidate pick, or an E-number typed); {estimate_id: null} unlinks
+  app.post('/api/bookkeeping/purchases/:id/job', ...guard, async (req, res) => { try {
+    const pid = parseInt(req.params.id), raw = (req.body || {}).estimate_id;
+    const p = await dbGet('SELECT id FROM bk_purchases WHERE id = ?', [pid]); if (!p) return res.json({ ok: false, error: 'No such purchase' });
+    if (raw == null || raw === '') { await dbRun("UPDATE bk_purchases SET job_id = NULL, job_cands = NULL, job_checked_at = NULL, received_ref = NULL, updated_at = datetime('now') WHERE id = ?", [pid]); await audit(userId(req), 'purchase.job', pid, { estimate_id: null }); return res.json({ ok: true }); }
+    const eid = parseInt(String(raw).replace(/^E/i, '')); if (!eid) return res.json({ ok: false, error: 'Give an E-number' });
+    const job = await jobById(eid); if (!job) return res.json({ ok: false, error: 'E' + eid + ' is not in the CRM' });
+    await linkJob(pid, job, userId(req), 'manual');
+    res.json({ ok: true, job });
+  } catch (e) { res.json({ ok: false, error: e.message }); } });
+  // 1.20.139: an unsure shipment email → this purchase (the row's "delivery email? Match"); {email_id, no: true} says it is not ours
+  app.post('/api/bookkeeping/purchases/:id/shipment', ...guard, async (req, res) => { try {
+    const pid = parseInt(req.params.id), eid = parseInt((req.body || {}).email_id);
+    const em = await dbGet('SELECT * FROM bk_emails WHERE id = ?', [eid]); if (!em) return res.json({ ok: false, error: 'No such email' });
+    let x = null; try { x = JSON.parse(em.ship_json || 'null'); } catch (e) {}
+    if ((req.body || {}).no) { if (x) { x.cands = (x.cands || []).filter(c => c.id !== pid); await dbRun('UPDATE bk_emails SET ship_json = ? WHERE id = ?', [JSON.stringify(x), eid]); } return res.json({ ok: true }); }
+    if (!x || (x.event !== 'shipped' && x.event !== 'delivered')) x = Object.assign(x || {}, { event: String((req.body || {}).event || 'delivered'), date: laDayOf(em.received_at) });
+    await applyShipment(pid, em, x, userId(req), false);
+    res.json({ ok: true, event: x.event });
+  } catch (e) { res.json({ ok: false, error: e.message }); } });
+  app.post('/api/bookkeeping/purchases/email-sweep', ...guard, async (req, res) => { try { res.json(Object.assign({ ok: true }, await applyEmailTracking(true))); } catch (e) { res.json({ ok: false, error: e.message }); } });
+  app.post('/api/bookkeeping/purchases/job-sweep', ...guard, async (req, res) => { try { res.json(Object.assign({ ok: true }, await applyJobTracking(true))); } catch (e) { res.json({ ok: false, error: e.message }); } });
   // 1.19.141: the receiving status as one dropdown — na (nothing to receive: a service), no / partial / yes (goods)
   app.post('/api/bookkeeping/purchases/:id/delivery', ...guard, async (req, res) => {
     const pid = parseInt(req.params.id), st = String((req.body || {}).status || ''), note = String((req.body || {}).note || '').slice(0, 300) || null;
     const p = await dbGet('SELECT id FROM bk_purchases WHERE id = ?', [pid]); if (!p) return res.json({ ok: false, error: 'No such purchase' });
     if (st === 'na') await dbRun("UPDATE bk_purchases SET expects_delivery = 0, received = 'na', received_at = NULL, received_note = NULL, updated_at = datetime('now') WHERE id = ?", [pid]);
-    else if (['no', 'partial', 'yes'].indexOf(st) > -1) await dbRun("UPDATE bk_purchases SET expects_delivery = 1, received = ?, received_at = ?, received_note = ?, updated_at = datetime('now') WHERE id = ?", [st, st === 'no' ? null : today(), note, pid]);
+    else if (['no', 'partial', 'yes'].indexOf(st) > -1) await dbRun("UPDATE bk_purchases SET expects_delivery = 1, received = ?, received_at = ?, received_note = ?, received_source = ?, received_by = ?, received_ref = NULL, updated_at = datetime('now') WHERE id = ?", [st, st === 'no' ? null : today(), note, st === 'no' ? null : 'hand', st === 'no' ? null : userId(req), pid]);   /* 1.20.139: the log says who set it by hand */
     else return res.json({ ok: false, error: 'na, no, partial or yes' });
     await audit(userId(req), 'purchase.delivery', pid, { status: st, note }); res.json({ ok: true });
   });
@@ -2984,7 +3173,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const label = String(req.get('x-file-label') || 'delivery').slice(0, 80) || null;
       const r = await dbRun('INSERT INTO bk_files (kind, ref_id, name, mime, size, file, label, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', ['purchase', id, name, kind.mime, buf.length, file, label, userId(req), nowIso()]);
       const received = String(req.get('x-received') || ''); const note = decodeURIComponent(String(req.get('x-note') || '')).slice(0, 300) || null;
-      if (received === 'yes' || received === 'partial') await dbRun("UPDATE bk_purchases SET expects_delivery = 1, received = ?, received_at = ?, received_note = CASE WHEN ? = 'yes' THEN ? ELSE COALESCE(?, received_note) END, updated_at = datetime('now') WHERE id = ?", [received, today(), received, note, note, id]);
+      if (received === 'yes' || received === 'partial') await dbRun("UPDATE bk_purchases SET expects_delivery = 1, received = ?, received_at = ?, received_note = CASE WHEN ? = 'yes' THEN ? ELSE COALESCE(?, received_note) END, received_source = 'slip', received_by = ?, updated_at = datetime('now') WHERE id = ?", [received, today(), received, note, note, userId(req), id]);   /* 1.20.139 */
       await audit(userId(req), 'purchase.file', id, { file_id: r.lastID, name, size: buf.length, received: received || null });
       res.json({ ok: true, file: fileRow(await dbGet('SELECT * FROM bk_files WHERE id = ?', [r.lastID])), received: received || null });
     } catch (e) { res.json({ ok: false, error: e.message }); }
@@ -3632,6 +3821,15 @@ module.exports = function mountBookkeeping(app, deps) {
       if (b.photo !== undefined) { sets.push('photo = ?'); args.push(vendorPhoto(b.photo)); }   // 1.19.77: a logo URL or a small picture uploaded from the form
     }
     if (b.default_category !== undefined) { sets.push('default_category = ?'); args.push(String(b.default_category || '').slice(0, 300) || null); }
+    let modeSwept = 0;
+    if (b.receive_mode !== undefined) {   // 1.20.139: Track receiving — none / job / email / hand, '' = decide from the category and kind of company
+      const m = RECEIVE_MODES.indexOf(b.receive_mode) > -1 ? b.receive_mode : null; sets.push('receive_mode = ?'); args.push(m);
+      const vid = parseInt(req.params.id);
+      // the company's purchases that are not received yet follow the new setting (received ones keep their history)
+      if (m === 'none') modeSwept = (await dbRun("UPDATE bk_purchases SET receive_mode = 'none', expects_delivery = 0, received = 'na', updated_at = datetime('now') WHERE vendor_id = ? AND received IN ('no', 'na') AND cancelled = 0", [vid])).changes;
+      else if (m) modeSwept = (await dbRun("UPDATE bk_purchases SET receive_mode = ?, expects_delivery = 1, received = CASE WHEN received = 'na' THEN 'no' ELSE received END, updated_at = datetime('now') WHERE vendor_id = ? AND received IN ('no', 'na', 'partial') AND cancelled = 0", [m, vid])).changes;
+      else modeSwept = (await dbRun("UPDATE bk_purchases SET receive_mode = NULL, updated_at = datetime('now') WHERE vendor_id = ? AND received IN ('no', 'na', 'partial') AND cancelled = 0", [vid])).changes;
+    }
     if (b.notes !== undefined) { sets.push('notes = ?'); args.push(String(b.notes || '').slice(0, 500) || null); }
     if (b.aliases !== undefined) { sets.push('aliases = ?'); args.push(String(b.aliases || '').slice(0, 1000) || null); }
     if (b.approved !== undefined) { sets.push('approved = ?, approved_by = ?, approved_at = ?'); args.push(b.approved ? 1 : 0, userId(req), nowIso()); }
@@ -3639,12 +3837,12 @@ module.exports = function mountBookkeeping(app, deps) {
     await dbRun('UPDATE bk_vendors SET ' + sets.join(', ') + ' WHERE id = ?', args.concat([parseInt(req.params.id)]));
     dirCache.at = 0;
     let relinked = 0; if (b.aliases !== undefined || b.name !== undefined) { try { relinked = await relinkVendor(parseInt(req.params.id)); } catch (e) { errlog('relink', e.message); } }   // 1.19.130: a bank name typed in links the open lines now
-    await audit(userId(req), 'vendor.update', req.params.id, Object.assign({ relinked }, b)); res.json({ ok: true, relinked });
+    await audit(userId(req), 'vendor.update', req.params.id, Object.assign({ relinked, modeSwept }, b)); res.json({ ok: true, relinked, swept: modeSwept });
   });
   app.get('/api/bookkeeping/activity', ...guard, async (req, res) => res.json({ ok: true, runs: await dbAll('SELECT * FROM bk_runs ORDER BY id DESC LIMIT 40'), audit: await dbAll('SELECT * FROM bk_audit ORDER BY id DESC LIMIT 200'), briefs: await dbAll('SELECT day, stats, posted_at, post_error FROM bk_briefs ORDER BY day DESC LIMIT 30') }));
   app.post('/api/bookkeeping/settings', ...guard, async (req, res) => {
     const b = req.body || {};
-    for (const k of ['run_at', 'poll_min', 'threshold', 'notes', 'chat_webhook', 'backfill_days', 'triage_ad', 'triage_bill', 'triage_notice', 'triage_message', 'triage_auto', 'notreceived_days', 'waiting_days', 'alert_to', 'alert_at', 'ar_to', 'ar_cc', 'baskets']) if (b[k] !== undefined) await setSetting(k, b[k] === true ? 1 : b[k] === false ? 0 : b[k], userId(req));
+    for (const k of ['run_at', 'poll_min', 'threshold', 'notes', 'chat_webhook', 'backfill_days', 'triage_ad', 'triage_bill', 'triage_notice', 'triage_message', 'triage_auto', 'notreceived_days', 'waiting_days', 'shipped_days', 'alert_to', 'alert_at', 'ar_to', 'ar_cc', 'baskets']) if (b[k] !== undefined) await setSetting(k, b[k] === true ? 1 : b[k] === false ? 0 : b[k], userId(req));
     if (b.categories !== undefined) await saveChart(parseChartText(b.categories, chartTree(await settings())), userId(req));
     await audit(userId(req), 'settings', null, Object.keys(b));
     res.json({ ok: true, settings: await settings() });
