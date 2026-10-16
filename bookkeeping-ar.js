@@ -142,10 +142,21 @@ module.exports = function mountAr(ctx) {
     if (force || Date.now() - rulesCache.at > 60000) { rulesCache = { at: Date.now(), rows: await dbAll('SELECT * FROM bk_ar_rules ORDER BY LENGTH(pattern) DESC, id') }; }
     return rulesCache.rows;
   }
+  // 1.20.119: a rule's words are kept as typed ("peace & haight", "4 over"). A deposit matches when every real word of the rule
+  // ("&" / "and" skipped) is a token of the wording, or when the rule's compact form is inside the wording's ("4over" ⊂ "4overllcpayments").
+  const typedPattern = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9&]+/g, ' ').trim().split(' ').filter(Boolean).slice(0, 5).join(' ');
+  const tokensOf = (s) => new Set(String(s || '').toLowerCase().replace(/[^a-z0-9&]+/g, ' ').split(' ').filter(Boolean));
+  function ruleHits(r, wording) {
+    const w = String(r.pattern || '').split(' ').filter(x => x && x !== '&' && x !== 'and');
+    if (!w.length) return false;
+    const toks = tokensOf(wording);
+    if (w.every(x => toks.has(x))) return true;
+    const c = compact(r.pattern); return c.length >= 4 && compact(wording).indexOf(c) > -1;
+  }
   async function ruleFor(t) {
-    const words = new Set(keyWords([t.name, t.merchant, t.orig_desc].filter(Boolean).join(' ')));
-    if (!words.size) return null;
-    for (const r of await arRules()) { const w = String(r.pattern || '').split(' ').filter(Boolean); if (w.length && w.every(x => words.has(x))) return r; }
+    const wording = [t.name, t.merchant, t.orig_desc].filter(Boolean).join(' ');
+    if (!wording.trim()) return null;
+    for (const r of await arRules()) if (ruleHits(r, wording)) return r;
     return null;
   }
   // learned on every match / pair / manual entry: the payer words of this deposit → the customer the AR team chose
@@ -407,7 +418,8 @@ module.exports = function mountAr(ctx) {
   });
   app.post('/api/bookkeeping/ar/rules', ...guard, async (req, res) => {
     try {
-      const pat = keyWords(String(req.body.pattern || '')).filter(w => !/\d/.test(w)).slice(0, 5).join(' ');
+      /* 1.20.119: a typed rule keeps its words as typed — "PEACE & HAIGHT" / "4 Over" (lower-cased, ≤ 5 tokens); matching is by words or by the compact form */
+      const pat = typedPattern(req.body.pattern);
       // 1.20.84: several accounts at once — customer_ids[] + customer_names[] (the old single customer_id / customer still works)
       const ids = (Array.isArray(req.body.customer_ids) ? req.body.customer_ids : [req.body.customer_id]).map(x => parseInt(x)).filter(Boolean).filter((x, i, a) => a.indexOf(x) === i);
       const names = (Array.isArray(req.body.customer_names) ? req.body.customer_names : [req.body.customer]).map(x => String(x || '').trim().slice(0, 120)).filter(Boolean);

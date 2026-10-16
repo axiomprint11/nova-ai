@@ -1174,6 +1174,21 @@
     }
   }
   // ---- 1.20.83: AR Rules — payer words on the bank line → the customer; learned from every match, editable here
+  /* 1.20.119: the Customer cell — the accounts are "Company (Person)"; one company name in bold, the people as small chips
+     (several accounts of one company read "Peace & Haight · Aiyana Ramirez · Eric Klein …"), the full list on hover. */
+  function ruleCustomer(r) {
+    const names = String(r.customer_name || '').split(' \u00b7 ').map(x => x.trim()).filter(Boolean);
+    if (!names.length) return '<b>Customer #' + esc(r.customer_id) + '</b>';
+    const split = (n) => { const m = n.match(/^(.*?)\s*\(([^()]*)\)\s*$/); return m ? { co: m[1].trim(), who: m[2].trim() } : { co: n, who: '' }; };
+    const parts = names.map(split);
+    const brand = (co) => co.replace(/\s*\([^()]*\)\s*/g, ' ').trim();     /* "PAX (Peace & Haight)" → "PAX" */
+    const cos = [...new Set(parts.map(p => brand(p.co)).filter(Boolean))];
+    const main = cos.length === 1 ? cos[0] : (cos.find(c => parts.filter(p => brand(p.co) === c).length > 1) || cos[0]);
+    const people = parts.map(p => p.who || (brand(p.co) !== main ? brand(p.co) : '')).filter(Boolean);
+    return '<div class="ar-rcust" title="' + esc(names.join('\n')) + '"><b>' + esc(main) + '</b>' +
+      (names.length > 1 ? ' <span class="bk-tag">' + names.length + ' accounts</span>' : '') +
+      (people.length ? '<div class="ar-rpeople">' + people.map(x => '<span>' + esc(x) + '</span>').join('') + '</div>' : '') + '</div>';
+  }
   async function loadArRules() {
     arSt = 'rules';
     const v = $('vArList'); v.innerHTML = '<div class="bk-card bk-muted">Loading…</div>';
@@ -1185,7 +1200,7 @@
     v.innerHTML = '<div class="bk-card"><h2>Payer rules ' + qHelp('arrules', 'AR rules', 'A rule says: when the bank line carries these words, the payer is this customer — Nova then looks only at that customer\'s invoices (plus any invoice number in the memo) and lifts them in the suggestions.<br><br>Rules are <b>learned from every Match, Pair and hand entry</b> the AR team makes (the payer words of that deposit → the customer chosen), and you can add or remove them here. A rule <b>never pairs by itself</b> — it only makes the suggestion better; a person still clicks Match, reviews, and Match &amp; Pay.') + ' <span class="bk-muted">' + rules.length + '</span></h2>' +
       '<div class="ar-rform"><input class="bk" id="arRPat" placeholder="Payer words on the bank line, e.g. peace haight"><input class="bk" id="arRCust" placeholder="Customer(s) in the CRM… (type to search, tick several)" autocomplete="off"><button class="bk-btn sm" id="arRAdd">Add rule</button><span class="bk-dim" id="arRMsg"></span><div class="ar-rchips" id="arRChips"></div></div>' +
       (rules.length ? '<table class="bk ar-rules"><thead><tr><th>Bank line says</th><th>Customer</th><th>How</th><th>Used</th><th>Made by</th><th></th></tr></thead><tbody>' +
-        rules.map(r => '<tr><td class="pat">' + esc(r.pattern) + '</td><td>' + ((r.ids && r.ids.length > 1) ? '<b>' + esc(String(r.customer_name || '').split(' · ')[0] || ('Customer #' + r.customer_id)) + '</b> <span class="bk-tag" title="' + esc(r.customer_name || '') + '">' + r.ids.length + ' accounts</span><div class="bk-dim">' + esc(String(r.customer_name || '').split(' · ').slice(1).join(' · ')) + '</div>' : '<b>' + esc(r.customer_name || ('Customer #' + r.customer_id)) + '</b> <span class="bk-dim">#' + r.customer_id + '</span>') + '</td><td>' + (r.source === 'manual' ? '<span class="bk-tag">typed in</span>' : '<span class="bk-tag ok">learned from a match</span>') + '</td><td>' + (r.hits ? r.hits + '× · last ' + esc(usD(String(r.last_hit_at || '').slice(0, 10))) : '<span class="bk-dim">not yet</span>') + '</td><td>' + (r.made_by ? whoHtml(r.made_by) + ' ' + esc(r.made_by.split('@')[0]) : '') + ' <span class="bk-dim">' + esc(usD(String(r.updated_at || r.created_at || '').slice(0, 10))) + '</span></td><td class="ar-racts"><button class="bk-btn sm" data-redit="' + r.id + '">Edit</button><button class="ar-rdel" data-rdel="' + r.id + '" title="Remove this rule" aria-label="Remove">×</button></td></tr>').join('') + '</tbody></table>'
+        rules.map(r => '<tr><td class="pat">' + esc(r.pattern) + '</td><td>' + ruleCustomer(r) + '</td><td class="how">' + (r.source === 'manual' ? '<span class="bk-tag">Typed in</span>' : '<span class="bk-tag ok">Learned</span>') + '</td><td>' + (r.hits ? r.hits + '× · last ' + esc(usD(String(r.last_hit_at || '').slice(0, 10))) : '<span class="bk-dim">not yet</span>') + '</td><td>' + (r.made_by ? whoHtml(r.made_by) + ' ' + esc(r.made_by.split('@')[0]) : '') + ' <span class="bk-dim">' + esc(usD(String(r.updated_at || r.created_at || '').slice(0, 10))) + '</span></td><td class="ar-racts"><button class="bk-btn sm" data-redit="' + r.id + '">Edit</button><button class="ar-rdel" data-rdel="' + r.id + '" title="Remove this rule" aria-label="Remove">×</button></td></tr>').join('') + '</tbody></table>'
         : '<div class="bk-muted" style="padding:14px 0">No rules yet — every Match or Pair you make adds one.</div>') + '</div>';
     v.querySelectorAll('[data-rdel]').forEach(a => a.onclick = async (e) => { e.preventDefault(); if (!await ask('Remove this payer rule?', { ok: 'Remove' })) return; await post('/api/bookkeeping/ar/rules/' + a.dataset.rdel + '/delete', {}); loadArRules(); });
     let editing = 0;
