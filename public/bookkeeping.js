@@ -255,7 +255,8 @@
     if (!vals.length) return '<span class="ckp-empty">' + esc(blank || 'Choose…') + '</span><span class="ckp-caret"></span>';
     if (!multi) { const p = parentOf(vals[0]), st = styleOf(p || vals[0]); return '<span class="ckp-one">' + (p ? '<small><span class="dot" style="background:' + esc(st.color) + '"></span>' + esc(p) + '</small>' : '') + esc(vals[0]) + '</span><span class="ckp-caret"></span>'; }
     // 1.19.103: a chip names the type of expense before the sub category ("Facilities › Equipment Repairs…"), so the pick is unambiguous
-    return vals.map(v => { const par = parentOf(v), st = styleOf(par || v); return '<span class="ckp-chip"><span class="dot" style="background:' + esc(st.color) + '"></span>' + (par ? '<small class="ckp-par">' + esc(par) + ' ›</small> ' : '') + esc(v) + '<i data-rm="' + esc(v) + '" title="Remove">×</i></span>'; }).join('') + '<span class="ckp-caret"></span>';
+    // 1.20.144: the chip is the chart's own look — the type's coloured icon, then the sub category (full path on hover), tinted in the type's colour
+    return vals.map(v => { const par = parentOf(v), gp = par ? parentOf(par) : '', top = gp || par, st = styleOf(top || v); return '<span class="ckp-chip" style="--c:' + esc(st.color || '#64748b') + '" title="' + esc([gp, par, v].filter(Boolean).join(' › ')) + '">' + (top ? tile(st.color, st.icon, 'xs', top.charAt(0)) + '<small class="ckp-par">›</small>' : '') + '<b>' + esc(v) + '</b><i data-rm="' + esc(v) + '" title="Remove">×</i></span>'; }).join('') + '<span class="ckp-caret"></span>';
   };
   const ckpSet = (wrap, vals) => { wrap.querySelector('.ckp-val').value = vals.join('; '); wrap.querySelector('.ckp-btn').innerHTML = ckpFace(vals, wrap.dataset.blank, wrap.classList.contains('multi')); wrap.dispatchEvent(new Event('change', { bubbles: true })); };
   let ckpOpen = null, ckpCollapsed = {}; try { ckpCollapsed = JSON.parse(localStorage.getItem('bk_ckp_collapsed') || '{}') || {}; } catch (e) {}
@@ -2208,7 +2209,7 @@
   }
   // 1.19.69: open a vendor from anywhere — Nova / bill vendors get the edit form, CRM companies a details card
   // 1.20.139: Track receiving — how a purchase from this company is confirmed received
-  const RMODES = [['', 'Decide by category / kind'], ['none', 'Nothing to receive'], ['job', 'Via Axiom job (B2, 4over)'], ['email', 'Via email (shipped / delivered)'], ['hand', 'By hand at the dock']];
+  const RMODES = [['', 'Auto'], ['none', 'Nothing to receive'], ['job', 'Via Axiom job'], ['email', 'Via email'], ['hand', 'By hand']];   /* 1.20.144: short labels — the (?) explains them */
   const RMODE_T = 'How a purchase from this company gets confirmed received. Nothing to receive: paid is done (rides, fees, subscriptions). Via Axiom job: the purchase is linked to the job it was bought for and counts as received once that job ships. Via email: shipped / delivered emails in accounting@ move it along. By hand: someone at the dock confirms. Not set: Nova decides from the category and the kind of company.';
   const modeSel = (cls, cur) => '<select class="bk vmode ' + cls + '" title="' + esc(RMODE_T) + '">' + RMODES.map(m => '<option value="' + m[0] + '"' + ((cur || '') === m[0] ? ' selected' : '') + '>' + m[1] + '</option>').join('') + '</select>';
   async function vendorCard(id, onDone) {
@@ -2309,7 +2310,7 @@
     };
     const unapproved = all.filter(x => !x.approved).length;
     v.innerHTML = '<div class="bk-card">' + (j.sync_error ? '<div class="bk-muted" style="color:#b91c1c;margin-bottom:8px" title="' + esc(j.sync_error) + '">CRM sync failed — ' + esc(j.sync_error) + '</div>' : '') +
-            (all.length ? '<table class="bk bk-dir"><thead><tr><th>' + thFilter('kind', 'Type', FOPTS.kind, F.kind) + '</th><th>' + thFilter('name', 'Name', FOPTS.name) + '</th><th>' + thFilter('contact', 'Contact', FOPTS.contact) + '</th><th>' + thFilter('spec', 'Specialty', FOPTS.spec) + '</th><th>' + thFilter('cat', 'Usual category', FOPTS.cat, F.cat) + '</th><th title="How this company appears on bank statements">Bank name</th><th title="' + esc(RMODE_T) + '">Receiving</th>' +
+            (all.length ? '<table class="bk bk-dir"><thead><tr><th>' + thFilter('kind', 'Type', FOPTS.kind, F.kind) + '</th><th>' + thFilter('name', 'Name', FOPTS.name) + '</th><th>' + thFilter('contact', 'Contact', FOPTS.contact) + '</th><th>' + thFilter('spec', 'Specialty', FOPTS.spec) + '</th><th>' + thFilter('cat', 'Categories', FOPTS.cat, F.cat) + '</th><th title="How this company appears on bank statements">Bank name</th><th title="' + esc(RMODE_T) + '">Receiving</th>' +
         '<th class="num" title="Bank transactions and bills linked to this company">Linked</th></tr></thead><tbody>' + all.map(row).join('') + '</tbody></table><div class="bk-muted" id="vNone" style="display:none;padding:14px 0">Nothing matches.</div>'
         : '<div class="bk-muted">Nothing synced from the CRM yet — it syncs itself within the hour.</div>') + '</div>';
     const filter = () => {
@@ -2321,7 +2322,7 @@
         const on = (!F.kind || tr.dataset.kind === F.kind) && (!F.ap || tr.dataset.ap === F.ap) && catOk && has('name', F.name) && has('contact', F.contact) && has('spec', F.spec) && (!q || tr.dataset.q.indexOf(q) >= 0); tr.style.display = on ? '' : 'none'; if (on) n++; });
       if ($('vNone')) $('vNone').style.display = n ? 'none' : '';
     };
-    const onF = (key, val) => { F[key] = val; if (FOPTS[key] && FOPTS[key].type === 'text') FOPTS[key].value = val; filter(); const th = v.querySelector('.thf[data-thf="' + key + '"]'); if (th) th.outerHTML = thFilter(key, { kind: 'Type', cat: 'Usual category', ap: 'Approved', name: 'Name', contact: 'Contact', spec: 'Specialty' }[key], FOPTS[key], val); thFilterBind(v, FOPTS, onF); };
+    const onF = (key, val) => { F[key] = val; if (FOPTS[key] && FOPTS[key].type === 'text') FOPTS[key].value = val; filter(); const th = v.querySelector('.thf[data-thf="' + key + '"]'); if (th) th.outerHTML = thFilter(key, { kind: 'Type', cat: 'Categories', ap: 'Approved', name: 'Name', contact: 'Contact', spec: 'Specialty' }[key], FOPTS[key], val); thFilterBind(v, FOPTS, onF); };
     thFilterBind(v, FOPTS, onF);
     filter();
     v.querySelectorAll('[data-vopen]').forEach(a => a.onclick = (e) => { e.preventDefault(); const x = all.find(y => String(y.id) === a.dataset.vopen); if (x) openVendor(x); });
