@@ -249,25 +249,43 @@
       kpi('Shortest in production', 'up', fast, fast && '<b>' + d(fast) + '</b>', fast && 'avg ' + r1(fast.cur.prod_avg) + ' · ' + fast.cur.prod_n + ' jobs', 'fast');
     $('prKpis').querySelectorAll('.ra-kpi[data-b]').forEach(k => k.onclick = () => setBy(k.dataset.b));
   }
-  // the chart's views: plain measures, and the ranked lists behind the tiles (so more than one product shows for each)
+  // the chart's views: plain measures, and the ranked lists behind the tiles (so more than one product shows for each).
+  // cols = the three figure columns at the right (1.20.104); a click on a product name lists its jobs (E-numbers) under the row.
+  const pct = (p) => arrow(p);
   const MODES = {
-    rev: { t: 'Revenue by product', v: p => p.cur.rev, pv: p => p.prev.rev, f: usd0, tr: p => arrow(p.trend.rev) },
-    qty: { t: 'Units by product', v: p => p.cur.qty, pv: p => p.prev.qty, f: num, tr: p => arrow(p.trend.qty) },
-    orders: { t: 'Orders by product', v: p => p.cur.orders, pv: p => p.prev.orders, f: num, tr: p => arrow(p.trend.orders) },
-    new_clients: { t: 'New clients by product', v: p => p.cur.new_clients, pv: p => p.prev.new_clients, f: num, tr: p => arrow(p.trend.orders) },
-    reorders: { t: 'Most reorders', v: p => p.cur.reorders, pv: p => p.prev.reorders, f: num, tr: p => p.cur.orders ? '<span class="sub">' + Math.round(p.cur.reorders / p.cur.orders * 100) + '% of orders</span>' : '' },
-    up: { t: 'Heating up — revenue gained vs the period before', keep: p => p.trend_kind === 'up' && p.prev.orders >= 2, sort: (a, b) => (b.cur.rev - b.prev.rev) - (a.cur.rev - a.prev.rev), v: p => p.cur.rev, pv: p => p.prev.rev, f: usd0, tr: p => arrow(p.trend.rev) + ' <span class="sub">was ' + usd0(p.prev.rev) + '</span>' },
-    down: { t: 'Cooling down — revenue lost vs the period before', keep: p => (p.trend_kind === 'down' || p.trend_kind === 'gone') && p.prev.orders >= 3, sort: (a, b) => (a.cur.rev - a.prev.rev) - (b.cur.rev - b.prev.rev), v: p => p.cur.rev, pv: p => p.prev.rev, f: usd0, tr: p => arrow(p.trend.rev) + ' <span class="sub">was ' + usd0(p.prev.rev) + ' · ' + p.prev.orders + ' orders</span>' },
-    slow: { t: 'Longest in production — typical days (3+ timed jobs)', keep: p => p.cur.prod_n >= 3, sort: (a, b) => b.cur.prod_med - a.cur.prod_med, v: p => p.cur.prod_med, pv: p => p.prev.prod_med || 0, f: n => r1(n) + ' d', tr: p => '<span class="sub">avg ' + r1(p.cur.prod_avg) + ' · max ' + r1(p.cur.prod_max) + ' · ' + p.cur.prod_n + ' jobs</span>' },
-    fast: { t: 'Shortest in production — typical days (3+ timed jobs)', keep: p => p.cur.prod_n >= 3, sort: (a, b) => a.cur.prod_med - b.cur.prod_med, v: p => p.cur.prod_med, pv: p => p.prev.prod_med || 0, f: n => r1(n) + ' d', tr: p => '<span class="sub">avg ' + r1(p.cur.prod_avg) + ' · ' + p.cur.prod_n + ' jobs</span>' }
+    rev: { t: 'Revenue by product', v: p => p.cur.rev, pv: p => p.prev.rev, cols: [['Revenue', p => '<b>' + usd0(p.cur.rev) + '</b>'], ['vs before', p => pct(p.trend.rev)], ['Before', p => usd0(p.prev.rev)]] },
+    qty: { t: 'Units by product', v: p => p.cur.qty, pv: p => p.prev.qty, cols: [['Units', p => '<b>' + num(p.cur.qty) + '</b>'], ['vs before', p => pct(p.trend.qty)], ['Per unit', p => unit(p.cur.unit_price)]] },
+    orders: { t: 'Orders by product', v: p => p.cur.orders, pv: p => p.prev.orders, cols: [['Orders', p => '<b>' + num(p.cur.orders) + '</b>'], ['vs before', p => pct(p.trend.orders)], ['Clients', p => num(p.cur.clients)]] },
+    new_clients: { t: 'New clients by product', v: p => p.cur.new_clients, pv: p => p.prev.new_clients, cols: [['New clients', p => '<b>' + num(p.cur.new_clients) + '</b>'], ['Before', p => num(p.prev.new_clients)], ['Their revenue', p => usd0(p.cur.new_rev)]] },
+    reorders: { t: 'Most reorders', v: p => p.cur.reorders, pv: p => p.prev.reorders, cols: [['Reorders', p => '<b>' + num(p.cur.reorders) + '</b>'], ['Of orders', p => p.cur.orders ? Math.round(p.cur.reorders / p.cur.orders * 100) + '%' : '—'], ['Orders', p => num(p.cur.orders)]] },
+    up: { t: 'Heating up — revenue gained vs the period before', keep: p => p.trend_kind === 'up' && p.prev.orders >= 2, sort: (a, b) => (b.cur.rev - b.prev.rev) - (a.cur.rev - a.prev.rev), v: p => p.cur.rev, pv: p => p.prev.rev, cols: [['Revenue', p => '<b>' + usd0(p.cur.rev) + '</b>'], ['Change', p => pct(p.trend.rev)], ['Was', p => usd0(p.prev.rev)]] },
+    down: { t: 'Cooling down — revenue lost vs the period before', keep: p => (p.trend_kind === 'down' || p.trend_kind === 'gone') && p.prev.orders >= 3, sort: (a, b) => (a.cur.rev - a.prev.rev) - (b.cur.rev - b.prev.rev), v: p => p.cur.rev, pv: p => p.prev.rev, cols: [['Revenue', p => '<b>' + usd0(p.cur.rev) + '</b>'], ['Change', p => pct(p.trend.rev)], ['Was', p => usd0(p.prev.rev) + ' <span class="sub">· ' + p.prev.orders + ' ord</span>']] },
+    slow: { t: 'Longest in production — typical days (3+ timed jobs)', keep: p => p.cur.prod_n >= 3, sort: (a, b) => b.cur.prod_med - a.cur.prod_med, v: p => p.cur.prod_med, pv: p => p.prev.prod_med || 0, cols: [['Typical', p => '<b>' + r1(p.cur.prod_med) + ' d</b>'], ['Average', p => r1(p.cur.prod_avg) + ' d'], ['Jobs', p => p.cur.prod_n + ' <span class="sub">· max ' + r1(p.cur.prod_max) + '</span>']] },
+    fast: { t: 'Shortest in production — typical days (3+ timed jobs)', keep: p => p.cur.prod_n >= 3, sort: (a, b) => a.cur.prod_med - b.cur.prod_med, v: p => p.cur.prod_med, pv: p => p.prev.prod_med || 0, cols: [['Typical', p => '<b>' + r1(p.cur.prod_med) + ' d</b>'], ['Average', p => r1(p.cur.prod_avg) + ' d'], ['Jobs', p => p.cur.prod_n + ' <span class="sub">· max ' + r1(p.cur.prod_max) + '</span>']] }
   };
+  let openJobs = null;   /* the product whose jobs are listed under its chart row */
   function drawChart() {
     if (!data) return; const M = MODES[by] || MODES.rev, all = data._rows || [];
     const rows = all.filter(M.keep || (p => M.v(p) > 0)).sort(M.sort || ((a, b) => M.v(b) - M.v(a))).slice(0, 20);
     const max = rows.reduce((m, p) => Math.max(m, M.v(p), M.pv(p)), 0) || 1;
-    $('prChartT').textContent = M.t; $('prChartN').textContent = 'top ' + rows.length + ' of ' + all.length + ' · thin bar = the period before';
+    $('prChartT').textContent = M.t; $('prChartN').textContent = 'top ' + rows.length + ' of ' + all.length + ' · thin bar = the period before · click a product for its jobs';
     document.querySelectorAll('#prKpis .ra-kpi[data-b]').forEach(k => k.classList.toggle('on', k.dataset.b === by));
-    $('prChart').innerHTML = rows.map(p => '<div class="nm" title="' + esc(p.title) + '">' + pimg(p) + '<span>' + esc(p.title) + '</span></div><div class="bar"><i style="width:' + (M.v(p) / max * 100) + '%"></i><i class="prev" style="width:' + (M.pv(p) / max * 100) + '%"></i></div><div class="val"><b>' + M.f(M.v(p)) + '</b> ' + M.tr(p) + '</div>').join('') || '<div class="ra-muted">Nothing in this view for the period.</div>';
+    $('prChart').innerHTML = rows.length ? '<div class="h">Product</div><div class="h"></div>' + M.cols.map(c => '<div class="h r">' + c[0] + '</div>').join('') +
+      rows.map(p => '<div class="nm" data-pid="' + p.pid + '" title="' + esc(p.title) + ' — show the jobs">' + pimg(p) + '<span>' + esc(p.title) + '</span><i class="car">' + (openJobs === p.pid ? '▲' : '▼') + '</i></div><div class="bar"><i style="width:' + (M.v(p) / max * 100) + '%"></i><i class="prev" style="width:' + (M.pv(p) / max * 100) + '%"></i></div>' + M.cols.map(c => '<div class="c">' + c[1](p) + '</div>').join('') + (openJobs === p.pid ? '<div class="ra-jobs" data-jobs="' + p.pid + '"><span class="ra-muted">Reading the jobs…</span></div>' : '')).join('') : '<div class="ra-muted" style="grid-column:1/-1">Nothing in this view for the period.</div>';
+    $('prChart').querySelectorAll('.nm[data-pid]').forEach(el => el.onclick = () => { const pid = +el.dataset.pid; openJobs = openJobs === pid ? null : pid; drawChart(); });
+    const box = $('prChart').querySelector('[data-jobs]'); if (box) loadJobs(+box.dataset.jobs, box);
+  }
+  const dt = (iso) => iso ? new Date(iso).toLocaleString('en-US', { month: '2-digit', day: '2-digit', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }) : '—';
+  async function loadJobs(pid, box) {
+    let j; try { const r = await fetch('/api/reports-ai/products/' + pid + '/jobs?from=' + data.from + '&to=' + data.to, { headers: H() }); j = await r.json(); } catch (e) { j = { ok: false, error: 'The CRM did not answer' }; }
+    if (!box.isConnected) return;
+    if (!j.ok) { box.innerHTML = '<span style="color:#b91c1c">' + esc(j.error || 'Could not load') + '</span>'; return; }
+    const jobs = j.jobs.filter(x => !x.canceled), timed = jobs.filter(x => x.prod_days != null).length;
+    const prodMode = by === 'slow' || by === 'fast';
+    const sorted = prodMode ? jobs.slice().sort((a, b) => (b.prod_days || -1) - (a.prod_days || -1)) : jobs;
+    box.innerHTML = '<div style="margin-bottom:6px"><b>' + jobs.length + ' job' + (jobs.length === 1 ? '' : 's') + '</b> <span class="ra-muted">· ' + jobs.filter(x => x.invoiced).length + ' invoiced · ' + timed + ' timed in production · ' + (j.jobs.length - jobs.length) + ' canceled left out</span></div>' +
+      '<table><thead><tr><th>Job</th><th>Name</th><th>Client</th><th class="n">Qty</th><th class="n">Price</th><th>Created</th><th>Prod. started</th><th>Done</th><th class="n">Prod. days</th><th class="n">Order → ready</th><th>On time</th></tr></thead><tbody>' +
+      sorted.map(x => '<tr' + (!x.invoiced ? ' class="off" title="quote — not invoiced"' : '') + '><td class="e">' + x.e + (x.type === 'reorder' ? ' <span class="ra-muted">re</span>' : '') + (x.express ? ' <span style="color:#b91c1c">exp</span>' : '') + '</td><td>' + esc(x.name) + '</td><td>' + esc(x.client) + '</td><td class="n">' + (x.qty != null ? num(x.qty) : '—') + '</td><td class="n">' + usd0(x.price) + '</td><td>' + dt(x.created) + '</td><td>' + dt(x.started) + '</td><td>' + dt(x.done) + '</td><td class="n">' + (x.prod_days != null ? '<b>' + x.prod_days + '</b>' : '—') + '</td><td class="n">' + (x.o2r_days != null ? x.o2r_days : '—') + '</td><td>' + (x.on_time == null ? '—' : x.on_time ? '<span class="ok">yes</span>' : '<span class="late">late</span>') + '</td></tr>').join('') + '</tbody></table>';
   }
   const setBy = (b) => { by = b; document.querySelectorAll('#prBy button[data-b]').forEach(x => x.classList.toggle('on', x.dataset.b === b)); drawChart(); };
   function specs() {

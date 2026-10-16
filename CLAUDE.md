@@ -477,7 +477,7 @@ default · 90 · this / last month · this year · 12 months), tiles (top seller
 horizontal bar chart (Revenue / Units / Orders / New clients, thin bar = the period before), the NovaTable table (Product text · Category ·
 Orders range · Units · Revenue range · Avg order · Per unit · Clients · new · Reorders · Quotes → orders · Trend list · Production days
 range) and a "How to read this report" fold with the pricing reading. Read-only. 1.20.100: the chart's views also list **Reorders · Heating up ·
-Cooling down · Longest / Shortest production** (`MODES` in the page script; a tile click opens its list on the chart, `setBy`).
+Cooling down · Longest / Shortest production** (`MODES` in the page script; a tile click opens its list on the chart, `setBy`). 1.20.104: the chart is Product · bar (60%) · three figure columns per view (`MODES[].cols`, e.g. Typical · Average · Jobs), and a click on a product name opens its **jobs** under the row (`GET /api/reports-ai/products/:pid/jobs?from&to` — E-number, name, client, qty, price, created, production started / done, production days, order → ready, on time; quotes dimmed, canceled left out) so a production figure can be checked job by job.
 **New Clients + Referral Report** (1.20.100, tabs `?tab=clients` / `?tab=referrals`, one route `GET /api/reports-ai/clients?from&to` →
 `clientsReport()`): every `customer` created in the period (LA days) with **who made it** — `created_from_website = 1` = a website
 sign-up (the CRM logs those under the "CSR Team" user, 327, who is also their `manager_id`), else the team member of the

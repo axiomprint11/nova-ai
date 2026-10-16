@@ -142,6 +142,31 @@ module.exports = function mountReportsAi(app, deps) {
     return { products, from, to, prev_from: pFrom, prev_to: new Date(new Date(from + 'T12:00:00Z').getTime() - 864e5).toISOString().slice(0, 10), days };
   }
   // GET /api/reports-ai/products?from&to (LA days; default the last 30 days)
+  // GET /api/reports-ai/products/:pid/jobs?from&to — the jobs behind one product's row (1.20.104): E-number, name, client, created,
+  // production started / done, production days, order → ready, on time, price, quantity, type — so a production figure can be analysed.
+  app.get('/api/reports-ai/products/:pid/jobs', auth, adminOnly, async (req, res) => {
+    try {
+      const pid = parseInt(req.params.pid); if (!pid) return res.json({ ok: false, error: 'product id' });
+      const today = ymd(new Date()); const ok = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
+      const to = ok(req.query.to) ? req.query.to : today, from = ok(req.query.from) ? req.query.from : new Date(new Date(to + 'T12:00:00Z').getTime() - 29 * 864e5).toISOString().slice(0, 10);
+      const b1 = laBound(from), b2 = laBound(to, true), floor = await idFloorAt(b1);
+      const rows = await runQuery('SELECT e.id, e.estimate_name name, e.estimate_clientid cid, e.estimate_price price, e.created, e.estimate_type typ, e.express, e.estimate_invoiceid inv, e.production_started_at started, e.complete_by, c.company_name, c.name c_name, c.last_name c_last ' +
+        'FROM estimate e LEFT JOIN customer c ON c.id = e.estimate_clientid WHERE e.id >= ' + floor + ' AND e.created >= ' + mysql.escape(b1) + ' AND e.created < ' + mysql.escape(b2) + ' AND e.estimate_productid = ' + pid + ' ORDER BY e.id DESC LIMIT 2000');
+      const ids = rows.map(r => r.id); if (!ids.length) return res.json({ ok: true, jobs: [] });
+      const [qtys, dones, cancels] = await Promise.all([
+        runQuery("SELECT estimate_id id, COALESCE(NULLIF(estimate_option_custom_value, ''), estimate_option_value) q FROM estimateoption WHERE estimate_option_name = 'Quantity' AND estimate_id IN (" + ids.join(',') + ')'),
+        runQuery("SELECT estimate_id id, MAX(created_at) d FROM qr_scan_history WHERE estimate_id >= " + floor + " AND production_step = 'complete' AND estimate_id IN (" + ids.join(',') + ') GROUP BY estimate_id'),
+        runQuery("SELECT estimate_id id FROM estimate_stage WHERE estimate_stage = 'complete' AND estimate_substage = 'canceled' AND estimate_id IN (" + ids.join(',') + ')')
+      ]);
+      const qty = {}; qtys.forEach(r => { const n = parseInt(String(r.q).replace(/[^\d]/g, '')); if (n > 0) qty[r.id] = n; });
+      const done = {}; dones.forEach(r => { done[r.id] = new Date(r.d); }); const canceled = new Set(cancels.map(r => Number(r.id)));
+      const jobs = rows.map(r => { const d = done[r.id] || null, st = r.started ? new Date(r.started) : null, cr = new Date(r.created);
+        return { id: r.id, e: 'E' + r.id, name: r.name || '', client: r.company_name || [r.c_name, r.c_last].filter(Boolean).join(' ') || (r.cid ? 'Customer #' + r.cid : ''), cid: r.cid, price: Number(r.price) || 0, qty: qty[r.id] || null, type: r.typ, express: !!r.express,
+          invoiced: r.inv > 0, canceled: canceled.has(Number(r.id)), created: cr.toISOString(), started: st ? st.toISOString() : null, done: d ? d.toISOString() : null, complete_by: r.complete_by ? new Date(r.complete_by).toISOString() : null,
+          prod_days: st && d && d > st ? Math.round((d - st) / 864e5 * 10) / 10 : null, o2r_days: d && d > cr ? Math.round((d - cr) / 864e5 * 10) / 10 : null, on_time: d && r.complete_by ? d.getTime() <= new Date(r.complete_by).getTime() + 7 * 3600e3 : null }; });
+      res.json({ ok: true, jobs, from, to });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
   app.get('/api/reports-ai/products', auth, adminOnly, async (req, res) => {
     try {
       const today = ymd(new Date()); const ok = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
