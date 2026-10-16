@@ -87,6 +87,25 @@ window.RaPeriod = (function () {
   }
   return { range, wire };
 })();
+// 1.20.128: the people tiles (who onboarded / who created the accounts / who referred) are head + count chips, as on TalkAi's
+// dashboard — a click filters, the name is on hover, and hovering the row opens a breakdown card (name · detail · count).
+window.RaChips = (function () {
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const face = (p) => { const ini = esc(String(p.name || '?').trim().charAt(0).toUpperCase()); return p.photo ? '<img class="ra-av" src="' + esc(p.photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;ra-av&quot;>' + ini + '</span>\'">' : '<span class="ra-av' + (p.icon ? ' ico' : '') + '">' + (p.icon || ini) + '</span>'; };
+  const nf = (n) => Number(n || 0).toLocaleString('en-US');
+  /* items: [{key, name, photo?, icon?, n}] in rank order; o: {pick, onPick(key), sub(a) → text, title, total, empty} */
+  function render(el, items, o) {
+    o = o || {};
+    if (!items.length) { el.innerHTML = '<div class="ra-muted">' + (o.empty || 'Nothing in this period.') + '</div>'; return; }
+    const total = o.total != null ? o.total : items.reduce((a, x) => a + x.n, 0);
+    el.innerHTML = '<div class="ra-fwrap">' + items.map((a, i) => '<button type="button" class="ra-fchip' + (o.pick === a.key ? ' on' : '') + '" data-k="' + esc(a.key) + '" title="#' + (i + 1) + ' ' + esc(a.name) + (o.sub && o.sub(a) ? ' · ' + esc(o.sub(a)) : '') + ' — click to see only ' + esc(a.name) + '">' + face(a) + '<b>' + nf(a.n) + '</b></button>').join('') +
+      '<div class="ra-fpop"><div class="ra-fpop-h"><span>' + esc(o.title || '') + '</span><b>' + nf(total) + '</b></div>' +
+      items.slice(0, 12).map((a, i) => '<div class="ra-fpop-r' + (o.pick === a.key ? ' on' : '') + '"><i>#' + (i + 1) + '</i>' + face(a) + '<span>' + esc(a.name) + (o.sub && o.sub(a) ? '<small>' + esc(o.sub(a)) + '</small>' : '') + '</span><b>' + nf(a.n) + '</b></div>').join('') +
+      (items.length > 12 ? '<div class="ra-fpop-r"><i></i><span class="ra-av" style="visibility:hidden"></span><span>' + (items.length - 12) + ' more</span><b>' + nf(items.slice(12).reduce((a, x) => a + x.n, 0)) + '</b></div>' : '') + '</div></div>';
+    el.querySelectorAll('[data-k]').forEach(x => x.onclick = () => o.onPick && o.onPick(o.pick === x.dataset.k ? '' : x.dataset.k));
+  }
+  return { render };
+})();
 // ReportsAI — Onboarding (1.20.96): who onboarded whom, when, where the client came from; a chart per account manager.
 (function () {
   'use strict';
@@ -142,8 +161,7 @@ window.RaPeriod = (function () {
     const by = {}; base.forEach(r => { const k = String(r.am.id); if (!by[k]) by[k] = Object.assign({ n: 0 }, r.am); by[k].n++; });
     const ams = Object.values(by).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
     ams.forEach((a, i) => { a.color = COLORS[i % COLORS.length]; });
-    $('obAms').innerHTML = ams.map((a, i) => '<div class="ra-am' + (amPick === String(a.id) ? ' on' : '') + '" data-am="' + esc(a.id) + '" title="Only ' + esc(a.name) + '"><span class="rank">#' + (i + 1) + '</span>' + face(a) + '<div><b>' + a.n + '</b><small>' + esc(a.name) + '</small></div></div>').join('') || '<div class="ra-muted">No onboardings in this period.</div>';
-    $('obAms').querySelectorAll('[data-am]').forEach(el => el.onclick = () => { amPick = amPick === el.dataset.am ? '' : el.dataset.am; render(); });
+    RaChips.render($('obAms'), ams.map(a => ({ key: String(a.id), name: a.name, photo: a.photo, n: a.n })), { pick: amPick, onPick: (k) => { amPick = k; render(); }, title: 'Onboardings by account manager', empty: 'No onboardings in this period.' });
     data._ams = ams; data._base = base; data._rows = rows;
     drawChart(); drawTable(rows);
   }
@@ -520,10 +538,7 @@ window.RaPeriod = (function () {
       h.onmouseleave = () => { box.classList.remove('hovering'); tip.hidden = true; };
     });
   }
-  const leaderboard = (el, items, pick, onPick, sub) => {
-    el.innerHTML = items.map((a, i) => '<div class="ra-am' + (pick === a.key ? ' on' : '') + '" data-k="' + esc(a.key) + '" title="Only ' + esc(a.name) + '"><span class="rank">#' + (i + 1) + '</span>' + face(a) + '<div><b>' + a.n + '</b><small>' + esc(a.name) + (sub && sub(a) ? ' · ' + sub(a) : '') + '</small></div></div>').join('') || '<div class="ra-muted">Nothing in this period.</div>';
-    el.querySelectorAll('[data-k]').forEach(x => x.onclick = () => onPick(pick === x.dataset.k ? '' : x.dataset.k));
-  };
+  const leaderboard = (el, items, pick, onPick, sub, title) => RaChips.render(el, items.map(a => Object.assign({}, a, { photo: a.key === 'web' ? '' : a.photo, icon: a.key === 'web' ? '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>' : undefined })), { pick, onPick, sub, title });
 
   // ======== New Clients
   const C = { period: '30', from: '', to: '', grain: 'day', series: 'source', revBy: 'source', data: null, maker: '', F: { date: { from: '', to: '' }, client: '', made: '', src: '', am: '', ordered: '', ref: '' } };
@@ -565,7 +580,7 @@ window.RaPeriod = (function () {
     const by = {}; base.forEach(r => { const k = madeKey(r); if (!by[k]) by[k] = { key: k, id: r.made.id, name: r.made.kind === 'web' ? 'Website sign-ups' : r.made.name, photo: r.made.photo, n: 0, ordered: 0, rev: 0 }; by[k].n++; if (r.orders) { by[k].ordered++; by[k].rev += r.orders.rev; } });
     const makers = Object.values(by).sort((a, b) => b.n - a.n);
     $('clMakersN').textContent = makers.filter(m => m.key !== 'web' && m.key !== 'none').length + ' team members · ' + web + ' website';
-    leaderboard($('clMakers'), makers, C.maker, (k) => { C.maker = k; renderClients(); }, (a) => a.ordered + ' ordered · ' + usd0(a.rev));
+    leaderboard($('clMakers'), makers, C.maker, (k) => { C.maker = k; renderClients(); }, (a) => a.ordered + ' ordered · ' + usd0(a.rev), 'Who created the accounts');
     const kMaker = (r) => ({ k: madeKey(r), l: r.made.kind === 'web' ? 'Website' : r.made.name, photo: r.made.kind === 'team' ? (r.made.photo || '') : undefined });
     const kAm = (r) => ({ k: 'a' + (r.am ? r.am.id : 0), l: r.am ? r.am.name : 'No AM', photo: r.am ? (r.am.photo || '') : undefined });
     const keyOf = C.series === 'source' ? (r) => ({ k: r.source.kind, l: r.source.kind }) : (C.series === 'maker' || C.series === 'rev') ? kMaker : C.series === 'how' ? (r) => r.web ? { k: 'web', l: 'Website sign-up' } : { k: 'team', l: 'Created by the team' } : kAm;
@@ -636,8 +651,8 @@ window.RaPeriod = (function () {
     const board = (list) => { const by = {}; list.forEach(r => { const k = whoKey(r); if (!by[k]) by[k] = { key: k, name: r.referral.who, photo: r.referral.photo || null, title: r.referral.title || '', n: 0, ordered: 0, rev: 0 }; by[k].n++; if (r.orders) { by[k].ordered++; by[k].rev += r.orders.rev; } }); return Object.values(by).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name)); };
     const cb = board(cl), tb = board(tm);
     $('rfClientsN').textContent = cb.length + ' clients sent ' + cl.length; $('rfTeamN').textContent = tb.length + ' team members sent ' + tm.length;
-    leaderboard($('rfClients'), cb, R.pick, (k) => { R.pick = k; renderRefs(); }, (a) => a.ordered ? a.ordered + ' ordered · ' + usd0(a.rev) : '');
-    leaderboard($('rfTeam'), tb, R.pick, (k) => { R.pick = k; renderRefs(); }, (a) => (a.title ? a.title : '') + (a.ordered ? (a.title ? ' · ' : '') + a.ordered + ' ordered' : ''));
+    leaderboard($('rfClients'), cb, R.pick, (k) => { R.pick = k; renderRefs(); }, (a) => a.ordered ? a.ordered + ' ordered · ' + usd0(a.rev) : '', 'Top referring clients');
+    leaderboard($('rfTeam'), tb, R.pick, (k) => { R.pick = k; renderRefs(); }, (a) => (a.title ? a.title : '') + (a.ordered ? (a.title ? ' · ' : '') + a.ordered + ' ordered' : ''), 'Axiom team referrals');
     drawRefsTable(rows, base, all.length);
   }
   function drawRefsTable(rows, base, total) {

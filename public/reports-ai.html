@@ -86,6 +86,21 @@
   .ra-two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; } @media (max-width: 1000px) { .ra-two { grid-template-columns: 1fr; } }
   .ra-bars.ra-bars-rev { grid-template-columns: 220px 1fr repeat(4, minmax(70px, max-content)); }
   .ra-two .ra-card { margin-bottom: 14px; } .ra-two .ra-ams { margin-bottom: 0; }
+  /* 1.20.128: head + count chips with a hover breakdown (the TalkAi dashboard's look, a size up) */
+  .ra-ams { display: block; }
+  .ra-fwrap { position: relative; display: flex; flex-wrap: wrap; gap: 8px; }
+  .ra-fchip { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 999px; padding: 4px 14px 4px 4px; background: #fff; cursor: pointer; font: inherit; }
+  .ra-fchip .ra-av { width: 34px; height: 34px; font-size: 13px; } .ra-fchip .ra-av.ico { background: var(--indigo-light); color: var(--indigo-dark); }
+  .ra-fchip b { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
+  .ra-fchip:hover { border-color: #c7c7f5; background: #fafaff; } .ra-fchip.on { border-color: var(--indigo); background: #f5f3ff; } .ra-fchip.on b { color: var(--indigo-dark); }
+  .ra-fpop { display: none; position: absolute; left: 0; top: calc(100% + 8px); z-index: 40; min-width: 300px; background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 34px rgba(15, 23, 42, .14); padding: 10px 12px; font-size: 13px; }
+  .ra-fwrap:hover .ra-fpop { display: block; }
+  .ra-fpop-h { display: flex; justify-content: space-between; gap: 14px; font-weight: 700; padding: 2px 2px 8px; border-bottom: 1px solid var(--line); margin-bottom: 4px; white-space: nowrap; } .ra-fpop-h b { color: #15803d; }
+  .ra-fpop-r { display: flex; align-items: center; gap: 9px; padding: 5px 2px; border-radius: 8px; } .ra-fpop-r.on { background: #f5f3ff; }
+  .ra-fpop-r i { font-style: normal; font-size: 11px; font-weight: 700; color: var(--muted); width: 24px; flex: none; }
+  .ra-fpop-r .ra-av { width: 26px; height: 26px; font-size: 11px; flex: none; } .ra-fpop-r .ra-av.ico { background: var(--indigo-light); color: var(--indigo-dark); } .ra-fpop-r .ra-av.ico svg { width: 14px; height: 14px; }
+  .ra-fpop-r > span { flex: 1; color: var(--ink); white-space: nowrap; } .ra-fpop-r > span small { display: block; font-size: 11.5px; color: var(--muted); } .ra-fpop-r b { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .ra-card { overflow: visible; }
   .ra-made { display: inline-flex; align-items: center; gap: 6px; } .ra-made .web { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: #e0f2fe; color: #075985; } .ra-made .web svg { width: 14px; height: 14px; }
   .ra-kpi .v .ra-tr { margin-left: 4px; }
   .ra-ref { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 6px; } .ra-ref.client { background: #dcfce7; color: #166534; } .ra-ref.team { background: #ede9fe; color: #5b21b6; } .ra-ref.other { background: #f3f4f6; color: #4b5563; }
