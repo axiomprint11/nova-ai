@@ -120,7 +120,7 @@
       when: { type: 'range', kind: 'date', presets: [{ v: '', l: 'All time' }, { v: 'today', l: 'Today' }, { v: 'yesterday', l: 'Yesterday' }, { v: 'week', l: 'This week' }, { v: 'month', l: 'This month' }, { v: '30', l: 'Last 30 days' }], period: F.period, from: F.from, to: F.to },
       client: [{ v: '', l: 'Any client' }, { v: 'none', l: 'Not a client yet' }].concat(clientOpts),
       /* 1.20.95: one "Answered by" list — the TalkAIs (via=…) and the team members (am=<CRM user id>, the client's account manager) */
-      who: [{ v: '', l: 'Anyone' }, { v: 'via:regular', l: 'Regular Hours TalkAI', sub: 'TalkAI' }, { v: 'via:missed', l: 'Team Missed TalkAI', sub: 'TalkAI' }, { v: 'via:after', l: 'After Hours TalkAI', sub: 'TalkAI' }]
+      who: [{ v: '', l: 'Anyone' }, { v: 'via:regular', l: 'Regular Hours TalkAI', sub: 'TalkAI' }, { v: 'via:missed', l: 'Backup TalkAI', sub: 'TalkAI' }, { v: 'via:after', l: 'After Hours TalkAI', sub: 'TalkAI' }]
         .concat(lines.map(l => ({ v: 'via:line:' + l.id, l: firstName(l.am_name) + '’s TalkAI', sub: 'TalkAI', h: NovaTable.face(l.photo || '', firstName(l.am_name) + '’s TalkAI') })))
         .concat(amOpts.map(a => ({ v: 'am:' + a.v, l: a.l, sub: 'team', h: a.h })))
         .concat([{ v: 'via:tests', l: 'Tests' }]),
@@ -201,7 +201,7 @@
     eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
     test: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>'
   };
-  // Who picked up: "Mane’s TalkAI" (the manager’s face), "After Hours TalkAI", "Team Missed TalkAI", "Regular Hours TalkAI".
+  // Who picked up: "Mane’s TalkAI" (the manager’s face), "After Hours TalkAI", "Backup TalkAI" (was Team Missed, 1.20.116), "Regular Hours TalkAI".
   function viaOf(c) {
     if (c.source !== 'phone') return { label: c.source === 'try' ? 'Test in text' : 'ElevenLabs test', av: '<span class="tk-av sys">' + SYS_ICON.test + '</span>' };
     if (c.line_id && c.line_name) {
@@ -210,7 +210,7 @@
       return { label: firstName(c.line_name) + '’s TalkAI', av };
     }
     if (c.hours_mode === 'after') return { label: 'After Hours TalkAI', av: '<span class="tk-av sys night">' + SYS_ICON.moon + '</span>' };
-    if (c.hours_mode === 'missed') return { label: 'Team Missed TalkAI', av: '<span class="tk-av sys miss">' + SYS_ICON.missed + '</span>' };
+    if (c.hours_mode === 'missed') return { label: 'Backup TalkAI', av: '<span class="tk-av sys miss" title="The team did not pick up; NovaAI answered">' + PHONE_IN + '</span>' };     /* 1.20.116: green — it IS an answered call */
     return { label: 'Regular Hours TalkAI', av: '<span class="tk-av sys">' + SYS_ICON.ai + '</span>' };
   }
   const nice = (n) => Number(n || 0).toLocaleString('en-US');
@@ -278,7 +278,7 @@
     test: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>'
   };
   // Which setup answered the call (Settings tabs), one short grey label everywhere.
-  const MODE_LABEL = { regular: 'Regular Hours TalkAI', missed: 'Team Missed TalkAI', after: 'After Hours TalkAI' };   // 1.20.71: the same names as the dashboard's Answered by
+  const MODE_LABEL = { regular: 'Regular Hours TalkAI', missed: 'Backup TalkAI', after: 'After Hours TalkAI' };   // 1.20.71: the same names as the dashboard's Answered by
   function callAvatar(c) {
     const match = c.caller_match && c.caller_match[0];
     const own = Number(c.owner) === 1 && c.line_name;
