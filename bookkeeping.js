@@ -3597,9 +3597,9 @@ module.exports = function mountBookkeeping(app, deps) {
   // the sweep: an uncategorized money-out line from a loan's lender for the loan's monthly payment (± 2%, or ± $1) is a
   // payment on that loan — linked with no click; a loan with no lender never auto-links (no guessing)
   // 1.20.141: two machines financed by the same company (Mitsubishi HCC: $4,118.90 and $10,455.86) are told apart by the payment —
-  // of the lender's loans, the one whose payment (any step; with or without property tax) is nearest the line, within ± $5.
+  // of the lender's loans, the one whose payment (any step; with or without property tax) is nearest the line, within ± $10 (LOAN_TOL).
   // The old ± 2% (± $209 on a $10k payment) could not separate them, and ± $1 missed a few-dollar difference.
-  const LOAN_TOL = 5;
+  const LOAN_TOL = 10;   /* 1.20.146: ± $10 (was 5) */
   function loanFit(loans, amt, amountsOf) {
     let best = null, bestD = LOAN_TOL + 0.001;
     for (const l of loans) for (const m of (amountsOf(l) || [])) { if (!(m > 0)) continue; const d = Math.abs(m - amt); if (d < bestD) { best = l; bestD = d; } }
