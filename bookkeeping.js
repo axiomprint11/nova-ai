@@ -1458,7 +1458,8 @@ module.exports = function mountBookkeeping(app, deps) {
     let effective = apr; if (effective == null && monthly && term) effective = solveApr(financed, term, monthly, deferred, balloon);
     if (!total && monthly && term) total = down + monthly * term + balloon;
     const tax = Number(l.sales_tax) || 0, taxIn = tax ? (l.tax_in == null ? 1 : Number(l.tax_in) ? 1 : 0) : null, propTax = Number(l.property_tax_monthly) || 0;
-    const amounts = (steps.length ? steps.map(x => x.amount) : [monthly]).filter(a => a > 0).reduce((o, a) => o.concat([a, a + propTax0(l)]), []);   // every figure the bank may show for this loan
+    const payAmt = Number(String(l.pay_amount == null ? '' : l.pay_amount).replace(/[$,\s]/g, '')) || 0;   // 1.20.147: the auto-payment amount as it leaves the bank — taxes and fees move it off the contract's figure
+    const amounts = (steps.length ? steps.map(x => x.amount) : [monthly]).filter(a => a > 0).reduce((o, a) => o.concat([a, a + propTax0(l)]), []).concat(payAmt > 0 ? [payAmt] : []);   // every figure the bank may show for this loan
     return { principal, down, deferred, term, balloon, financed, steps, amounts: amounts.filter((a, i) => amounts.indexOf(a) === i).map(a => Math.round(a * 100) / 100), monthly: Math.round(monthly * 100) / 100, apr: effective, apr_given: l.apr !== '' && l.apr != null, total_payback: Math.round(total * 100) / 100, total_interest: Math.round((total - principal) * 100) / 100,
       sales_tax: tax, tax_in: taxIn, property_tax: propTax, payment: Math.round((monthly + propTax) * 100) / 100,   // payment = what leaves the bank each month
       total_cost: Math.round((total + (tax && !taxIn ? tax : 0) + propTax * term) * 100) / 100 };   // everything paid over the term: payback + separate tax + property tax
