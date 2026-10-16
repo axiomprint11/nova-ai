@@ -476,7 +476,31 @@ default · 90 · this / last month · this year · 12 months), tiles (top seller
 ±25% with 3+ orders, `trendKind()` — brings new clients, longest / shortest in production by the typical days over 3+ timed jobs), a
 horizontal bar chart (Revenue / Units / Orders / New clients, thin bar = the period before), the NovaTable table (Product text · Category ·
 Orders range · Units · Revenue range · Avg order · Per unit · Clients · new · Reorders · Quotes → orders · Trend list · Production days
-range) and a "How to read this report" fold with the pricing reading. Read-only.
+range) and a "How to read this report" fold with the pricing reading. Read-only. 1.20.100: the chart's views also list **Reorders · Heating up ·
+Cooling down · Longest / Shortest production** (`MODES` in the page script; a tile click opens its list on the chart, `setBy`).
+**New Clients + Referral Report** (1.20.100, tabs `?tab=clients` / `?tab=referrals`, one route `GET /api/reports-ai/clients?from&to` →
+`clientsReport()`): every `customer` created in the period (LA days) with **who made it** — `created_from_website = 1` = a website
+sign-up (the CRM logs those under the "CSR Team" user, 327, who is also their `manager_id`), else the team member of the
+`customer_logs` `customer_created` row (`made {kind web|team|unknown, id, name, photo}`) — the AM (`manager_id`), the **source**
+(the welcome form's answer via `sourceOf()` when there is one, else the sign-up form's `refered_by` code via `signupSource()`:
+google / googleads / linkedin / chat_gpt / personalreferral / axiom_referral / trade_show_expo / reddit / youtube / facebook /
+instagram / other + `refered_by_custom`; `source.from` = form | signup), the **referral** (`referred_by_client_id` → client,
+`referred_by_manager_id` → team member with `user.title`, else the form's existing_client / employee_referral, else the sign-up
+code; `referral {kind client|team|other, who, who_id, photo, title, from account|form|signup}`), the onboarding, `biz_dev_type`,
+and `orders {n, rev, first}` from the invoiced estimates (one grouped query over the ids, 2000 at a time). `prev {n, web, refs}` =
+the equal period before; `older_referrals` = welcome forms dated in the period that name a referral for an account created
+earlier. New Clients page: period chips (This month default; week / last month / 30 / 90 / year / 12 months), tiles (new clients vs
+before, website %, created by the team, already ordered + revenue, referrals), the **who created the accounts** leaderboard (team
+members + Website as one tile; click = filter), a stacked chart (`stacked()` — By source / By who created / Website vs team / By AM
+× Daily / Weekly / Monthly) and the NovaTable table (Created · Client · Created by · Source (+ which form) · Referral · AM ·
+Onboarded · Orders). Referral Report: tiles, **Top referring clients** and **Axiom team referrals** leaderboards (click = filter), the
+table (Created · New client · Kind · Referred by (+ title, where it was read from) · AM · Created by · Orders; older accounts dimmed).
+**Emails are per report now**: `MAIL = { onboarding, clients }`, settings key `<report>_email`, `GET/POST /api/reports-ai/:report/email`,
+`POST …/email/send`, `sendReport(report, who, opts)`, one clock loop over both; the New Clients mail (`clientsHtml`: numbers, who
+created the accounts, sources, AMs, referrers, every client) goes To `to` (gary@) CC `cc` (arsine@, luciana@) and, with `all_ams`,
+the same mail to every member of the CRM team **"Account Managers"** (`amTeam()`: `team.members` JSON, active users, cached 10 min;
+`GET /api/reports-ai/ams`) on the 1st at 07:00 LA; Notify kind `ra.clients` ("New Clients Report"). The page's **Email report card
+is shared** (`RaEmailCard.mount(box, labels)` on `.ra-emailcard[data-report]`; onboarding keeps `per_am`, clients has `all_ams`).
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 

@@ -59,8 +59,15 @@
   .ra-src.google, .ra-src.googleads { background: #e0f2fe; color: #075985; } .ra-src.chatgptai { background: #ede9fe; color: #5b21b6; } .ra-src.clientreferral, .ra-src.teamreferral, .ra-src.referral { background: #dcfce7; color: #166534; }
   .ra-src.returningclient { background: #fef3c7; color: #92400e; } .ra-src.social { background: #fce7f3; color: #be185d; } .ra-src.unknown { background: #f3f4f6; color: #9ca3af; }
   .ra-tag { display: inline-block; font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 6px; background: #f0f0f5; color: #555; } .ra-tag.hi { background: #fee2e2; color: #991b1b; } .ra-tag.dev { background: #fef3c7; color: #92400e; } .ra-tag.lo { background: #f3f4f6; color: #6b7280; } .ra-tag.no { background: #fee2e2; color: #991b1b; }
+  /* New Clients + Referral Report (1.20.100) */
+  .ra-two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; } @media (max-width: 1000px) { .ra-two { grid-template-columns: 1fr; } }
+  .ra-two .ra-card { margin-bottom: 14px; } .ra-two .ra-ams { margin-bottom: 0; }
+  .ra-made { display: inline-flex; align-items: center; gap: 6px; } .ra-made .web { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: #e0f2fe; color: #075985; } .ra-made .web svg { width: 14px; height: 14px; }
+  .ra-kpi .v .ra-tr { margin-left: 4px; }
+  .ra-ref { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 6px; } .ra-ref.client { background: #dcfce7; color: #166534; } .ra-ref.team { background: #ede9fe; color: #5b21b6; } .ra-ref.other { background: #f3f4f6; color: #4b5563; }
   /* Product Report (1.20.98) */
   .ra-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .ra-kpi[data-b] { cursor: pointer; } .ra-kpi[data-b]:hover { border-color: var(--indigo); } .ra-kpi.on { border-color: var(--indigo); background: #f5f3ff; }
   .ra-kpi { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: #fff; min-height: 86px; display: flex; flex-direction: column; gap: 4px; }
   .ra-kpi .l { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); } .ra-kpi .l.up { color: #047857; } .ra-kpi .l.down { color: #b91c1c; }
   .ra-kpi .p { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; line-height: 1.2; } .ra-kpi .p img { width: 30px; height: 30px; border-radius: 7px; object-fit: cover; flex: none; border: 1px solid var(--line); }
@@ -81,7 +88,7 @@
 <div class="ra-top">
   <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><rect x="5" y="11" width="3" height="6" rx="1"/><rect x="10.5" y="6" width="3" height="11" rx="1"/><rect x="16" y="9" width="3" height="8" rx="1"/></svg> ReportsAI <span>· reports from the CRM</span></h1>
   <span class="sp"></span>
-  <div class="ra-tabs"><button class="on" data-v="onboarding">Onboarding</button><button data-v="products">Product Report</button></div>
+  <div class="ra-tabs"><button class="on" data-v="onboarding">Onboarding</button><button data-v="clients">New Clients</button><button data-v="referrals">Referral Report</button><button data-v="products">Product Report</button></div>
 </div>
 <div class="ra-main">
   <section class="ra-view on" data-v="onboarding">
@@ -97,19 +104,40 @@
       <div class="ra-legend" id="obLegend"></div>
     </div>
     <div class="ra-card" id="obList"></div>
-    <div class="ra-card" id="obEmail">
-      <h2>Email report <span class="n" id="obEmailWhen"></span><span class="sp"></span><span class="ra-switch" id="obEmOn" title="Send the report"></span></h2>
-      <div class="ra-email">
-        <label>Timespan<select id="obEmSpan"><option value="month">Previous month</option><option value="30">Last 30 days</option><option value="week">Previous week (Mon–Sun)</option></select></label>
-        <label>Send on<select id="obEmDay"></select></label>
-        <label>At (Los Angeles)<input id="obEmAt" placeholder="07:00"></label>
-        <label>Send to<input id="obEmTo" placeholder="gary@axiomprint.com"></label>
-        <label>CC<input id="obEmCc" placeholder="luciana@axiomprint.com, …"></label>
-        <label class="chk"><input type="checkbox" id="obEmPer"> Also email each account manager their own onboardings</label>
-        <div class="acts"><button class="bk-btn pri" id="obEmSave">Save</button><button class="bk-btn" id="obEmSend" title="Send the report now for the timespan above, to the addresses above (and to each AM when ticked)">Send now</button><span class="msg" id="obEmMsg"></span></div>
-      </div>
-      <div class="ra-sent" id="obEmSent"></div>
+    <div class="ra-card ra-emailcard" id="obEmail" data-report="onboarding"></div>
+  </section>
+  <section class="ra-view" data-v="clients">
+    <div class="ra-sub" id="clPeriod">
+      <button data-p="week">This week</button><button data-p="month" class="on">This month</button><button data-p="last">Last month</button><button data-p="30">Last 30 days</button><button data-p="90">Last 90 days</button><button data-p="year">This year</button><button data-p="365">Last 12 months</button>
+      <span class="ra-muted" id="clVs"></span>
+      <span class="sp"></span><input class="q" id="clQ" placeholder="Search client, source, team member" autocomplete="off">
     </div>
+    <div class="ra-kpis" id="clKpis"></div>
+    <div class="ra-card">
+      <h2>Who created the accounts <span class="n" id="clMakersN"></span></h2>
+      <div class="ra-ams" id="clMakers"></div>
+    </div>
+    <div class="ra-card">
+      <h2>New clients <span class="n" id="clChartN"></span><span class="sp"></span><div class="ra-seg" id="clSeries"><button data-s="source" class="on">By source</button><button data-s="maker">By who created</button><button data-s="how">Website vs team</button><button data-s="am">By AM</button></div><div class="ra-seg" id="clGrain"><button data-g="day" class="on">Daily</button><button data-g="week">Weekly</button><button data-g="month">Monthly</button></div></h2>
+      <div class="ra-chart" id="clChart"><svg></svg><div class="ra-tip" hidden></div></div>
+      <div class="ra-legend" id="clLegend"></div>
+    </div>
+    <div class="ra-card" id="clList"></div>
+    <div class="ra-card ra-emailcard" id="clEmail" data-report="clients"></div>
+  </section>
+  <section class="ra-view" data-v="referrals">
+    <div class="ra-sub" id="rfPeriod">
+      <button data-p="week">This week</button><button data-p="month" class="on">This month</button><button data-p="last">Last month</button><button data-p="30">Last 30 days</button><button data-p="90">Last 90 days</button><button data-p="year">This year</button><button data-p="365">Last 12 months</button>
+      <span class="ra-muted" id="rfVs"></span>
+      <span class="sp"></span><input class="q" id="rfQ" placeholder="Search client or referrer" autocomplete="off">
+    </div>
+    <div class="ra-kpis" id="rfKpis"></div>
+    <div class="ra-two">
+      <div class="ra-card"><h2>Top referring clients <span class="n" id="rfClientsN"></span></h2><div class="ra-ams" id="rfClients"></div></div>
+      <div class="ra-card"><h2>Axiom team referrals <span class="n" id="rfTeamN"></span></h2><div class="ra-ams" id="rfTeam"></div></div>
+    </div>
+    <div class="ra-card" id="rfList"></div>
+    <div class="ra-muted" style="margin:-6px 0 14px 4px">A referral is read from the account (Referred by client / team member in the CRM), from the client's sign-up form (Personal referral / Axiom referral) or from the welcome form (existing client / employee referral). Welcome forms in the period that name a referral for an account created earlier are listed too, marked "older account".</div>
   </section>
   <section class="ra-view" data-v="products">
     <div class="ra-sub" id="prPeriod">
@@ -119,7 +147,7 @@
     </div>
     <div class="ra-kpis" id="prKpis"></div>
     <div class="ra-card">
-      <h2>Revenue by product <span class="n" id="prChartN"></span><span class="sp"></span><div class="ra-seg" id="prBy"><button data-b="rev" class="on">Revenue</button><button data-b="qty">Units</button><button data-b="orders">Orders</button><button data-b="new_clients">New clients</button></div></h2>
+      <h2><span id="prChartT">Revenue by product</span> <span class="n" id="prChartN"></span><span class="sp"></span><div class="ra-seg" id="prBy"><button data-b="rev" class="on">Revenue</button><button data-b="qty">Units</button><button data-b="orders">Orders</button><button data-b="new_clients">New clients</button><button data-b="reorders">Reorders</button><button data-b="up">Heating up</button><button data-b="down">Cooling down</button><button data-b="slow">Longest production</button><button data-b="fast">Shortest production</button></div></h2>
       <div class="ra-bars" id="prChart"></div>
     </div>
     <div class="ra-card" id="prList"></div>
