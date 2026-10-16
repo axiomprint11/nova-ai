@@ -2,6 +2,8 @@
 // YTD · Custom (two dates); RaPeriod.range(state) gives [from, to] as LA calendar days ('' = open), RaPeriod.wire() runs the chips.
 window.RaPeriod = (function () {
   const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const MON = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const usD = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '/' + m[3] + '/' + m[1] : ''; };
   function range(st) {
     const p = st.period, now = new Date(), d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     if (p === 'custom') return [st.from || '', st.to || ymd(d0)];
@@ -14,12 +16,73 @@ window.RaPeriod = (function () {
     if (p === 'all') return ['', ''];
     const n = parseInt(p) || 30; return [ymd(new Date(d0 - (n - 1) * 864e5)), ymd(d0)];
   }
+  /* 1.20.125: two chips + More. Last 30 days (the default) · YTD · More ▾ (This month · Last month · Last 90 days · 6 months · 12 months ·
+     All when the bar allows it · Custom range…). A choice from More takes the chip's place ("Last month ▾"). Custom opens the range picker:
+     two month calendars side by side, click the first day then the last, Apply. */
+  const MORE = [['month', 'This month'], ['last', 'Last month'], ['90', 'Last 90 days'], ['180', '6 months'], ['365', '12 months']];
+  const LABEL = { '30': 'Last 30 days', year: 'YTD', all: 'All time', custom: 'Custom range' };
+  MORE.forEach(([k, l]) => { LABEL[k] = l; });
+  let openMenu = null, openPick = null;
+  const closeAll = () => { if (openMenu) { openMenu.remove(); openMenu = null; } if (openPick) { openPick.remove(); openPick = null; } };
+  document.addEventListener('click', (e) => { if (!e.target.closest('.ra-pmenu, .ra-pick, .ra-pmore, .ra-pcustom')) closeAll(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAll(); });
+
   function wire(barId, st, onChange) {
     const bar = document.getElementById(barId); if (!bar) return;
-    const cu = bar.querySelector('.ra-custom'), ins = cu ? cu.querySelectorAll('input') : [];
-    const paint = () => { bar.querySelectorAll('button[data-p]').forEach(x => x.classList.toggle('on', x.dataset.p === st.period)); if (cu) cu.hidden = st.period !== 'custom'; };
-    bar.querySelectorAll('button[data-p]').forEach(b => b.onclick = () => { st.period = b.dataset.p; paint(); if (st.period === 'custom') { if (ins[0] && !ins[0].value) { ins[0].focus(); return; } if (!(st.from && st.to)) return; } onChange(); });
-    ins.forEach(i => i.onchange = () => { st.from = ins[0].value; st.to = ins[1].value; if (st.from && st.to && st.from <= st.to) onChange(); });
+    bar.querySelectorAll('button[data-p], .ra-custom').forEach(x => x.remove());
+    const allowAll = bar.dataset.all === '1';
+    const wrap = document.createElement('div'); wrap.className = 'ra-pchips';
+    bar.insertAdjacentElement('afterbegin', wrap);
+    const paint = () => {
+      const inMore = !(st.period === '30' || st.period === 'year');
+      const custom = st.period === 'custom' && st.from && st.to ? usD(st.from) + ' – ' + usD(st.to) : '';
+      wrap.innerHTML = '<button type="button" data-p="30"' + (st.period === '30' ? ' class="on"' : '') + '>Last 30 days</button>' +
+        '<button type="button" data-p="year"' + (st.period === 'year' ? ' class="on"' : '') + '>YTD</button>' +
+        '<button type="button" class="ra-pmore' + (inMore ? ' on' : '') + '">' + (inMore ? (custom || LABEL[st.period] || st.period) : 'More') + ' <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>';
+      wrap.querySelectorAll('button[data-p]').forEach(b => b.onclick = () => { closeAll(); st.period = b.dataset.p; paint(); onChange(); });
+      wrap.querySelector('.ra-pmore').onclick = (e) => { e.stopPropagation(); if (openMenu) { closeAll(); return; } closeAll(); menu(wrap.querySelector('.ra-pmore')); };
+    };
+    const menu = (anchor) => {
+      const m = document.createElement('div'); m.className = 'ra-pmenu';
+      const items = MORE.concat(allowAll ? [['all', 'All time']] : []);
+      m.innerHTML = items.map(([k, l]) => '<button type="button" data-k="' + k + '"' + (st.period === k ? ' class="on"' : '') + '>' + l + '</button>').join('') +
+        '<div class="sep"></div><button type="button" data-k="custom" class="ra-pcustom' + (st.period === 'custom' ? ' on' : '') + '"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg> Custom range…</button>';
+      anchor.insertAdjacentElement('afterend', m); openMenu = m;
+      m.querySelectorAll('button[data-k]').forEach(b => b.onclick = (e) => { e.stopPropagation(); const k = b.dataset.k; if (k === 'custom') { closeAll(); picker(wrap); return; } closeAll(); st.period = k; paint(); onChange(); });
+    };
+    const picker = (anchor) => {
+      const now = new Date(), [f0, t0] = st.period === 'custom' ? [st.from, st.to] : range(st);
+      let a = f0 || '', b = t0 || '', hover = '';
+      let view = new Date((b || ymd(now)) + 'T12:00:00'); view = new Date(view.getFullYear(), view.getMonth() - 1, 1);   /* left = the month before the end */
+      const pk = document.createElement('div'); pk.className = 'ra-pick';
+      anchor.insertAdjacentElement('afterend', pk); openPick = pk;
+      const cal = (y, mo) => {
+        const first = new Date(y, mo, 1), start = first.getDay(), days = new Date(y, mo + 1, 0).getDate(), today = ymd(now);
+        const lo = a && b ? (a < b ? a : b) : a, hi = a && b ? (a < b ? b : a) : (a && hover ? (hover > a ? hover : a) : ''), lo2 = a && !b && hover && hover < a ? hover : lo;
+        let h = '<div class="cal"><div class="cal-h"><b>' + MON[mo] + '</b> <span>' + y + '</span></div><div class="cal-w">' + ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(x => '<i>' + x + '</i>').join('') + '</div><div class="cal-g">';
+        for (let i = 0; i < start; i++) h += '<s></s>';
+        for (let d = 1; d <= days; d++) {
+          const k = ymd(new Date(y, mo, d)), inR = lo2 && hi && k > lo2 && k < hi, end = k === a || k === b;
+          h += '<button type="button" data-d="' + k + '" class="' + (end ? 'end' : '') + (inR ? ' in' : '') + (k === today ? ' today' : '') + (k > today ? ' fut' : '') + '"' + (k > today ? ' disabled' : '') + '>' + d + '</button>';
+        }
+        return h + '</div></div>';
+      };
+      const draw = () => {
+        const y2 = view.getMonth() === 11 ? view.getFullYear() + 1 : view.getFullYear(), m2 = (view.getMonth() + 1) % 12;
+        pk.innerHTML = '<div class="ra-pick-top"><button type="button" class="nav" data-nav="-1" aria-label="Earlier">‹</button><div class="ra-pick-cals">' + cal(view.getFullYear(), view.getMonth()) + cal(y2, m2) + '</div><button type="button" class="nav" data-nav="1" aria-label="Later">›</button></div>' +
+          '<div class="ra-pick-foot"><span class="sel">' + (a ? usD(a) : 'Start') + ' <em>→</em> ' + (b ? usD(b) : (a ? 'pick the last day' : 'End')) + '</span><span class="sp"></span>' +
+          '<button type="button" class="lnk" data-act="clear">Clear</button><button type="button" class="go" data-act="apply"' + (a && b ? '' : ' disabled') + '>Apply</button></div>';
+        pk.querySelectorAll('[data-nav]').forEach(n => n.onclick = (e) => { e.stopPropagation(); view = new Date(view.getFullYear(), view.getMonth() + Number(n.dataset.nav), 1); draw(); });
+        pk.querySelectorAll('button[data-d]').forEach(d => {
+          d.onclick = (e) => { e.stopPropagation(); const k = d.dataset.d; if (!a || (a && b)) { a = k; b = ''; } else { b = k; if (b < a) { const t = a; a = b; b = t; } } hover = ''; draw(); };
+          d.onmouseenter = () => { if (a && !b) { hover = d.dataset.d; paintHover(); } };
+        });
+        pk.querySelector('[data-act="clear"]').onclick = (e) => { e.stopPropagation(); a = ''; b = ''; hover = ''; draw(); };
+        pk.querySelector('[data-act="apply"]').onclick = (e) => { e.stopPropagation(); if (!(a && b)) return; st.period = 'custom'; st.from = a; st.to = b; closeAll(); paint(); onChange(); };
+      };
+      const paintHover = () => { pk.querySelectorAll('button[data-d]').forEach(d => { const k = d.dataset.d, lo = hover < a ? hover : a, hi = hover < a ? a : hover; d.classList.toggle('in', !!hover && k > lo && k < hi); }); };
+      draw();
+    };
     paint();
   }
   return { range, wire };
@@ -463,7 +526,7 @@ window.RaPeriod = (function () {
   };
 
   // ======== New Clients
-  const C = { period: 'month', from: '', to: '', grain: 'day', series: 'source', revBy: 'source', data: null, maker: '', F: { date: { from: '', to: '' }, client: '', made: '', src: '', am: '', ordered: '', ref: '' } };
+  const C = { period: '30', from: '', to: '', grain: 'day', series: 'source', revBy: 'source', data: null, maker: '', F: { date: { from: '', to: '' }, client: '', made: '', src: '', am: '', ordered: '', ref: '' } };
   RaPeriod.wire('clPeriod', C, loadClients);
   document.querySelectorAll('#clRevBy button').forEach(b => b.onclick = () => { C.revBy = b.dataset.r; document.querySelectorAll('#clRevBy button').forEach(x => x.classList.toggle('on', x === b)); renderClients(); });
   document.querySelectorAll('#clGrain button').forEach(b => b.onclick = () => { C.grain = b.dataset.g; document.querySelectorAll('#clGrain button').forEach(x => x.classList.toggle('on', x === b)); renderClients(); });
@@ -542,7 +605,7 @@ window.RaPeriod = (function () {
   }
 
   // ======== Referral Report
-  const R = { period: 'month', from: '', to: '', data: null, pick: '', F: { date: { from: '', to: '' }, client: '', kind: '', who: '', am: '', ordered: '' } };
+  const R = { period: '30', from: '', to: '', data: null, pick: '', F: { date: { from: '', to: '' }, client: '', kind: '', who: '', am: '', ordered: '' } };
   RaPeriod.wire('rfPeriod', R, loadRefs);
   { let t = null; $('rfQ').oninput = () => { clearTimeout(t); t = setTimeout(renderRefs, 250); }; }
   async function loadRefs() {
