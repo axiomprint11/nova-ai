@@ -14,7 +14,7 @@
   const COLORS = ['#4f46e5', '#059669', '#d97706', '#db2777', '#0891b2', '#7c3aed', '#dc2626', '#65a30d', '#0d9488', '#9333ea', '#ea580c', '#2563eb'];
 
   // ---- period
-  let period = '30', grain = 'month';
+  let period = '30', grain = 'day';
   function range(p) {
     const now = new Date(), d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     if (p === 'week') return [ymd(new Date(d0 - ((d0.getDay() + 6) % 7) * 864e5)), ymd(d0)];

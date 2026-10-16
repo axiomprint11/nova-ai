@@ -449,7 +449,7 @@ mouth", "Repeat customer"…) — into `{kind, who, raw}`: Google · Google Ads 
 Returning client · Social · Yelp · Reddit · Website · Outreach · Other · Unknown, `who` on the row's second line ("from Sean Sirisap").
 "Did not onboard" forms are left out unless `all=1` (the page's tick box). The page: period chips (This week / This month (default) /
 Last month / 30 / 90 / This year / All, `range()` in LA days), a search box, **AM tiles** (the leaderboard for the period — face, count,
-rank; click = only that AM), a **stacked bar chart per AM** with Daily / Weekly / Monthly (`buckets()` / `drawChart()`, own SVG, colours
+rank; click = only that AM), a **stacked bar chart per AM** with Daily (default since 1.20.98) / Weekly / Monthly (`buckets()` / `drawChart()`, own SVG, colours
 from `COLORS` in rank order, a tooltip with the split, a legend), and the table (NovaTable header filters: Onboarded date range, Client
 text, AM heads, Source, Onboarded via, Lead rating; Budget + est. value; pinned header): Onboarded · Client (company, person · email) ·
 AM (head + name) · Source (coloured pill + "from …") · Onboarded via (+ the "other" text) · Lead rating · Budget. Add a report = a tab
