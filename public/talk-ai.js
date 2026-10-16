@@ -1,4 +1,4 @@
-// TalkAi admin page: Calls · Try it · Training · Setup.
+// TalkAi admin page: Calls · Try it · Settings (tab key 'train') · Account managers · Setup.
 (function () {
   'use strict';
   const token = localStorage.getItem('axiom_token');
@@ -270,7 +270,7 @@
     phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>',
     test: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>'
   };
-  // Which setup answered the call (Training tabs), one short grey label everywhere.
+  // Which setup answered the call (Settings tabs), one short grey label everywhere.
   const MODE_LABEL = { regular: 'Regular Hours TalkAI', missed: 'Team Missed TalkAI', after: 'After Hours TalkAI' };   // 1.20.71: the same names as the dashboard's Answered by
   function callAvatar(c) {
     const match = c.caller_match && c.caller_match[0];
@@ -683,7 +683,7 @@
     paintTry(); $('tryInput').focus();
   };
 
-  // ---- Training ----
+  // ---- Settings (was Training) ----
   // Opening hours + the Regular / After hours setups (who answers, greetings, rules for that time of day).
   const DAYS = [['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'], ['fri', 'Friday'], ['sat', 'Saturday'], ['sun', 'Sunday']];
   let callerId = 'carrier', modes = null, curMode = 'regular';
@@ -725,7 +725,7 @@
       'closed days and order status \u2014 order details once the caller is recognised or verified. Can email the quote with Order now links.';
     const down = 'If the voice service is down: ' + (forward ? 'the call is forwarded to ' + scr(forward) + '.' : 'callers hear the ' + scr('Closed message') + '.');
     const hd = (cells) => '<div class="tk-flow-hd">' + cells.map(c => '<div><span>' + c[0] + '</span>' + c[1] + (c[2] ? '<small>' + c[2] + '</small>' : '') + '</div>').join('') + '</div>';
-    const mainLine = $('sMainLine').value.trim() || (s.main_line ? phone(s.main_line) : '(747) 888-7777');
+    const mainLine = s.main_line ? phone(s.main_line) : '(747) 888-7777';   /* 1.20.111: the field left the page; the saved value is kept */
     const csr = $('sCsrTo').value.trim() || s.csr_to || '';
     const usage = (k) => { const n = (j.mode_counts || {})[k] || 0; return n + ' call' + (n === 1 ? '' : 's') + ' in the last 30 days'; };
     const after = 'After the call NovaAI writes an AI summary and emails it to the CSR team' + (csr ? ' (' + scr(csr.split(/\s*,\s*/).length + ' people') + ')' : ' \u2014 <b>no CSR emails set</b>') +
@@ -788,7 +788,7 @@
     };
   }
   $('sMissedNum').addEventListener('input', () => paintLogic());
-  ['sMainLine', 'sCsrTo', 'sTransfer'].forEach(id => $(id).addEventListener('input', () => paintLogic()));
+  ['sCsrTo'].forEach(id => $(id).addEventListener('input', () => paintLogic()));
   $('sHookDoc').onclick = async (e) => {
     e.preventDefault();
     const id = logicData && logicData.latest_call;
@@ -888,7 +888,6 @@
     logicData = j;
     paintHours(s.hours); paintNow(j); paintMode();
     $('sRules').value = s.rules || '';
-    $('sTransfer').value = s.transfer_number ? phone(s.transfer_number) : '';
     $('sNotify').value = s.notify_to || '';
     $('sBcc').value = s.email_bcc || '';
     $('sReturningShort').checked = !!s.returning_short;
@@ -899,7 +898,6 @@
     // 1.20.76: the on / off switches are Admin → Emails' (notify_prefs) — read them here, save on the spot
     api('/api/admin/notifications').then(n => { if (!n.ok) return; document.querySelectorAll('#vTrain input[data-kind], #vSetup input[data-kind]').forEach(cb => { const k = (n.kinds || []).find(x => x.kind === cb.dataset.kind); if (k) cb.checked = !!k.enabled;
       cb.onchange = async () => { const r = await api('/api/admin/notifications/' + encodeURIComponent(cb.dataset.kind), { method: 'POST', body: JSON.stringify({ enabled: cb.checked }) }); if (!r.ok) { alert(r.error || 'Could not save'); cb.checked = !cb.checked; } }; }); }).catch(() => {});
-    $('sMainLine').value = s.main_line ? phone(s.main_line) : '';
     $('sCsrTo').value = s.csr_to || '';
     $('sHook').value = s.webhook_url || '';
     $('sHookState').innerHTML = s.webhook_secret ? '<b style="color:#166534">Secret set \u2713</b>' : '<b style="color:#b45309">Secret not in .env yet</b>';
@@ -913,8 +911,8 @@
     Object.keys(modes || {}).forEach(k => { modes[k].answer = 'ai'; });     // every setup is NovaAI (no "Who answers" choice)
     const j = await api('/api/admin/talk/settings', { method: 'POST', body: JSON.stringify({ hours: readHours(), modes: modes, rules: $('sRules').value,
       languages: langState ? langState.on.filter(k => k !== 'en') : undefined, lang_greetings: langState ? langState.greet : undefined,
-      transfer_number: $('sTransfer').value, notify_to: $('sNotify').value, email_bcc: $('sBcc').value, returning_short: $('sReturningShort').checked, missed_number: $('sMissedNum').value, summary_mail: $('sSummary').checked,
-      main_line: $('sMainLine').value, csr_to: $('sCsrTo').value, webhook_url: $('sHook').value,
+      notify_to: $('sNotify').value, email_bcc: $('sBcc').value, returning_short: $('sReturningShort').checked, missed_number: $('sMissedNum').value, summary_mail: $('sSummary').checked,
+      csr_to: $('sCsrTo').value, webhook_url: $('sHook').value,
       closed_message: $('sClosed').value }) });
     if (!j.ok) { m.className = 'tk-msg err'; m.textContent = j.error || 'Could not save.'; return; }
     const keep = curMode;
@@ -1122,7 +1120,7 @@
       '<li><b>Voice</b>: pick a warm voice. For English and Spanish the Flash / Turbo models are fastest; for Armenian use <b>Eleven v3 Conversational</b>. Turn on <b>interruptions</b>.</li>' +
       '<li><b>Languages</b> (Agent tab): default <b>English</b>; under <b>Additional languages</b> add <b>Spanish</b>, <b>Armenian</b> and <b>Russian</b>, and give each a voice that speaks it ' +
         '(for Armenian use an <b>Eleven v3</b> voice). Then <b>Security \u2192 Overrides</b>: turn on <b>Language</b> \u2014 Nova tells ElevenLabs which language the caller chose.</li>' +
-      '<li><b>Tools → System tools</b>: turn on <b>End conversation</b> and <b>Detect language</b>. Leave "Transfer to number" off — Nova does transfers (Training → Transfer to).</li>' +
+      '<li><b>Tools → System tools</b>: turn on <b>End conversation</b> and <b>Detect language</b>. Leave "Transfer to number" off — Nova does transfers (to the account manager\u2019s Dialpad number).</li>' +
       '<li><b>Advanced → audio</b>: user input audio format <b>μ-law 8000 Hz</b> and TTS output format <b>μ-law 8000 Hz</b> (needed because Nova hands the call over from Twilio).</li>' +
       '<li>Leave the phone number out of ElevenLabs — Nova connects each call itself, so it can forward or play the closed message when needed.</li></ol></details>' +
 
