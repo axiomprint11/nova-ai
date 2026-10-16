@@ -133,6 +133,7 @@ module.exports = function mountBookkeeping(app, deps) {
     // 1.19.149: a line a person sent back to Pending ("Uncategorize" in the Categorized view) — the rule / team / loan
     // sweeps leave it alone until someone files it again
     db.run('ALTER TABLE bk_transactions ADD COLUMN no_auto INTEGER DEFAULT 0', () => {});
+    db.run('ALTER TABLE bk_transactions ADD COLUMN loan_ok INTEGER DEFAULT 0', () => {});   /* 1.20.143: a loan link a person confirmed although the wording names no lender */
     db.run('ALTER TABLE bk_transactions ADD COLUMN auto_reviewed_at TEXT', () => {});   // 1.20.61: an auto-filed line a person has looked at (the Auto tab shows only the unreviewed)
     db.run('ALTER TABLE bk_transactions ADD COLUMN auto_reviewed_by TEXT', () => {});
     db.run('ALTER TABLE bk_transactions ADD COLUMN dup_of INTEGER', () => {});   // 1.20.61: the same bank line already held under another connection (a re-linked bank gives new Plaid ids)
@@ -3402,6 +3403,61 @@ module.exports = function mountBookkeeping(app, deps) {
   // Equipment: the machine list with its financing. The CRM part syncs with the directory; the money part is edited here.
   // 1.19.99: Loans & leases — every liability in one list (standalone loans + machines financed under Equipment) with the
   // amortized balance, and a small balance-sheet view: equipment book value against what is still owed.
+  // 1.20.143 — Accounts → Lenders: the finance companies, their loans and bank lines, and every loan link the wording disagrees with
+  app.get('/api/bookkeeping/lenders', ...guard, async (req, res) => {
+    try {
+      const lenders = await dbAll("SELECT id, name, source, kind, photo, aliases, details, specialty, notes FROM bk_vendors WHERE kind = 'lender' ORDER BY name COLLATE NOCASE");
+      const loans = await dbAll('SELECT id, name, kind, status, vendor_id, lender, monthly, start_date, term_months, steps_json, property_tax_monthly, principal, apr, total_payback, down_payment, deferred_months, balloon FROM bk_loans ORDER BY status, name');
+      const lines = {}; (await dbAll("SELECT vendor_id, COUNT(*) n, SUM(amount) total, MAX(date) last FROM bk_transactions WHERE vendor_id IS NOT NULL AND amount > 0 AND status NOT IN ('removed', 'excluded') GROUP BY vendor_id")).forEach(r => { lines[r.vendor_id] = r; });
+      for (const v of lenders) {
+        v.website = (() => { try { return JSON.parse(v.details || '{}').website || null; } catch (e) { return null; } })(); delete v.details;
+        v.statement = String(v.aliases || '').split('\n').filter(a => a && a.indexOf('@') < 0); v.auto_words = dotForms(v.name);
+        v.loans = loans.filter(l => l.vendor_id === v.id).map(l => { const m = loanMath(l); return { id: l.id, name: l.name, kind: l.kind, status: l.status, payment: m.payment || m.monthly || 0, amounts: m.amounts || [] }; });
+        v.lines = lines[v.id] ? { n: lines[v.id].n, total: Math.round(lines[v.id].total * 100) / 100, last: lines[v.id].last } : { n: 0, total: 0, last: null };
+      }
+      const unassigned = loans.filter(l => !l.vendor_id).map(l => ({ id: l.id, name: l.name, status: l.status, lender_text: l.lender || null }));
+      // every loan-linked line whose wording does not name the loan's lender
+      const conflicts = [];
+      const byId = {}; loans.forEach(l => { byId[l.id] = l; }); const vn = {}; (await dbAll('SELECT id, name, kind, source FROM bk_vendors')).forEach(x => { vn[x.id] = x; });
+      for (const t of await dbAll("SELECT id, date, amount, name, merchant, raw, vendor_id, loan_id, category_source FROM bk_transactions WHERE loan_id IS NOT NULL AND IFNULL(loan_ok, 0) = 0 AND status NOT IN ('removed', 'excluded') ORDER BY date DESC")) {
+        const l = byId[t.loan_id]; if (!l) continue;
+        const says = await lenderOf(t);
+        if (says && l.vendor_id && says.id === l.vendor_id) continue;
+        conflicts.push({ txn_id: t.id, date: t.date, amount: Number(t.amount), wording: t.name, how: t.category_source, loan: { id: l.id, name: l.name }, lender: l.vendor_id ? { id: l.vendor_id, name: (vn[l.vendor_id] || {}).name || '?' } : null, says: says ? { id: says.id, name: says.name, is_lender: says.kind === 'lender' } : null });
+      }
+      res.json({ ok: true, lenders, unassigned, conflicts });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  // what to do with a loan link the wording disagrees with: relender = the loan's lender becomes the company the line names
+  // (every line of that loan follows), unlink = the line is no longer a loan payment (back to Pending), keep = it is right
+  app.post('/api/bookkeeping/lenders/conflicts/:txn', ...guard, async (req, res) => {
+    try {
+      const id = parseInt(req.params.txn), act = String(req.body.action || ''), who = userId(req);
+      const t = await dbGet('SELECT * FROM bk_transactions WHERE id = ?', [id]); if (!t || !t.loan_id) return res.json({ ok: false, error: 'Not a loan payment' });
+      if (act === 'keep') { await dbRun('UPDATE bk_transactions SET loan_ok = 1 WHERE id = ?', [id]); await audit(who, 'loan.keep', id, { loan_id: t.loan_id }); return res.json({ ok: true }); }
+      if (act === 'unlink') {
+        await dbRun("UPDATE bk_transactions SET loan_id = NULL, category = NULL, category_source = NULL, rule_id = NULL, status = 'pending', updated_at = datetime('now') WHERE id = ?", [id]);
+        await audit(who, 'loan.unlink', id, { loan_id: t.loan_id }); return res.json({ ok: true });
+      }
+      if (act === 'relender') {
+        const says = await lenderOf(t); if (!says) return res.json({ ok: false, error: 'The wording names no company Nova knows — add the lender with its statement words first' });
+        if (says.source === 'nova' && says.kind !== 'lender') await dbRun("UPDATE bk_vendors SET kind = 'lender' WHERE id = ?", [says.id]);
+        await dbRun("UPDATE bk_loans SET vendor_id = ?, updated_at = datetime('now') WHERE id = ?", [says.id, t.loan_id]);
+        const moved = (await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = 'manual', vendor_score = 1 WHERE loan_id = ? AND (vendor_id IS NULL OR vendor_id <> ?)", [says.id, t.loan_id, says.id])).changes;
+        dirCache.at = 0; await audit(who, 'loan.relender', t.loan_id, { lender_id: says.id, moved });
+        return res.json({ ok: true, lender: says, moved });
+      }
+      res.json({ ok: false, error: 'Unknown action' });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
+  app.post('/api/bookkeeping/loans/:id/lender', ...guard, async (req, res) => {   /* 1.20.143: pick / change a loan's lender */
+    try {
+      const id = parseInt(req.params.id), vid = req.body.lender_id ? parseInt(req.body.lender_id) : null;
+      if (vid) { const v = await dbGet('SELECT id, source, kind FROM bk_vendors WHERE id = ?', [vid]); if (!v) return res.json({ ok: false, error: 'No such company' }); if (v.source === 'nova' && v.kind !== 'lender') await dbRun("UPDATE bk_vendors SET kind = 'lender' WHERE id = ?", [vid]); }
+      await dbRun("UPDATE bk_loans SET vendor_id = ?, updated_at = datetime('now') WHERE id = ?", [vid, id]); dirCache.at = 0;
+      await audit(userId(req), 'loan.lender', id, { lender_id: vid }); res.json({ ok: true });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+  });
   app.get('/api/bookkeeping/loans', ...guard, async (req, res) => {
     try {
       const loans = await loanRows();
@@ -3411,7 +3467,7 @@ module.exports = function mountBookkeeping(app, deps) {
       const owed = active.reduce((n, l) => n + (l.balance || 0), 0), monthly = active.reduce((n, l) => n + ((l.math && l.math.payment) || l.schedule.monthly || 0), 0);
       // 1.20.131: the connected bank accounts for the form's "Auto payment from" select (live connections, accounts in use)
       const banks = []; for (const it of (await plaidItems().catch(() => []))) { if (it.status === 'removed') continue; for (const a of it.accounts || []) { if ((it.excluded || []).indexOf(a.account_id) > -1) continue; banks.push({ id: a.account_id, label: (it.institution || 'Bank') + ' ••' + (a.mask || '') + (a.name ? ' · ' + a.name : ''), logo: it.logo || null }); } }
-      res.json({ ok: true, loans, banks, vendors: await dbAll('SELECT id, name, photo FROM bk_vendors ORDER BY name COLLATE NOCASE'), equipment: eq.map(e => ({ id: e.id, name: e.name, photo: e.photo, mode: e.mode })),
+      res.json({ ok: true, loans, banks, lenders: await dbAll("SELECT id, name, photo FROM bk_vendors WHERE kind = 'lender' ORDER BY name COLLATE NOCASE"), vendors: await dbAll('SELECT id, name, photo FROM bk_vendors ORDER BY name COLLATE NOCASE'), equipment: eq.map(e => ({ id: e.id, name: e.name, photo: e.photo, mode: e.mode })),
         sheet: { equipment_value: Math.round(assets * 100) / 100, owed: Math.round(owed * 100) / 100, monthly: Math.round(monthly * 100) / 100, net: Math.round((assets - owed) * 100) / 100, loans: active.length } });
     } catch (e) { res.json({ ok: false, error: e.message }); }
   });
@@ -3490,42 +3546,39 @@ module.exports = function mountBookkeeping(app, deps) {
   // 1.19.144: one place that ties a bank line to a loan. `source` manual (the Match button) or 'loan' (the sweep).
   // A hand match also settles the lender: a loan with no company gets a Nova vendor made from the line (name = the
   // merchant, alias = the bank wording), and the line is linked to it — from then on every payment auto-links.
-  async function linkLoan(txnId, loanId, who, source) {
+  // 1.20.143 — Lenders. The finance companies are their own list (bk_vendors.kind = 'lender', Accounts → Lenders); every loan
+  // points at one, and a payment is tied to a loan only when the bank wording NAMES that lender. No lender is ever made out of
+  // a bank line any more, and a bank line never teaches a lender a new alias — aliases are typed on the lender's card.
+  const lenderOf = async (t) => { const m = await matchVendorAny(t).catch(() => null); return m ? { id: m.id, name: m.name, kind: m.kind, source: m.source } : null; };
+  async function linkLoan(txnId, loanId, who, source, opts) {
+    opts = opts || {};
     const t = await dbGet('SELECT * FROM bk_transactions WHERE id = ?', [txnId]); const l = await dbGet('SELECT * FROM bk_loans WHERE id = ?', [loanId]);
     if (!t || !l) return { ok: false, error: 'No such line or loan' };
+    if (source !== 'loan') {
+      const says = await lenderOf(t);
+      if (opts.lender_id) {   // the person picked the lender for a loan that had none
+        await dbRun("UPDATE bk_loans SET vendor_id = ?, updated_at = datetime('now') WHERE id = ?", [parseInt(opts.lender_id), loanId]); l.vendor_id = parseInt(opts.lender_id);
+      } else if (opts.set_lender && says) {   // "this line says NAVITAS CREDIT — make it the loan's lender"
+        await dbRun("UPDATE bk_loans SET vendor_id = ?, updated_at = datetime('now') WHERE id = ?", [says.id, loanId]); l.vendor_id = says.id;
+        if (says.source === 'nova' && says.kind !== 'lender') { await dbRun("UPDATE bk_vendors SET kind = 'lender' WHERE id = ?", [says.id]); dirCache.at = 0; }
+      }
+      if (!l.vendor_id) {
+        if (says) { await dbRun("UPDATE bk_loans SET vendor_id = ?, updated_at = datetime('now') WHERE id = ?", [says.id, loanId]); l.vendor_id = says.id; if (says.source === 'nova' && says.kind !== 'lender') { await dbRun("UPDATE bk_vendors SET kind = 'lender' WHERE id = ?", [says.id]); dirCache.at = 0; } }
+        else return { ok: false, need_lender: true, wording: t.name, loan: { id: l.id, name: l.name }, error: 'This loan has no lender yet, and the bank wording names no company Nova knows — pick the lender first' };
+      }
+      if (says && says.id !== l.vendor_id && !opts.force) {
+        const lv = await dbGet('SELECT id, name FROM bk_vendors WHERE id = ?', [l.vendor_id]);
+        return { ok: false, conflict: { says, lender: lv || { id: l.vendor_id, name: '?' }, loan: { id: l.id, name: l.name }, wording: t.name }, error: 'The bank line says ' + says.name + ' but the loan\'s lender is ' + (lv ? lv.name : '?') };
+      }
+      if (t.vendor_id && t.vendor_id !== l.vendor_id && says && says.id === l.vendor_id) await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = 'manual', vendor_score = 1 WHERE id = ?", [l.vendor_id, txnId]);   // the wording names the lender — the stale link goes
+    }
     const names = chartOf(await settings()).map(c => c.name), cat = ['Loan Payment (Principal)', 'Loan Payment'].find(n => names.indexOf(n) > -1) || null;
     await dbRun("UPDATE bk_transactions SET no_auto = 0, loan_id = ?, updated_at = datetime('now')" + (cat ? ", category = ?, category_source = ?, status = 'categorized'" : '') + ' WHERE id = ?', cat ? [loanId, cat, source === 'loan' ? 'loan' : 'manual', txnId] : [loanId, txnId]);
     await dbRun("UPDATE bk_proposals SET status = 'edited' WHERE ref_table = 'bk_transactions' AND ref_id = ? AND status = 'pending'", [txnId]).catch(() => {});
-    let vid = l.vendor_id || null, made = null;
-    if (!vid && source !== 'loan') {
-      if (t.vendor_id) vid = t.vendor_id;
-      else {
-        // 1.19.145: the lender's name typed on the loan beats the bank's merchant guess (Plaid reads a Mitsubishi HCC ACH as "Axiom Print")
-        // 1.20.64: never our own company — Plaid reads a Wells Fargo ACH as "Axiomprint Inc.", which named the Scodix lender after
-        // us. With no lender typed, the payee words of the statement wording ("SIGNATURE FIN") name the vendor instead.
-        let name = String((l.lender && l.lender.trim()) || '').replace(/\s+/g, ' ').trim();
-        if (!name) {
-          const guess = String(t.merchant || t.name || '').trim();
-          if (guess && !isOwnName(guess)) name = guess;
-          else {
-            const od = (() => { try { return JSON.parse(t.raw || '{}').original_description; } catch (e) { return null; } })() || t.name || '';
-            const payee = stripBank(normV(od), await bankBoilerplate());
-            const words = String(payee || '').replace(/\b(payment|pmt|pay|bill|signature|loan|lease|ach|ppd|ccd|inc|llc)\b/g, m => m === 'signature' ? m : ' ').replace(/\b[a-z]*\d+[a-z0-9]*\b/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(w => w.length >= 3 && !isOwnName(w)).slice(0, 3);
-            name = words.length ? words.map(w => w[0].toUpperCase() + w.slice(1)).join(' ') : ('Lender · ' + l.name);
-          }
-        }
-        name = name.slice(0, 120);
-        const dup = await dbGet('SELECT id FROM bk_vendors WHERE lower(name) = lower(?)', [name]);
-        if (dup) vid = dup.id;
-        else { const r = await dbRun('INSERT INTO bk_vendors (name, source, kind, approved, approved_by, approved_at, default_category, specialty, aliases, notes) VALUES (?,?,?,?,?,?,?,?,?,?)', [name, 'nova', 'lender', 1, who, nowIso(), cat, 'Lender · ' + l.name, String(t.name || '').slice(0, 120) || null, 'Made from a loan payment (' + l.name + ')']); vid = r.lastID; made = name; dirCache.at = 0; }
-      }
-      if (vid) await dbRun("UPDATE bk_loans SET vendor_id = ?, updated_at = datetime('now') WHERE id = ?", [vid, loanId]);
-    }
+    const vid = l.vendor_id || null, made = null;
     if (vid) {
       await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = COALESCE(vendor_by, 'auto'), vendor_score = COALESCE(vendor_score, 1) WHERE id = ? AND vendor_id IS NULL", [vid, txnId]);
-      // remember the lender's own words from the bank line so the next payment links by itself
-      const v = await dbGet('SELECT name, aliases FROM bk_vendors WHERE id = ?', [vid]);
-      if (v && t.name) { const ph = vendorPhrase(v.name, t.name) || String(t.merchant || '').trim(); const al = String(v.aliases || '').split('\n').filter(Boolean); if (ph && al.indexOf(ph) < 0 && normV(ph) !== normV(v.name)) { al.push(ph.slice(0, 120)); await dbRun('UPDATE bk_vendors SET aliases = ? WHERE id = ?', [al.join('\n').slice(0, 1000), vid]); dirCache.at = 0; } }
+      /* 1.20.143: a bank line no longer teaches the lender an alias — type them on the lender's card */
     }
     await audit(who, 'txn.loan', txnId, { loan_id: loanId, category: cat, source: source || 'manual', vendor_id: vid, vendor_made: made });
     return { ok: true, category: cat, vendor_id: vid, vendor_made: made };
@@ -3545,10 +3598,11 @@ module.exports = function mountBookkeeping(app, deps) {
     const loans = (await dbAll("SELECT * FROM bk_loans WHERE status = 'active' AND vendor_id IS NOT NULL")).map(l => Object.assign(l, { _m: loanMath(l) })).filter(l => l._m.payment > 0 || l._m.monthly > 0);
     if (!loans.length) return 0;
     let n = 0;
-    for (const t of await dbAll("SELECT id, vendor_id, amount, name FROM bk_transactions WHERE loan_id IS NULL AND vendor_id IS NOT NULL AND amount > 0 AND status IN ('new', 'pending') AND IFNULL(no_auto, 0) = 0 AND transfer_of IS NULL AND refund_of IS NULL AND (category IS NULL OR category = '')")) {
+    for (const t of await dbAll("SELECT id, vendor_id, amount, name, merchant, raw FROM bk_transactions WHERE loan_id IS NULL AND vendor_id IS NOT NULL AND amount > 0 AND status IN ('new', 'pending') AND IFNULL(no_auto, 0) = 0 AND transfer_of IS NULL AND refund_of IS NULL AND (category IS NULL OR category = '')")) {
       const amt = Number(t.amount);
       const l = loanFit(loans.filter(x => x.vendor_id === t.vendor_id), amt, x => x._m.amounts);   /* 1.20.141: the closest of the lender's loans, within $5 */
       if (!l) continue;
+      const says = await lenderOf(t); if (!says || says.id !== l.vendor_id) continue;   /* 1.20.143: the wording itself must name the lender — a stale vendor link is not enough */
       const r = await linkLoan(t.id, l.id, 'system', 'loan'); if (r.ok) n++;
     }
     return n;
@@ -3556,7 +3610,7 @@ module.exports = function mountBookkeeping(app, deps) {
   app.post('/api/bookkeeping/transactions/:id/loan', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), lid = req.body.loan_id == null ? null : parseInt(req.body.loan_id);
     if (!lid) { await dbRun("UPDATE bk_transactions SET loan_id = NULL, updated_at = datetime('now') WHERE id = ?", [id]); await audit(userId(req), 'txn.loan', id, { loan_id: null }); return res.json({ ok: true }); }
-    const r = await linkLoan(id, lid, userId(req), 'manual');
+    const r = await linkLoan(id, lid, userId(req), 'manual', { force: !!req.body.force, set_lender: !!req.body.set_lender, lender_id: req.body.lender_id ? parseInt(req.body.lender_id) : null });   /* 1.20.143 */
     if (!r.ok) return res.json(r);
     let swept = 0; try { if (r.vendor_id) await relinkVendor(r.vendor_id); swept = await applyLoans(); } catch (e) {}   // the lender is known now — link its other lines, then the payments
     res.json(Object.assign(r, { swept }));
@@ -3801,8 +3855,9 @@ module.exports = function mountBookkeeping(app, deps) {
       const dup = await dbGet('SELECT id, name, source FROM bk_vendors WHERE lower(name) = lower(?)', [name]);
       if (dup && !b.force) return res.json({ ok: false, error: '"' + dup.name + '" is already in the directory' + (dup.source === 'nova' ? ' as a Nova vendor' : ' (from the CRM)'), duplicate: dup });
       const details = JSON.stringify({ website: String(b.website || '').trim().slice(0, 200) || undefined });
+      const kind = b.kind === 'lender' ? 'lender' : 'nova';   /* 1.20.143: a finance company */
       const r = await dbRun('INSERT INTO bk_vendors (name, source, kind, approved, approved_by, approved_at, default_category, aliases, details, photo, ' + VFIELDS.join(', ') + ') VALUES (?,?,?,?,?,?,?,?,?,?' + VFIELDS.map(() => ',?').join('') + ')',
-        [name, 'nova', 'nova', 1, userId(req), nowIso(), String(b.default_category || '').slice(0, 300) || null, String(b.aliases || '').slice(0, 1000) || null, details, vendorPhoto(b.photo)].concat(VFIELDS.map(k => String(b[k] || '').slice(0, 500) || null)));
+        [name, 'nova', kind, 1, userId(req), nowIso(), String(b.default_category || '').slice(0, 300) || null, String(b.aliases || '').slice(0, 1000) || null, details, vendorPhoto(b.photo)].concat(VFIELDS.map(k => String(b[k] || '').slice(0, 500) || null)));
       dirCache.at = 0;
       await audit(userId(req), 'vendor.new', r.lastID, { name });
       res.json({ ok: true, vendor: await dbGet('SELECT * FROM bk_vendors WHERE id = ?', [r.lastID]) });
@@ -3858,6 +3913,7 @@ module.exports = function mountBookkeeping(app, deps) {
       VFIELDS.forEach(k => { if (b[k] !== undefined) { sets.push(k + ' = ?'); args.push(String(b[k] || '').slice(0, 500) || null); } });
       if (b.website !== undefined) { let d = {}; try { d = JSON.parse(cur.details || '{}') || {}; } catch (e) {} d.website = String(b.website || '').trim().slice(0, 200) || undefined; sets.push('details = ?'); args.push(JSON.stringify(d)); }
       if (b.photo !== undefined) { sets.push('photo = ?'); args.push(vendorPhoto(b.photo)); }   // 1.19.77: a logo URL or a small picture uploaded from the form
+      if (b.kind === 'lender' || b.kind === 'nova') { sets.push('kind = ?'); args.push(b.kind); }   /* 1.20.143: Nova vendor ↔ lender */
     }
     if (b.default_category !== undefined) { sets.push('default_category = ?'); args.push(String(b.default_category || '').slice(0, 300) || null); }
     let modeSwept = 0;

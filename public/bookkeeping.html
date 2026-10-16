@@ -217,6 +217,26 @@
   .bk-view { max-width: 1120px; }   /* left aligned, brief-width; the Inbox split view keeps the full width */
   .bk-view[data-v=bank] { max-width: 1480px; }   /* 1.19.61: the Bank feed has seven columns — let it breathe */
   #vNova .bk-card { width: 1232px; max-width: none; }
+  /* 1.20.143: Accounts → Lenders */
+  #vLenders .bk-card { width: 1100px; max-width: none; }
+  .ld-top .bk-card-title { display: flex; align-items: center; gap: 8px; }
+  .ld-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(500px, 1fr)); gap: 14px; margin-top: 10px; }
+  .ld-card { border: 1px solid var(--line, #e5e7eb); border-radius: 12px; padding: 14px 16px; background: #fff; }
+  .ld-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .ld-head .bk-logo { width: 40px; height: 40px; border-radius: 10px; object-fit: contain; }
+  .ld-name { flex: 1; min-width: 0; font-size: 15px; }
+  .ld-row { display: grid; grid-template-columns: 118px 1fr; gap: 8px; padding: 6px 0; border-top: 1px dashed #eef0f3; font-size: 13px; align-items: start; }
+  .ld-words { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .ld-alias { background: #f1f3f8; border-radius: 6px; padding: 2px 8px; font-family: ui-monospace, monospace; font-size: 12px; text-transform: uppercase; }
+  .ld-alias.auto { background: #fff; border: 1px dashed #cfd4dc; color: #6b7280; }
+  .ld-loan { padding: 2px 0; } .ld-loan.off { opacity: .55; }
+  .ld-table td, .ld-table th { vertical-align: top; }
+  .ld-cacts { white-space: nowrap; } .ld-cacts .bk-btn { margin-left: 6px; }
+  .ld-pick { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; margin: 8px 0 12px; }
+  .ld-opt { display: flex; align-items: center; gap: 10px; justify-content: flex-start; text-align: left; }
+  .ld-opt img { width: 24px; height: 24px; border-radius: 6px; object-fit: contain; } .ld-opt .bk-logo.sm { width: 24px; height: 24px; font-size: 12px; }
+  .ld-new { border-style: dashed; }
+  .ld-card button.bk-link { background: none; border: 0; padding: 0; color: #4f46e5; cursor: pointer; font-size: 12px; text-decoration: underline; }
   #vLoans .bk-card { width: 1300px; max-width: none; }   /* 1.20.133: the Loans table has a Payment column — the Edit button sat past the card */   /* 1.19.146: the Nova vendors table 10% wider than the view */
   .nv-table .nv-rowacts { white-space: nowrap; text-align: right; } .nv-table .nv-rowacts .bk-btn { margin: 0 0 0 4px; padding-left: 8px; padding-right: 8px; }
   .nv-table .nv-stmt { text-align: right; padding-right: 10px; } .nv-table th.nv-stmt { text-align: right; } .nv-table .nv-lines { color: inherit; text-decoration: underline dotted; } .nv-table .nv-lines:hover { color: var(--indigo-dark); }
@@ -595,6 +615,7 @@
       <button data-s="vendors">Vendors &amp; suppliers</button>
       <button data-s="equipment">Equipment</button>
       <button data-s="loans">Loans &amp; Leases</button>
+      <button data-s="lenders">Lenders</button>
       <button data-s="team">Overseas Team</button>
       <button data-s="chart">Chart of Accounts</button>
       <button data-s="rules">Rules</button>
@@ -603,6 +624,7 @@
     </div>
     <div class="bk-subview" data-s="nova" id="vNova"></div>
     <div class="bk-subview" data-s="loans" id="vLoans"></div>
+    <div class="bk-subview" data-s="lenders" id="vLenders"></div>
     <div class="bk-subview" data-s="team" id="vTeam"></div>
     <div class="bk-subview" data-s="vendors" id="vVendors"></div>
     <div class="bk-subview" data-s="equipment" id="vEquipment"></div>

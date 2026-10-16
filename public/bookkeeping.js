@@ -34,7 +34,7 @@
   // show('inbox') opens that sub-tab directly; the last sub-tab of each is remembered per browser.
   const BILL_SUBS = { all: ['draft', 'approved', 'scheduled', 'paid', 'rejected'], pending: ['draft'], approved: ['approved'], scheduled: ['scheduled'], paid: ['paid'], rejected: ['rejected'] };
   let billSub = 'pending';
-  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, equipment: loadEquipment, loans: loadLoans, team: loadTeam, chart: loadChart, rules: loadRules, materials: loadMaterials, nova: loadNovaVendors }, first: 'vendors' },
+  const TABS = { accounts: { bar: 'subAccounts', subs: { vendors: loadVendors, equipment: loadEquipment, loans: loadLoans, lenders: loadLenders, team: loadTeam, chart: loadChart, rules: loadRules, materials: loadMaterials, nova: loadNovaVendors }, first: 'vendors' },
     purchases: { bar: 'subPurchases', subs: { toreceive: () => loadPurchases('toreceive'), shipped: () => loadPurchases('shipped'), received: () => loadPurchases('received'), na: () => loadPurchases('na'), list: () => loadPurchases('list'), waiting: () => loadPurchases('waiting'), notreceived: () => loadPurchases('notreceived') }, first: 'toreceive' },   /* 1.20.139: the receiving pipeline */
     bank: { bar: 'subBank', subs: { all: () => loadTxns(''), new: () => loadTxns('new'), pending: () => loadTxns('pending'), old: () => loadTxns('old'), categorized: () => loadTxns('categorized'), auto: () => loadTxns('auto'), stats: () => loadTxns('stats') }, first: 'pending' },   // 1.19.54: Bank feed is a top tab
     ar: { bar: 'subAr', subs: { open: () => loadAr('open'), done: () => loadAr('done'), rules: () => loadArRules() }, first: 'open' },   // 1.19.152: Nova AR
@@ -879,7 +879,7 @@
     v.querySelectorAll('[data-teamcat]').forEach(a => a.onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/transactions/' + a.dataset.teamcat + '/category', { category: a.dataset.cat, source: 'manual' }); if (!r.ok) alert(r.error); loadTxns(); });
     v.querySelectorAll('[data-teamgo]').forEach(a => a.onclick = (e) => { e.preventDefault(); location.href = '/bookkeeping?tab=accounts&sub=team'; });
     // 1.19.99: loan payments — match from the hint, unlink
-    v.querySelectorAll('[data-loan]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/transactions/' + b.dataset.loan + '/loan', { loan_id: Number(b.dataset.lid) }); if (!r.ok) alert(r.error);
+    v.querySelectorAll('[data-loan]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await loanMatch(Number(b.dataset.loan), Number(b.dataset.lid)); if (!r) { b.disabled = false; return; } if (!r.ok) alert(r.error);
       else if (r.vendor_made || r.swept) toast((r.vendor_made ? '<b>' + esc(r.vendor_made) + '</b> is now the lender on this loan' : 'Linked to the loan') + (r.swept ? ' · ' + r.swept + ' more payment' + (r.swept === 1 ? '' : 's') + ' matched' : ''), 5000);   // 1.19.144
       loadTxns(); overview(); });
     v.querySelectorAll('[data-unloan]').forEach(a => a.onclick = async (e) => { e.preventDefault(); const r = await post('/api/bookkeeping/transactions/' + a.dataset.unloan + '/loan', { loan_id: null }); if (!r.ok) alert(r.error); loadTxns(); });
@@ -2155,7 +2155,7 @@
     const el = document.createElement('div'); el.className = 'bk-modal';
     const F = (id, label, val, ph, type) => '<label class="nv-f"><span class="bk-muted">' + label + '</span><input class="bk" id="' + id + '" type="' + (type || 'text') + '" value="' + esc(val || '') + '" placeholder="' + esc(ph || '') + '"></label>';
     // 1.19.86: the explanation sits behind a small (?) beside the title instead of a paragraph above the form
-    el.innerHTML = '<div class="bk-modal-box" style="width:min(620px,100%)"><div class="bk-modal-title" style="margin-bottom:12px">' + (isEdit ? 'Edit ' + esc(init.name) : 'New Nova vendor') + ' ' + qHelp('novavendor', 'Nova vendor', 'A company kept in Nova only — not in the CRM supplier / vendor lists. The chart of accounts is its map: say what you buy from them and the usual category, and the AI files their lines there.') + '</div>' +
+    el.innerHTML = '<div class="bk-modal-box" style="width:min(620px,100%)"><div class="bk-modal-title" style="margin-bottom:12px">' + (isEdit ? 'Edit ' + esc(init.name) : init.kind === 'lender' ? 'New lender' : 'New Nova vendor') + ' ' + qHelp('novavendor', 'Nova vendor', 'A company kept in Nova only — not in the CRM supplier / vendor lists. The chart of accounts is its map: say what you buy from them and the usual category, and the AI files their lines there.') + '</div>' +
       // 1.19.77: the logo — the bank's merchant logo when one was picked up, a URL, or a picture uploaded here (shrunk to 160px)
       '<div class="nv-photo"><div class="nv-photo-box" id="nvPhotoBox">' + (init.photo ? '<img src="' + esc(init.photo) + '" alt="">' : '<span class="bk-logo ph">' + esc(String(init.name || '?').charAt(0).toUpperCase()) + '</span>') + '</div><div class="nv-photo-f"><span class="bk-muted">Logo / photo</span><div class="bk-row" style="gap:6px;flex-wrap:nowrap"><input class="bk" id="nvPhoto" value="' + esc(/^data:/.test(init.photo || '') ? '' : (init.photo || '')) + '" placeholder="https://… — or paste (Ctrl+V), drop or upload a picture"><button type="button" class="bk-btn sm" id="nvUpload">Upload</button><button type="button" class="bk-btn sm" id="nvNoPhoto" title="Remove the picture">×</button></div><input type="file" id="nvFile" accept="image/*" hidden></div></div>' +
       '<div class="nv-grid">' + F('nvName', 'Company', init.name, 'HEVAC Inc') + F('nvWeb', 'Website', d.website || init.website, 'linkedin.com') + F('nvEmail', 'Email', init.email, 'billing@…', 'email') + F('nvPhone', 'Phone', init.phone, '') + F('nvContact', 'Contact person', init.contact, '') + F('nvAddr', 'Address', init.address, '') + '</div>' +
@@ -2197,6 +2197,7 @@
       let force = false;
       const body = { photo, name: el.querySelector('#nvName').value.trim(), website: el.querySelector('#nvWeb').value.trim(), email: el.querySelector('#nvEmail').value.trim(), phone: el.querySelector('#nvPhone').value.trim(), contact: el.querySelector('#nvContact').value.trim(), address: el.querySelector('#nvAddr').value.trim(),
         specialty: el.querySelector('#nvSpec').value.trim(), default_category: el.querySelector('#nvCat .ckp-val').value, aliases: el.querySelector('#nvAlias').value.split('|').map(x => x.trim()).filter(Boolean).join('\n'), notes: el.querySelector('#nvNotes').value.trim(), receive_mode: el.querySelector('select.nvMode').value };
+      if (init.kind === 'lender') body.kind = 'lender';   /* 1.20.143: made from Accounts → Lenders */
       if (!body.name) { el.querySelector('#nvMsg').textContent = 'Give the company a name.'; return; }
       if (ev.target.dataset.force) { body.force = true; }
       const r = await post(isEdit ? '/api/bookkeeping/vendors/' + init.id : '/api/bookkeeping/vendors', body);
@@ -2515,6 +2516,70 @@
     };
     const del = el.querySelector('#tmDel'); if (del) del.onclick = async () => { if (!(await ask('Remove **' + m.name + '** from the team? Their bank lines are kept, just unlinked; the Nova vendor stays.', { ok: 'Remove', danger: true }))) return; await post('/api/bookkeeping/team/' + m.id + '/delete', {}); close(); done(); };
   }
+  // 1.20.143: Match a bank line to a loan — when the wording names another company than the loan's lender, ask; when the loan
+  // has no lender and the wording names nobody Nova knows, pick one. Returns the final reply, or null when the person backed out.
+  async function loanMatch(txnId, loanId, extra) {
+    const r = await post('/api/bookkeeping/transactions/' + txnId + '/loan', Object.assign({ loan_id: loanId }, extra || {}));
+    if (r.ok) return r;
+    if (r.conflict) {
+      const c = r.conflict;
+      const a = await ask('The bank line says **' + shortName(c.says.name) + '** but the loan "' + c.loan.name + '" has **' + shortName(c.lender.name) + '** as its lender.\n\nMake ' + shortName(c.says.name) + ' the lender of this loan (every payment of the loan follows), or match anyway and keep ' + shortName(c.lender.name) + '?', { title: 'Lender does not match', ok: 'Set lender to ' + shortName(c.says.name, 18), alt: 'Match anyway' });
+      if (a === true) return loanMatch(txnId, loanId, { set_lender: true });
+      if (a === 'alt') return loanMatch(txnId, loanId, { force: true });
+      return null;
+    }
+    if (r.need_lender) {
+      const vid = await lenderPick('Who is the lender of "' + r.loan.name + '"?', r.wording);
+      if (!vid) return null;
+      return loanMatch(txnId, loanId, { lender_id: vid });
+    }
+    return r;
+  }
+  // a small picker over the Lenders list, with "+ New lender…" (the bank wording prefilled as the statement words)
+  function lenderPick(title, wording) {
+    return new Promise(async (resolve) => {
+      const j = await api('/api/bookkeeping/lenders'); const L = (j.ok && j.lenders) || [];
+      const el = document.createElement('div'); el.className = 'bk-modal';
+      el.innerHTML = '<div class="bk-modal-box" style="width:min(460px,100%)"><div class="bk-modal-title">' + esc(title) + '</div>' + (wording ? '<div class="bk-muted" style="margin:4px 0 10px;font-size:12px">Bank wording: ' + esc(wording) + '</div>' : '') +
+        '<div class="ld-pick">' + L.map(x => '<button type="button" class="bk-btn ld-opt" data-id="' + x.id + '">' + (x.photo ? '<img src="' + esc(x.photo) + '" alt="">' : '<span class="bk-logo ph sm">' + esc(x.name.charAt(0)) + '</span>') + esc(x.name) + '</button>').join('') + '<button type="button" class="bk-btn ld-opt ld-new" data-new>+ New lender…</button></div>' +
+        '<div class="bk-ask-acts"><button class="bk-btn" data-no>Cancel</button></div></div>';
+      document.body.appendChild(el);
+      const done = (v) => { el.remove(); resolve(v); };
+      el.onclick = (e) => { if (e.target === el) done(null); };
+      el.querySelector('[data-no]').onclick = () => done(null);
+      el.querySelectorAll('[data-id]').forEach(b => b.onclick = () => done(Number(b.dataset.id)));
+      el.querySelector('[data-new]').onclick = () => { el.remove(); novaVendorForm({ kind: 'lender', aliases: wording ? String(wording).replace(/\b[A-Z]*\d[A-Z0-9]*\b/gi, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) : '' }, (v) => resolve(v && v.id ? v.id : null)); };
+    });
+  }
+  // Accounts → Lenders: the finance companies, what each holds, and every loan link the bank wording disagrees with
+  async function loadLenders() {
+    const v = $('vLenders');
+    const j = await api('/api/bookkeeping/lenders'); if (!j.ok) { v.innerHTML = '<div class="bk-card bk-muted">' + esc(j.error || 'Could not load') + '</div>'; return; }
+    const L = j.lenders || [], C = j.conflicts || [], U = j.unassigned || [];
+    const logo = (x) => x.photo ? '<img class="bk-logo" src="' + esc(x.photo) + '" alt="">' : '<span class="bk-logo ph">' + esc(String(x.name || '?').charAt(0).toUpperCase()) + '</span>';
+    const dateS = (d) => d ? new Date(String(d).slice(0, 10) + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    const card = (x) => '<div class="ld-card" data-lid="' + x.id + '"><div class="ld-head">' + logo(x) + '<div class="ld-name"><b>' + esc(x.name) + '</b>' + (x.website ? '<div class="bk-dim">' + esc(x.website) + '</div>' : '') + '</div>' +
+      '<div class="ld-acts">' + (x.source === 'nova' ? '<button type="button" class="bk-btn sm" data-ledit="' + x.id + '">Edit</button>' : '<span class="bk-dim" title="From the Axiom CRM">CRM</span>') + '</div></div>' +
+      '<div class="ld-row"><span class="bk-muted">On the statement</span><div class="ld-words">' + (x.statement.length ? x.statement.map(a => '<span class="ld-alias">' + esc(a) + '</span>').join('') : '') + (x.auto_words || []).slice(0, 1).map(a => '<span class="ld-alias auto" title="built in from the name">' + esc(a) + '</span>').join('') + '<button type="button" class="bk-link" data-lwords="' + x.id + '">' + (x.statement.length ? 'change' : '+ add the statement words') + '</button></div></div>' +
+      '<div class="ld-row"><span class="bk-muted">Loans</span><div>' + (x.loans.length ? x.loans.map(l => '<div class="ld-loan' + (l.status !== 'active' ? ' off' : '') + '"><a href="#" data-lgo="' + l.id + '">' + esc(l.name) + '</a> <span class="bk-dim">' + (l.kind === 'lease' ? 'lease' : l.kind === 'credit_line' ? 'credit line' : 'loan') + ' · ' + usd(l.payment) + ' / mo' + (l.status !== 'active' ? ' · paid off' : '') + '</span></div>').join('') : '<span class="bk-dim">none yet</span>') + '</div></div>' +
+      '<div class="ld-row"><span class="bk-muted">Bank lines</span><div>' + (x.lines.n ? '<b>' + x.lines.n + '</b> · ' + usd(x.lines.total) + ' · last ' + dateS(x.lines.last) + ' · <a href="#" class="bk-link" data-llines="' + x.id + '">open in the Bank feed</a>' : '<span class="bk-dim">none linked</span>') + '</div></div></div>';
+    const conflictRow = (c) => '<tr><td>' + dateS(c.date) + '</td><td class="tx-amt">' + usd(c.amount) + '</td><td><div class="bk-name">' + esc(c.wording || '') + '</div><div class="bk-dim">' + (c.says ? 'names <b>' + esc(c.says.name) + '</b>' + (c.says.is_lender ? '' : ' (not in the Lenders list)') : 'names no company Nova knows') + '</div></td>' +
+      '<td><a href="#" data-lgo="' + c.loan.id + '">' + esc(c.loan.name) + '</a><div class="bk-dim">lender: ' + (c.lender ? esc(c.lender.name) : '<i>none</i>') + ' · ' + (c.how === 'loan' ? 'matched by Nova' : 'matched by hand') + '</div></td>' +
+      '<td class="ld-cacts">' + (c.says ? '<button type="button" class="bk-btn sm p" data-cfx="relender" data-txn="' + c.txn_id + '" title="The loan\'s lender becomes ' + esc(c.says.name) + '; every payment of the loan follows">Lender is ' + esc(shortName(c.says.name, 18)) + '</button>' : '') + '<button type="button" class="bk-btn sm" data-cfx="unlink" data-txn="' + c.txn_id + '" title="Not a payment on this loan — back to Pending">Not this loan</button><button type="button" class="bk-btn sm" data-cfx="keep" data-txn="' + c.txn_id + '" title="The link is right as it is">It\'s right</button></td></tr>';
+    v.innerHTML = '<div class="bk-card ld-top"><div class="bk-card-title">Lenders <span class="bk-muted">· ' + L.length + '</span> ' + qHelp('lenders', 'Lenders', 'The finance companies behind the loans and leases — their own list, apart from suppliers. Every loan points at one. A bank line is tied to a loan only when its wording names that lender AND the amount fits one of the lender\'s loans within $5; a bank line never creates a lender or teaches it a new name — the statement words are typed here.') +
+      '<span style="flex:1"></span><button type="button" class="bk-btn p" id="ldNew">+ New lender</button></div>' +
+      (L.length ? '<div class="ld-grid">' + L.map(card).join('') + '</div>' : '<div class="bk-muted">No lenders yet — add the finance companies here, then pick each loan\'s lender on Loans & Leases.</div>') + '</div>' +
+      (U.length ? '<div class="bk-card"><div class="bk-card-title">Loans without a lender <span class="bk-muted">· ' + U.length + '</span></div><table class="bk ld-table"><tbody>' + U.map(l => '<tr><td><a href="#" data-lgo="' + l.id + '">' + esc(l.name) + '</a>' + (l.lender_text ? '<div class="bk-dim">typed: ' + esc(l.lender_text) + '</div>' : '') + '</td><td><select class="bk" data-lset="' + l.id + '"><option value="">— pick the lender —</option>' + L.map(x => '<option value="' + x.id + '">' + esc(x.name) + '</option>').join('') + '</select></td></tr>').join('') + '</tbody></table></div>' : '') +
+      '<div class="bk-card"><div class="bk-card-title">Needs attention <span class="bk-muted">· ' + C.length + '</span> ' + qHelp('lendconf', 'Needs attention', 'Loan payments whose bank wording does not name the loan\'s lender — a wrong lender on the loan, or a line matched to the wrong loan. "Lender is X" moves the loan to the company the line names; "Not this loan" sends the line back to Pending; "It\'s right" keeps it and stops asking.') + '</div>' +
+      (C.length ? '<table class="bk ld-table"><thead><tr><th>Date</th><th>Amount</th><th>Bank wording</th><th>Linked to</th><th></th></tr></thead><tbody>' + C.map(conflictRow).join('') + '</tbody></table>' : '<div class="bk-muted">Every loan payment names its lender. ✓</div>') + '</div>';
+    $('ldNew').onclick = () => novaVendorForm({ kind: 'lender' }, () => loadLenders());
+    v.querySelectorAll('[data-ledit]').forEach(b => b.onclick = async () => { const r = await api('/api/bookkeeping/vendors/nova'); const x = ((r.vendors || r.rows || [])).find(y => String(y.id) === b.dataset.ledit) || L.find(y => String(y.id) === b.dataset.ledit); novaVendorForm(Object.assign({}, x, { kind: 'lender' }), () => loadLenders()); });
+    v.querySelectorAll('[data-lwords]').forEach(b => b.onclick = async () => { const x = L.find(y => String(y.id) === b.dataset.lwords); const cur = x.statement.join(' | '); const val = prompt('How ' + x.name + ' appears on the bank statement — separate several with |\n(e.g. NAVITAS CREDIT | NAVITAS CR)', cur); if (val == null) return; const r = await post('/api/bookkeeping/vendors/' + x.id, { aliases: val.split('|').map(t => t.trim()).filter(Boolean).join('\n') }); if (!r.ok) return alert(r.error); learnedNote(r, x.name); loadLenders(); });
+    v.querySelectorAll('[data-lgo]').forEach(a => a.onclick = (e) => { e.preventDefault(); lastSub.accounts = 'loans'; show('accounts', 'loans'); });
+    v.querySelectorAll('[data-llines]').forEach(a => a.onclick = (e) => { e.preventDefault(); const x = L.find(y => String(y.id) === a.dataset.llines); Object.assign(TF, { type: '', category: '', vkind: '', source: '', min: '', max: '', account: '', side: '', how: '', period: 'all', from: '', to: '', vendor_id: String(x.id), vendor_name: x.name }); try { localStorage.setItem('bk_txn_filters', JSON.stringify(TF)); } catch (err) {} show('bank', 'all'); });
+    v.querySelectorAll('[data-lset]').forEach(sel => sel.onchange = async () => { if (!sel.value) return; const r = await post('/api/bookkeeping/loans/' + sel.dataset.lset + '/lender', { lender_id: Number(sel.value) }); if (!r.ok) return alert(r.error); toast('Lender set'); loadLenders(); });
+    v.querySelectorAll('[data-cfx]').forEach(b => b.onclick = async () => { b.disabled = true; const r = await post('/api/bookkeeping/lenders/conflicts/' + b.dataset.txn, { action: b.dataset.cfx }); if (!r.ok) { alert(r.error); b.disabled = false; return; } if (r.lender) toast('<b>' + esc(r.lender.name) + '</b> is the lender now' + (r.moved ? ' · ' + r.moved + ' line' + (r.moved === 1 ? '' : 's') + ' moved' : '')); loadLenders(); });
+  }
   async function loadLoans() {
     const v = $('vLoans');
     const ord = (d) => d + (d % 10 === 1 && d !== 11 ? 'st' : d % 10 === 2 && d !== 12 ? 'nd' : d % 10 === 3 && d !== 13 ? 'rd' : 'th');   /* 1.20.131: the payment day on the row */
@@ -2589,7 +2654,7 @@
     el.innerHTML = '<div class="bk-modal-box" style="width:min(820px,100%)"><div class="bk-modal-title" style="margin-bottom:12px">' + (isEdit ? 'Edit ' + esc(l.name) : 'New loan / lease') + '</div>' +
       '<div class="nv-grid ln-grid">' +
       w(f('name', 'Name', 'text', '', 'SBA EIDL · Line of credit · Van loan'), 6) + w(sel('kind', 'Kind', [['loan', 'Loan (amortized)'], ['lease', 'Lease (fixed payments)'], ['credit_line', 'Line of credit (open-ended)']]), 4) + w(sel('status', 'Status', [['active', 'Active'], ['paid', 'Paid off']]), 2) +
-      w(sel('vendor_id', 'Lender', [['', '— company —']].concat((j.vendors || []).map(x => [x.id, x.name]))), 4) + w(f('lender', 'Lender name (if not listed)', 'text', '', 'Screen GP Americas'), 4) + w(sel('equipment_id', 'Finances a machine', [['', '— none —']].concat((j.equipment || []).map(x => [x.id, x.name]))), 4) +
+      w(sel('vendor_id', 'Lender', [['', '— pick the finance company —']].concat((j.lenders || []).map(x => [x.id, x.name]), l.vendor_id && !(j.lenders || []).some(x => x.id === l.vendor_id) ? (j.vendors || []).filter(x => x.id === l.vendor_id).map(x => [x.id, x.name + ' (not a lender yet)']) : [], [['__new', '+ New lender…']])), 5) + (l.lender && !l.vendor_id ? w('<label class="nv-f"><span class="bk-muted">Typed lender</span><input class="bk" value="' + esc(l.lender) + '" readonly title="Pick it from the Lenders list — Accounts → Lenders holds every finance company"></label>', 3) : '') + w(sel('equipment_id', 'Finances a machine', [['', '— none —']].concat((j.equipment || []).map(x => [x.id, x.name]))), 4) +   /* 1.20.143: lenders only */
       section('Finance') +
       w('<label class="nv-f"><span class="bk-muted">Purchase price</span><input class="bk ln-money" name="purchase_price" type="text" inputmode="decimal" value="' + esc(fmtMoney(purchase)) + '" placeholder="434,500.00"></label>', 3) +
       w(money('direct_down', 'Direct down payment', '0.00').replace('<span class="bk-muted">', '<span class="bk-muted" title="Paid straight to the manufacturer / seller — not part of the loan">'), 3) +
@@ -2620,6 +2685,8 @@
     document.body.appendChild(el); el.querySelector('[name=name]').focus();
     const num = (k) => { const v = Number(String(el.querySelector('[name=' + k + ']').value || '').replace(/[$,\s]/g, '')); return isFinite(v) ? v : 0; };
     // the term pick ↔ the months box; the property-tax amount shows when Axiom pays it; the payment fields follow the method
+    // 1.20.143: "+ New lender…" opens the lender form and selects the new company
+    { const vs = el.querySelector('[name=vendor_id]'); let lastV = vs.value; vs.addEventListener('change', () => { if (vs.value !== '__new') { lastV = vs.value; return; } vs.value = lastV; novaVendorForm({ kind: 'lender' }, (v) => { if (!v || !v.id) return; const o = document.createElement('option'); o.value = v.id; o.textContent = v.name; vs.insertBefore(o, vs.querySelector('option[value="__new"]')); vs.value = String(v.id); lastV = vs.value; }); }); }
     const termSel = el.querySelector('#lnTermSel'), termIn = el.querySelector('[name=term_months]');
     const stepsBox = el.querySelector('#lnSteps'), stepRows = el.querySelector('#lnStepRows'), stepsIn = el.querySelector('[name=steps_json]'), monthlyIn = el.querySelector('[name=monthly]');
     const readSteps = () => Array.from(stepRows.querySelectorAll('.ln-step')).map(r => ({ n: parseInt(r.querySelector('[data-n]').value) || 0, amount: Number(String(r.querySelector('[data-a]').value).replace(/[$,\s]/g, '')) || 0 })).filter(x => x.n > 0);
