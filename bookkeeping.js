@@ -2566,6 +2566,9 @@ module.exports = function mountBookkeeping(app, deps) {
       let pl = null; try { pl = r.ai_payload ? JSON.parse(r.ai_payload) : null; } catch (e) {}
       r.ai_category = pl && pl.category && pl.category !== 'Uncategorized' ? pl.category : null; delete r.ai_payload;
       if (!r.vendor_id && r.suggest_score == null && backfilled < 150) { backfilled++; try { await autoVendor(r); Object.assign(r, (await dbGet(VSEL, [r.id])) || {}); } catch (e) {} }
+      else if (!r.vendor_id && r.status !== 'excluded' && !isWise(lineText(r))) {   /* 1.20.151: a line checked before the directory changed (a new company, an alias, the dotcom words) is re-tried on every load — exact matches only, all in memory */
+        try { const ex = await matchVendorAny(r); if (ex) { await dbRun("UPDATE bk_transactions SET vendor_id = ?, vendor_by = 'auto', vendor_score = 1, suggest_vendor_id = NULL, suggest_score = NULL WHERE id = ? AND vendor_id IS NULL", [ex.id, r.id]); Object.assign(r, (await dbGet(VSEL, [r.id])) || {}); } } catch (e) {}
+      }
     }
     const matched = rows.length < 500 ? rows.length : (await dbGet('SELECT COUNT(*) n' + W, p)).n;   // how many the filters match (the list stops at 500)
     // 1.19.72: a category suggestion for every uncategorized line — the linked company's own history first (every
