@@ -871,7 +871,7 @@ const US_SPECS = () => ({
 function usersHead() {
   const S = US_SPECS(), T = (k, l) => '<th>' + NovaTable.th(k, l, S[k], UF[k]) + '</th>';
   const tr = document.getElementById('usersHead'); if (!tr || !window.NovaTable) return;
-  tr.innerHTML = '<th></th>' + T('name', 'Name') + T('username', 'Username') + T('email', 'Email') + T('login', 'Last login') + T('hist', 'History') + T('know', 'Knowledge') + T('role', 'Roles') + T('status', 'Status');
+  tr.innerHTML = '<th></th>' + T('name', 'Name') + T('username', 'Username') + T('email', 'Email') + T('login', 'Last login') + T('know', 'Knowledge') + T('role', 'Roles') + T('status', 'Status');
   NovaTable.bind(tr, S, (k, v) => { UF[k] = typeof v === 'string' ? v : ''; renderUsers(); });
 }
 function usersFilter() { return UF; }
@@ -890,14 +890,14 @@ function userPasses(m, f) {
 }
 async function loadUsers() {
   const tb = document.getElementById('usersBody');
-  if (!usersCache) tb.innerHTML = '<tr><td colspan="9" style="color:var(--muted)">Loading...</td></tr>';
+  if (!usersCache) tb.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">Loading...</td></tr>';
   try {
     const res = await fetch('/api/admin/users-activity', { headers: { 'Authorization': 'Bearer ' + token } });
     const j = await res.json();
-    if (!j.success) { tb.innerHTML = '<tr><td colspan="9" class="feedback err">' + (j.error||'Error') + '</td></tr>'; return; }
+    if (!j.success) { tb.innerHTML = '<tr><td colspan="8" class="feedback err">' + (j.error||'Error') + '</td></tr>'; return; }
     usersCache = j.members || [];
     renderUsers();
-  } catch (e) { tb.innerHTML = '<tr><td colspan="9" class="feedback err">Connection error</td></tr>'; }
+  } catch (e) { tb.innerHTML = '<tr><td colspan="8" class="feedback err">Connection error</td></tr>'; }
 }
 function renderUsers() {
   const tb = document.getElementById('usersBody'); if (!usersCache) return;
@@ -906,7 +906,7 @@ function renderUsers() {
   const en = usersCache.filter(m => m.enabled).length;
   const cnt = document.getElementById('usCount'); if (cnt) cnt.textContent = list.length + ' of ' + usersCache.length + ' people shown · ' + en + ' enabled · ' + (usersCache.length - en) + ' disabled in the Axiom CRM';
   tb.innerHTML = '';
-  if (!list.length) { tb.innerHTML = '<tr><td colspan="9" style="color:var(--muted)">' + (usersCache.length ? 'Nobody matches these filters.' : 'No members yet.') + '</td></tr>'; return; }
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">' + (usersCache.length ? 'Nobody matches these filters.' : 'No members yet.') + '</td></tr>'; return; }
   {
     list.forEach(m => {
       const tr = document.createElement('tr');
@@ -914,7 +914,7 @@ function renderUsers() {
       const avatar = m.photo
         ? '<img src="' + esc(photoUrl(m.photo)) + '" class="avatar-img" onerror="this.outerHTML=\'<span class=&quot;avatar-fallback&quot;>' + initial + '</span>\'">'
         : '<span class="avatar-fallback">' + initial + '</span>';
-      const hist = '<span class="hist-count" title="Last 30 days: ' + (m.chats30||0) + ' · Total: ' + (m.chatsTotal||0) + '" onclick="event.stopPropagation(); goToUserHistory(\'' + (m.user_key||'').replace(/'/g,"\\'") + '\')">History: ' + (m.chats7||0) + ' <span class="hist-sub">(last 7 days)</span></span>';
+      /* 1.20.123: the History column is gone from Users — chats are read in CRM Chat (the `hist` filter key stays in UF, unused) */
       const allowed = m.allowed_agents || [];
       const agentLabel = allowed.length ? (allowed.length + ' selected') : 'All agents';
       const agentCell = '<td><button class="agents-btn" onclick="openAgentAccess(' + m.id + ', \'' + esc(m.display_name || m.email).replace(/'/g, "\\'") + '\')" style="background:#eef;border:1px solid #c7c7f5;color:#4f46e5;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">⚙ ' + agentLabel + '</button></td>';
@@ -938,7 +938,6 @@ function renderUsers() {
         '<td>' + esc(m.username || '-') + '</td>' +
         '<td>' + esc(m.email) + '</td>' +
         '<td>' + (m.last_login ? fmtDate(m.last_login) : '<span style="color:var(--muted)">never</span>') + '</td>' +
-        '<td>' + hist + '</td>' +
         knowCell +
         adminCell +
         '<td title="' + (m.crm ? 'Axiom CRM status ' + m.crm.status + (m.crm.blocked ? ' · blocked' : '') + ' — enable or disable the account on the website' : 'Not matched to an Axiom CRM user') + '">' + (m.enabled ? '<span class="badge on">Enabled</span>' : '<span class="badge off">Disabled</span>') + '</td>';
