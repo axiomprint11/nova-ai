@@ -777,7 +777,11 @@ draws last year as a dashed line with dots over each bucket (`prev_series`, line
 "Last year · Oct 13 $8,666.67 (+5%)"). **1.20.176**: the heads are 30px (were 42px) and only the **top 12 AMs by total** show (`AM_LIMIT`); a
 **Show n more** pill (`#dbAmMore`, `amMore`) opens the rest and turns into **Show less**; the picked AM always shows even when outside the 12. **1.20.177**: Group by still picks Daily / Weekly / Monthly by itself but shows no AUTO tag; the compare
 checkbox moved from the Billed row into the chart card's header, before the legend, and reads just **Compare** (`#dbLy`, same behaviour). **1.20.178**: the By Inv. / By Qty. switch (`#dbBy`) moved from the top bar into the filter row, right after
-Ordered, under the label **Count**.
+Ordered, under the label **Count**. **1.20.179 — a real range calendar**: Custom ▾ → Pick dates… no longer shows the browser's date boxes; it opens
+`#dbCal` (`openCal()` / `paintCal()` / `monthHTML()`): two months side by side (one under 640px), the end month on the right, ‹ › move a
+month (› stops at this month), future days disabled, today marked with a dot; click the first day then the last (a reversed pair is
+swapped), the range is filled indigo with the ends as solid pills and hovering previews it before the second click; the foot reads
+"10/01/2026 – 10/17/2026 · 17 days" with Clear and Apply (`CAL {a, b, hover, view}`).
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 

@@ -104,9 +104,30 @@
   .db-pmenu button { border: 0 !important; background: none; text-align: left; padding: 9px 12px !important; border-radius: 8px !important; font-size: 13px; font-weight: 500 !important; color: var(--ink) !important; cursor: pointer; }
   .db-pmenu button:hover { background: #f4f4fb; } .db-pmenu button.on { background: var(--indigo-light); color: var(--indigo-dark) !important; font-weight: 600 !important; }
   .db-pmenu .sep { height: 1px; background: var(--line); margin: 5px 4px; }
-  .db-pick { display: grid; grid-template-columns: 38px 1fr; align-items: center; gap: 6px; padding: 6px 6px 4px; } .db-pick[hidden] { display: none; } .db-pick span { font-size: 12px; color: var(--muted); font-weight: 600; }
-  .db-pick .db-apply { grid-column: 1 / -1; text-align: center !important; }
-  .db-pick input { font: inherit; font-size: 12.5px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 8px; }
+  /* 1.20.179: the range calendar */
+  .db-cal { position: absolute; top: calc(100% + 6px); left: 0; z-index: 71; background: #fff; border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 16px 40px rgba(15,23,42,.16); padding: 14px 14px 12px; }
+  .db-cal[hidden] { display: none; }
+  .cal-top { display: flex; align-items: flex-start; gap: 6px; } .cal-ms { display: flex; gap: 22px; }
+  .cal-nav { width: 34px; height: 34px; border: 1px solid var(--line); background: #fff; border-radius: 10px; color: var(--ink-soft); cursor: pointer; display: grid; place-items: center; flex: none; }
+  .cal-nav:hover:not(:disabled) { background: #f4f4fb; color: var(--indigo-dark); } .cal-nav:disabled { opacity: .35; cursor: default; }
+  .cal { width: 266px; } .cal-h { text-align: center; font-size: 14px; padding: 7px 0 10px; color: var(--muted); } .cal-h b { color: var(--ink); }
+  .cal-w, .cal-g { display: grid; grid-template-columns: repeat(7, 38px); justify-content: center; }
+  .cal-w i { font-style: normal; font-size: 11px; font-weight: 600; color: var(--muted); text-align: center; padding-bottom: 6px; }
+  .cal-g { row-gap: 2px; }
+  .cal-g button { width: 38px; height: 36px; border: 0; background: none; font-family: inherit; font-size: 13px; font-weight: 500; color: var(--ink); cursor: pointer; position: relative; font-variant-numeric: tabular-nums; }
+  .cal-g button:hover:not(:disabled):not(.end) { background: #eef0ff; border-radius: 10px; }
+  .cal-g button:disabled { color: #cfcfdc; cursor: default; }
+  .cal-g button.today::after { content: ""; position: absolute; left: 50%; bottom: 4px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--indigo); }
+  .cal-g button.mid { background: var(--indigo-light); color: var(--indigo-dark); border-radius: 0; }
+  .cal-g button.mid.preview { background: #f1f0fe; }
+  .cal-g button.end { background: var(--indigo); color: #fff; font-weight: 700; border-radius: 10px; }
+  .cal-g button.end.lo { border-radius: 10px 0 0 10px; } .cal-g button.end.hi { border-radius: 0 10px 10px 0; }
+  .cal-g button.end.today::after { background: #fff; }
+  .cal-f { display: flex; align-items: center; gap: 8px; border-top: 1px solid #f1f1f6; margin-top: 10px; padding-top: 10px; }
+  .cal-sum { flex: 1; font-size: 12.5px; color: var(--muted); } .cal-sum b { color: var(--ink); font-weight: 600; }
+  .cal-btn { border: 1px solid var(--line); background: #fff; border-radius: 9px; padding: 7px 14px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); cursor: pointer; }
+  .cal-btn.pri { background: var(--indigo); border-color: var(--indigo); color: #fff; } .cal-btn.pri:disabled { opacity: .45; cursor: default; }
+  @media (max-width: 640px) { .db-cal { left: -60px; } }
   .db-pmenu button.db-apply { background: var(--indigo) !important; color: #fff !important; font-weight: 600 !important; padding: 6px 12px !important; }
   .db-ly { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); margin-right: 14px; cursor: pointer; padding: 5px 11px; border-radius: 20px; border: 1px dashed #cfcfe0; }
   .db-ly input { accent-color: #475569; width: 15px; height: 15px; margin: 0; } .db-ly:has(input:checked) { border-style: solid; border-color: #475569; color: #1e293b; background: #f8fafc; }

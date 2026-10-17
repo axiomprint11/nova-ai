@@ -86,7 +86,7 @@
     $('dbPeriod').innerHTML = BAR.map(k => '<button data-p="' + k + '" class="' + (S.period === k ? 'on' : '') + '">' + pl(k) + '</button>').join('') +
       '<span class="db-pm"><button id="dbCustom" class="db-pmore' + (inMenu ? ' on' : '') + '" aria-haspopup="true" aria-expanded="false">' + (inMenu ? (S.period === 'custom' ? us(from) + ' – ' + us(to) : pl(S.period)) : 'Custom') + caret + '</button>' +
       '<div class="db-pmenu" id="dbPMenu" hidden>' + MENU.map(k => (k === 'custom' ? '<div class="sep"></div>' : '') + '<button data-pm="' + k + '" class="' + (S.period === k ? 'on' : '') + '">' + pl(k) + '</button>').join('') +
-      '<div class="db-pick"' + (S.period === 'custom' ? '' : ' hidden') + ' id="dbPick"><span>From</span><input type="date" id="dbFrom" value="' + esc(S.from || from) + '" max="' + todayLA() + '"><span>To</span><input type="date" id="dbTo" value="' + esc(S.to || to) + '" max="' + todayLA() + '"><button class="db-apply" id="dbApply">Apply</button></div></div></span>' +
+      '</div><div class="db-cal" id="dbCal" hidden></div></span>' +
       '<span class="db-range">' + us(from) + ' – ' + us(to) + ' · ' + days + ' day' + (days === 1 ? '' : 's') + '</span>';
     const g = S.group === 'auto' ? auto : S.group;
     $('dbGroup').innerHTML = [['day', 'Daily'], ['week', 'Weekly'], ['month', 'Monthly']].map(x => '<button data-g="' + x[0] + '" class="' + (g === x[0] ? 'on' : '') + '" title="' + (x[0] === auto ? 'Picked by itself for ' + days + ' days' : 'Click to group by ' + x[1].toLowerCase()) + '">' + x[1] + '</button>').join('');
@@ -114,6 +114,51 @@
     const ly = $('dbLy'); if (ly) ly.checked = !!S.ly;
   }
 
+  // ---- the range calendar (1.20.179): two months side by side, click the first day then the last
+  const CAL = { a: null, b: null, hover: null, view: null };
+  const ymOf = (ymd) => ymd.slice(0, 7) + '-01';
+  const addMonths = (ym, n) => { const d = new Date(ym + 'T12:00:00Z'); d.setUTCMonth(d.getUTCMonth() + n); return d.toISOString().slice(0, 10); };
+  function openCal() {
+    const [from, to] = range(); CAL.a = from; CAL.b = to; CAL.hover = null;
+    CAL.view = addMonths(ymOf(to), -1);   /* the end month on the right */
+    if (window.innerWidth < 640) CAL.view = ymOf(to);
+    $('dbPMenu').hidden = true; $('dbCal').hidden = false; paintCal();
+  }
+  function closeCal() { const c = $('dbCal'); if (c) c.hidden = true; }
+  function monthHTML(ym) {
+    const d0 = new Date(ym + 'T12:00:00Z'), first = (d0.getUTCDay() + 7) % 7, days = new Date(Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth() + 1, 0)).getUTCDate();
+    const today = todayLA(), a = CAL.a, b = CAL.b || (CAL.hover && CAL.a && !CAL.b ? CAL.hover : null);
+    const lo = a && b ? (a < b ? a : b) : a, hi = a && b ? (a < b ? b : a) : a;
+    let cells = '';
+    for (let i = 0; i < first; i++) cells += '<i></i>';
+    for (let n = 1; n <= days; n++) {
+      const day = ym.slice(0, 8) + String(n).padStart(2, '0'), fut = day > today;
+      const cls = [day === lo || day === hi ? 'end' : '', lo && hi && day > lo && day < hi ? 'mid' : '', day === lo && hi && hi !== lo ? 'lo' : '', day === hi && lo && hi !== lo ? 'hi' : '', day === today ? 'today' : '', !CAL.b && CAL.hover && CAL.a ? 'preview' : ''].filter(Boolean).join(' ');
+      cells += '<button type="button" data-day="' + day + '" class="' + cls + '"' + (fut ? ' disabled' : '') + '>' + n + '</button>';
+    }
+    return '<div class="cal"><div class="cal-h"><b>' + d0.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long' }) + '</b> ' + d0.getUTCFullYear() + '</div><div class="cal-w">' + ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(w => '<i>' + w + '</i>').join('') + '</div><div class="cal-g">' + cells + '</div></div>';
+  }
+  function paintCal() {
+    const one = window.innerWidth < 640, right = addMonths(CAL.view, 1), canNext = (one ? CAL.view : right) < ymOf(todayLA());
+    const a = CAL.a, b = CAL.b, lo = a && b ? (a < b ? a : b) : a, hi = a && b ? (a < b ? b : a) : null;
+    const nav = (d, dis, svg) => '<button type="button" class="cal-nav" data-nav="' + d + '"' + (dis ? ' disabled' : '') + ' aria-label="' + (d < 0 ? 'Earlier' : 'Later') + '"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="' + svg + '"/></svg></button>';
+    $('dbCal').innerHTML = '<div class="cal-top">' + nav(-1, false, 'M15 6l-6 6 6 6') + '<div class="cal-ms">' + monthHTML(CAL.view) + (one ? '' : monthHTML(right)) + '</div>' + nav(1, !canNext, 'M9 6l6 6-6 6') + '</div>' +
+      '<div class="cal-f"><span class="cal-sum">' + (lo && hi ? '<b>' + us(lo) + ' – ' + us(hi) + '</b> · ' + daysBetween(lo, hi) + ' days' : lo ? '<b>' + us(lo) + '</b> · now click the last day' : 'Click the first day') + '</span>' +
+      '<button type="button" class="cal-btn" id="dbCalClear">Clear</button><button type="button" class="cal-btn pri" id="dbCalApply"' + (lo && hi ? '' : ' disabled') + '>Apply</button></div>';
+  }
+  document.addEventListener('click', (ev) => {
+    const t = ev.target.closest && ev.target.closest('#dbCal button'); if (!t) return;
+    ev.stopPropagation();
+    if (t.dataset.day) { const d = t.dataset.day; if (!CAL.a || CAL.b) { CAL.a = d; CAL.b = null; } else { CAL.b = d; if (CAL.b < CAL.a) { const x = CAL.a; CAL.a = CAL.b; CAL.b = x; } } CAL.hover = null; paintCal(); return; }
+    if (t.dataset.nav) { CAL.view = addMonths(CAL.view, +t.dataset.nav); paintCal(); return; }
+    if (t.id === 'dbCalClear') { CAL.a = CAL.b = CAL.hover = null; paintCal(); return; }
+    if (t.id === 'dbCalApply' && CAL.a && CAL.b) { S.period = 'custom'; S.from = CAL.a; S.to = CAL.b; S.group = 'auto'; closeCal(); closeMenu(); save(); paintFilters(); load(); }
+  });
+  document.addEventListener('mouseover', (ev) => {
+    const t = ev.target.closest && ev.target.closest('#dbCal [data-day]'); if (!t || !CAL.a || CAL.b || CAL.hover === t.dataset.day) return;
+    CAL.hover = t.dataset.day; paintCal();
+  });
+
   // ---- the AM snapshot (hover card)
   function snapHTML(key) {
     const q = S.by === 'qty', lyTxt = D.prev.kind === 'ly' ? 'last year' : 'the ' + D.range.days + ' days before';
@@ -139,7 +184,7 @@
     const r = h.getBoundingClientRect(), cw = card.offsetWidth;
     card.style.left = Math.max(8, Math.min(innerWidth - cw - 8, r.left + r.width / 2 - cw / 2)) + 'px'; card.style.top = (r.bottom + 8) + 'px';
   });
-  function closeMenu() { const m = $('dbPMenu'); if (m) m.hidden = true; const b = $('dbCustom'); if (b) b.setAttribute('aria-expanded', 'false'); }
+  function closeMenu() { const m = $('dbPMenu'); if (m) m.hidden = true; closeCal(); const b = $('dbCustom'); if (b) b.setAttribute('aria-expanded', 'false'); }
 
   // ---- tiles
   function chg(cur, prev) {
@@ -253,9 +298,8 @@
   document.addEventListener('click', (ev) => {
     const b = ev.target.closest('button'); if (!b) return;
     if (b.id === 'dbAmMore') { amMore = !amMore; paintFilters(); return; }
-    if (b.id === 'dbCustom') { const m = $('dbPMenu'); m.hidden = !m.hidden; b.setAttribute('aria-expanded', String(!m.hidden)); return; }
-    if (b.id === 'dbApply') { const f = $('dbFrom').value, t = $('dbTo').value; if (!f || !t) return; S.period = 'custom'; S.from = f; S.to = t; S.group = 'auto'; closeMenu(); save(); paintFilters(); load(); return; }
-    if (b.dataset.pm) { if (b.dataset.pm === 'custom') { $('dbPick').hidden = false; menuItems().forEach(x => x.classList.toggle('on', x === b)); return; } S.period = b.dataset.pm; S.group = 'auto'; closeMenu(); save(); paintFilters(); load(); return; }
+    if (b.id === 'dbCustom') { const m = $('dbPMenu'), open = !m.hidden || !$('dbCal').hidden; closeCal(); m.hidden = open; b.setAttribute('aria-expanded', String(!open)); return; }
+    if (b.dataset.pm) { if (b.dataset.pm === 'custom') { openCal(); return; } S.period = b.dataset.pm; S.group = 'auto'; closeMenu(); save(); paintFilters(); load(); return; }
     if (b.dataset.p) { S.period = b.dataset.p; S.group = 'auto'; save(); paintFilters(); load(); return; }
     if (b.dataset.g) { const [from, to] = range(); S.group = b.dataset.g === autoGroup(daysBetween(from, to)) ? 'auto' : b.dataset.g; save(); paintFilters(); load(); return; }
     if (b.dataset.o) { S.online = b.dataset.o; save(); paintFilters(); load(); return; }
@@ -266,7 +310,6 @@
   document.addEventListener('change', (ev) => {
     if (ev.target.id === 'dbLy') { S.ly = ev.target.checked; save(); load(); }
   });
-  const menuItems = () => Array.from(document.querySelectorAll('#dbPMenu [data-pm]'));
   document.addEventListener('click', (ev) => {
     if (ev.target.id === 'dbAmAll') { ev.preventDefault(); S.am = 'all'; save(); paintFilters(); load(); return; }
     if (!(ev.target.closest && ev.target.closest('.db-pm'))) closeMenu();
