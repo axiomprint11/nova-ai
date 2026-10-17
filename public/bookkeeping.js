@@ -602,7 +602,7 @@
       // how Nova knows (the Axiom job shipped, a delivery email, a slip, who set it by hand) or, while open, how it is tracked and for how long
       const stageL = p.stage === 'na' ? 'N/A' : p.stage === 'received' ? 'Received' : p.delivery === 'partial' ? 'Partially received' : p.stage === 'shipped' ? 'Shipped' : 'To receive';
       const stageC = p.stage === 'na' ? 'na' : p.stage === 'received' ? 'yes' : p.delivery === 'partial' ? 'partial' : p.stage === 'shipped' ? 'shipped' : 'open';
-      const MODE_L = { none: 'none', job: 'reseller products', email: 'inventory', hand: 'office use' };   /* 1.20.153 */
+      const MODE_L = { none: 'none', job: 'reseller products', email: 'inventory', parts: 'equipment parts', hand: 'office use' };   /* 1.20.153; 1.20.156 parts */
       const who = (by) => by ? esc(String(by).split('@')[0].replace(/^member:|^user:/, '')) : '';
       const logLine = () => { const L = p.rlog; if (p.stage === 'na') return '';
         // 1.20.139: an unsure shipment email Nova found for this purchase — one click says it is ours (or not)
@@ -634,7 +634,7 @@
       type: [{ v: '', l: 'All categories' }].concat(chart_types().filter(t => !t.income).map(t => ({ v: 'T:' + t.name, l: tile(t.color, t.icon, 'sm', '') + ' ' + esc(t.name) })), Object.keys(inUse).sort().map(c => ({ v: 'C:' + c, l: catLabel(c), n: inUse[c] }))),
       pstatus: [{ v: '', l: 'All' }, { v: 'bank', l: 'Awaiting bank / payment', t: 'Awaiting' }, { v: 'paid', l: 'Paid (bank line matched)', t: 'Paid' }, { v: 'cancelled', l: 'Cancelled' }],
       dstatus: [{ v: '', l: 'All' }, { v: 'no', l: 'To receive' }, { v: 'shipped', l: 'Shipped' }, { v: 'partial', l: 'Partially received' }, { v: 'yes', l: 'Received' }, { v: 'na', l: 'N/A — nothing to receive' }],
-      mode: [{ v: '', l: 'Any' }, { v: 'job', l: 'Reseller Products' }, { v: 'email', l: 'Inventory Tracking' }, { v: 'hand', l: 'Office Use' }, { v: 'none', l: 'None' }]
+      mode: [{ v: '', l: 'Any' }, { v: 'job', l: 'Reseller Products' }, { v: 'email', l: 'Inventory Tracking' }, { v: 'parts', l: 'Equipment Parts' }, { v: 'hand', l: 'Office Use' }, { v: 'none', l: 'None' }]
     };
     const anyF = PF.period !== 'all' || PF.from || PF.to || PF.vendor_id || PF.vkind || PF.min || PF.max || PF.type || PF.category || PF.dstatus || PF.pstatus || PF.mode;
     const title = view === 'waiting' ? 'Waiting for the bank' : view === 'notreceived' ? 'Not received' : view === 'toreceive' ? 'To receive' : view === 'shipped' ? 'Shipped' : view === 'received' ? 'Received' : view === 'na' ? 'Nothing to receive' : 'Purchases';
@@ -2244,8 +2244,8 @@
   // 1.20.153: the owner's words for what we buy from a company — the stored values stay none / job / email / hand (how receiving is confirmed):
   // Reseller Products = bought for a customer's job, received when that Axiom job ships; Inventory Tracking = stock, received by the
   // delivery emails; Office Use = received by hand at the office; None = nothing to receive.
-  const RMODES = [['', 'Auto'], ['none', 'None'], ['job', 'Reseller Products'], ['email', 'Inventory Tracking'], ['hand', 'Office Use']];
-  const RMODE_T = 'What we buy from this company, which decides how a purchase is confirmed received. None: nothing to receive — paid is done (rides, fees, subscriptions, software). Reseller Products: bought for a customer\'s job — linked to that Axiom job and received once the job ships. Inventory Tracking: stock for the shop — the shipped / delivered emails in accounting@ move it along. Office Use: received by hand at the office. Auto: Nova decides from the category and the kind of company.';
+  const RMODES = [['', 'Auto'], ['none', 'None'], ['job', 'Reseller Products'], ['email', 'Inventory Tracking'], ['parts', 'Equipment Parts'], ['hand', 'Office Use']];   /* 1.20.156: Equipment Parts */
+  const RMODE_T = 'What we buy from this company, which decides how a purchase is confirmed received. None: nothing to receive — paid is done (rides, fees, subscriptions, software). Reseller Products: bought for a customer\'s job — linked to that Axiom job and received once the job ships. Inventory Tracking: stock for the shop — the shipped / delivered emails in accounting@ move it along. Equipment Parts: parts and consumables for the machines — tracked the same way, by the delivery emails or the slip. Office Use: received by hand at the office. Auto: Nova decides from the category and the kind of company.';
   const modeSel = (cls, cur) => '<select class="bk vmode ' + cls + '" title="' + esc(RMODE_T) + '">' + RMODES.map(m => '<option value="' + m[0] + '"' + ((cur || '') === m[0] ? ' selected' : '') + '>' + m[1] + '</option>').join('') + '</select>';
   async function vendorCard(id, onDone) {
     const j = await api('/api/bookkeeping/directory?fresh=0');

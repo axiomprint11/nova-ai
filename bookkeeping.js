@@ -609,7 +609,7 @@ module.exports = function mountBookkeeping(app, deps) {
   // 1.20.139: how a purchase gets confirmed received. The vendor's own setting wins; else a category the chart says is not a delivery
   // is 'none'; else by the kind of company — Axiom suppliers ship goods (email), Axiom vendors are outsourcers paid per job (job),
   // Nova / bill vendors: email. The names match the picker on the vendor card (RECEIVE_MODES).
-  const RECEIVE_MODES = ['none', 'job', 'email', 'hand'];
+  const RECEIVE_MODES = ['none', 'job', 'email', 'hand', 'parts'];   /* 1.20.156: parts = Equipment Parts — tracked like inventory (delivery emails / the slip), its own label on the page */
   async function receiveModeFor(vendorId, category) {
     const v = vendorId ? (await directory()).find(x => x.id === vendorId) : null;
     if (v && RECEIVE_MODES.indexOf(v.receive_mode) > -1) return v.receive_mode;
