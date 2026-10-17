@@ -763,6 +763,18 @@ searches the PRIMARY key per day (cached an hour, 3,000 ids of slack); a range's
 in memory. **Who sees what**: admins every AM (pick one); a member only the invoices where they are the AM (`members.axiom_user_id`, else
 the CRM `user` by email; not linked → a note, nothing shown). State per browser in localStorage `nova_dash_v1`. Harness: `db-harness.js` in
 the scratchpad (the real Oct 10–11 rows + the real per-status day totals).
+**1.20.175 — heads, a short period bar, Compare to last year.** The AM row is **heads only** (`.db-head`, 42px, the picked one ringed, the
+others dimmed while one is picked; "Showing <name> · everyone" beside the label, `#dbAmPick`); hovering a head opens a **snapshot card**
+(`#dbSnap`, `snapHTML()`: rank of n · share of all invoiced · total (or count in By Qty.) with the change against the compared period ·
+invoices · avg · a paid / partially paid / unpaid bar and rows · still due · new clients · ordered online % · "Click to see only X's
+invoices"); a click filters, a second click (or "everyone") goes back to all. The server sends each AM's full figures (`amFull` with the
+order / online filters on, `prev_total` / `prev_n` from `amPrev`). **Billed** is **Last 7 days** (the default) · **YTD** · **Custom ▾**
+(`#dbCustom` → `#dbPMenu`: Last week · This month · Previous month · Last 30 days · Last 90 days · Last year · Pick dates… = From / To +
+Apply; the chip shows the picked preset's name or the dates; `BAR` / `MENU` in public/dashboard.js). **Compare to last year** (`#dbLy`,
+`S.ly`, `compare=ly`): the compared period becomes the same dates one year earlier (`backYear`, Feb 29 → 28) instead of the days just
+before — the tiles, the AM cards and a line above the tiles (`#dbVs`, "vs last year (10/10/2025 – 10/17/2025)") follow it, and the chart
+draws last year as a dashed line with dots over each bucket (`prev_series`, lined up by position; legend "Last year"; the tooltip adds
+"Last year · Oct 13 $8,666.67 (+5%)").
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 

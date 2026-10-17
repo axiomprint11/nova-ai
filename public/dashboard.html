@@ -8,7 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/axiom-shared.css">
 <style>
-  /* Dashboard (1.20.174) — NovaAI's home: the invoices billed in a period, as the CRM's chart draws them */
+  /* Dashboard (1.20.175) — NovaAI's home: the invoices billed in a period, as the CRM's chart draws them */
   body { margin: 0; font-family: Inter, system-ui, sans-serif; background: #f6f7fb; color: #1c1c28; }
   .db-top { flex: none; display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: #fff; flex-wrap: wrap; min-height: 36px; }
   .db-top h1 { font-size: 15px; margin: 0; display: flex; align-items: center; gap: 8px; } .db-top h1 span { font-weight: 500; color: var(--muted); } .db-top h1 svg { color: var(--indigo-dark); width: 18px; height: 18px; }
@@ -77,6 +77,40 @@
   .db-tip .tot { border-top: 1px solid rgba(255,255,255,.18); margin-top: 4px; padding-top: 4px; font-weight: 700; }
   .db-tip .hint { color: #a5a3c9; font-size: 11px; margin-top: 3px; }
 
+  /* 1.20.175: AM heads + the hover snapshot */
+  .db-ampick { text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 12px; color: var(--muted); margin-left: 8px; } .db-ampick b { color: var(--ink); font-weight: 600; } .db-ampick a { color: var(--indigo-dark); font-weight: 600; }
+  .db-heads { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+  .db-head { border: 0; background: none; padding: 3px; border-radius: 50%; cursor: pointer; position: relative; transition: transform .12s; }
+  .db-head:hover { transform: translateY(-2px); }
+  .db-head .face { width: 42px; height: 42px; font-size: 15px; box-shadow: 0 0 0 2px #fff, 0 0 0 3px #e6e6f0; }
+  .db-head.on .face { box-shadow: 0 0 0 2px #fff, 0 0 0 4.5px var(--indigo); }
+  .db-head.dim .face { opacity: .45; filter: grayscale(.5); } .db-head.dim:hover .face { opacity: 1; filter: none; }
+  .db-head.all { margin-right: 6px; } .db-head.all .face svg { width: 19px; height: 19px; }
+  .db-snap { position: fixed; z-index: 90; width: 290px; background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 16px 44px rgba(20,20,50,.18); padding: 13px 14px 11px; font-size: 12.5px; }
+  .sn-h { display: flex; align-items: center; gap: 10px; } .sn-h .face { width: 38px; height: 38px; } .sn-h b { display: block; font-size: 13.5px; } .sn-h small { color: var(--muted); font-size: 11.5px; }
+  .sn-big { font-size: 21px; font-weight: 700; margin-top: 10px; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 8px; }
+  .sn-sub { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+  .sn-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: #f1f1f6; margin: 10px 0 8px; }
+  .sn-rows { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-variant-numeric: tabular-nums; } .sn-rows span { color: var(--ink-soft); display: flex; align-items: center; gap: 6px; } .sn-rows i { width: 9px; height: 9px; border-radius: 2px; } .sn-rows b { text-align: right; font-weight: 600; }
+  .sn-hint { margin-top: 9px; padding-top: 8px; border-top: 1px solid #f1f1f6; color: var(--indigo-dark); font-size: 11.5px; font-weight: 600; }
+  /* 1.20.175: Last 7 days · YTD · Custom ▾, and Compare to last year */
+  .db-chips { align-items: center; }
+  .db-pm { position: relative; display: inline-flex; }
+  .db-chips button.db-pmore { display: inline-flex; align-items: center; gap: 6px; }
+  .db-pmenu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 70; min-width: 200px; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgba(15,23,42,.14); padding: 6px; display: flex; flex-direction: column; }
+  .db-pmenu[hidden] { display: none; }
+  .db-pmenu button { border: 0 !important; background: none; text-align: left; padding: 9px 12px !important; border-radius: 8px !important; font-size: 13px; font-weight: 500 !important; color: var(--ink) !important; cursor: pointer; }
+  .db-pmenu button:hover { background: #f4f4fb; } .db-pmenu button.on { background: var(--indigo-light); color: var(--indigo-dark) !important; font-weight: 600 !important; }
+  .db-pmenu .sep { height: 1px; background: var(--line); margin: 5px 4px; }
+  .db-pick { display: grid; grid-template-columns: 38px 1fr; align-items: center; gap: 6px; padding: 6px 6px 4px; } .db-pick[hidden] { display: none; } .db-pick span { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .db-pick .db-apply { grid-column: 1 / -1; text-align: center !important; }
+  .db-pick input { font: inherit; font-size: 12.5px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 8px; }
+  .db-pmenu button.db-apply { background: var(--indigo) !important; color: #fff !important; font-weight: 600 !important; padding: 6px 12px !important; }
+  .db-ly { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); margin-left: 6px; cursor: pointer; padding: 6px 10px; border-radius: 20px; border: 1px dashed #cfcfe0; }
+  .db-ly input { accent-color: #475569; width: 15px; height: 15px; margin: 0; } .db-ly:has(input:checked) { border-style: solid; border-color: #475569; color: #1e293b; background: #f8fafc; }
+  .db-vs { font-size: 11.5px; color: var(--muted); margin: -4px 2px 6px; }
+  .db-legend i.lyk { background: none; border-top: 2px dashed #475569; height: 0; width: 18px; border-radius: 0; }
+  .db-tip .r.ly { color: #cbd5e1; border-top: 1px dashed rgba(255,255,255,.2); margin-top: 3px; padding-top: 3px; }
   /* table */
   .db-tbl-wrap { overflow-x: auto; }
   table.db-t { width: 100%; border-collapse: collapse; font-size: 12.5px; }
@@ -108,7 +142,7 @@
 </div>
 <div class="db-main" id="dbMain">
   <div class="db-card db-filters" id="dbFilters">
-    <div id="dbAmBox"><div class="db-lab">Account manager</div><div class="db-ams" id="dbAms"></div></div>
+    <div id="dbAmBox"><div class="db-lab">Account manager <span class="db-ampick" id="dbAmPick"></span></div><div class="db-heads" id="dbAms"></div></div>
     <div class="db-row">
       <div><div class="db-lab">Billed</div><div class="db-chips" id="dbPeriod"></div></div>
       <div><div class="db-lab">Group by</div><div class="seg" id="dbGroup"></div></div>
@@ -117,6 +151,7 @@
     <div><div class="db-lab">Client's order number</div><div class="db-ord" id="dbOrders"></div></div>
   </div>
   <div id="dbErr"></div>
+  <div class="db-vs" id="dbVs"></div>
   <div class="db-tiles" id="dbTiles"></div>
   <div class="db-card">
     <h2><span id="dbChartTitle">Invoiced</span><span class="n" id="dbChartSub"></span><span class="sp"></span><div class="db-legend" id="dbLegend"></div></h2>
@@ -127,6 +162,7 @@
     <div class="db-tbl-wrap" id="dbList"></div>
   </div>
 </div>
+<div class="db-snap" id="dbSnap" hidden></div>
 <script src="/nova-loader.js"></script>
 <script src="/nova-nav.js"></script>
 <script src="/nova-table.js"></script>

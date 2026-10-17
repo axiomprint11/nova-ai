@@ -121,7 +121,10 @@ module.exports = function mountDashboard(app, deps) {
       if (daysBetween(from, to) > 800) from = addDays(to, -799);
       const days = daysBetween(from, to);
       const auto = autoGroup(days), group = ['day', 'week', 'month'].indexOf(q.group) > -1 ? q.group : auto;
-      const pTo = addDays(from, -1), pFrom = addDays(pTo, -(days - 1));
+      /* the period it is compared with: the same number of days just before, or (1.20.175) the same dates last year */
+      const ly = q.compare === 'ly';
+      const backYear = (ymd) => { const y = Number(ymd.slice(0, 4)) - 1, md = ymd.slice(5); return y + '-' + (md === '02-29' ? '02-28' : md); };
+      const pFrom = ly ? backYear(from) : addDays(from, -days), pTo = ly ? backYear(to) : addDays(from, -1);
 
       const scope = await scopeOf(req);
       let am = q.am && q.am !== 'all' ? parseInt(q.am) || 0 : 0;
@@ -136,6 +139,12 @@ module.exports = function mountDashboard(app, deps) {
       // facets: each one counts with every OTHER filter on, so the chips say what a click would show
       const facet = (rows, keep, keyFn) => { const m = {}; rows.forEach(r => { if (!keep(r) || r.type !== 'invoice') return; const k = keyFn(r); const f = m[k] || (m[k] = { n: 0, total: 0 }); f.n++; f.total += r.total; }); Object.keys(m).forEach(k => { m[k].total = num(m[k].total); }); return m; };
       const amF = scope.admin ? facet(cur, r => passOrd(r) && passOn(r), r => r.am) : {};
+      /* 1.20.175: a snapshot per AM for the hover card — the full figures with the order / online filters on, and the compared period */
+      const amFull = {}, amPrev = {};
+      if (scope.admin) {
+        cur.forEach(r => { if (passOrd(r) && passOn(r)) add(amFull[r.am] || (amFull[r.am] = blank()), r); });
+        prev.forEach(r => { if (passOrd(r) && passOn(r)) add(amPrev[r.am] || (amPrev[r.am] = blank()), r); });
+      }
       const ordF = facet(cur, r => base(r) && passAm(r) && passOn(r), r => band(r.order_n));
       const onF = facet(cur, r => base(r) && passAm(r) && passOrd(r), r => r.online ? 'online' : 'manual');
       const sum = (m) => Object.values(m).reduce((a, f) => ({ n: a.n + f.n, total: num(a.total + f.total) }), { n: 0, total: 0 });
@@ -153,11 +162,16 @@ module.exports = function mountDashboard(app, deps) {
 
       const amIds = Object.keys(amF).map(Number).concat(rows.map(r => r.am)).concat(am ? [am] : []);
       const info = await amInfo(Array.from(new Set(amIds)));
-      const ams = Object.keys(amF).map(Number).map(id => Object.assign({}, info[id], amF[id])).sort((a, b) => b.total - a.total);
+      const ams = Object.keys(amF).map(Number).map(id => { const f = round(amFull[id] || blank()), p = amPrev[id] ? round(amPrev[id]) : blank();
+        return Object.assign({}, info[id], amF[id], { paid: f.paid, partial: f.partial, unpaid: f.unpaid, due: f.due, avg: f.avg, new_clients: f.new_clients, online: f.online, n_online: f.n_online, prev_total: num(p.total), prev_n: p.n }); }).sort((a, b) => b.total - a.total);
+      /* last year's (or the period before's) figures bucket by bucket, lined up with this period's buckets by position */
+      const pbs = buckets(pFrom, pTo, group), pByKey = {}; pbs.forEach(b => { b.f = blank(); pByKey[b.key] = b; });
+      prows.forEach(r => { const b = pByKey[keyOf(r.day, group)]; if (b) add(b.f, r); });
+      const prev_series = pbs.slice(0, series.length).map(b => ({ key: b.key, from: b.from, to: b.to, total: num(b.f.total), n: b.f.n, paid: num(b.f.paid), unpaid: num(b.f.unpaid), partial: num(b.f.partial) }));
 
       const list = rows.filter(r => r.type === 'invoice' || r.type === 'bad_debt' || r.type === 'estimate').slice(0, 3000).map(r => ({ id: r.id, at: r.at, day: r.day, client: r.client, person: r.person, cid: r.cid, pid: r.pid, am: r.am, order_n: r.order_n, band: band(r.order_n), online: r.online, type: r.type, st: r.st, total: r.total, done: r.done }));
       res.json({ ok: true, scope: { admin: scope.admin, am_locked: !scope.admin, me: scope.crmId ? info[scope.crmId] || null : null },
-        range: { from, to, days, group, auto_group: auto, today }, prev: { from: pFrom, to: pTo },
+        range: { from, to, days, group, auto_group: auto, today }, prev: { from: pFrom, to: pTo, kind: ly ? 'ly' : 'before' }, prev_series,
         filters: { am, orders, online },
         ams, am_all: sum(amF), orders_f: { all: sum(ordF), new: ordF.new || { n: 0, total: 0 }, mid: ordF.mid || { n: 0, total: 0 }, loyal: ordF.loyal || { n: 0, total: 0 } },
         online_f: { all: sum(onF), online: onF.online || { n: 0, total: 0 }, manual: onF.manual || { n: 0, total: 0 } },

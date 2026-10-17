@@ -1,4 +1,4 @@
-/* Dashboard (1.20.174) — NovaAI's home page. GET /api/dashboard draws: AM heads, period presets, Day / Week / Month (auto by the
+/* Dashboard (1.20.175) — NovaAI's home page. GET /api/dashboard draws: AM heads, period presets, Day / Week / Month (auto by the
    length of the period), the client's order number as four cards (All · New · 2–5 · 5+), Online vs Manual, By Inv. ($) / By Qty.
    (count), tiles against the period before, the CRM-style chart (Total Value next to Partially paid / Paid / Unpaid stacked, Bad
    debt + Estimates beside it) and the invoice list. A click on a bar narrows the list to that day / week / month. */
@@ -26,12 +26,16 @@
     ['prevmonth', 'Previous month', (t) => { const f = new Date(t.slice(0, 8) + '01T12:00:00Z'); f.setUTCMonth(f.getUTCMonth() - 1); const a = f.toISOString().slice(0, 10); return [a, addDays(t.slice(0, 8) + '01', -1)]; }],
     ['ytd', 'YTD', (t) => [t.slice(0, 4) + '-01-01', t]],
     ['lastyear', 'Last year', (t) => { const y = Number(t.slice(0, 4)) - 1; return [y + '-01-01', y + '-12-31']; }],
-    ['custom', 'Custom', null]
+    ['last30', 'Last 30 days', (t) => [addDays(t, -29), t]],
+    ['last90', 'Last 90 days', (t) => [addDays(t, -89), t]],
+    ['custom', 'Pick dates…', null]
   ];
+  /* 1.20.175: the bar shows Last 7 days and YTD; everything else lives in the Custom ▾ menu */
+  const BAR = ['last7', 'ytd'], MENU = ['lastweek', 'month', 'prevmonth', 'last30', 'last90', 'lastyear', 'custom'];
   const autoGroup = (days) => days <= 31 ? 'day' : days <= 183 ? 'week' : 'month';
 
   // ---- state (kept per browser)
-  const DEF = { period: 'last7', from: '', to: '', group: 'auto', am: 'all', orders: 'all', online: 'all', by: 'inv' };
+  const DEF = { period: 'last7', from: '', to: '', group: 'auto', am: 'all', orders: 'all', online: 'all', by: 'inv', ly: false };
   let S = Object.assign({}, DEF);
   try { Object.assign(S, JSON.parse(localStorage.getItem('nova_dash_v1') || '{}')); } catch (e) {}
   const save = () => { try { localStorage.setItem('nova_dash_v1', JSON.stringify(S)); } catch (e) {} };
@@ -57,7 +61,7 @@
   // ---- the data
   async function load() {
     const [from, to] = range(); const my = ++seq;
-    const qs = new URLSearchParams({ from, to, group: S.group === 'auto' ? '' : S.group, am: S.am, orders: S.orders, online: S.online });
+    const qs = new URLSearchParams({ from, to, group: S.group === 'auto' ? '' : S.group, am: S.am, orders: S.orders, online: S.online, compare: S.ly ? 'ly' : '' });
     $('dbChart').innerHTML = '<div class="db-skel"></div>';
     let j;
     try {
@@ -75,8 +79,13 @@
   // ---- filters
   function paintFilters() {
     const [from, to] = range(), days = daysBetween(from, to), auto = autoGroup(days);
-    $('dbPeriod').innerHTML = PRESETS.map(p => '<button data-p="' + p[0] + '" class="' + (S.period === p[0] ? 'on' : '') + '">' + p[1] + '</button>').join('') +
-      (S.period === 'custom' ? '<span class="db-custom"><input type="date" id="dbFrom" value="' + esc(S.from || from) + '" max="' + todayLA() + '"> to <input type="date" id="dbTo" value="' + esc(S.to || to) + '" max="' + todayLA() + '"></span>' : '') +
+    const inMenu = MENU.indexOf(S.period) > -1, pl = (k) => (PRESETS.find(p => p[0] === k) || [])[1];
+    const caret = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>';
+    $('dbPeriod').innerHTML = BAR.map(k => '<button data-p="' + k + '" class="' + (S.period === k ? 'on' : '') + '">' + pl(k) + '</button>').join('') +
+      '<span class="db-pm"><button id="dbCustom" class="db-pmore' + (inMenu ? ' on' : '') + '" aria-haspopup="true" aria-expanded="false">' + (inMenu ? (S.period === 'custom' ? us(from) + ' – ' + us(to) : pl(S.period)) : 'Custom') + caret + '</button>' +
+      '<div class="db-pmenu" id="dbPMenu" hidden>' + MENU.map(k => (k === 'custom' ? '<div class="sep"></div>' : '') + '<button data-pm="' + k + '" class="' + (S.period === k ? 'on' : '') + '">' + pl(k) + '</button>').join('') +
+      '<div class="db-pick"' + (S.period === 'custom' ? '' : ' hidden') + ' id="dbPick"><span>From</span><input type="date" id="dbFrom" value="' + esc(S.from || from) + '" max="' + todayLA() + '"><span>To</span><input type="date" id="dbTo" value="' + esc(S.to || to) + '" max="' + todayLA() + '"><button class="db-apply" id="dbApply">Apply</button></div></div></span>' +
+      '<label class="db-ly" title="Compare every figure with the same dates one year earlier"><input type="checkbox" id="dbLy"' + (S.ly ? ' checked' : '') + '><span>Compare to last year</span></label>' +
       '<span class="db-range">' + us(from) + ' – ' + us(to) + ' · ' + days + ' day' + (days === 1 ? '' : 's') + '</span>';
     const g = S.group === 'auto' ? auto : S.group;
     $('dbGroup').innerHTML = [['day', 'Daily'], ['week', 'Weekly'], ['month', 'Monthly']].map(x => '<button data-g="' + x[0] + '" class="' + (g === x[0] ? 'on' : '') + '" title="' + (x[0] === auto ? 'Picked by itself for ' + days + ' days' : 'Click to group by ' + x[1].toLowerCase()) + '">' + x[1] + (x[0] === auto ? ' <span class="auto">AUTO</span>' : '') + '</button>').join('');
@@ -91,13 +100,43 @@
       const me = D.scope.me || { name: 'You' };
       $('dbAms').innerHTML = '<div class="db-am on" style="cursor:default">' + face(me) + '<span><b>' + esc(me.name) + '</b><small>the invoices where you are the AM</small></span></div>';
     } else if (D) {
-      const tot = D.am_all || { n: 0, total: 0 };
-      $('dbAms').innerHTML = '<button class="db-am' + (S.am === 'all' ? ' on' : '') + '" data-am="all"><span class="face all">' + IC.all + '</span><span><b>All AMs</b><small>' + (S.by === 'qty' ? int(tot.n) + ' invoices' : usd0(tot.total)) + '</small></span></button>' +
-        D.ams.map(a => '<button class="db-am' + (String(S.am) === String(a.id) ? ' on' : '') + '" data-am="' + a.id + '" title="' + esc(a.name + ' · ' + int(a.n) + ' invoices · ' + usd2(a.total)) + '">' + face(a) + '<span><b>' + esc(a.name) + '</b><small>' + (S.by === 'qty' ? int(a.n) + ' invoices' : usd0(a.total)) + '</small></span></button>').join('') +
-        (S.am !== 'all' && !D.ams.some(a => String(a.id) === String(S.am)) ? '<button class="db-am on" data-am="' + esc(S.am) + '">' + face(D.am_info && D.am_info[S.am]) + '<span><b>' + esc((D.am_info && D.am_info[S.am] && D.am_info[S.am].name) || 'This AM') + '</b><small>nothing in this period</small></span></button>' : '');
+      /* 1.20.175: heads only — hover for a snapshot, click to see only that AM (click again for everyone) */
+      const missing = S.am !== 'all' && !D.ams.some(a => String(a.id) === String(S.am));
+      $('dbAms').innerHTML = '<button class="db-head all' + (S.am === 'all' ? ' on' : '') + '" data-am="all" data-snap="all" aria-label="All account managers"><span class="face all">' + IC.all + '</span></button>' +
+        D.ams.map(a => '<button class="db-head' + (String(S.am) === String(a.id) ? ' on' : '') + (S.am !== 'all' && String(S.am) !== String(a.id) ? ' dim' : '') + '" data-am="' + a.id + '" data-snap="' + a.id + '" aria-label="' + esc(a.name) + '">' + face(a) + '</button>').join('') +
+        (missing ? '<button class="db-head on" data-am="' + esc(S.am) + '" data-snap="' + esc(S.am) + '">' + face(D.am_info && D.am_info[S.am]) + '</button>' : '');
+      const cur = S.am === 'all' ? null : D.ams.find(a => String(a.id) === String(S.am)) || (D.am_info && D.am_info[S.am]);
+      $('dbAmPick').innerHTML = cur ? 'Showing <b>' + esc(cur.name) + '</b> · <a href="#" id="dbAmAll">everyone</a>' : 'All account managers · hover a face for a snapshot, click to see only theirs';
     }
     document.querySelectorAll('#dbBy button').forEach(b => b.classList.toggle('on', b.dataset.by === S.by));
   }
+
+  // ---- the AM snapshot (hover card)
+  function snapHTML(key) {
+    const q = S.by === 'qty', lyTxt = D.prev.kind === 'ly' ? 'last year' : 'the ' + D.range.days + ' days before';
+    if (key === 'all') { const t = D.am_all || { n: 0, total: 0 };
+      return '<div class="sn-h"><span class="face all">' + IC.all + '</span><div><b>All account managers</b><small>' + int(D.ams.length) + ' AMs with invoices</small></div></div><div class="sn-big">' + usd2(t.total) + '</div><div class="sn-sub">' + int(t.n) + ' invoices · ' + us(D.range.from) + ' – ' + us(D.range.to) + '</div><div class="sn-hint">Click to see everyone</div>'; }
+    const a = D.ams.find(x => String(x.id) === String(key)); if (!a) return '';
+    const all = (D.am_all && D.am_all.total) || 1, rank = D.ams.indexOf(a) + 1, w = (v) => a.total ? Math.max(0, Math.round(100 * v / a.total)) : 0;
+    const ch = a.prev_total ? Math.round((a.total - a.prev_total) / a.prev_total * 100) : null;
+    return '<div class="sn-h">' + face(a) + '<div><b>' + esc(a.name) + '</b><small>#' + rank + ' of ' + D.ams.length + ' · ' + Math.round(100 * a.total / all) + '% of all invoiced</small></div></div>' +
+      '<div class="sn-big">' + (q ? int(a.n) + ' invoices' : usd2(a.total)) + (ch == null ? '' : ' <span class="chg ' + (ch > 0 ? 'up' : ch < 0 ? 'dn' : 'eq') + '">' + (ch > 0 ? '▲ ' : ch < 0 ? '▼ ' : '') + Math.abs(ch) + '%</span>') + '</div>' +
+      '<div class="sn-sub">' + (q ? usd0(a.total) : int(a.n) + ' invoices') + ' · avg ' + usd0(a.avg) + (a.prev_total ? ' · ' + usd0(a.prev_total) + ' ' + lyTxt : '') + '</div>' +
+      '<div class="sn-bar"><i style="width:' + w(a.partial) + '%;background:' + C.partial + '"></i><i style="width:' + w(a.paid) + '%;background:' + C.paid + '"></i><i style="width:' + w(a.unpaid) + '%;background:' + C.unpaid + '"></i></div>' +
+      '<div class="sn-rows"><span><i style="background:' + C.paid + '"></i>Paid</span><b>' + usd0(a.paid) + '</b><span><i style="background:' + C.partial + '"></i>Partially paid</span><b>' + usd0(a.partial) + '</b><span><i style="background:' + C.unpaid + '"></i>Unpaid</span><b>' + usd0(a.unpaid) + '</b>' +
+      '<span>Still due</span><b>' + usd0(a.due) + '</b><span>New clients</span><b>' + int(a.new_clients) + '</b><span>Ordered online</span><b>' + (a.total ? Math.round(100 * a.online / a.total) : 0) + '%</b></div>' +
+      '<div class="sn-hint">' + (String(S.am) === String(a.id) ? 'Click to see everyone again' : 'Click to see only ' + esc(a.first || a.name.split(' ')[0]) + '\'s invoices') + '</div>';
+  }
+  let snapT = 0;
+  document.addEventListener('mouseover', (ev) => {
+    const h = ev.target.closest && ev.target.closest('[data-snap]'); const card = $('dbSnap');
+    if (!h) { if (card && !(ev.target.closest && ev.target.closest('#dbSnap'))) { clearTimeout(snapT); snapT = setTimeout(() => { card.hidden = true; }, 120); } return; }
+    if (!D) return; clearTimeout(snapT);
+    card.innerHTML = snapHTML(h.dataset.snap); card.hidden = false;
+    const r = h.getBoundingClientRect(), cw = card.offsetWidth;
+    card.style.left = Math.max(8, Math.min(innerWidth - cw - 8, r.left + r.width / 2 - cw / 2)) + 'px'; card.style.top = (r.bottom + 8) + 'px';
+  });
+  function closeMenu() { const m = $('dbPMenu'); if (m) m.hidden = true; const b = $('dbCustom'); if (b) b.setAttribute('aria-expanded', 'false'); }
 
   // ---- tiles
   function chg(cur, prev) {
@@ -119,7 +158,8 @@
       ['Estimates · Bad debt', '#64748b', q ? int(t.n_est) : usd0(t.estimates), '', (q ? int(t.n_bad) + ' bad debt' : usd0(t.bad_debt) + ' bad debt') + ' · not in Invoiced']
     ];
     $('dbTiles').innerHTML = T.map(x => '<div class="db-tile" style="--c:' + x[1] + '"><div class="l">' + x[0] + (x[3] ? ' ' + x[3] : '') + '</div><div class="v">' + x[2] + '</div><div class="s">' + x[4] + '</div></div>').join('');
-    $('dbTiles').title = 'Changes are against ' + us(D.prev.from) + ' – ' + us(D.prev.to) + ', the same number of days just before';
+    $('dbTiles').title = 'Changes are against ' + us(D.prev.from) + ' – ' + us(D.prev.to) + (D.prev.kind === 'ly' ? ', the same dates last year' : ', the same number of days just before');
+    $('dbVs').textContent = 'vs ' + (D.prev.kind === 'ly' ? 'last year' : 'the ' + D.range.days + ' days before') + ' (' + us(D.prev.from) + ' – ' + us(D.prev.to) + ')';
   }
 
   // ---- chart
@@ -130,10 +170,12 @@
     const v = (b) => q ? { total: b.n, partial: b.n_partial, paid: b.n_paid, unpaid: b.n_unpaid, bad: b.n_bad, est: b.n_est } : { total: b.total, partial: b.partial, paid: b.paid, unpaid: b.unpaid, bad: b.bad_debt, est: b.estimates };
     $('dbChartTitle').textContent = q ? 'Invoices' : 'Invoiced';
     $('dbChartSub').textContent = (g === 'day' ? 'daily' : g === 'week' ? 'weekly' : 'monthly') + ' · by the billed date (Los Angeles)';
-    $('dbLegend').innerHTML = [['Total value', C.total], ['Partially paid', C.partial], ['Paid', C.paid], ['Unpaid', C.unpaid], ['Bad debt', C.bad], ['Estimates', C.est]].map(x => '<span><i style="background:' + x[1] + '"></i>' + x[0] + '</span>').join('');
+    $('dbLegend').innerHTML = [['Total value', C.total], ['Partially paid', C.partial], ['Paid', C.paid], ['Unpaid', C.unpaid], ['Bad debt', C.bad], ['Estimates', C.est]].map(x => '<span><i style="background:' + x[1] + '"></i>' + x[0] + '</span>').join('') +
+      (D.prev.kind === 'ly' ? '<span><i class="lyk"></i>Last year</span>' : '');
     const box = $('dbChart'); const W = Math.max(320, box.clientWidth), H = window.innerWidth < 900 ? 260 : 320;
     const L = 58, R = 8, T = 10, B = 28, pw = W - L - R, ph = H - T - B;
-    const maxV = Math.max(0, ...ser.map(b => { const x = v(b); return Math.max(x.total, x.partial + x.paid + x.unpaid, x.bad + x.est); }));
+    const LY = D.prev.kind === 'ly' ? (D.prev_series || []) : [], lyv = (i) => LY[i] ? (q ? LY[i].n : LY[i].total) : null;
+    const maxV = Math.max(0, ...ser.map((b, i) => { const x = v(b); return Math.max(x.total, x.partial + x.paid + x.unpaid, x.bad + x.est, lyv(i) || 0); }));
     const [top, step] = nice(maxV * 1.05);
     const y = (n) => T + ph - (n / top) * ph;
     const n = ser.length, gw = pw / Math.max(1, n), bw = Math.max(2, Math.min(30, gw * 0.27)), gap = Math.max(1, Math.min(4, bw * 0.15));
@@ -150,13 +192,17 @@
       if (i % every === 0) s += '<text x="' + cx + '" y="' + (H - 8) + '" text-anchor="middle" font-size="11" fill="#6b6b85">' + esc(bucketLabel(b, g)) + '</text>';
     });
     s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(0) + '" y2="' + y(0) + '" stroke="#c9c9da"/>';
+    if (LY.length) { const pts = ser.map((b, i) => lyv(i) == null ? null : [L + i * gw + gw / 2, y(lyv(i))]).filter(Boolean);
+      s += '<polyline points="' + pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ') + '" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round" pointer-events="none"/>' + pts.map(p => '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3.5" fill="#fff" stroke="#475569" stroke-width="2" pointer-events="none"/>').join(''); }
     box.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="height:' + H + 'px" role="img" aria-label="Invoices by ' + g + '">' + s + '</svg><div class="db-tip" id="dbTip"></div>' + (maxV ? '' : '<div class="db-empty" style="position:absolute;inset:0;padding-top:120px">Nothing billed with these filters</div>');
     const tip = $('dbTip');
     box.querySelectorAll('.bk').forEach(el => {
       el.addEventListener('mousemove', (ev) => {
         const b = ser[+el.dataset.i], x = v(b), r = box.getBoundingClientRect(), f = (n) => q ? int(n) : usd2(n);
         tip.innerHTML = '<b>' + esc(bucketLabel(b, g, true)) + '</b>' + [['Total value', C.total, x.total], ['Partially paid', C.partial, x.partial], ['Paid', C.paid, x.paid], ['Unpaid', C.unpaid, x.unpaid], ['Bad debt', C.bad, x.bad], ['Estimates', C.est, x.est]].filter((z, k) => k < 4 || z[2]).map(z => '<div class="r"><span><i style="background:' + z[1] + '"></i>' + z[0] + '</span><span>' + f(z[2]) + '</span></div>').join('') +
-          '<div class="r tot"><span>' + (q ? 'Invoiced' : 'Invoices') + '</span><span>' + (q ? usd2(b.total) : int(b.n)) + '</span></div><div class="hint">Click to see these invoices below</div>';
+          '<div class="r tot"><span>' + (q ? 'Invoiced' : 'Invoices') + '</span><span>' + (q ? usd2(b.total) : int(b.n)) + '</span></div>' +
+          (LY[+el.dataset.i] ? (() => { const p = LY[+el.dataset.i], pv = q ? p.n : p.total, cv = q ? b.n : b.total, ch = pv ? Math.round((cv - pv) / pv * 100) : null; return '<div class="r ly"><span>Last year · ' + esc(bucketLabel(p, g, false)) + '</span><span>' + (q ? int(pv) : usd2(pv)) + (ch == null ? '' : ' (' + (ch > 0 ? '+' : '') + ch + '%)') + '</span></div>'; })() : '') +
+          '<div class="hint">Click to see these invoices below</div>';
         tip.style.display = 'block';
         const lx = ev.clientX - r.left + 14, tw = tip.offsetWidth;
         tip.style.left = (lx + tw > r.width ? ev.clientX - r.left - tw - 14 : lx) + 'px'; tip.style.top = Math.max(0, ev.clientY - r.top - 20) + 'px';
@@ -203,7 +249,10 @@
   // ---- clicks
   document.addEventListener('click', (ev) => {
     const b = ev.target.closest('button'); if (!b) return;
-    if (b.dataset.p) { S.period = b.dataset.p; if (S.period === 'custom') { const r = range(); S.from = S.from || r[0]; S.to = S.to || r[1]; } S.group = 'auto'; save(); paintFilters(); load(); return; }
+    if (b.id === 'dbCustom') { const m = $('dbPMenu'); m.hidden = !m.hidden; b.setAttribute('aria-expanded', String(!m.hidden)); return; }
+    if (b.id === 'dbApply') { const f = $('dbFrom').value, t = $('dbTo').value; if (!f || !t) return; S.period = 'custom'; S.from = f; S.to = t; S.group = 'auto'; closeMenu(); save(); paintFilters(); load(); return; }
+    if (b.dataset.pm) { if (b.dataset.pm === 'custom') { $('dbPick').hidden = false; menuItems().forEach(x => x.classList.toggle('on', x === b)); return; } S.period = b.dataset.pm; S.group = 'auto'; closeMenu(); save(); paintFilters(); load(); return; }
+    if (b.dataset.p) { S.period = b.dataset.p; S.group = 'auto'; save(); paintFilters(); load(); return; }
     if (b.dataset.g) { const [from, to] = range(); S.group = b.dataset.g === autoGroup(daysBetween(from, to)) ? 'auto' : b.dataset.g; save(); paintFilters(); load(); return; }
     if (b.dataset.o) { S.online = b.dataset.o; save(); paintFilters(); load(); return; }
     if (b.dataset.ord) { S.orders = S.orders === b.dataset.ord ? 'all' : b.dataset.ord; save(); paintFilters(); load(); return; }
@@ -211,8 +260,14 @@
     if (b.dataset.by) { S.by = b.dataset.by; save(); if (D) paint(); else paintFilters(); return; }
   });
   document.addEventListener('change', (ev) => {
-    if (ev.target.id === 'dbFrom' || ev.target.id === 'dbTo') { S.from = $('dbFrom').value; S.to = $('dbTo').value; if (S.from && S.to) { S.group = 'auto'; save(); paintFilters(); load(); } }
+    if (ev.target.id === 'dbLy') { S.ly = ev.target.checked; save(); load(); }
   });
+  const menuItems = () => Array.from(document.querySelectorAll('#dbPMenu [data-pm]'));
+  document.addEventListener('click', (ev) => {
+    if (ev.target.id === 'dbAmAll') { ev.preventDefault(); S.am = 'all'; save(); paintFilters(); load(); return; }
+    if (!(ev.target.closest && ev.target.closest('.db-pm'))) closeMenu();
+  }, true);
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { closeMenu(); const c = $('dbSnap'); if (c) c.hidden = true; } });
   let rt = 0; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { if (D) paintChart(); }, 120); });
 
   paintFilters(); load();
