@@ -351,6 +351,42 @@ function buildOptionPicks(d) {
   return wrap;
 }
 
+// Die line finder: the next calculator field that decides the template, drawn as the
+// website draws it — the field name, then a row of picture tiles (the option's own image,
+// the name on hover). A click answers the question in the chat.
+function buildDieTiles(d) {
+  const nice = t => String(t == null ? '' : t).replace(/_/g, ' ');
+  const wrap = document.createElement('div');
+  wrap.className = 'dt-wrap';
+  const chosen = d.chosen || {};
+  const ctx = Object.keys(chosen).map(k => chosen[k]).filter(Boolean).join(' · ');
+  wrap.innerHTML = '<div class="dt-hd"><span class="dt-f">' + esc(nice(d.field || 'Option')) + '</span>' +
+    '<span class="dt-pick"></span>' + (ctx ? '<span class="dt-ctx">' + esc(nice(ctx)) + '</span>' : '') + '</div>';
+  const row = document.createElement('div');
+  row.className = 'dt-row';
+  (d.options || []).forEach(o => {
+    const name = nice(o.title);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'dt-tile' + (o.image ? '' : ' dt-text');
+    b.title = name;
+    b.innerHTML = (o.image
+      ? '<img src="' + esc(o.image) + '" alt="' + esc(name) + '" loading="lazy" onerror="this.parentNode.classList.add(\'dt-text\');this.replaceWith(document.createTextNode(this.alt))">'
+      : esc(name)) + '<span class="dt-ok"><svg viewBox="0 0 12 12" width="10" height="10"><path d="M2.5 6.2l2.2 2.2 4.8-4.9" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
+    b.onclick = () => {
+      if (wrap.classList.contains('done')) return;
+      wrap.classList.add('done');
+      row.querySelectorAll('.dt-tile').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      wrap.querySelector('.dt-pick').textContent = name;
+      ask(o.die ? ('Die line: ' + name + ' (#' + o.item_id + ')') : (nice(d.field || 'Option') + ': ' + name));
+    };
+    row.appendChild(b);
+  });
+  wrap.appendChild(row);
+  return wrap;
+}
+
 // ===== Product picker (clickable options, top 5 + Load more) =====
 // A plain question with clickable answers — so nothing has to be typed.
 function buildChoicePicks(d) {
@@ -1538,6 +1574,7 @@ function buildPriceCard(d) {
     clientPicks: function (d, o) { token = CTX.getToken(); return buildClientPicks(d, o); },
     optionPicks: function (d) { token = CTX.getToken(); return buildOptionPicks(d); },
     choicePicks: function (d) { token = CTX.getToken(); return buildChoicePicks(d); },
+    dieTiles:    function (d) { return buildDieTiles(d); },
     turnaround:  function (d) { token = CTX.getToken(); return buildTurnaround(d); },
     productCards:function (d, o) { token = CTX.getToken(); return buildProductCards(d, o); },
     picks:       function (d, o) { token = CTX.getToken(); return buildPicks(d, o); },

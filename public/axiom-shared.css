@@ -604,6 +604,25 @@ textarea { flex: 1; border: none; background: transparent; font-size: 14.5px; re
 .op-choice.chosen { border-color: var(--indigo); background: var(--indigo-light); color: var(--indigo-dark); opacity: 1; }
 /* Selectable options for one field, shown visually */
 .op-wrap { margin: 10px 0 6px; max-width: 520px; }
+/* Die line finder — the website's option tiles (1.20.158) */
+.dt-wrap { margin: 12px 0 6px; max-width: 560px; }
+.dt-hd { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.dt-f { font-size: 15px; font-weight: 700; color: #1e1b2e; }
+.dt-pick { font-size: 13px; font-weight: 600; color: #4b3f72; }
+.dt-pick:not(:empty)::before { content: '\00B7  '; color: #9ca3af; }
+.dt-ctx { margin-left: auto; font-size: 12px; color: #9ca3af; }
+.dt-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.dt-tile { position: relative; width: 88px; height: 66px; padding: 8px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff;
+  cursor: pointer; display: flex; align-items: center; justify-content: center; font-family: inherit; transition: border-color .15s, box-shadow .15s; }
+.dt-tile img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.dt-tile.dt-text { width: auto; min-width: 88px; height: 44px; padding: 0 14px; font-size: 13px; font-weight: 600; color: #1e1b2e; }
+.dt-tile:hover { border-color: #b8b2cc; box-shadow: 0 2px 8px rgba(30,27,46,.08); }
+.dt-tile.on { border: 2px solid #2b1b3d; padding: 7px; }
+.dt-tile.dt-text.on { padding: 0 13px; }
+.dt-ok { display: none; position: absolute; top: -7px; right: -7px; width: 18px; height: 18px; border-radius: 50%; background: #2b1b3d;
+  align-items: center; justify-content: center; }
+.dt-tile.on .dt-ok { display: flex; }
+.dt-wrap.done .dt-tile:not(.on) { opacity: .45; cursor: default; box-shadow: none; border-color: #e5e7eb; }
 .op-hd { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 7px; }
 .op-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
 .op-grid.op-plain { grid-template-columns: 1fr; }

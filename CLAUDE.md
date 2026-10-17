@@ -669,6 +669,16 @@ pattern for any new report over a large log table. To add a report, add an entry
   TalkAi ARTWORK SPECS line, staff prompt). Domain Knowledge docs reach the website chat when shared with the
   `client-bot` agent ("Client ChatBot", access `system`) by name (`loadClientTraining()`); Word files are read by
   `docxText()` (mammoth if installed, else word/document.xml via xlsx's CFB).
+- **Die lines in the staff chat** (1.20.158): `get_dieline {product_id, size?, choices?, option_item_id?}` → `dieLineLookup()` in server.js.
+  A die line is a `product_variable_item` with `die_line_id`; its `product_variable_filters` rows (`relatedTo` = the field, `relatedItems` =
+  the options) are its gates (Event Badges #690: Size × Hole_Punch → 50 die lines). The size (`dlSize()`, orientation kept, reversed only
+  as a fallback) and the named choices narrow the list; one left → the Drive file; several → the FIRST gate field in calculator order that
+  still tells them apart is sent as a `die_tiles` event (`buildDieTiles()` in axiom-cards.js, `.dt-*` in axiom-shared.css): the field name
+  and a row of picture tiles exactly like the website (the option's own `product_variable_item.image`, else its material photo; name on
+  hover; text tile when there is no picture; the picked one gets the dark border + check), and the model asks one short question. A click
+  asks "Hole Punch: Oblong" and the model calls again with the same size + choices (`next_call` in the result). Every field / option
+  name reads with spaces for underscores (`dlNice`). A size with no die line answers `none` + the sizes that have one. No product card,
+  no list of die lines.
 - **`estimate.production_status` is stale.** True production state is the newest `qr_scan_history` row
   for that `estimate_id`. This is stated in DATA_DICTIONARY and enforced in the `get_job` MCP tool.
 - **"Related to" rules** (`product_variable_filters`) decide when a field or option exists at all — Scoring on Book

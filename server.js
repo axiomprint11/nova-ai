@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.157';
-const NOVA_BUILT = '10-16-2026 7:45pm';
+const NOVA_VERSION = '1.20.158';
+const NOVA_BUILT = '10-16-2026 8:20pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -4006,6 +4006,154 @@ function stripQuoted(body) {
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+/* ===== Die lines (staff get_dieline) =====
+   A die line hangs off a product_variable_item (die_line_id); product_variable_filters say which
+   calculator choices it belongs to (Size, Hole_Punch…). The person's size + choices narrow the list;
+   when several are left, the first gate field that still differs is offered as picture tiles —
+   the option images the website shows (product_variable_item.image). Underscores read as spaces. */
+const dlNice = t => String(t == null ? '' : t).replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+const dlKey = t => String(t || '').toLowerCase().replace(/[_\s\-]+/g, '');
+function dlSize(t) {
+  const m = String(t || '').replace(/[×X]/g, 'x').match(/(\d+(?:\.\d+)?)\s*["']?\s*(?:x|by)\s*(\d+(?:\.\d+)?)/i);
+  return m ? [Number(m[1]), Number(m[2])] : null;
+}
+async function dieLineLookup(pid, opt) {
+  opt = opt || {};
+  const rows = await runQueryRaw(
+    'SELECT pvi.id AS item_id, pvi.title AS option_name, pv.title AS field, ' +
+    'd.id AS die_id, d.width, d.height, d.description, d.status, ' +
+    'd.die_line_file_id, d.die_line_file_name, d.template_file_id, d.template_file_name ' +
+    'FROM product_variables pv ' +
+    'JOIN product_variable_item pvi ON pvi.variable_id = pv.id ' +
+    'JOIN die_line d ON d.id = pvi.die_line_id ' +
+    'WHERE pv.product_id = ' + parseInt(pid) + ' AND pvi.die_line_id IS NOT NULL AND pvi.die_line_id > 0 ' +
+    (opt.item ? 'AND pvi.id = ' + parseInt(opt.item) + ' ' : '') +
+    'ORDER BY pv.`order`, pvi.`order`');
+  if (!rows.length) return { result: opt.item ? 'No die line on that option.'
+    : 'No die lines are set up for product ' + pid + '. Say so plainly — do not guess a file.' };
+  const DRIVE = id => id ? ('https://drive.google.com/file/d/' + id + '/view') : null;
+  const dies = rows.map(r => ({
+    item_id: r.item_id, option: dlNice(r.option_name),
+    size: (r.width && r.height) ? (Number(r.width) + '" x ' + Number(r.height) + '"') : null,
+    w: Number(r.width) || null, h: Number(r.height) || null,
+    file_name: r.die_line_file_name || r.template_file_name || null,
+    file_url: DRIVE(r.die_line_file_id || r.template_file_id || null),
+    gates: {}
+  })).filter(x => x.file_url);
+  if (!dies.length) return { result: 'Die line records exist for this product but none has a file attached. Tell the team the file is missing — do not invent a link.' };
+
+  // The gates: which calculator choices each die line belongs to.
+  const ids = dies.map(d => d.item_id);
+  let gates = [];
+  try {
+    gates = await runQueryRaw('SELECT product_variable_item_id AS item_id, relatedTo AS vid, relatedItems ' +
+      'FROM product_variable_filters WHERE product_variable_item_id IN (' + ids.join(',') + ')');
+  } catch (e) { gates = []; }
+  const gateIds = new Set(), vids = new Set();
+  gates.forEach(g => {
+    let rel = g.relatedItems;
+    try { if (typeof rel === 'string') rel = JSON.parse(rel); } catch (e) { rel = []; }
+    const list = (Array.isArray(rel) ? rel : []).map(Number).filter(Boolean);
+    const d = dies.find(x => Number(x.item_id) === Number(g.item_id));
+    if (!d || !g.vid || !list.length) return;
+    d.gates[g.vid] = (d.gates[g.vid] || []).concat(list);
+    vids.add(Number(g.vid)); list.forEach(i => gateIds.add(i));
+  });
+  const fields = {}, items = {};
+  if (vids.size) {
+    (await runQueryRaw('SELECT id, title, `order` AS ord FROM product_variables WHERE id IN (' + Array.from(vids).join(',') + ')'))
+      .forEach(v => { fields[v.id] = { id: v.id, title: v.title, label: dlNice(v.title), ord: Number(v.ord) || 0 }; });
+  }
+  if (gateIds.size) {
+    (await runQueryRaw('SELECT pvi.id, pvi.variable_id, pvi.title, pvi.`order` AS ord, pvi.image, ' +
+      "COALESCE(NULLIF(m.website_image_url,''), NULLIF(m.photo_url,'')) AS material_image " +
+      'FROM product_variable_item pvi LEFT JOIN materials m ON m.id = pvi.material_id WHERE pvi.id IN (' + Array.from(gateIds).join(',') + ')'))
+      .forEach(i => { items[i.id] = { id: i.id, vid: i.variable_id, title: i.title, label: dlNice(i.title), ord: Number(i.ord) || 0,
+        image: i.image || i.material_image || null }; });
+  }
+  const order = Object.values(fields).sort((a, b) => a.ord - b.ord || a.id - b.id);
+  const sizeField = order.find(f => /size/i.test(f.title));
+
+  // What the person already decided → field id → allowed item ids.
+  const picked = {}, said = {};
+  const want = dlSize(opt.size);
+  if (want && sizeField) {
+    const its = Object.values(items).filter(i => Number(i.vid) === sizeField.id);
+    let hit = its.filter(i => { const n = dlSize(i.title); return n && n[0] === want[0] && n[1] === want[1]; });
+    if (!hit.length) hit = its.filter(i => { const n = dlSize(i.title); return n && n[0] === want[1] && n[1] === want[0]; });
+    if (hit.length) { picked[sizeField.id] = hit.map(i => i.id); said[sizeField.label] = hit.map(i => i.label).join(' / '); }
+  }
+  let unknown = [];
+  const ch = (opt.choices && typeof opt.choices === 'object') ? opt.choices : {};
+  Object.keys(ch).forEach(k => {
+    const f = order.find(x => dlKey(x.title) === dlKey(k)) || order.find(x => dlKey(x.title).indexOf(dlKey(k)) > -1 || dlKey(k).indexOf(dlKey(x.title)) > -1);
+    if (!f) { unknown.push(k); return; }
+    const v = String(ch[k] == null ? '' : ch[k]).trim();
+    if (f === sizeField && dlSize(v) && picked[f.id]) return;
+    const its = Object.values(items).filter(i => Number(i.vid) === f.id);
+    let hit = its.filter(i => String(i.id) === v || dlKey(i.title) === dlKey(v));
+    if (!hit.length) hit = its.filter(i => dlKey(i.title).indexOf(dlKey(v)) > -1);
+    if (!hit.length && f === sizeField && dlSize(v)) {
+      const n2 = dlSize(v); hit = its.filter(i => { const n = dlSize(i.title); return n && n[0] === n2[0] && n[1] === n2[1]; });
+    }
+    if (hit.length) { picked[f.id] = hit.map(i => i.id); said[f.label] = hit.map(i => i.label).join(' / '); }
+    else unknown.push(k + ': ' + v);
+  });
+  const fits = d => Object.keys(picked).every(fid => !d.gates[fid] || d.gates[fid].some(i => picked[fid].indexOf(i) > -1));
+  let left = opt.item ? dies : dies.filter(fits);
+  // A size with no die line of its own (e.g. 4" x 6") — fall back to the die's own width x height.
+  if (!left.length && want) left = dies.filter(d => d.w === want[0] && d.h === want[1]);
+  const show = d => ({ item_id: d.item_id, size: d.size, option: d.option,
+    applies_when: order.filter(f => d.gates[f.id]).map(f => f.label + ': ' + d.gates[f.id].map(i => (items[i] || {}).label || i).join(' / ')).join(', ') || null,
+    file_name: d.file_name, file_url: d.file_url });
+
+  if (want && sizeField && !picked[sizeField.id] && !opt.item && !(left.length && left.every(d => d.w === want[0] && d.h === want[1]))) {
+    const sizes = Object.values(items).filter(i => Number(i.vid) === sizeField.id && dies.some(d => (d.gates[sizeField.id] || []).indexOf(i.id) > -1))
+      .sort((a, b) => a.ord - b.ord).map(i => i.label);
+    return { result: { none: true, size_asked: opt.size, sizes_with_die_lines: sizes,
+      ui: 'There is no die line for ' + opt.size + ' on this product. Say so in one line and name the sizes that have one; do not invent a link.' } };
+  }
+  if (!left.length) {
+    return { result: { none: true, already_chosen: said, not_matched: unknown.length ? unknown : undefined,
+      ui: 'No die line on file for that combination. Say so in one line and suggest the team makes one; do not invent a link.' } };
+  }
+  if (left.length === 1) {
+    const d0 = show(left[0]);
+    return { result: { dieline: d0, already_chosen: said,
+      how_to_show: 'Give the size and the choices in one line, then the file as a markdown link: [' + (d0.file_name || 'Die line PDF') + '](' + d0.file_url + '). Nothing else.' } };
+  }
+  // Several left: the first gate field (calculator order) that still tells them apart.
+  const next = order.find(f => {
+    if (picked[f.id] && picked[f.id].length === 1) return false;
+    const keys = new Set(left.map(d => (d.gates[f.id] || []).slice().sort().join(',')));
+    return keys.size > 1;
+  });
+  let tiles, fieldLabel;
+  if (next) {
+    const inUse = new Set(); left.forEach(d => (d.gates[next.id] || []).forEach(i => inUse.add(i)));
+    const opts = Object.values(items).filter(i => Number(i.vid) === next.id && inUse.has(i.id))
+      .sort((a, b) => a.ord - b.ord || a.id - b.id)
+      .map(i => ({ item_id: i.id, title: i.label, image: i.image || null }));
+    fieldLabel = next.label;
+    tiles = { product_id: pid, field: fieldLabel, options: opts, chosen: said };
+  } else {
+    // Nothing in the calculator tells them apart — offer the die lines themselves.
+    fieldLabel = 'Die line';
+    tiles = { product_id: pid, field: fieldLabel, chosen: said,
+      options: left.map(d => ({ item_id: d.item_id, title: d.option + (d.size ? ' · ' + d.size : ''), image: null, die: true })) };
+  }
+  const nextChoices = {}; Object.keys(said).forEach(k => { if (!sizeField || k !== sizeField.label) nextChoices[k] = said[k]; });
+  nextChoices[fieldLabel] = '<their answer>';
+  return { tiles, result: {
+    remaining: left.length, already_chosen: said, not_matched: unknown.length ? unknown : undefined,
+    asking_about: fieldLabel, options: tiles.options.map(o => o.title),
+    ui: 'The person is ALREADY shown the ' + fieldLabel + ' options as picture tiles. Reply with ONE short question, e.g. "Which ' +
+      fieldLabel.toLowerCase() + ' do you need?" — do not list the options or the die lines, do not pick one.',
+    next_call: next ? { product_id: pid, size: opt.size || undefined, choices: nextChoices }
+      : { product_id: pid, option_item_id: '<item_id of the die line they pick>' }
+  } };
+}
+
 app.post('/api/chatbot/draft-reply', auth, async (req, res) => {
   try {
     const b = req.body || {};
@@ -6686,12 +6834,14 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     }
   }, {
     name: 'get_dieline',
-    description: 'Get the die line / template file (a Google Drive PDF) for a product. Die lines hang off individual OPTIONS — usually the Folding or Template field — and are gated by another field, most often Size. One product can therefore have several. Call with just product_id first: if more than one exists you get them all back with the size and fold each belongs to, and the user is shown clickable buttons to pick. Pass option_item_id once they have chosen.',
+    description: 'Get the die line / template file (a Google Drive PDF) for a product. Die lines hang off individual OPTIONS and are decided by the calculator fields they are gated on — usually Size, then e.g. Hole Punch or Folding. Pass EVERYTHING already said: `size` and any other field the person named in `choices`. The tool narrows the die lines with them; when one is left it returns the file, when several are left it shows the person the NEXT deciding field as picture tiles (as on the website) — you then ask ONE short question about that field. When they answer, call again with the same size + choices plus their answer.',
     input_schema: {
       type: 'object',
       properties: {
         product_id: { type: 'integer', description: 'The product.id' },
-        option_item_id: { type: 'integer', description: 'Optional. product_variable_item.id of the chosen fold/template option.' }
+        size: { type: 'string', description: 'The size if said, e.g. "3.5x5.5" (width x height, as said — orientation matters).' },
+        choices: { type: 'object', description: 'Other calculator fields already decided, field name → option name, e.g. {"Hole Punch": "Oblong"}.' },
+        option_item_id: { type: 'integer', description: 'Optional. product_variable_item.id of a die-line option, when known exactly.' }
       },
       required: ['product_id']
     }
@@ -7330,9 +7480,10 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     '- When the user names a product type rather than a specific product, call find_products. If it returns ' +
     'several, the user gets clickable buttons automatically — reply with ONE short line ("Which one?") and ' +
     'nothing more. Never re-list what the buttons already show.\n' +
-    '- DIE LINES / TEMPLATES: use get_dieline, never raw SQL. A product can have several, one per size/fold ' +
-    'combination, so if more than one comes back ASK WHICH SIZE rather than guessing or listing all of them. ' +
-    'Give the file as a markdown link. Never invent or guess a Drive link.\n' +
+    '- DIE LINES / TEMPLATES: use get_dieline, never raw SQL. Pass the size and every option already said (`choices`). ' +
+    'When several die lines remain the person is shown picture tiles for the next deciding field — ask ONE short question ' +
+    '("Which hole punch do you need?"), never list the die lines or the options in words. When they answer, call get_dieline ' +
+    'again with the same size + choices plus the answer. Give the final file as a markdown link. Never invent or guess a Drive link.\n' +
     '- ARTWORK SPECS (safe area / safe margin, bleed, resolution): for a specific product, get_product_options returns its ' +
     'own `artwork` values (product.safe / bleed / dpi) — use those; they override the general artwork guide in Domain Knowledge. ' +
     'Product values are totals across a dimension: give the per-edge figure ("0.125 in inside each trim edge"). Only general ' +
@@ -8335,96 +8486,11 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
         const chosenItem = toolUse.input.option_item_id ? parseInt(toolUse.input.option_item_id) : null;
         send({ type: 'query', description: 'Looking up die lines' });
         try {
-          // Die lines live on product_variable_item.die_line_id, and which option
-          // applies is decided by product_variable_filters (usually gated on Size).
-          const rows = await runQueryRaw(
-            'SELECT pvi.id AS item_id, pvi.title AS option_name, pv.title AS field, ' +
-            'd.id AS die_id, d.width, d.height, d.description, d.status, ' +
-            'd.die_line_file_id, d.die_line_file_name, d.template_file_id, d.template_file_name ' +
-            'FROM product_variables pv ' +
-            'JOIN product_variable_item pvi ON pvi.variable_id = pv.id ' +
-            'JOIN die_line d ON d.id = pvi.die_line_id ' +
-            'WHERE pv.product_id = ' + pid + ' AND pvi.die_line_id IS NOT NULL AND pvi.die_line_id > 0 ' +
-            (chosenItem ? 'AND pvi.id = ' + chosenItem + ' ' : '') +
-            'ORDER BY pv.`order`, pvi.`order`');
-
-          if (rows.length) await sendProductCards([pid]);
-          if (!rows.length) {
-            toolResult = chosenItem
-              ? 'No die line on that option.'
-              : 'No die lines are set up for product ' + pid + '. Say so plainly — do not guess a file.';
-          } else {
-            // What gates each option? Usually Size — that's the question to ask.
-            const ids = rows.map(r => r.item_id);
-            let gates = [];
-            try {
-              gates = await runQueryRaw(
-                'SELECT pvf.product_variable_item_id AS item_id, pv2.title AS gate_field, pvf.relatedItems ' +
-                'FROM product_variable_filters pvf LEFT JOIN product_variables pv2 ON pv2.id = pvf.relatedTo ' +
-                'WHERE pvf.product_variable_item_id IN (' + ids.join(',') + ')');
-            } catch (ge) { gates = []; }
-            const gateIds = [];
-            gates.forEach(g => {
-              let rel = g.relatedItems;
-              try { if (typeof rel === 'string') rel = JSON.parse(rel); } catch (e) { rel = []; }
-              g._items = Array.isArray(rel) ? rel.map(Number) : [];
-              g._items.forEach(x => { if (gateIds.indexOf(x) === -1) gateIds.push(x); });
-            });
-            let gateNames = {};
-            if (gateIds.length) {
-              try {
-                const gn = await runQueryRaw('SELECT id, title FROM product_variable_item WHERE id IN (' + gateIds.join(',') + ')');
-                gn.forEach(x => { gateNames[x.id] = x.title; });
-              } catch (e) {}
-            }
-
-            const DRIVE = id => id ? ('https://drive.google.com/file/d/' + id + '/view') : null;
-            const list = rows.map(r => {
-              const g = gates.filter(x => Number(x.item_id) === Number(r.item_id));
-              const gateLabel = g.map(x => (x.gate_field || 'Option') + ': ' +
-                (x._items || []).map(i => gateNames[i] || i).join(' / ')).join(', ');
-              // die_line_file_* is often empty; the usable PDF is template_file_*
-              const fileId = r.die_line_file_id || r.template_file_id || null;
-              const fileName = r.die_line_file_name || r.template_file_name || null;
-              return {
-                item_id: r.item_id,
-                option: r.option_name,
-                field: r.field,
-                size: (r.width && r.height) ? (Number(r.width) + '" x ' + Number(r.height) + '"') : null,
-                applies_when: gateLabel || null,
-                description: r.description,
-                status: r.status,
-                file_name: fileName,
-                file_url: DRIVE(fileId)
-              };
-            }).filter(x => x.file_url);
-
-            if (!list.length) {
-              toolResult = 'Die line records exist for this product but none has a file attached. Tell the team the file is missing — do not invent a link.';
-            } else if (list.length === 1 || chosenItem) {
-              const d0 = list[0];
-              toolResult = JSON.stringify({
-                dieline: d0,
-                how_to_show: 'Give the size, then the file as a markdown link: [' + (d0.file_name || 'Die line PDF') + '](' + d0.file_url + '). One or two lines total.'
-              });
-            } else {
-              // Several — the differentiator is almost always size, so let them pick.
-              send({
-                type: 'product_picks',
-                products: list.map(d => ({
-                  id: d.item_id,
-                  name: (d.size || d.option) + (d.applies_when ? ' — ' + d.applies_when : ''),
-                  image: null
-                }))
-              });
-              toolResult = JSON.stringify({
-                dielines: list.map(d => ({ item_id: d.item_id, size: d.size, option: d.option, applies_when: d.applies_when })),
-                ui: 'This product has ' + list.length + ' die lines that differ by SIZE. The user has ALREADY ' +
-                    'been shown them as clickable buttons. Do NOT list them and do NOT pick one yourself. ' +
-                    'Reply with ONE short line asking which size, and nothing else.'
-              });
-            }
-          }
+          const r = await dieLineLookup(pid, {
+            item: chosenItem, size: toolUse.input.size, choices: toolUse.input.choices
+          });
+          if (r.tiles) send(Object.assign({ type: 'die_tiles' }, r.tiles));
+          toolResult = JSON.stringify(r.result);
         } catch (e) {
           toolResult = 'Die line lookup failed: ' + e.message + '. The database IS connected - retry.';
         }

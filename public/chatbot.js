@@ -914,7 +914,7 @@ document.addEventListener('click', (e) => {
 // Card events that belong to an answer. Stored with the message so reopening a
 // chat rebuilds what was on screen, not just the sentence above it.
 const CARD_TYPES = ['job_card', 'price_quote', 'client_card', 'client_picks', 'product_cards',
-                    'turnaround', 'choice_picks', 'option_picks', 'product_picks', 'install_quote', 'report'];
+                    'turnaround', 'choice_picks', 'option_picks', 'die_tiles', 'product_picks', 'install_quote', 'report'];
 
 // A card with nothing in it is worse than no card. An empty client placeholder,
 // a "WHICH CLIENT?" header over no options, a turnaround sentence with no dates —
@@ -926,6 +926,7 @@ function cardHasContent(j) {
     case 'product_picks': return Array.isArray(j.products) && j.products.length > 0;
     case 'product_cards': return Array.isArray(j.products) && j.products.length > 0;
     case 'option_picks':  return Array.isArray(j.options) && j.options.length > 0;
+    case 'die_tiles':     return Array.isArray(j.options) && j.options.length > 0;
     case 'choice_picks':  return Array.isArray(j.choices) && j.choices.length > 0;
     case 'turnaround':    return !!(j.data && (j.data.readyLabel || (j.data.timeline || []).length));
     case 'price_quote':   return !!(j.data && j.data.product);
@@ -2247,6 +2248,9 @@ function renderCard(box, j) {
     case 'option_picks':
       box.appendChild(buildOptionPicks(j));
       break;
+    case 'die_tiles':
+      box.appendChild(buildDieTiles(j));
+      break;
     case 'product_picks':
       box.appendChild(buildPicks(j.products || [],
         { intent: j.intent, ask_about: j.ask_about, replace: j.replace }));
@@ -2756,6 +2760,7 @@ const buildClientCard   = (d) => AxiomCards.clientCard(d);
 const buildClientPicks  = (d, o) => AxiomCards.clientPicks(d, o);
 const buildOptionPicks  = (d) => AxiomCards.optionPicks(d);
 const buildChoicePicks  = (d) => AxiomCards.choicePicks(d);
+const buildDieTiles     = (d) => AxiomCards.dieTiles(d);
 const buildTurnaround   = (d) => AxiomCards.turnaround(d);
 const buildProductCards = (d) => AxiomCards.productCards(d);
 const buildPicks        = (d, o) => AxiomCards.picks(d, o);
