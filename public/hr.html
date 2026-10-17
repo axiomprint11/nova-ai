@@ -278,20 +278,22 @@ button.lvl:hover { background: var(--surface-2); }
 /* company tree */
 /* 1.20.169: a canvas — fills the window, scrolls both ways, drags with the hand, arrows + zoom */
 .org-box { position: relative; padding: 0; overflow: hidden; }
-.org-wrap { overflow: auto; padding: 26px 22px 64px; height: calc(100vh - 230px); min-height: 380px; cursor: grab; outline: none; scrollbar-width: thin; }
+/* 1.20.171: a map — nothing scrolls, the tree moves by transform */
+.org-wrap { position: relative; overflow: hidden; height: calc(100vh - 230px); min-height: 380px; cursor: grab; outline: none; touch-action: none; background-image: radial-gradient(circle, #e7e4f1 1px, transparent 1.2px); background-size: 22px 22px; }
 .org-wrap.dragging { cursor: grabbing; user-select: none; }
 .org-wrap.dragging * { cursor: grabbing !important; }
-.org-wrap::-webkit-scrollbar { height: 12px; width: 12px; } .org-wrap::-webkit-scrollbar-thumb { background: #cfcbe0; border-radius: 8px; border: 3px solid #fff; } .org-wrap::-webkit-scrollbar-thumb:hover { background: #b3aecb; }
-.org { display: flex; flex-direction: column; align-items: center; width: max-content; min-width: 100%; }
-.org-box::before, .org-box::after { content: ""; position: absolute; top: 0; bottom: 12px; width: 46px; pointer-events: none; opacity: 0; transition: opacity .15s; z-index: 2; }
-.org-box::before { left: 0; background: linear-gradient(90deg, #fff, rgba(255,255,255,0)); } .org-box::after { right: 12px; background: linear-gradient(270deg, #fff, rgba(255,255,255,0)); }
+.org { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; width: max-content; transform-origin: 0 0; will-change: transform; }
+.org.anim { transition: transform .28s cubic-bezier(.2,.7,.2,1); }
+.org-box::before, .org-box::after { content: ""; position: absolute; top: 0; bottom: 0; width: 46px; pointer-events: none; opacity: 0; transition: opacity .15s; z-index: 2; }
+.org-box::before { left: 0; background: linear-gradient(90deg, #fff, rgba(255,255,255,0)); } .org-box::after { right: 0; background: linear-gradient(270deg, #fff, rgba(255,255,255,0)); }
 .org-box.more-l::before, .org-box.more-r::after { opacity: 1; }
 .org-arrow { position: absolute; top: 50%; transform: translateY(-50%); z-index: 3; width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line); background: #fff; color: var(--ink-2); box-shadow: var(--shadow); display: none; align-items: center; justify-content: center; cursor: pointer; }
-.org-arrow:hover { color: var(--accent); border-color: var(--accent); } .org-arrow.l { left: 10px; } .org-arrow.r { right: 22px; }
+.org-arrow:hover { color: var(--accent); border-color: var(--accent); } .org-arrow.l { left: 10px; } .org-arrow.r { right: 10px; }
 .org-box.more-l .org-arrow.l, .org-box.more-r .org-arrow.r { display: flex; }
 .org-ctl { position: absolute; right: 24px; bottom: 22px; z-index: 3; display: flex; align-items: center; gap: 2px; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 3px; box-shadow: var(--shadow); }
 .org-ctl button { border: 0; background: none; min-width: 30px; height: 28px; border-radius: 7px; font-size: 15px; font-weight: 600; font-family: inherit; color: var(--ink-2); cursor: pointer; padding: 0 8px; }
 .org-ctl button:hover { background: var(--surface-2); color: var(--ink); } .org-ctl .pct { font-size: 12px; min-width: 50px; font-variant-numeric: tabular-nums; } .org-ctl button[data-d="fit"] { font-size: 12px; }
+.org-info { width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: var(--ink-3); margin-right: 6px; cursor: help; }
 .org-hint { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-3); padding: 0 8px 0 6px; border-right: 1px solid var(--line); margin-right: 2px; }
 @media (max-width: 760px) { .org-hint { display: none; } .org-wrap { height: calc(100vh - 260px); } }
 /* 1.20.169: location flags */

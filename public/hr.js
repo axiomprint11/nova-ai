@@ -19,7 +19,7 @@
 
   let S = null, LOADED = 0;
   const UI = { view: 'today', q: '', loc: 'all', dept: 'all', incomplete: false, inactive: false, drawer: null, detail: null, tab: 'overview', editing: false,
-    tsWeek: null, ts: null, timeTab: 'sheet', adhWeeks: 4, adhSort: 'worst', adh: null, calMonth: null, calLoc: 'all', orgq: '', orgOpen: {}, orgZoom: (() => { try { const z = +localStorage.getItem('hr_org_zoom'); return z >= 0.3 && z <= 1.5 ? z : 1; } catch (e) { return 1; } })(), bandOpen: {},
+    tsWeek: null, ts: null, timeTab: 'sheet', adhWeeks: 4, adhSort: 'worst', adh: null, calMonth: null, calLoc: 'all', orgq: '', orgOpen: {}, orgZoom: (() => { try { const z = +localStorage.getItem('hr_org_zoom'); return z >= 0.2 && z <= 2 ? z : 1; } catch (e) { return 1; } })(), orgView: null, bandOpen: {},
     rwTab: 'checkin', rwWeek: null, ck: null, setTab: 'types', holLoc: 'all', cover: '', skDept: 'all', skQ: '', draft: {}, myWeek: null, flags: null, kiosks: null, audit: null };
   const params = new URLSearchParams(location.search);
   if (params.get('tab')) UI.view = params.get('tab');
@@ -137,9 +137,8 @@
     $('subtitle').textContent = sub[UI.view];
     try { const u = new URL(location.href); u.searchParams.set('tab', UI.view); history.replaceState(null, '', u.pathname + '?' + u.searchParams.toString()); } catch (e) {}
     const v = $('view');
-    const keep = v.querySelector('.org-wrap'), sl = keep ? keep.scrollLeft : null, st = keep ? keep.scrollTop : 0;
     v.innerHTML = '<div class="wrap">' + ({ today: vToday, people: vPeople, org: vOrg, time: vTime, timeoff: vTimeoff, reviews: vReviews, skills: vSkills, rewards: vRewards, settings: vSettings })[UI.view]() + '</div>';
-    const w = v.querySelector('.org-wrap'); if (w) { orgSize(); w.scrollLeft = sl != null ? sl : (w.scrollWidth - w.clientWidth) / 2; w.scrollTop = st; orgEdges(); }
+    if (v.querySelector('.org-wrap')) { orgSize(); orgApply(); }
     after();
   }
   function after() {
@@ -483,76 +482,126 @@
     const ceoP = O.ceo.employee_id ? emp(O.ceo.employee_id) : null;
     return '<div class="toolbar"><div class="search">' + I.search + '<input class="input" placeholder="Search people, roles, or teams" value="' + esc(UI.orgq) + '" data-in="orgq" aria-label="Search the company tree"></div>' +
       '<button class="btn" data-act="org-all" data-n="1">Expand all</button><button class="btn" data-act="org-all" data-n="0">Collapse all</button>' +
-      (isAdmin() ? '<span style="margin-left:auto;display:flex;gap:8px"><button class="btn" data-act="org-reset" title="Re-read the CRM departments and teams; Nova edits are dropped">Sync from CRM</button><button class="btn" data-act="org-addteam">Add team</button><button class="btn primary" data-act="org-adddept">Add department</button></span>' : '') + '</div>' +
-      '<div class="card org-box"><div class="org-wrap" tabindex="0" aria-label="Company tree — drag to move, arrow keys scroll"><div class="org" style="zoom:' + UI.orgZoom + '"><div class="ceo">' + (ceoP ? avatar(ceoP, 'lg') : pav({ name: O.ceo.name }, 'lg')) + '<div><b>' + esc(O.ceo.name) + '</b><small>' + esc(O.ceo.title) + '</small></div>' +
+      (isAdmin() ? '<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;min-width:0"><button class="btn" data-act="org-reset" title="Re-read the CRM departments and teams; Nova edits are dropped">Sync from CRM</button><button class="btn" data-act="org-addteam">Add team</button><button class="btn primary" data-act="org-adddept">Add department</button></span>' : '') + '</div>' +
+      '<div class="card org-box"><div class="org-wrap" tabindex="0" aria-label="Company tree — drag to move, wheel or + − to zoom, arrow keys move"><div class="org"' + (UI.orgView ? ' style="transform:translate(' + UI.orgView.x + 'px,' + UI.orgView.y + 'px) scale(' + UI.orgZoom + ')"' : '') + '><div class="ceo">' + (ceoP ? avatar(ceoP, 'lg') : pav({ name: O.ceo.name }, 'lg')) + '<div><b>' + esc(O.ceo.name) + '</b><small>' + esc(O.ceo.title) + '</small></div>' +
       '<div class="ceo-stats"><span><b>' + O.depts.length + '</b> departments</span><span><b>' + teamsN + '</b> teams</span><span><b>' + all.size + '</b> people</span></div></div>' +
       '<div class="cols">' + cols + '</div></div></div>' +
       '<button class="org-arrow l" data-act="org-pan" data-d="-1" aria-label="Scroll left"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></button>' +
       '<button class="org-arrow r" data-act="org-pan" data-d="1" aria-label="Scroll right"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>' +
-      '<div class="org-ctl"><span class="org-hint"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 0 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>Drag to move · wheel to zoom</span>' +
+      '<div class="org-ctl"><span class="org-hint"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 0 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>Drag to move · wheel to zoom</span><span class="org-info" tabindex="0" title="The tree comes from the Axiom CRM\'s departments and teams; a department or team edited here keeps its Nova version (marked NOVA). Some people lead more than one team. Click a name to open their profile.">?</span>' +
       '<button data-act="org-zoom" data-d="-1" aria-label="Zoom out" title="Zoom out">−</button><button data-act="org-zoom" data-d="0" class="pct" title="Back to 100%">' + Math.round(UI.orgZoom * 100) + '%</button><button data-act="org-zoom" data-d="1" aria-label="Zoom in" title="Zoom in">+</button><button data-act="org-zoom" data-d="fit" title="Fit the whole tree in view">Fit</button></div></div>' +
-      '<p class="muted" style="font-size:12px;margin-top:10px">The tree comes from the Axiom CRM\'s departments and teams; a department or team edited here keeps its Nova version (marked NOVA). Some people lead more than one team. Click a name to open their profile.</p>';
+      '';
   }
-  /* 1.20.169: the tree is a canvas — it fills the window height so both scrollbars are always on screen, drags with the hand,
-     has left / right arrows that show while there is more that way, and zooms (− % + Fit, kept per browser). */
+  /* 1.20.171: the tree is a map, like Google Maps — no scrollbars. The tree sits in a window that fills the screen and is moved with
+     a CSS transform (translate + scale, origin top-left): drag to pan (mouse, pen or one finger), the mouse wheel zooms in / out on the
+     spot under the pointer, two fingers pinch-zoom, ‹ › and ← → pan, − % + Fit. The view (x, y, zoom) is kept across re-renders; the
+     zoom is remembered per browser. */
+  const ORG_MIN = 0.2, ORG_MAX = 2;
+  function orgEls() { const w = document.querySelector('.org-wrap'); return w ? { w, o: w.querySelector('.org') } : null; }
   function orgSize() {
-    const w = document.querySelector('.org-wrap'); if (!w) return;
-    w.style.height = Math.max(380, innerHeight - w.getBoundingClientRect().top - 46) + 'px';
+    const e = orgEls(); if (!e) return;
+    const c = e.w.closest('.content') || document.documentElement, pb = parseFloat(getComputedStyle(c).paddingBottom) || 0;
+    e.w.style.height = Math.max(380, Math.floor(c.getBoundingClientRect().bottom - pb - e.w.getBoundingClientRect().top - 2)) + 'px';
   }
-  function orgEdges() {
-    const w = document.querySelector('.org-wrap'); if (!w) return;
-    const box = w.parentNode, max = w.scrollWidth - w.clientWidth;
-    box.classList.toggle('more-l', w.scrollLeft > 4); box.classList.toggle('more-r', w.scrollLeft < max - 4);
+  function orgClamp() {
+    const e = orgEls(); if (!e || !UI.orgView) return;
+    const W = e.w.clientWidth, H = e.w.clientHeight, cw = e.o.offsetWidth * UI.orgZoom, ch = e.o.offsetHeight * UI.orgZoom, keep = 120;
+    const v = UI.orgView;
+    v.x = Math.min(W - Math.min(keep, cw), Math.max(Math.min(keep, cw) - cw, v.x));
+    v.y = Math.min(H - Math.min(keep, ch), Math.max(Math.min(keep, ch) - ch, v.y));
   }
-  /* d: -1 / 1 = a step, '0' = 100 %, 'fit', or {z} = an exact zoom; at = {x, y} in the window — that spot of the tree stays
-     under it (the mouse wheel), else the middle of the view does. 1.20.170 */
-  function orgZoom(d, at) {
-    const w = document.querySelector('.org-wrap'), o = w && w.querySelector('.org'), c = o && o.querySelector('.cols'); if (!c) return;
-    const old = UI.orgZoom, wr = w.getBoundingClientRect();
-    const px = at ? at.x : wr.left + w.clientWidth / 2, py = at ? at.y : wr.top + w.clientHeight / 2;
-    const cr = c.getBoundingClientRect(), or = o.getBoundingClientRect();
-    const fx = (px - cr.left) / (cr.width || 1), fy = (py - or.top) / (or.height || 1);
-    let z = d === 'fit' || d === '0' ? 1 : d && typeof d === 'object' ? d.z : Math.round((old + (+d) * 0.1) * 10) / 10;
-    if (d === 'fit') { o.style.zoom = 1; z = Math.min(1, (w.clientWidth - 44) / o.scrollWidth, (w.clientHeight - 56) / o.scrollHeight); z = Math.floor(z * 20) / 20; }
-    z = Math.max(0.3, Math.min(1.5, Math.round(z * 100) / 100)); if (z === old && d !== 'fit') return;
-    UI.orgZoom = z; try { localStorage.setItem('hr_org_zoom', String(z)); } catch (e) {}
-    o.style.zoom = z; const pct = w.parentNode.querySelector('.org-ctl .pct'); if (pct) pct.textContent = Math.round(z * 100) + '%';
-    if (d === 'fit') { w.scrollLeft = (w.scrollWidth - w.clientWidth) / 2; w.scrollTop = 0; }
-    else { const cr2 = c.getBoundingClientRect(), or2 = o.getBoundingClientRect(); w.scrollLeft += cr2.left + fx * cr2.width - px; w.scrollTop += or2.top + fy * or2.height - py; }
+  function orgApply(anim) {
+    const e = orgEls(); if (!e) return;
+    if (!UI.orgView) { const W = e.w.clientWidth; UI.orgView = { x: Math.round((W - e.o.offsetWidth * UI.orgZoom) / 2), y: 24 }; }
+    orgClamp();
+    e.o.classList.toggle('anim', !!anim); e.w.scrollLeft = 0; e.w.scrollTop = 0;
+    e.o.style.transform = 'translate(' + UI.orgView.x + 'px,' + UI.orgView.y + 'px) scale(' + UI.orgZoom + ')';
+    const pct = e.w.parentNode.querySelector('.org-ctl .pct'); if (pct) pct.textContent = Math.round(UI.orgZoom * 100) + '%';
     orgEdges();
   }
-  /* The mouse wheel zooms in / out where the pointer is (a map's feel); a trackpad's two-finger scroll still moves the tree,
-     a pinch (ctrl + wheel) zooms; Shift + wheel scrolls sideways. 1.20.170 */
+  function orgEdges() {
+    const e = orgEls(); if (!e || !UI.orgView) return;
+    const cw = e.o.offsetWidth * UI.orgZoom, box = e.w.parentNode;
+    box.classList.toggle('more-l', UI.orgView.x < -4); box.classList.toggle('more-r', UI.orgView.x + cw > e.w.clientWidth + 4);
+  }
+  /* zoom to z keeping the window point (px, py) — relative to the map window — on the same spot of the tree */
+  function orgZoomAt(z, px, py, anim) {
+    const e = orgEls(); if (!e) return;
+    z = Math.max(ORG_MIN, Math.min(ORG_MAX, z)); if (!UI.orgView) orgApply();
+    const v = UI.orgView, old = UI.orgZoom;
+    if (px == null) { px = e.w.clientWidth / 2; py = e.w.clientHeight / 2; }
+    v.x = px - (px - v.x) * z / old; v.y = py - (py - v.y) * z / old;
+    UI.orgZoom = z; try { localStorage.setItem('hr_org_zoom', String(z)); } catch (er) {}
+    orgApply(anim);
+  }
+  function orgZoom(d) {
+    const e = orgEls(); if (!e) return;
+    if (d === 'fit') {
+      const W = e.w.clientWidth, H = e.w.clientHeight, cw = e.o.offsetWidth, ch = e.o.offsetHeight;
+      const z = Math.max(ORG_MIN, Math.min(1, (W - 48) / cw, (H - 70) / ch));
+      UI.orgZoom = z; try { localStorage.setItem('hr_org_zoom', String(z)); } catch (er) {}
+      UI.orgView = { x: Math.round((W - cw * z) / 2), y: Math.max(16, Math.round((H - 50 - ch * z) / 2)) };
+      orgApply(true); return;
+    }
+    orgZoomAt(d === '0' ? 1 : UI.orgZoom * (+d > 0 ? 1.25 : 0.8), null, null, true);
+  }
+  function orgPan(dx, dy, anim) { if (!UI.orgView) orgApply(); UI.orgView.x += dx; UI.orgView.y += dy; orgApply(anim); }
   document.addEventListener('wheel', (ev) => {
-    const w = ev.target.closest && ev.target.closest('.org-wrap'); if (!w || ev.shiftKey) return;
-    const mouse = ev.deltaMode === 1 || (ev.deltaX === 0 && Math.abs(ev.deltaY) >= 50 && Number.isInteger(ev.deltaY));
-    if (!ev.ctrlKey && !mouse) return;
+    const w = ev.target.closest && ev.target.closest('.org-wrap'); if (!w) return;
     ev.preventDefault();
-    const step = ev.ctrlKey && !mouse ? Math.exp(-ev.deltaY * 0.01) : (ev.deltaY < 0 ? 1.12 : 1 / 1.12);
-    orgZoom({ z: UI.orgZoom * step }, { x: ev.clientX, y: ev.clientY });
+    const dy = ev.deltaMode === 1 ? ev.deltaY * 33 : ev.deltaMode === 2 ? ev.deltaY * 400 : ev.deltaY;
+    const f = Math.max(0.5, Math.min(2, Math.exp(-dy * (ev.ctrlKey ? 0.01 : 0.002))));
+    const r = w.getBoundingClientRect();
+    orgZoomAt(UI.orgZoom * f, ev.clientX - r.left, ev.clientY - r.top);
   }, { passive: false });
-  let orgDrag = null;
+  let orgDrag = null; const orgPts = new Map(); let orgPinch = null;
   document.addEventListener('pointerdown', (ev) => {
-    const w = ev.target.closest && ev.target.closest('.org-wrap'); if (!w || ev.button !== 0 || ev.pointerType === 'touch') return;
+    const w = ev.target.closest && ev.target.closest('.org-wrap'); if (!w) return;
+    if (ev.pointerType === 'mouse' && ev.button !== 0) return;
     if (ev.target.closest('input, select, textarea, .org-ctl, .org-arrow')) return;
-    orgDrag = { w, x: ev.clientX, y: ev.clientY, sl: w.scrollLeft, st: w.scrollTop, moved: false, id: ev.pointerId };
+    orgPts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (orgPts.size === 2) {
+      const [a, b] = [...orgPts.values()], r = w.getBoundingClientRect();
+      orgPinch = { w, d: Math.hypot(a.x - b.x, a.y - b.y) || 1, z: UI.orgZoom, mx: (a.x + b.x) / 2 - r.left, my: (a.y + b.y) / 2 - r.top };
+      if (orgDrag) orgDrag.moved = true;
+      return;
+    }
+    if (!UI.orgView) orgApply();
+    orgDrag = { w, x: ev.clientX, y: ev.clientY, vx: UI.orgView.x, vy: UI.orgView.y, moved: false, id: ev.pointerId };
   });
   document.addEventListener('pointermove', (ev) => {
-    if (!orgDrag) return;
+    if (orgPts.has(ev.pointerId)) orgPts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (orgPinch && orgPts.size >= 2) {
+      const [a, b] = [...orgPts.values()], r = orgPinch.w.getBoundingClientRect();
+      const d = Math.hypot(a.x - b.x, a.y - b.y) || 1, mx = (a.x + b.x) / 2 - r.left, my = (a.y + b.y) / 2 - r.top;
+      orgZoomAt(orgPinch.z * d / orgPinch.d, orgPinch.mx, orgPinch.my);
+      orgPan(mx - orgPinch.mx, my - orgPinch.my); orgPinch.mx = mx; orgPinch.my = my; orgPinch.z = UI.orgZoom; orgPinch.d = d;
+      ev.preventDefault(); return;
+    }
+    if (!orgDrag || ev.pointerId !== orgDrag.id) return;
     const dx = ev.clientX - orgDrag.x, dy = ev.clientY - orgDrag.y;
     if (!orgDrag.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
     if (!orgDrag.moved) { orgDrag.moved = true; orgDrag.w.classList.add('dragging'); try { getSelection().removeAllRanges(); } catch (e) {} try { orgDrag.w.setPointerCapture(orgDrag.id); } catch (e) {} }
-    orgDrag.w.scrollLeft = orgDrag.sl - dx; orgDrag.w.scrollTop = orgDrag.st - dy; ev.preventDefault();
+    UI.orgView.x = orgDrag.vx + dx; UI.orgView.y = orgDrag.vy + dy; orgApply(); ev.preventDefault();
   });
-  const orgUp = () => { if (!orgDrag) return; const d = orgDrag; orgDrag = null; d.w.classList.remove('dragging'); if (d.moved) { const stop = (e) => { e.stopPropagation(); e.preventDefault(); }; document.addEventListener('click', stop, { capture: true, once: true }); setTimeout(() => document.removeEventListener('click', stop, true), 0); } };
+  const orgUp = (ev) => {
+    orgPts.delete(ev.pointerId); if (orgPts.size < 2) orgPinch = null;
+    if (!orgDrag || (ev.pointerId !== orgDrag.id && orgPts.size)) return;
+    const d = orgDrag; orgDrag = null; d.w.classList.remove('dragging');
+    if (d.moved) { const stop = (e) => { e.stopPropagation(); e.preventDefault(); }; document.addEventListener('click', stop, { capture: true, once: true }); setTimeout(() => document.removeEventListener('click', stop, true), 0); }
+  };
   document.addEventListener('pointerup', orgUp); document.addEventListener('pointercancel', orgUp);
   document.addEventListener('selectstart', (ev) => { if (orgDrag) ev.preventDefault(); });
-  document.addEventListener('scroll', (ev) => { if (ev.target && ev.target.classList && ev.target.classList.contains('org-wrap')) orgEdges(); }, true);
+  /* overflow: hidden can still be scrolled by focus — keep the map window itself at 0, the transform does the moving */
+  document.addEventListener('scroll', (ev) => { const w = ev.target; if (w && w.classList && w.classList.contains('org-wrap') && (w.scrollLeft || w.scrollTop)) { w.scrollLeft = 0; w.scrollTop = 0; } }, true);
   document.addEventListener('keydown', (ev) => {
     const w = document.activeElement; if (!w || !w.classList || !w.classList.contains('org-wrap')) return;
-    if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') { w.scrollBy({ left: (ev.key === 'ArrowLeft' ? -1 : 1) * 120, behavior: 'smooth' }); ev.preventDefault(); }
+    const k = { ArrowLeft: [120, 0], ArrowRight: [-120, 0], ArrowUp: [0, 120], ArrowDown: [0, -120] }[ev.key];
+    if (k) { orgPan(k[0], k[1], true); ev.preventDefault(); }
+    else if (ev.key === '+' || ev.key === '=') { orgZoom(1); ev.preventDefault(); }
+    else if (ev.key === '-') { orgZoom(-1); ev.preventDefault(); }
   });
-  window.addEventListener('resize', () => { orgSize(); orgEdges(); });
+  window.addEventListener('resize', () => { orgSize(); orgApply(); });
   function personPicker(id, list, placeholderName) {
     return '<select class="select" id="' + id + '" data-people style="width:100%"><option value="">' + esc(placeholderName || 'Pick a person') + '</option>' + people().filter(e => e.status === 'Active').sort((a, b) => a.name.localeCompare(b.name)).map(e => '<option value="' + e.id + '" ' + ((list || []).some(p => p.employee_id === e.id) ? 'selected' : '') + '>' + esc(e.name) + '</option>').join('') + '</select>';
   }
@@ -1198,7 +1247,7 @@
       case 'req-for': closeAll(); UI.view = 'timeoff'; render(); setTimeout(() => { const s = $('rq_for'); if (s) { s.value = id; ppSync(s); rqSummary(); } }, 30); return;
       case 'cal': { const [y, m] = calBase(); const d = new Date(y, m + (+b.dataset.n), 1); UI.calMonth = [d.getFullYear(), d.getMonth()]; render(); return; }
       case 'cal-loc': UI.calLoc = b.dataset.k; render(); return;
-      case 'org-pan': { const w = document.querySelector('.org-wrap'); if (w) w.scrollBy({ left: +b.dataset.d * Math.max(240, w.clientWidth * 0.7), behavior: 'smooth' }); return; }
+      case 'org-pan': { const w = document.querySelector('.org-wrap'); if (w) orgPan(-b.dataset.d * Math.max(240, w.clientWidth * 0.6), 0, true); return; }
       case 'org-zoom': orgZoom(b.dataset.d); return;
       case 'time-tab': UI.timeTab = b.dataset.k; render(); return;
       case 'week': { const n = +b.dataset.n; UI.tsWeek = n === 0 ? mondayOf(today()) : addDays(UI.tsWeek || mondayOf(today()), n); UI.ts = null; render(); return; }

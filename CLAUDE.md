@@ -693,7 +693,14 @@ across re-renders. **1.20.170 — the wheel zooms where the pointer is**: a mous
 (×1.12 a notch) keeping the spot under the pointer in place (`orgZoom(d, at)` anchors on `.cols` / `.org` rects and corrects the
 scroll after the zoom; exact once the tree is bigger than the view — while it all fits it stays centred); a pinch (ctrl + wheel)
 zooms smoothly, a trackpad's two-finger scroll still pans (told apart by `deltaMode` / whole-number `deltaY` ≥ 50 with no `deltaX`),
-Shift + wheel scrolls sideways; the hint reads "Drag to move · wheel to zoom".
+Shift + wheel scrolls sideways; the hint reads "Drag to move · wheel to zoom". **1.20.171 — the tree is a map (Google Maps), no scrollbars**: `.org-wrap` is
+`overflow: hidden` (focus-scrolls are reset to 0) and `.org` is absolutely placed and moved by a CSS transform — `translate(x, y)
+scale(z)`, origin top-left (`UI.orgView {x, y}` + `UI.orgZoom`, 20–200 %, kept across re-renders; zoom in localStorage). The mouse wheel
+zooms at the pointer EXACTLY wherever it points (`orgZoomAt(z, px, py)`: x = px − (px − x)·z/old — no centring limit any more), pinch
+(ctrl + wheel or two fingers) zooms, drag / one finger pans (`orgPan`), ‹ › / arrow keys pan, + / − keys zoom, Fit centres the whole tree;
+`orgClamp()` keeps at least 120px of the tree on screen. `orgSize()` sizes the window to the `.content` bottom minus its padding so the
+page never scrolls; the footnote moved into a (?) on the control bar. Dotted map background. Replaces the 1.20.169 / 1.20.170 scroll +
+CSS-zoom version.
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 
