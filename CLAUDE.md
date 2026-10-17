@@ -781,7 +781,8 @@ Ordered, under the label **Count**. **1.20.179 — a real range calendar**: Cust
 `#dbCal` (`openCal()` / `paintCal()` / `monthHTML()`): two months side by side (one under 640px), the end month on the right, ‹ › move a
 month (› stops at this month), future days disabled, today marked with a dot; click the first day then the last (a reversed pair is
 swapped), the range is filled indigo with the ends as solid pills and hovering previews it before the second click; the foot reads
-"10/01/2026 – 10/17/2026 · 17 days" with Clear and Apply (`CAL {a, b, hover, view}`).
+"10/01/2026 – 10/17/2026 · 17 days" with Clear and Apply (`CAL {a, b, hover, view}`). **1.20.180**: the "All account managers · hover a face…" line is a (?) beside the label (`.db-q` / `.db-qtip`,
+shown on hover / focus); "Showing <name> · everyone" still appears while an AM is picked. The tooltip ignores the pointer so it never covers the heads; the Billed range line ("10/10/2026 – 10/17/2026 · 8 days", `.db-range`) sits on its own line under the chips.
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 

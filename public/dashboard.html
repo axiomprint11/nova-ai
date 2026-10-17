@@ -36,7 +36,7 @@
   .db-chips button:hover { border-color: #c7c7dc; } .db-chips button.on { background: var(--indigo-light); border-color: var(--indigo); color: var(--indigo-dark); }
   .db-custom { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
   .db-custom input { font: inherit; font-size: 12.5px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
-  .db-range { font-size: 12px; color: var(--muted); margin-left: 4px; white-space: nowrap; }
+  .db-range { font-size: 12px; color: var(--muted); white-space: nowrap; flex-basis: 100%; margin: 2px 0 0 4px; }   /* 1.20.180: on its own line under the chips */
 
   /* AM heads */
   .db-ams { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: thin; }
@@ -79,6 +79,9 @@
 
   /* 1.20.175: AM heads + the hover snapshot */
   .db-ampick { text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 12px; color: var(--muted); margin-left: 8px; } .db-ampick b { color: var(--ink); font-weight: 600; } .db-ampick a { color: var(--indigo-dark); font-weight: 600; }
+  .db-q { position: relative; display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; border: 1px solid #d4d4e2; font-size: 10px; font-weight: 700; color: var(--muted); margin-left: 6px; cursor: help; vertical-align: 1px; text-transform: none; letter-spacing: 0; }
+  .db-qtip { display: none; position: absolute; left: -8px; top: calc(100% + 8px); z-index: 80; width: max-content; max-width: 280px; background: #1e1b2e; color: #fff; font-size: 12px; font-weight: 500; line-height: 1.4; padding: 8px 11px; border-radius: 9px; box-shadow: 0 10px 28px rgba(0,0,0,.2); pointer-events: none; }
+  .db-q:hover .db-qtip, .db-q:focus .db-qtip { display: block; }
   .db-heads { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
   .db-head { border: 0; background: none; padding: 3px; border-radius: 50%; cursor: pointer; position: relative; transition: transform .12s; }
   .db-head:hover { transform: translateY(-2px); }
@@ -163,7 +166,7 @@
 </div>
 <div class="db-main" id="dbMain">
   <div class="db-card db-filters" id="dbFilters">
-    <div id="dbAmBox"><div class="db-lab">Account manager <span class="db-ampick" id="dbAmPick"></span></div><div class="db-heads" id="dbAms"></div></div>
+    <div id="dbAmBox"><div class="db-lab">Account manager <span class="db-q" tabindex="0" aria-label="Help">?<span class="db-qtip">All account managers · hover a face for a snapshot, click to see only theirs</span></span><span class="db-ampick" id="dbAmPick"></span></div><div class="db-heads" id="dbAms"></div></div>
     <div class="db-row">
       <div><div class="db-lab">Billed</div><div class="db-chips" id="dbPeriod"></div></div>
       <div><div class="db-lab">Group by</div><div class="seg" id="dbGroup"></div></div>

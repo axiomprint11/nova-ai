@@ -108,7 +108,7 @@
         (missing ? '<button class="db-head on" data-am="' + esc(S.am) + '" data-snap="' + esc(S.am) + '">' + face(D.am_info && D.am_info[S.am]) + '</button>' : '') +
         (D.ams.length > AM_LIMIT ? '<button class="db-hmore" id="dbAmMore">' + (amMore ? 'Show less' : 'Show ' + (D.ams.length - AM_LIMIT) + ' more') + '</button>' : '');
       const cur = S.am === 'all' ? null : D.ams.find(a => String(a.id) === String(S.am)) || (D.am_info && D.am_info[S.am]);
-      $('dbAmPick').innerHTML = cur ? 'Showing <b>' + esc(cur.name) + '</b> · <a href="#" id="dbAmAll">everyone</a>' : 'All account managers · hover a face for a snapshot, click to see only theirs';
+      $('dbAmPick').innerHTML = cur ? 'Showing <b>' + esc(cur.name) + '</b> · <a href="#" id="dbAmAll">everyone</a>' : '';
     }
     document.querySelectorAll('#dbBy button').forEach(b => b.classList.toggle('on', b.dataset.by === S.by));
     const ly = $('dbLy'); if (ly) ly.checked = !!S.ly;
