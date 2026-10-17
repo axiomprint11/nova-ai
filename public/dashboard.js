@@ -44,6 +44,8 @@
     if (S.period === 'custom' && S.from && S.to) return S.from <= S.to ? [S.from, S.to] : [S.to, S.from];
     return (p && p[2] ? p[2] : PRESETS[0][2])(t);
   }
+  /* 1.20.176: the top 12 AMs by total; "Show n more" opens the rest (the picked one always shows) */
+  const AM_LIMIT = 12; let amMore = false;
   let D = null, sel = null, LF = { status: '', client: '' }, seq = 0;
 
   // ---- icons
@@ -103,8 +105,9 @@
       /* 1.20.175: heads only — hover for a snapshot, click to see only that AM (click again for everyone) */
       const missing = S.am !== 'all' && !D.ams.some(a => String(a.id) === String(S.am));
       $('dbAms').innerHTML = '<button class="db-head all' + (S.am === 'all' ? ' on' : '') + '" data-am="all" data-snap="all" aria-label="All account managers"><span class="face all">' + IC.all + '</span></button>' +
-        D.ams.map(a => '<button class="db-head' + (String(S.am) === String(a.id) ? ' on' : '') + (S.am !== 'all' && String(S.am) !== String(a.id) ? ' dim' : '') + '" data-am="' + a.id + '" data-snap="' + a.id + '" aria-label="' + esc(a.name) + '">' + face(a) + '</button>').join('') +
-        (missing ? '<button class="db-head on" data-am="' + esc(S.am) + '" data-snap="' + esc(S.am) + '">' + face(D.am_info && D.am_info[S.am]) + '</button>' : '');
+        D.ams.filter((a, i) => amMore || i < AM_LIMIT || String(S.am) === String(a.id)).map(a => '<button class="db-head' + (String(S.am) === String(a.id) ? ' on' : '') + (S.am !== 'all' && String(S.am) !== String(a.id) ? ' dim' : '') + '" data-am="' + a.id + '" data-snap="' + a.id + '" aria-label="' + esc(a.name) + '">' + face(a) + '</button>').join('') +
+        (missing ? '<button class="db-head on" data-am="' + esc(S.am) + '" data-snap="' + esc(S.am) + '">' + face(D.am_info && D.am_info[S.am]) + '</button>' : '') +
+        (D.ams.length > AM_LIMIT ? '<button class="db-hmore" id="dbAmMore">' + (amMore ? 'Show less' : 'Show ' + (D.ams.length - AM_LIMIT) + ' more') + '</button>' : '');
       const cur = S.am === 'all' ? null : D.ams.find(a => String(a.id) === String(S.am)) || (D.am_info && D.am_info[S.am]);
       $('dbAmPick').innerHTML = cur ? 'Showing <b>' + esc(cur.name) + '</b> · <a href="#" id="dbAmAll">everyone</a>' : 'All account managers · hover a face for a snapshot, click to see only theirs';
     }
@@ -249,6 +252,7 @@
   // ---- clicks
   document.addEventListener('click', (ev) => {
     const b = ev.target.closest('button'); if (!b) return;
+    if (b.id === 'dbAmMore') { amMore = !amMore; paintFilters(); return; }
     if (b.id === 'dbCustom') { const m = $('dbPMenu'); m.hidden = !m.hidden; b.setAttribute('aria-expanded', String(!m.hidden)); return; }
     if (b.id === 'dbApply') { const f = $('dbFrom').value, t = $('dbTo').value; if (!f || !t) return; S.period = 'custom'; S.from = f; S.to = t; S.group = 'auto'; closeMenu(); save(); paintFilters(); load(); return; }
     if (b.dataset.pm) { if (b.dataset.pm === 'custom') { $('dbPick').hidden = false; menuItems().forEach(x => x.classList.toggle('on', x === b)); return; } S.period = b.dataset.pm; S.group = 'auto'; closeMenu(); save(); paintFilters(); load(); return; }

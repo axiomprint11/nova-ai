@@ -82,10 +82,12 @@
   .db-heads { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
   .db-head { border: 0; background: none; padding: 3px; border-radius: 50%; cursor: pointer; position: relative; transition: transform .12s; }
   .db-head:hover { transform: translateY(-2px); }
-  .db-head .face { width: 42px; height: 42px; font-size: 15px; box-shadow: 0 0 0 2px #fff, 0 0 0 3px #e6e6f0; }
-  .db-head.on .face { box-shadow: 0 0 0 2px #fff, 0 0 0 4.5px var(--indigo); }
+  .db-head .face { width: 30px; height: 30px; font-size: 11.5px; box-shadow: 0 0 0 2px #fff, 0 0 0 3px #e6e6f0; }
+  .db-head.on .face { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--indigo); }
+  .db-hmore { border: 1px solid var(--line); background: #fff; border-radius: 20px; padding: 5px 12px; font-size: 12px; font-weight: 600; color: var(--indigo-dark); cursor: pointer; margin-left: 6px; white-space: nowrap; }
+  .db-hmore:hover { background: var(--indigo-light); border-color: var(--indigo); }
   .db-head.dim .face { opacity: .45; filter: grayscale(.5); } .db-head.dim:hover .face { opacity: 1; filter: none; }
-  .db-head.all { margin-right: 6px; } .db-head.all .face svg { width: 19px; height: 19px; }
+  .db-head.all { margin-right: 6px; } .db-head.all .face svg { width: 15px; height: 15px; }
   .db-snap { position: fixed; z-index: 90; width: 290px; background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 16px 44px rgba(20,20,50,.18); padding: 13px 14px 11px; font-size: 12.5px; }
   .sn-h { display: flex; align-items: center; gap: 10px; } .sn-h .face { width: 38px; height: 38px; } .sn-h b { display: block; font-size: 13.5px; } .sn-h small { color: var(--muted); font-size: 11.5px; }
   .sn-big { font-size: 21px; font-weight: 700; margin-top: 10px; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 8px; }
