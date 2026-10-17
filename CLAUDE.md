@@ -63,6 +63,17 @@ domain-wide delegation and the folder shared with order@ — until then "Drive s
 | `users.db` (SQLite, local) | App state only: users, members, chats, messages, agents, training_examples, knowledge_docs | Read/write, schema auto-created and auto-migrated at boot (server.js:51-166) |
 | `axiomprint_new` (MySQL, remote) | Live production business data: estimates, customers, products, invoices, QR scans | **Read-only by convention** — everything goes through `runQuery()` (server.js:393) |
 
+**One connection pool to the production MySQL (1.20.160).** The CRM database is a DigitalOcean managed MySQL on another server (TLS,
+port 25060); the `design-db` MySQL container on the Droplet belongs to design-tool, not Nova. `runQuery()` / `runQueryRaw()` go through
+`mysqlPool` (`mysql.createPool`, up to `MYSQL_POOL` = 10 warm connections, idle ones dropped after 60 s, keep-alive, at most 64
+prepared statements per connection — the SQL is string-built, an unbounded cache would pile statements up on the shared server) via
+`poolRun()`: a query over `MYSQL_SLOW_MS` (1000) logs `[mysql slow] <ms> <sql>`, a dropped connection is retried once, and
+`GET /api/admin/mysql-stats` gives queries / avg ms / slow / errors / open / idle / waiting since boot. Before, every query opened and
+closed its own TLS connection (20 queries = 20 handshakes; 94 ms vs 8 ms for 20 queries even on localhost) and `runQuery()` leaked
+the connection when a query threw. `reports.js` still opens its own connection per report run (it overrides `conn.query`). SIGINT
+ends the pool after the HTTP server closes. Never go back to a connection per query. The Droplet itself (Oct 16: 1 vCPU, 2 GB, load
+0.00, Nova 224 MB, no memory restarts — the ↺ count is deploys) is not the bottleneck.
+
 SQLite migrations are additive `ALTER TABLE ... , () => {}` calls that swallow the "duplicate column"
 error — that is the intended idiom for adding a column, not a bug.
 

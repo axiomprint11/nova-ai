@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.159';
-const NOVA_BUILT = '10-16-2026 11:40pm';
+const NOVA_VERSION = '1.20.160';
+const NOVA_BUILT = '10-16-2026 11:05pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -991,23 +991,53 @@ async function extractFileText(buffer, mimetype, filename) {
 // Ad-hoc read-only SQL from an agent. Uses query() rather than execute() because
 // execute() prepares the statement, and MySQL rejects prepared statements that end
 // in a semicolon or use syntax the model may reasonably produce.
-async function runQueryRaw(sql) {
-  const clean = String(sql || '').trim().replace(/;+\s*$/, '');
-  const conn = await mysql.createConnection(dbConfig);
-  try {
-    const [rows] = await conn.query(clean);
-    return rows;
-  } finally {
-    await conn.end();
+// 1.20.160 — one pool of warm connections to the production MySQL (DigitalOcean managed, TLS on 25060). Before, every query
+// opened a new TLS connection (TCP + TLS + auth handshake to another data centre) and closed it after — pages that run 10–20
+// queries paid that 10–20 times — and runQuery() never closed its connection when the query threw, leaving it to time out on
+// the server. The pool keeps up to MYSQL_POOL (10) connections open and reuses them; idle ones are dropped after a minute;
+// each connection keeps at most 64 prepared statements (the SQL is string-built, so an unbounded cache would pile up
+// statements on the server, whose max_prepared_stmt_count is shared with the website). Queries over MYSQL_SLOW_MS (1000)
+// are logged as [mysql slow]. A connection the server dropped is retried once on a fresh one.
+const mysqlPool = mysql.createPool(Object.assign({}, dbConfig, {
+  connectionLimit: parseInt(process.env.MYSQL_POOL) || 10, waitForConnections: true, queueLimit: 0,
+  maxIdle: parseInt(process.env.MYSQL_POOL) || 10, idleTimeout: 60000, enableKeepAlive: true, keepAliveInitialDelay: 10000,
+  connectTimeout: 15000, maxPreparedStatements: 64
+}));
+const MYSQL_SLOW_MS = parseInt(process.env.MYSQL_SLOW_MS) || 1000;
+const mysqlStats = { n: 0, slow: 0, errors: 0, retried: 0, ms: 0, since: Date.now() };
+const DROPPED = /PROTOCOL_CONNECTION_LOST|ECONNRESET|EPIPE|ETIMEDOUT|Connection lost|closed state/i;
+async function poolRun(kind, sql) {
+  const t0 = Date.now();
+  let tries = 0;
+  for (;;) {
+    try {
+      const [rows] = kind === 'query' ? await mysqlPool.query(sql) : await mysqlPool.execute(sql);
+      const ms = Date.now() - t0; mysqlStats.n++; mysqlStats.ms += ms;
+      if (ms > MYSQL_SLOW_MS) { mysqlStats.slow++; console.log('[mysql slow] ' + ms + 'ms ' + String(sql).replace(/\s+/g, ' ').slice(0, 200)); }
+      return rows;
+    } catch (e) {
+      if (tries++ === 0 && DROPPED.test(String(e.code || '') + ' ' + String(e.message || ''))) { mysqlStats.retried++; continue; }
+      mysqlStats.errors++; throw e;
+    }
   }
 }
 
-async function runQuery(sql) {
-  const conn = await mysql.createConnection(dbConfig);
-  const [rows] = await conn.execute(sql);
-  await conn.end();
-  return rows;
+async function runQueryRaw(sql) {
+  const clean = String(sql || '').trim().replace(/;+\s*$/, '');
+  return poolRun('query', clean);
 }
+
+async function runQuery(sql) {
+  return poolRun('execute', sql);
+}
+// How the pool is doing since boot: queries, average ms, slow ones, errors, reconnects, and the pool's open / idle connections.
+app.get('/api/admin/mysql-stats', auth, adminOnly, (req, res) => {
+  const p = mysqlPool.pool || {};
+  res.json({ ok: true, queries: mysqlStats.n, avg_ms: mysqlStats.n ? Math.round(mysqlStats.ms / mysqlStats.n) : null, slow: mysqlStats.slow, slow_ms: MYSQL_SLOW_MS,
+    errors: mysqlStats.errors, retried: mysqlStats.retried, since: new Date(mysqlStats.since).toISOString(),
+    open: (p._allConnections && p._allConnections.length) || 0, idle: (p._freeConnections && p._freeConnections.length) || 0,
+    waiting: (p._connectionQueue && p._connectionQueue.length) || 0, limit: p.config ? p.config.connectionLimit : null });
+});
 
 // ---- Server-side price calculation (mirrors the in-browser evaluator) ----
 function num(v) { const n = Number(v); return isFinite(n) && n > 0 ? n : null; }
@@ -9663,7 +9693,7 @@ const httpServer = app.listen(process.env.PORT, () => {
 });
 process.on('SIGINT', () => {
   console.log('Nova: stopping — finishing open requests');
-  httpServer.close(() => process.exit(0));
+  httpServer.close(() => { mysqlPool.end().catch(() => {}).finally(() => process.exit(0)); });   /* 1.20.160: hand the pooled MySQL connections back */
   if (httpServer.closeIdleConnections) httpServer.closeIdleConnections();
   setTimeout(() => process.exit(0), 10000).unref();
 });
