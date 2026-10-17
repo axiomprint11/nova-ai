@@ -19,7 +19,7 @@
 
   let S = null, LOADED = 0;
   const UI = { view: 'today', q: '', loc: 'all', dept: 'all', incomplete: false, inactive: false, drawer: null, detail: null, tab: 'overview', editing: false,
-    tsWeek: null, ts: null, timeTab: 'sheet', adhWeeks: 4, adhSort: 'worst', adh: null, calMonth: null, calLoc: 'all', orgq: '', orgOpen: {}, bandOpen: {},
+    tsWeek: null, ts: null, timeTab: 'sheet', adhWeeks: 4, adhSort: 'worst', adh: null, calMonth: null, calLoc: 'all', orgq: '', orgOpen: {}, orgZoom: (() => { try { const z = +localStorage.getItem('hr_org_zoom'); return z >= 0.3 && z <= 1.5 ? z : 1; } catch (e) { return 1; } })(), bandOpen: {},
     rwTab: 'checkin', rwWeek: null, ck: null, setTab: 'types', holLoc: 'all', cover: '', skDept: 'all', skQ: '', draft: {}, myWeek: null, flags: null, kiosks: null, audit: null };
   const params = new URLSearchParams(location.search);
   if (params.get('tab')) UI.view = params.get('tab');
@@ -43,6 +43,16 @@
   const hrsLabel = (h) => { h = Math.max(0, Number(h) || 0); const hh = Math.floor(h), mm = Math.round((h - hh) * 60); return hh + 'h ' + pad(mm === 60 ? 0 : mm) + 'm'; };
   const fmtH = (h) => { const x = ((h % 24) + 24) % 24, hh = Math.floor(x), mm = Math.round((x - hh) * 60); return ((hh % 12) || 12) + (mm ? ':' + pad(mm) : '') + (hh < 12 ? 'a' : 'p'); };
   const LOCN = (k) => (S.locations[k] || S.locations.gl);
+  /* 1.20.169: a small flag per location (18x12, inline SVG, no image requests); gl = Glendale = US */
+  const FLAGS = {
+    gl: '<svg viewBox="0 0 18 12" aria-hidden="true"><rect width="18" height="12" fill="#fff"/><path d="M0 0h18v1.33H0zM0 2.67h18V4H0zM0 5.33h18v1.34H0zM0 8h18v1.33H0zM0 10.67h18V12H0z" fill="#b22234"/><rect width="8" height="6.67" fill="#3c3b6e"/><g fill="#fff"><circle cx="1.6" cy="1.4" r=".45"/><circle cx="4" cy="1.4" r=".45"/><circle cx="6.4" cy="1.4" r=".45"/><circle cx="2.8" cy="3.3" r=".45"/><circle cx="5.2" cy="3.3" r=".45"/><circle cx="1.6" cy="5.2" r=".45"/><circle cx="4" cy="5.2" r=".45"/><circle cx="6.4" cy="5.2" r=".45"/></g></svg>',
+    am: '<svg viewBox="0 0 18 12" aria-hidden="true"><rect width="18" height="4" fill="#d90012"/><rect y="4" width="18" height="4" fill="#0033a0"/><rect y="8" width="18" height="4" fill="#f2a800"/></svg>',
+    mx: '<svg viewBox="0 0 18 12" aria-hidden="true"><rect width="6" height="12" fill="#006847"/><rect x="6" width="6" height="12" fill="#fff"/><rect x="12" width="6" height="12" fill="#ce1126"/><circle cx="9" cy="6" r="1.6" fill="#8a6a2b"/></svg>',
+    ph: '<svg viewBox="0 0 18 12" aria-hidden="true"><rect width="18" height="6" fill="#0038a8"/><rect y="6" width="18" height="6" fill="#ce1126"/><path d="M0 0l8 6-8 6z" fill="#fff"/><circle cx="2.6" cy="6" r="1.1" fill="#fcd116"/></svg>',
+    other: '<svg viewBox="0 0 18 12" aria-hidden="true"><rect width="18" height="12" fill="#e5e7eb"/><circle cx="9" cy="6" r="4" fill="none" stroke="#94a3b8" stroke-width="1"/><path d="M5 6h8M9 2v8" stroke="#94a3b8" stroke-width="1"/></svg>'
+  };
+  const flag = (k) => '<span class="flag" title="' + esc(LOCN(k).name) + '">' + (FLAGS[S.locations[k] ? k : 'gl'] || FLAGS.other) + '</span>';
+  const locName = (k) => '<span class="locn">' + flag(k) + esc(LOCN(k).name) + '</span>';
   const tzNow = (tz) => { const p = {}; new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', weekday: 'short' }).formatToParts(new Date()).forEach(x => { p[x.type] = x.value; }); return { y: +p.year, mo: +p.month, d: +p.day, h: +p.hour % 24, mi: +p.minute, wd: p.weekday }; };
   const offsetFromLA = (tz) => { const a = tzNow(tz), b = tzNow('America/Los_Angeles'); return (Date.UTC(a.y, a.mo - 1, a.d, a.h, a.mi) - Date.UTC(b.y, b.mo - 1, b.d, b.h, b.mi)) / 3600000; };
   const clockStr = (tz) => new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit' }).format(new Date());
@@ -127,9 +137,9 @@
     $('subtitle').textContent = sub[UI.view];
     try { const u = new URL(location.href); u.searchParams.set('tab', UI.view); history.replaceState(null, '', u.pathname + '?' + u.searchParams.toString()); } catch (e) {}
     const v = $('view');
-    const keep = v.querySelector('.org-wrap'), sl = keep ? keep.scrollLeft : null;
+    const keep = v.querySelector('.org-wrap'), sl = keep ? keep.scrollLeft : null, st = keep ? keep.scrollTop : 0;
     v.innerHTML = '<div class="wrap">' + ({ today: vToday, people: vPeople, org: vOrg, time: vTime, timeoff: vTimeoff, reviews: vReviews, skills: vSkills, rewards: vRewards, settings: vSettings })[UI.view]() + '</div>';
-    const w = v.querySelector('.org-wrap'); if (w) w.scrollLeft = sl != null ? sl : (w.scrollWidth - w.clientWidth) / 2;
+    const w = v.querySelector('.org-wrap'); if (w) { orgSize(); w.scrollLeft = sl != null ? sl : (w.scrollWidth - w.clientWidth) / 2; w.scrollTop = st; orgEdges(); }
     after();
   }
   function after() {
@@ -173,7 +183,7 @@
         }).join('') || '<div class="muted" style="font-size:12px">No one scheduled today</div>';
       }
       const shown = (onNow.length ? onNow : []).slice(0, 14);
-      return '<div class="band-row"><button class="band-loc" type="button" data-act="band" data-k="' + k + '" aria-expanded="' + open + '"><b>' + esc(L.name) + I.chev + '</b><div class="t num">' + clockStr(L.tz) + '</div><small>' + onNow.length + ' of ' + ppl.length + ' on now</small></button>' +
+      return '<div class="band-row"><button class="band-loc" type="button" data-act="band" data-k="' + k + '" aria-expanded="' + open + '"><b>' + flag(k) + esc(L.name) + I.chev + '</b><div class="t num">' + clockStr(L.tz) + '</div><small>' + onNow.length + ' of ' + ppl.length + ' on now</small></button>' +
         '<div class="lanes"><span class="nowline" style="left:' + now + '%"></span>' + lanes + '</div>' +
         '<div class="band-people">' + shown.map(e => '<button class="pbtn" data-act="open" data-id="' + e.id + '" title="' + esc(e.name) + ', ' + STATUS_TXT[statusOf(e)].toLowerCase() + '">' + avatar(e, 'sm', statusOf(e)) + '</button>').join('') + (onNow.length > shown.length ? '<span class="more">+' + (onNow.length - shown.length) + '</span>' : '') + (!onNow.length ? '<span class="more">No one on right now</span>' : '') + '</div></div>';
     }).join('');
@@ -237,7 +247,7 @@
     people().filter(e => e.status === 'Active').forEach(e => { if (e.bday) { const d = within(e.bday); if (d) cel.push({ e, txt: 'Birthday', d }); } if (e.hire_date && +e.hire_date.slice(0, 4) < +t.slice(0, 4)) { const d = within(md(e.hire_date)); if (d) { const y = +d.slice(0, 4) - +e.hire_date.slice(0, 4); if (y > 0) cel.push({ e, txt: y + ' year' + (y === 1 ? '' : 's') + ' at Axiom', d }); } } });
     cel.sort((a, b) => a.d.localeCompare(b.d));
     const rows = out.slice(0, 14).map(r => { const e = emp(r.employee_id); if (!e) return ''; return '<div class="li">' + avatar(e, 'sm') + '<div class="meta">' + esc(e.name) + ' <span class="muted">' + (r.status === 'pending' ? 'may be out' : 'out') + '</span></div><span class="muted num" style="font-size:12px">' + (r.start_date === r.end_date ? fmtD(r.start_date) : fmtD(r.start_date) + ' – ' + fmtD(r.end_date)) + '</span></div>'; }).join('') +
-      hol.map(h => '<div class="li"><span class="av sm" style="background:var(--warn-soft);color:var(--warn)">H</span><div class="meta">' + esc(h.name) + ' <span class="muted">' + esc(LOCN(h.location).name) + ' team off</span></div><span class="muted num" style="font-size:12px">' + fmtD(h.date) + '</span></div>').join('') +
+      hol.map(h => '<div class="li"><span class="av sm" style="background:var(--warn-soft);color:var(--warn)">H</span><div class="meta">' + esc(h.name) + ' <span class="muted">' + locName(h.location) + ' team off</span></div><span class="muted num" style="font-size:12px">' + fmtD(h.date) + '</span></div>').join('') +
       cel.slice(0, 14).map(c => '<div class="li">' + avatar(c.e, 'sm') + '<div class="meta">' + esc(c.e.name) + ' <span class="muted">' + esc(c.txt) + '</span></div><span class="muted num" style="font-size:12px">' + fmtD(c.d) + '</span></div>').join('');
     return '<div class="card"><div class="card-h"><h2>Coming up</h2><span class="hint">Next 30 days</span></div><div class="card-b"><div class="list">' + (rows || '<div class="empty">Nothing coming up.</div>') + '</div></div></div>';
   }
@@ -253,7 +263,7 @@
     const showPay = isMgr();
     const incN = people().filter(e => missingCount(e)).length;
     return '<div class="toolbar"><div class="search">' + I.search + '<input class="input" placeholder="Search name, role, email or language" value="' + esc(UI.q) + '" data-in="q" aria-label="Search people"></div>' +
-      '<div class="chips">' + [['all', 'All locations']].concat(Object.keys(S.locations).map(k => [k, S.locations[k].name])).map(([k, n]) => '<button class="chip" data-act="loc" data-k="' + k + '" aria-pressed="' + (UI.loc === k) + '">' + esc(n) + '</button>').join('') + '</div>' +
+      '<div class="chips">' + [['all', 'All locations']].concat(Object.keys(S.locations).map(k => [k, S.locations[k].name])).map(([k, n]) => '<button class="chip" data-act="loc" data-k="' + k + '" aria-pressed="' + (UI.loc === k) + '">' + (k === 'all' ? '' : flag(k)) + esc(n) + '</button>').join('') + '</div>' +
       '<select class="select" data-in="dept" aria-label="Department"><option value="all">All departments</option>' + S.org.depts.map(d => '<option value="' + d.id + '" ' + (String(UI.dept) === String(d.id) ? 'selected' : '') + '>' + esc(d.name) + '</option>').join('') + '</select>' +
       (isMgr() ? '<button class="chip" data-act="incomplete" aria-pressed="' + UI.incomplete + '">Missing info ' + incN + '</button><button class="chip" data-act="inactive" aria-pressed="' + UI.inactive + '">Show inactive</button>' +
         '<span style="margin-left:auto;display:flex;gap:8px"><button class="btn" data-act="badges">' + I.badge + 'Print badges</button><button class="btn primary" data-act="add">Add employee</button></span>' : '') + '</div>' +
@@ -261,7 +271,7 @@
       (list.map(e => {
         const st = statusOf(e), m = emp(e.reports_to), p = completePct(e);
         return '<tr class="click" data-act="open" data-id="' + e.id + '"><td><div class="who">' + avatar(e, '', st) + '<div><b>' + esc(e.name) + (e.status !== 'Active' ? ' <span class="tag">' + esc(e.status) + '</span>' : '') + '</b><small>' + esc(e.title || '') + '</small></div></div></td>' +
-          '<td>' + esc(deptName(e.department_id)) + '</td><td>' + esc(LOCN(e.location).name) + '</td><td class="num">' + clockStr(tzOf(e)) + '</td><td>' + statusTag(st) + '</td>' +
+          '<td>' + esc(deptName(e.department_id)) + '</td><td>' + locName(e.location) + '</td><td class="num">' + clockStr(tzOf(e)) + '</td><td>' + statusTag(st) + '</td>' +
           '<td>' + (m ? esc(m.name) : '<span class="muted">—</span>') + '</td>' +
           (showPay ? '<td class="r num">' + (e.priv ? payText(e) : '<span class="muted">—</span>') + '</td><td>' + (p == null ? '<span class="muted">—</span>' : '<span class="pc" title="' + esc((e.missing || []).map(x => x[1]).join(', ') || 'Complete') + '"><span class="meter"><i style="width:' + p + '%;background:' + (p === 100 ? 'var(--work)' : p >= 85 ? 'var(--accent)' : 'var(--break)') + '"></i></span><span class="num">' + p + '%</span></span>') + '</td><td>' + (e.priv ? (e.has_pin ? '<span class="tag ok">Set</span>' : '<span class="tag">—</span>') : '') + '</td>' : '') +
           '<td class="num">' + (e.hire_date ? fmtD(e.hire_date, { month: 'short', year: 'numeric' }) : '<span class="muted">—</span>') + '</td></tr>';
@@ -289,7 +299,7 @@
     const tabs = [['overview', 'Overview'], ['job', 'Job & pay', 1], ['timeoff', 'Time off', 1], ['skills', 'Skills & languages'], ['review', 'Performance', 1], ['docs', 'Documents', 1]].filter(t => !t[2] || priv);
     if (!tabs.find(t => t[0] === UI.tab)) UI.tab = 'overview';
     const L = LOCN(e.location);
-    $('drawer').innerHTML = '<div class="dr-h">' + avatar(e, 'lg', st) + '<div style="min-width:0"><h2>' + esc(e.name) + '</h2><div class="muted">' + esc(e.title || '') + (deptName(e.department_id) ? ', ' + esc(deptName(e.department_id)) : '') + '</div><div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">' + statusTag(st) + '<span class="tag">' + esc(L.name) + ', ' + clockStr(L.tz) + ' local</span>' + (e.employment_type ? '<span class="tag">' + esc(e.employment_type) + '</span>' : '') + (e.status !== 'Active' ? '<span class="tag warn">' + esc(e.status) + '</span>' : '') + '</div></div>' +
+    $('drawer').innerHTML = '<div class="dr-h">' + avatar(e, 'lg', st) + '<div style="min-width:0"><h2>' + esc(e.name) + '</h2><div class="muted">' + esc(e.title || '') + (deptName(e.department_id) ? ', ' + esc(deptName(e.department_id)) : '') + '</div><div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">' + statusTag(st) + '<span class="tag">' + flag(e.location) + esc(L.name) + ', ' + clockStr(L.tz) + ' local</span>' + (e.employment_type ? '<span class="tag">' + esc(e.employment_type) + '</span>' : '') + (e.status !== 'Active' ? '<span class="tag warn">' + esc(e.status) + '</span>' : '') + '</div></div>' +
       '<button class="btn ghost x" data-act="close" aria-label="Close">' + I.x + '</button></div>' + completeHTML(e) +
       '<div class="tabs" role="tablist">' + tabs.map(t => '<button role="tab" data-act="tab" data-k="' + t[0] + '" aria-selected="' + (UI.tab === t[0]) + '">' + t[1] + '</button>').join('') + '</div>' +
       '<div class="dr-b">' + (UI.detail ? ({ overview: tOverview, job: tJob, timeoff: tTimeoff, skills: tSkills, review: tReview, docs: tDocs })[UI.tab](e) : '<div class="empty">Loading…</div>') + '</div>';
@@ -368,7 +378,7 @@
     const d = UI.detail || {}, ed = e.can_manage;
     const yrs = e.hire_date ? (Date.now() - parse(e.hire_date)) / 31557600000 : 0;
     const lock = ed ? '' : '<div class="lock">' + I.lock + 'Only you and your manager can see this. Ask your manager to change anything here.</div>';
-    const sel = (k, opts, v) => '<select class="select" data-jf="' + k + '"' + (k === 'reports_to' ? ' data-people' : '') + (ed ? '' : ' disabled') + '>' + opts.map(o => Array.isArray(o) ? '<option value="' + esc(o[0]) + '" ' + (String(o[0]) === String(v) ? 'selected' : '') + '>' + esc(o[1]) + '</option>' : '<option ' + (o === v ? 'selected' : '') + '>' + esc(o) + '</option>').join('') + '</select>';
+    const sel = (k, opts, v) => '<select class="select" data-jf="' + k + '"' + (k === 'reports_to' ? ' data-people' : k === 'location' ? ' data-loc' : '') + (ed ? '' : ' disabled') + '>' + opts.map(o => Array.isArray(o) ? '<option value="' + esc(o[0]) + '" ' + (String(o[0]) === String(v) ? 'selected' : '') + '>' + esc(o[1]) + '</option>' : '<option ' + (o === v ? 'selected' : '') + '>' + esc(o) + '</option>').join('') + '</select>';
     const val = (x) => '<div class="v">' + (x == null || x === '' ? '<span class="muted">—</span>' : esc(x)) + '</div>';
     const [s0, s1] = shiftArr(e), hm = (h) => pad(Math.floor(((h % 24) + 24) % 24)) + ':' + pad(Math.round((h % 1) * 60));
     const days = String(e.shift_days || '1,2,3,4,5').split(',').map(Number);
@@ -379,7 +389,7 @@
       '<div class="field"><label>Department</label>' + (ed ? sel('department_id', [['', 'None']].concat(S.org.depts.map(x => [x.id, x.name])), e.department_id) : val(deptName(e.department_id))) + '</div>' +
       '<div class="field"><label>Employment type</label>' + (ed ? sel('employment_type', ['Full-time', 'Part-time', 'Contractor'], e.employment_type) : val(e.employment_type)) + '</div>' +
       '<div class="field"><label>Reports to</label>' + (ed ? sel('reports_to', [['', 'No manager']].concat(others.map(x => [x.id, x.name])), e.reports_to) : val(emp(e.reports_to) ? emp(e.reports_to).name : '')) + '</div>' +
-      '<div class="field"><label>Location</label>' + (ed ? sel('location', Object.keys(S.locations).map(k => [k, S.locations[k].name]), e.location) : val(LOCN(e.location).name)) + '</div>' +
+      '<div class="field"><label>Location</label>' + (ed ? sel('location', Object.keys(S.locations).map(k => [k, S.locations[k].name]), e.location) : '<div class="val">' + locName(e.location) + '</div>') + '</div>' +
       '<div class="field"><label>Time with Axiom</label>' + val(e.hire_date ? Math.floor(yrs) + ' yr ' + Math.floor((yrs % 1) * 12) + ' mo (since ' + fmtLong(e.hire_date) + ')' : '') + '</div>' +
       '<div class="field"><label>Shift start (' + esc(LOCN(e.location).name) + ' time)</label>' + (ed ? '<input class="input" type="time" data-jf="shift_start" value="' + hm(s0) + '">' : val(fmtH(s0))) + '</div>' +
       '<div class="field"><label>Shift end</label>' + (ed ? '<input class="input" type="time" data-jf="shift_end" value="' + hm(s1) + '">' : val(fmtH(s1) + (s1 > 24 ? ' (next day)' : ''))) + '</div>' +
@@ -474,11 +484,58 @@
     return '<div class="toolbar"><div class="search">' + I.search + '<input class="input" placeholder="Search people, roles, or teams" value="' + esc(UI.orgq) + '" data-in="orgq" aria-label="Search the company tree"></div>' +
       '<button class="btn" data-act="org-all" data-n="1">Expand all</button><button class="btn" data-act="org-all" data-n="0">Collapse all</button>' +
       (isAdmin() ? '<span style="margin-left:auto;display:flex;gap:8px"><button class="btn" data-act="org-reset" title="Re-read the CRM departments and teams; Nova edits are dropped">Sync from CRM</button><button class="btn" data-act="org-addteam">Add team</button><button class="btn primary" data-act="org-adddept">Add department</button></span>' : '') + '</div>' +
-      '<div class="card org-wrap"><div class="org"><div class="ceo">' + (ceoP ? avatar(ceoP, 'lg') : pav({ name: O.ceo.name }, 'lg')) + '<div><b>' + esc(O.ceo.name) + '</b><small>' + esc(O.ceo.title) + '</small></div>' +
+      '<div class="card org-box"><div class="org-wrap" tabindex="0" aria-label="Company tree — drag to move, arrow keys scroll"><div class="org" style="zoom:' + UI.orgZoom + '"><div class="ceo">' + (ceoP ? avatar(ceoP, 'lg') : pav({ name: O.ceo.name }, 'lg')) + '<div><b>' + esc(O.ceo.name) + '</b><small>' + esc(O.ceo.title) + '</small></div>' +
       '<div class="ceo-stats"><span><b>' + O.depts.length + '</b> departments</span><span><b>' + teamsN + '</b> teams</span><span><b>' + all.size + '</b> people</span></div></div>' +
       '<div class="cols">' + cols + '</div></div></div>' +
+      '<button class="org-arrow l" data-act="org-pan" data-d="-1" aria-label="Scroll left"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></button>' +
+      '<button class="org-arrow r" data-act="org-pan" data-d="1" aria-label="Scroll right"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>' +
+      '<div class="org-ctl"><span class="org-hint"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 0 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>Drag to move</span>' +
+      '<button data-act="org-zoom" data-d="-1" aria-label="Zoom out" title="Zoom out">−</button><button data-act="org-zoom" data-d="0" class="pct" title="Back to 100%">' + Math.round(UI.orgZoom * 100) + '%</button><button data-act="org-zoom" data-d="1" aria-label="Zoom in" title="Zoom in">+</button><button data-act="org-zoom" data-d="fit" title="Fit the whole tree in view">Fit</button></div></div>' +
       '<p class="muted" style="font-size:12px;margin-top:10px">The tree comes from the Axiom CRM\'s departments and teams; a department or team edited here keeps its Nova version (marked NOVA). Some people lead more than one team. Click a name to open their profile.</p>';
   }
+  /* 1.20.169: the tree is a canvas — it fills the window height so both scrollbars are always on screen, drags with the hand,
+     has left / right arrows that show while there is more that way, and zooms (− % + Fit, kept per browser). */
+  function orgSize() {
+    const w = document.querySelector('.org-wrap'); if (!w) return;
+    w.style.height = Math.max(380, innerHeight - w.getBoundingClientRect().top - 46) + 'px';
+  }
+  function orgEdges() {
+    const w = document.querySelector('.org-wrap'); if (!w) return;
+    const box = w.parentNode, max = w.scrollWidth - w.clientWidth;
+    box.classList.toggle('more-l', w.scrollLeft > 4); box.classList.toggle('more-r', w.scrollLeft < max - 4);
+  }
+  function orgZoom(d) {
+    const w = document.querySelector('.org-wrap'), o = w && w.querySelector('.org'); if (!o) return;
+    const old = UI.orgZoom, cx = (w.scrollLeft + w.clientWidth / 2) / old, cy = (w.scrollTop + w.clientHeight / 2) / old;
+    let z = d === 'fit' ? 1 : d === '0' ? 1 : Math.round((old + (+d) * 0.1) * 10) / 10;
+    if (d === 'fit') { o.style.zoom = 1; z = Math.min(1, (w.clientWidth - 44) / o.scrollWidth, (w.clientHeight - 56) / o.scrollHeight); z = Math.floor(z * 20) / 20; }
+    z = Math.max(0.3, Math.min(1.5, z)); UI.orgZoom = z; try { localStorage.setItem('hr_org_zoom', String(z)); } catch (e) {}
+    o.style.zoom = z; const pct = w.parentNode.querySelector('.org-ctl .pct'); if (pct) pct.textContent = Math.round(z * 100) + '%';
+    if (d === 'fit') { w.scrollLeft = (w.scrollWidth - w.clientWidth) / 2; w.scrollTop = 0; } else { w.scrollLeft = cx * z - w.clientWidth / 2; w.scrollTop = cy * z - w.clientHeight / 2; }
+    orgEdges();
+  }
+  let orgDrag = null;
+  document.addEventListener('pointerdown', (ev) => {
+    const w = ev.target.closest && ev.target.closest('.org-wrap'); if (!w || ev.button !== 0 || ev.pointerType === 'touch') return;
+    if (ev.target.closest('input, select, textarea, .org-ctl, .org-arrow')) return;
+    orgDrag = { w, x: ev.clientX, y: ev.clientY, sl: w.scrollLeft, st: w.scrollTop, moved: false, id: ev.pointerId };
+  });
+  document.addEventListener('pointermove', (ev) => {
+    if (!orgDrag) return;
+    const dx = ev.clientX - orgDrag.x, dy = ev.clientY - orgDrag.y;
+    if (!orgDrag.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+    if (!orgDrag.moved) { orgDrag.moved = true; orgDrag.w.classList.add('dragging'); try { getSelection().removeAllRanges(); } catch (e) {} try { orgDrag.w.setPointerCapture(orgDrag.id); } catch (e) {} }
+    orgDrag.w.scrollLeft = orgDrag.sl - dx; orgDrag.w.scrollTop = orgDrag.st - dy; ev.preventDefault();
+  });
+  const orgUp = () => { if (!orgDrag) return; const d = orgDrag; orgDrag = null; d.w.classList.remove('dragging'); if (d.moved) { const stop = (e) => { e.stopPropagation(); e.preventDefault(); }; document.addEventListener('click', stop, { capture: true, once: true }); setTimeout(() => document.removeEventListener('click', stop, true), 0); } };
+  document.addEventListener('pointerup', orgUp); document.addEventListener('pointercancel', orgUp);
+  document.addEventListener('selectstart', (ev) => { if (orgDrag) ev.preventDefault(); });
+  document.addEventListener('scroll', (ev) => { if (ev.target && ev.target.classList && ev.target.classList.contains('org-wrap')) orgEdges(); }, true);
+  document.addEventListener('keydown', (ev) => {
+    const w = document.activeElement; if (!w || !w.classList || !w.classList.contains('org-wrap')) return;
+    if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') { w.scrollBy({ left: (ev.key === 'ArrowLeft' ? -1 : 1) * 120, behavior: 'smooth' }); ev.preventDefault(); }
+  });
+  window.addEventListener('resize', () => { orgSize(); orgEdges(); });
   function personPicker(id, list, placeholderName) {
     return '<select class="select" id="' + id + '" data-people style="width:100%"><option value="">' + esc(placeholderName || 'Pick a person') + '</option>' + people().filter(e => e.status === 'Active').sort((a, b) => a.name.localeCompare(b.name)).map(e => '<option value="' + e.id + '" ' + ((list || []).some(p => p.employee_id === e.id) ? 'selected' : '') + '>' + esc(e.name) + '</option>').join('') + '</select>';
   }
@@ -545,7 +602,7 @@
       const empty = !r.total && !r.flagged;
       const stat = r.flagged ? '<span class="tag bad">Fix needed</span>' : r.approved ? '<span class="tag ok" title="' + esc(r.approved.by) + '">Approved</span>' : empty ? '<span class="muted" style="font-size:11.5px">No hours</span>' : '<span class="tag">Open</span>';
       const act = r.can_manage ? (r.approved ? '<button class="btn sm ghost" data-act="ts-unapprove" data-id="' + e.id + '">Reopen</button>' : !r.flagged && !empty ? '<button class="btn sm" data-act="ts-approve" data-id="' + e.id + '">Approve</button>' : '') : '';
-      return '<tr><td><div class="who">' + avatar(e, 'sm') + '<div><b>' + esc(e.name) + '</b><small>' + esc(LOCN(e.location).name) + ' · ' + shiftLabel(e) + '</small></div></div></td>' + cells + '<td class="r tot num">' + r.total.toFixed(2) + '</td><td class="r num" style="color:' + (r.ot ? 'var(--warn)' : 'var(--ink-3)') + '">' + (r.ot ? r.ot.toFixed(2) : '—') + '</td><td>' + stat + '</td><td class="r">' + act + '</td></tr>';
+      return '<tr><td><div class="who">' + avatar(e, 'sm') + '<div><b>' + esc(e.name) + '</b><small>' + locName(e.location) + ' · ' + shiftLabel(e) + '</small></div></div></td>' + cells + '<td class="r tot num">' + r.total.toFixed(2) + '</td><td class="r num" style="color:' + (r.ot ? 'var(--warn)' : 'var(--ink-3)') + '">' + (r.ot ? r.ot.toFixed(2) : '—') + '</td><td>' + stat + '</td><td class="r">' + act + '</td></tr>';
     }).join('');
     return tabs + head + (T.error ? '<div class="lock red">' + esc(T.error) + '</div>' : '') +
       '<div class="card tbl-wrap"><table class="ts"><thead><tr><th>Employee</th>' + days.map(d => '<th class="c">' + parse(d).toLocaleDateString('en-US', { weekday: 'short' }) + ' ' + parse(d).getDate() + '</th>').join('') + '<th class="r">Total</th><th class="r">Overtime</th><th>Status</th><th></th></tr></thead><tbody>' + (rows || '<tr><td colspan="12"><div class="empty">No timesheets.</div></td></tr>') + '</tbody></table></div>' +
@@ -583,7 +640,7 @@
       '<div><small>Left early</small><b class="num">' + tot.e + '</b><span>more than ' + A.earlyGrace + ' min before shift end</span></div>' +
       '<div><small>Missed punches</small><b class="num">' + tot.m + '</b><span>need a manager fix</span></div></div>' +
       '<div class="card tbl-wrap"><table><thead><tr><th>Employee</th><th>Shift</th><th>On schedule</th><th class="r">Late</th><th class="r">Avg late</th><th class="r">Left early</th><th class="r">Missed</th><th>Weekly trend</th><th>Recent shifts</th></tr></thead><tbody>' +
-      (list.map(r => { const e = emp(r.employee_id); return '<tr><td><div class="who">' + avatar(e, 'sm') + '<div><b>' + esc(e.name) + '</b><small>' + esc(LOCN(e.location).name) + '</small></div></div></td><td class="num" style="white-space:nowrap">' + shiftLabel(e) + '</td>' +
+      (list.map(r => { const e = emp(r.employee_id); return '<tr><td><div class="who">' + avatar(e, 'sm') + '<div><b>' + esc(e.name) + '</b><small>' + locName(e.location) + '</small></div></div></td><td class="num" style="white-space:nowrap">' + shiftLabel(e) + '</td>' +
         '<td><div class="score-cell"><span class="tag ' + sc(r.score) + '">' + r.score + '%</span><div class="meter" style="width:70px;margin:0"><i style="width:' + r.score + '%;background:var(--' + (sc(r.score) === 'ok' ? 'work' : sc(r.score) === 'warn' ? 'break' : 'bad') + ')"></i></div></div></td>' +
         '<td class="r num">' + (r.lates || '<span class="muted">0</span>') + '</td><td class="r num">' + (r.avgLate ? r.avgLate + ' min' : '<span class="muted">—</span>') + '</td><td class="r num">' + (r.early || '<span class="muted">0</span>') + '</td><td class="r num" ' + (r.missed ? 'style="color:var(--bad)"' : '') + '>' + (r.missed || '<span class="muted">0</span>') + '</td><td>' + trend(r) + '</td><td>' + strip(e, r) + '</td></tr>'; }).join('') ||
         '<tr><td colspan="9"><div class="empty">No scheduled shifts with punches in this period yet. Adherence starts from each person\'s first clock-in in NovaHR.</div></td></tr>') + '</tbody></table></div>' +
@@ -613,7 +670,7 @@
       ((isMgr() ? pending : mine).map(r => reqLi(r, true)).join('') || '<div class="empty">Nothing waiting.</div>') + '</div>' +
       (isMgr() && mine.length ? '<div class="muted" style="font-size:11.5px;margin:16px 0 4px;font-weight:700">Your own requests</div><div class="list">' + mine.slice(0, 8).map(r => reqLi(r, true)).join('') + '</div>' : '') +
       (isMgr() && decided.length ? '<div class="muted" style="font-size:11.5px;margin:16px 0 4px;font-weight:700">Decided</div><div class="list">' + decided.map(r => reqLi(r, false)).join('') + '</div>' : '') + '</div></div></div>' +
-      '<div class="card" style="margin-top:16px"><div class="card-h"><h2>Team calendar</h2><div class="chips">' + [['all', 'Everyone']].concat(Object.keys(S.locations).map(k => [k, S.locations[k].name])).map(([k, n]) => '<button class="chip" data-act="cal-loc" data-k="' + k + '" aria-pressed="' + (UI.calLoc === k) + '">' + esc(n) + '</button>').join('') + '</div>' +
+      '<div class="card" style="margin-top:16px"><div class="card-h"><h2>Team calendar</h2><div class="chips">' + [['all', 'Everyone']].concat(Object.keys(S.locations).map(k => [k, S.locations[k].name])).map(([k, n]) => '<button class="chip" data-act="cal-loc" data-k="' + k + '" aria-pressed="' + (UI.calLoc === k) + '">' + (k === 'all' ? '' : flag(k)) + esc(n) + '</button>').join('') + '</div>' +
       '<div class="r"><button class="btn sm" data-act="cal" data-n="-1" aria-label="Previous month">‹</button><b style="min-width:130px;text-align:center">' + calLabel() + '</b><button class="btn sm" data-act="cal" data-n="1" aria-label="Next month">›</button></div></div>' +
       '<div class="card-b"><div class="legend" style="margin-bottom:10px"><span><i style="background:var(--pto)"></i>Approved</span><span><i style="border:1px dashed var(--pto)"></i>Pending</span><span><i style="background:var(--warn)"></i>Holiday</span></div>' + calHTML() + '</div></div>';
   }
@@ -629,7 +686,7 @@
       const wk = d.getDay() === 0 || d.getDay() === 6;
       const evs = S.leave.filter(r => r.status !== 'declined' && r.start_date <= s && r.end_date >= s && !wk && locOk(emp(r.employee_id)));
       const ev = evs.slice(0, 4).map(r => { const e = emp(r.employee_id); return '<div class="ev ' + (r.status === 'pending' ? 'pending' : '') + '" title="' + esc(e ? e.name : '') + ', ' + esc(typeName(r.type)) + (r.status === 'pending' ? ' (pending)' : '') + '">' + esc(first(e)) + (r.half_day ? ' ½' : '') + '</div>'; }).join('') + (evs.length > 4 ? '<div class="ev more">+' + (evs.length - 4) + ' more</div>' : '');
-      const hol = S.holidays.filter(x => x.date === s && (UI.calLoc === 'all' || x.location === UI.calLoc)).map(x => '<div class="ev hol" title="' + esc(x.name) + ', ' + esc(LOCN(x.location).name) + (x.src === 'website' ? ' (website closed days)' : '') + '">' + esc(x.name) + ' (' + esc(LOCN(x.location).name.slice(0, 2)) + ')</div>').join('');
+      const hol = S.holidays.filter(x => x.date === s && (UI.calLoc === 'all' || x.location === UI.calLoc)).map(x => '<div class="ev hol" title="' + esc(x.name) + ', ' + esc(LOCN(x.location).name) + (x.src === 'website' ? ' (website closed days)' : '') + '">' + flag(x.location) + esc(x.name) + '</div>').join('');
       h += '<div class="day ' + (d.getMonth() !== m ? 'out' : '') + ' ' + (wk ? 'wk' : '') + ' ' + (s === today() ? 'today' : '') + '"><span class="dn">' + d.getDate() + '</span>' + hol + ev + '</div>';
     }
     return '<div class="cal">' + h + '</div>';
@@ -728,7 +785,7 @@
     const lvl = (l) => '<i></i><i></i><i></i><i></i>';
     const rows = ppl.map(e => {
       const st = statusOf(e), lv = cover ? ((e.skills || {})[cover] || 0) : 0, cls = cover ? (lv >= 3 ? 'hl' : 'dim') : '';
-      return '<tr class="' + cls + '"><td><div class="who">' + avatar(e, 'sm', st) + '<div><b>' + esc(e.name) + '</b><small>' + esc(LOCN(e.location).name) + (cover && lv >= 3 ? ', ' + STATUS_TXT[st].toLowerCase() : '') + '</small></div></div></td>' +
+      return '<tr class="' + cls + '"><td><div class="who">' + avatar(e, 'sm', st) + '<div><b>' + esc(e.name) + '</b><small>' + locName(e.location) + (cover && lv >= 3 ? ', ' + STATUS_TXT[st].toLowerCase() : '') + '</small></div></div></td>' +
         SKL.map(s => { const l = (e.skills || {})[s.k] || 0; return '<td class="lv">' + (e.can_manage ? '<button class="lvl l' + l + '" data-act="cycle" data-id="' + e.id + '" data-k="' + s.k + '" title="' + esc(first(e)) + ': ' + esc(s.n) + ', ' + esc(LV[l]).toLowerCase() + '. Click to change.">' + lvl(l) + '</button>' : '<span class="lvl l' + l + '" title="' + esc(LV[l]) + '">' + lvl(l) + '</span>') + '</td>'; }).join('') + '</tr>';
     }).join('');
     const allA = people().filter(e => e.status === 'Active');
@@ -834,9 +891,9 @@
     const H = S.holidays.filter(h => UI.holLoc === 'all' || h.location === UI.holLoc);
     const L = Object.keys(S.locations);
     return '<div class="card"><div class="card-h"><h2>Paid holidays</h2><span class="hint">Each location gets its own calendar</span></div><div class="card-b">' +
-      '<div class="chips" style="margin-bottom:12px">' + [['all', 'All locations']].concat(L.map(l => [l, S.locations[l].name])).map(([k, n]) => '<button class="chip" data-act="hol-loc" data-k="' + k + '" aria-pressed="' + (UI.holLoc === k) + '">' + esc(n) + ' ' + (k === 'all' ? S.holidays.length : S.holidays.filter(h => h.location === k).length) + '</button>').join('') + '</div>' +
-      '<div class="hol-add"><input class="input" type="date" id="h_d"><input class="input" id="h_n" placeholder="Holiday name" style="flex:1;min-width:160px"><select class="select" id="h_l">' + L.map(l => '<option value="' + l + '" ' + (UI.holLoc === l ? 'selected' : '') + '>' + esc(S.locations[l].name) + '</option>').join('') + '</select><button class="btn primary" data-act="hol-add">Add holiday</button></div>' +
-      '<div class="list" style="margin-top:6px">' + (H.map(h => '<div class="li"><span class="num" style="width:120px;color:var(--ink-2)">' + fmtD(h.date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) + '</span><div class="meta"><b>' + esc(h.name) + '</b>' + (h.src === 'website' ? ' <span class="tag crm" title="From the website\'s Closed days (CRM holidays) — change it there">WEBSITE</span>' : '') + '</div><span class="tag">' + esc(LOCN(h.location).name) + '</span>' + (h.id ? '<button class="btn sm ghost" data-act="hol-del" data-id="' + h.id + '" aria-label="Remove">' + I.x + '</button>' : '<span style="width:30px"></span>') + '</div>').join('') || '<div class="empty">No holidays for this location yet.</div>') + '</div>' +
+      '<div class="chips" style="margin-bottom:12px">' + [['all', 'All locations']].concat(L.map(l => [l, S.locations[l].name])).map(([k, n]) => '<button class="chip" data-act="hol-loc" data-k="' + k + '" aria-pressed="' + (UI.holLoc === k) + '">' + (k === 'all' ? '' : flag(k)) + esc(n) + ' ' + (k === 'all' ? S.holidays.length : S.holidays.filter(h => h.location === k).length) + '</button>').join('') + '</div>' +
+      '<div class="hol-add"><input class="input" type="date" id="h_d"><input class="input" id="h_n" placeholder="Holiday name" style="flex:1;min-width:160px"><select class="select" id="h_l" data-loc>' + L.map(l => '<option value="' + l + '" ' + (UI.holLoc === l ? 'selected' : '') + '>' + esc(S.locations[l].name) + '</option>').join('') + '</select><button class="btn primary" data-act="hol-add">Add holiday</button></div>' +
+      '<div class="list" style="margin-top:6px">' + (H.map(h => '<div class="li"><span class="num" style="width:120px;color:var(--ink-2)">' + fmtD(h.date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) + '</span><div class="meta"><b>' + esc(h.name) + '</b>' + (h.src === 'website' ? ' <span class="tag crm" title="From the website\'s Closed days (CRM holidays) — change it there">WEBSITE</span>' : '') + '</div><span class="tag">' + locName(h.location) + '</span>' + (h.id ? '<button class="btn sm ghost" data-act="hol-del" data-id="' + h.id + '" aria-label="Remove">' + I.x + '</button>' : '<span style="width:30px"></span>') + '</div>').join('') || '<div class="empty">No holidays for this location yet.</div>') + '</div>' +
       '<p class="muted" style="font-size:12px;margin-top:10px">Glendale also follows the website\'s Closed days (the CRM holidays list), shown as WEBSITE. Time off never counts a holiday, and nobody is expected to clock in on one.</p></div></div>';
   }
   function sAtt() {
@@ -864,7 +921,7 @@
       row('Badge needs the PIN too', 'Scanning a badge also asks for the PIN — stops someone clocking in with a borrowed badge', chk('clock', 'badge_pin', C.badge_pin)) + saveBtn('clock') + '</div></div>' +
       '<div class="card" style="margin-top:16px"><div class="card-h"><h2>Time clocks (kiosks)</h2><span class="hint">A tablet or computer by the door that the team clocks in on with their PIN or badge</span><div class="r"><button class="btn sm primary" data-act="kiosk-new">Make this device a time clock</button></div></div><div class="card-b">' +
       (here ? '<div class="lock blue">This browser is the time clock "' + esc(here) + '". <a href="/hr/kiosk" class="linkbtn" target="_blank">Open it</a></div>' : '') +
-      '<div class="list">' + (K == null ? '<div class="muted">Loading…</div>' : K.length ? K.map(k => '<div class="li"><span class="av sm" style="background:' + (k.revoked_at ? '#cbd5e1' : '#10b981') + '">⏱</span><div class="meta"><b>' + esc(k.name) + '</b> <span class="tag">' + esc(LOCN(k.location).name) + '</span><div class="muted" style="font-size:11.5px">Made by ' + esc(k.created_by || '') + ' · ' + (k.revoked_at ? 'switched off ' + esc(k.revoked_at) : k.last_seen ? 'last seen ' + esc(k.last_seen) + ' UTC' + (k.last_ip ? ' from ' + esc(k.last_ip) : '') : 'not used yet') + '</div></div>' + (k.revoked_at ? '' : '<button class="btn sm bad" data-act="kiosk-off" data-id="' + k.id + '">Switch off</button>') + '</div>').join('') : '<div class="muted">No time clocks yet.</div>') + '</div>' +
+      '<div class="list">' + (K == null ? '<div class="muted">Loading…</div>' : K.length ? K.map(k => '<div class="li"><span class="av sm" style="background:' + (k.revoked_at ? '#cbd5e1' : '#10b981') + '">⏱</span><div class="meta"><b>' + esc(k.name) + '</b> <span class="tag">' + locName(k.location) + '</span><div class="muted" style="font-size:11.5px">Made by ' + esc(k.created_by || '') + ' · ' + (k.revoked_at ? 'switched off ' + esc(k.revoked_at) : k.last_seen ? 'last seen ' + esc(k.last_seen) + ' UTC' + (k.last_ip ? ' from ' + esc(k.last_ip) : '') : 'not used yet') + '</div></div>' + (k.revoked_at ? '' : '<button class="btn sm bad" data-act="kiosk-off" data-id="' + k.id + '">Switch off</button>') + '</div>').join('') : '<div class="muted">No time clocks yet.</div>') + '</div>' +
       '<p class="muted" style="font-size:12px;margin-top:10px">' + withPin + ' of ' + act + ' active people have a PIN. Set a PIN on each person\'s profile (Overview → Time clock), or let them set their own from Today. Badges: People → Print badges. A USB or Bluetooth barcode scanner by the time clock reads badges instantly; the tablet camera works too.</p></div></div>';
   }
   function sSkills() {
@@ -965,8 +1022,12 @@
     if (e) return avatar(e, cls || 'sm');
     return '<span class="av ' + (cls || 'sm') + ' pp-none" aria-hidden="true">—</span>';
   }
+  /* 1.20.169: a <select data-loc> (options = location keys) gets the same picker with the flag and the local time */
+  const isLoc = (sel) => sel.hasAttribute('data-loc');
+  const locRow = (o) => '<span class="pp-flag">' + flag(o.value) + '</span><span class="pp-txt"><b>' + esc(o.text) + '</b><small>' + clockStr(LOCN(o.value).tz) + ' local</small></span>';
   function ppLabel(sel) {
     const o = sel.options[sel.selectedIndex]; if (!o) return '<span class="muted">Pick a person</span>';
+    if (isLoc(sel)) return locRow(o);
     const e = o.value ? emp(o.value) : null, isMe = !o.value && /^me$/i.test(o.text.trim());
     const sub = e ? [e.title, deptName(e.department_id)].filter(Boolean)[0] : isMe && ME() ? ME().name : '';
     return ppFace(o.value, o.text) + '<span class="pp-txt"><b>' + esc(o.text) + '</b>' + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</span>';
@@ -983,10 +1044,10 @@
   function ppShow(sel) {
     ppClose();
     const opts = Array.from(sel.options), many = opts.length > 8;
-    const el = document.createElement('div'); el.className = 'pp-pop';
+    const el = document.createElement('div'); el.className = 'pp-pop' + (isLoc(sel) ? ' pp-locs' : '');
     el.innerHTML = (many ? '<div class="pp-q">' + I.search + '<input type="text" placeholder="Search people" autocomplete="off"></div>' : '') + '<div class="pp-list" role="listbox"></div>';
     document.body.appendChild(el);
-    const r = sel._ppBtn.getBoundingClientRect(), w = Math.max(r.width, 280);
+    const r = sel._ppBtn.getBoundingClientRect(), w = Math.max(r.width, isLoc(sel) ? 220 : 280);
     el.style.width = w + 'px'; el.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
     const below = innerHeight - r.bottom - 12, above = r.top - 12, up = below < 260 && above > below;
     el.style.maxHeight = Math.min(380, Math.max(160, up ? above : below)) + 'px';
@@ -995,9 +1056,10 @@
     let act = 0, shown = [];
     const draw = () => {
       const t = q ? q.value.trim().toLowerCase() : '';
-      shown = opts.filter(o => { if (!t) return true; const e = o.value ? emp(o.value) : null; return [o.text, e && e.title, e && deptName(e.department_id), e && LOCN(e.location).name].join(' ').toLowerCase().indexOf(t) > -1; });
+      shown = opts.filter(o => { if (!t) return true; if (isLoc(sel)) return o.text.toLowerCase().indexOf(t) > -1; const e = o.value ? emp(o.value) : null; return [o.text, e && e.title, e && deptName(e.department_id), e && LOCN(e.location).name].join(' ').toLowerCase().indexOf(t) > -1; });
       act = Math.max(0, Math.min(act, shown.length - 1));
-      list.innerHTML = shown.map((o, i) => { const e = o.value ? emp(o.value) : null; const isMe = !o.value && /^me$/i.test(o.text.trim()) && ME();
+      list.innerHTML = shown.map((o, i) => { if (isLoc(sel)) return '<div class="pp-row' + (o.value === sel.value ? ' sel' : '') + (i === act ? ' act' : '') + '" role="option" data-i="' + i + '">' + locRow(o) + (o.value === sel.value ? '<span class="pp-tick">✓</span>' : '') + '</div>';
+        const e = o.value ? emp(o.value) : null; const isMe = !o.value && /^me$/i.test(o.text.trim()) && ME();
         const sub = e ? [e.title, deptName(e.department_id), LOCN(e.location).name].filter(Boolean).join(' · ') : isMe ? ME().name : '';
         return '<div class="pp-row' + (o.value === sel.value ? ' sel' : '') + (i === act ? ' act' : '') + '" role="option" data-i="' + i + '">' + ppFace(o.value, o.text) + '<span class="pp-txt"><b>' + esc(o.text) + '</b>' + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</span>' + (o.value === sel.value ? '<span class="pp-tick">✓</span>' : '') + '</div>'; }).join('') || '<div class="pp-empty">No one matches</div>';
       const a = list.querySelector('.act'); if (a) a.scrollIntoView({ block: 'nearest' });
@@ -1021,7 +1083,7 @@
   document.addEventListener('click', () => ppClose());
   window.addEventListener('resize', () => ppClose());
   document.addEventListener('scroll', (ev) => { if (ppOpen && !ppOpen.el.contains(ev.target)) ppClose(); }, true);
-  new MutationObserver(() => { document.querySelectorAll('select[data-people]').forEach(ppEnhance); }).observe(document.body, { childList: true, subtree: true });
+  new MutationObserver(() => { document.querySelectorAll('select[data-people], select[data-loc]').forEach(ppEnhance); }).observe(document.body, { childList: true, subtree: true });
 
   // =========================================================== Add employee
   async function openAdd() {
@@ -1037,12 +1099,12 @@
     if (k === 'crm') {
       const list = (UI.crmStaff || []).sort((a, b) => (a.test - b.test) || a.name.localeCompare(b.name));
       $('addBody').innerHTML = '<p class="muted" style="margin-top:0">Active CRM staff who are not in NovaHR yet. Their name, email, phones, birthday, start date, photo and title come from the CRM.</p><input class="input" id="crmQ" placeholder="Search" style="width:100%;margin-bottom:8px" data-in="crmq">' +
-        '<div id="crmList" style="max-height:360px;overflow:auto">' + (list.length ? list.map(u => '<div class="li" data-name="' + esc(u.name.toLowerCase() + ' ' + (u.email || '').toLowerCase()) + '">' + avatar({ name: u.name, photo_url: u.photo }, 'sm') + '<div class="meta"><b>' + esc(u.name) + '</b>' + (u.test ? ' <span class="tag">looks like a test account</span>' : '') + '<small class="muted" style="display:block">' + esc(u.title || '') + ' · ' + esc(u.email || '') + ' · ' + esc(LOCN(u.location).name) + '</small></div><button class="btn sm primary" data-act="add-crm" data-id="' + u.id + '">Add</button></div>').join('') : '<div class="empty">Everyone active in the CRM is already in NovaHR.</div>') + '</div>';
+        '<div id="crmList" style="max-height:360px;overflow:auto">' + (list.length ? list.map(u => '<div class="li" data-name="' + esc(u.name.toLowerCase() + ' ' + (u.email || '').toLowerCase()) + '">' + avatar({ name: u.name, photo_url: u.photo }, 'sm') + '<div class="meta"><b>' + esc(u.name) + '</b>' + (u.test ? ' <span class="tag">looks like a test account</span>' : '') + '<small class="muted" style="display:block">' + esc(u.title || '') + ' · ' + esc(u.email || '') + ' · ' + locName(u.location) + '</small></div><button class="btn sm primary" data-act="add-crm" data-id="' + u.id + '">Add</button></div>').join('') : '<div class="empty">Everyone active in the CRM is already in NovaHR.</div>') + '</div>';
       $('addFoot').innerHTML = '<button class="btn" data-act="close-modal">Close</button>';
     } else {
       $('addBody').innerHTML = '<div class="fields"><div class="field full"><label for="n_name">Full name</label><input class="input" id="n_name"></div><div class="field"><label for="n_title">Job title</label><input class="input" id="n_title"></div>' +
         '<div class="field"><label for="n_dept">Department</label><select class="select" id="n_dept" style="width:100%"><option value="">—</option>' + S.org.depts.map(d => '<option value="' + d.id + '">' + esc(d.name) + '</option>').join('') + '</select></div>' +
-        '<div class="field"><label for="n_loc">Location</label><select class="select" id="n_loc" style="width:100%">' + Object.keys(S.locations).map(k => '<option value="' + k + '">' + esc(S.locations[k].name) + '</option>').join('') + '</select></div>' +
+        '<div class="field"><label for="n_loc">Location</label><select class="select" id="n_loc" data-loc style="width:100%">' + Object.keys(S.locations).map(k => '<option value="' + k + '">' + esc(S.locations[k].name) + '</option>').join('') + '</select></div>' +
         '<div class="field"><label for="n_email">Work email</label><input class="input" id="n_email" type="email"></div><div class="field"><label for="n_hire">Start date</label><input class="input" id="n_hire" type="date" value="' + today() + '"></div>' +
         '<div class="field"><label for="n_rate">Hourly rate (USD)</label><input class="input" id="n_rate" type="number" step="0.25"></div></div><p class="muted" style="font-size:12px;margin:12px 0 0">For someone not in the CRM yet (a contractor, a new hire before their account). Fill in the rest on their profile.</p>';
       $('addFoot').innerHTML = '<button class="btn" data-act="close-modal">Cancel</button><button class="btn primary" data-act="add-save">Add employee</button>';
@@ -1119,6 +1181,8 @@
       case 'req-for': closeAll(); UI.view = 'timeoff'; render(); setTimeout(() => { const s = $('rq_for'); if (s) { s.value = id; ppSync(s); rqSummary(); } }, 30); return;
       case 'cal': { const [y, m] = calBase(); const d = new Date(y, m + (+b.dataset.n), 1); UI.calMonth = [d.getFullYear(), d.getMonth()]; render(); return; }
       case 'cal-loc': UI.calLoc = b.dataset.k; render(); return;
+      case 'org-pan': { const w = document.querySelector('.org-wrap'); if (w) w.scrollBy({ left: +b.dataset.d * Math.max(240, w.clientWidth * 0.7), behavior: 'smooth' }); return; }
+      case 'org-zoom': orgZoom(b.dataset.d); return;
       case 'time-tab': UI.timeTab = b.dataset.k; render(); return;
       case 'week': { const n = +b.dataset.n; UI.tsWeek = n === 0 ? mondayOf(today()) : addDays(UI.tsWeek || mondayOf(today()), n); UI.ts = null; render(); return; }
       case 'fix': openFix(id, b.dataset.d); return;

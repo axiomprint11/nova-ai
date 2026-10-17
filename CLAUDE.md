@@ -681,6 +681,15 @@ the page hidden and keeps the value — a pick sets it and fires `input` + `chan
 `data-in="rq"` preview work unchanged; `ppSync(sel)` repaints the button after code sets `.value`; a MutationObserver upgrades selects
 drawn later (`ppEnhance`). Used on Time off → For, Job & pay → Reports to, Rewards → shout-out Who, Company tree → Add person. A new
 people dropdown only needs `data-people`.
+**1.20.169 — location flags + the tree canvas**: every location shows its flag (`FLAGS` / `flag(k)` / `locName(k)` in public/hr.js —
+Glendale = US, Armenia, Mexico, Philippines, inline SVG): People chips + table, the drawer tag, Today's bands, timesheets, adherence,
+skills, calendar + holiday chips, holiday list, kiosks; a `<select data-loc>` (Job & pay Location, Add employee, Settings → holidays)
+uses the people picker with the flag + the local time instead of a head (`isLoc(sel)` / `locRow()`). **Company tree** (`.org-box` >
+`.org-wrap`): the wrap fills the window height (`orgSize()`) so both scrollbars are always on screen (before, the sideways scrollbar sat
+under the fold and the tree looked stuck), drags with the hand anywhere — cards included; a drag never opens a card (the click after a
+move is swallowed), text selection is blocked while dragging — ‹ › arrows + edge fades show while there is more that way (`orgEdges()`),
+← → keys when focused, and zoom − % + Fit (CSS `zoom`, `UI.orgZoom`, localStorage `hr_org_zoom`, 30–150 %); scroll is kept both ways
+across re-renders.
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 

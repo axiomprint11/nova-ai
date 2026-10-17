@@ -276,8 +276,32 @@ button.lvl:hover { background: var(--surface-2); }
 .sq.late { background: var(--break); } .sq.vlate { background: #ef4444; } .sq.early { background: var(--accent); } .sq.missed { background: transparent; border: 1.5px solid #ef4444; }
 
 /* company tree */
-.org-wrap { overflow-x: auto; padding: 26px 22px 30px; }
-.org { display: inline-flex; flex-direction: column; align-items: center; min-width: 100%; }
+/* 1.20.169: a canvas — fills the window, scrolls both ways, drags with the hand, arrows + zoom */
+.org-box { position: relative; padding: 0; overflow: hidden; }
+.org-wrap { overflow: auto; padding: 26px 22px 64px; height: calc(100vh - 230px); min-height: 380px; cursor: grab; outline: none; scrollbar-width: thin; }
+.org-wrap.dragging { cursor: grabbing; user-select: none; }
+.org-wrap.dragging * { cursor: grabbing !important; }
+.org-wrap::-webkit-scrollbar { height: 12px; width: 12px; } .org-wrap::-webkit-scrollbar-thumb { background: #cfcbe0; border-radius: 8px; border: 3px solid #fff; } .org-wrap::-webkit-scrollbar-thumb:hover { background: #b3aecb; }
+.org { display: flex; flex-direction: column; align-items: center; width: max-content; min-width: 100%; }
+.org-box::before, .org-box::after { content: ""; position: absolute; top: 0; bottom: 12px; width: 46px; pointer-events: none; opacity: 0; transition: opacity .15s; z-index: 2; }
+.org-box::before { left: 0; background: linear-gradient(90deg, #fff, rgba(255,255,255,0)); } .org-box::after { right: 12px; background: linear-gradient(270deg, #fff, rgba(255,255,255,0)); }
+.org-box.more-l::before, .org-box.more-r::after { opacity: 1; }
+.org-arrow { position: absolute; top: 50%; transform: translateY(-50%); z-index: 3; width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line); background: #fff; color: var(--ink-2); box-shadow: var(--shadow); display: none; align-items: center; justify-content: center; cursor: pointer; }
+.org-arrow:hover { color: var(--accent); border-color: var(--accent); } .org-arrow.l { left: 10px; } .org-arrow.r { right: 22px; }
+.org-box.more-l .org-arrow.l, .org-box.more-r .org-arrow.r { display: flex; }
+.org-ctl { position: absolute; right: 24px; bottom: 22px; z-index: 3; display: flex; align-items: center; gap: 2px; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 3px; box-shadow: var(--shadow); }
+.org-ctl button { border: 0; background: none; min-width: 30px; height: 28px; border-radius: 7px; font-size: 15px; font-weight: 600; font-family: inherit; color: var(--ink-2); cursor: pointer; padding: 0 8px; }
+.org-ctl button:hover { background: var(--surface-2); color: var(--ink); } .org-ctl .pct { font-size: 12px; min-width: 50px; font-variant-numeric: tabular-nums; } .org-ctl button[data-d="fit"] { font-size: 12px; }
+.org-hint { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-3); padding: 0 8px 0 6px; border-right: 1px solid var(--line); margin-right: 2px; }
+@media (max-width: 760px) { .org-hint { display: none; } .org-wrap { height: calc(100vh - 260px); } }
+/* 1.20.169: location flags */
+.flag { display: inline-flex; width: 18px; height: 12px; border-radius: 2px; overflow: hidden; box-shadow: 0 0 0 1px rgba(0,0,0,.08); vertical-align: -1px; flex: none; margin-right: 6px; }
+.flag svg { width: 18px; height: 12px; display: block; }
+.locn { display: inline-flex; align-items: center; white-space: nowrap; }
+.chip .flag { margin-right: 6px; } .ev .flag { width: 14px; height: 9px; margin-right: 4px; } .ev .flag svg { width: 14px; height: 9px; }
+small .flag, .muted .flag { width: 15px; height: 10px; margin-right: 4px; } small .flag svg, .muted .flag svg { width: 15px; height: 10px; }
+.pp-flag { width: 30px; height: 30px; border-radius: 8px; background: var(--surface-2); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.pp-flag .flag { width: 22px; height: 15px; margin: 0; } .pp-flag .flag svg { width: 22px; height: 15px; }
 .ceo { display: flex; align-items: center; gap: 14px; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 14px 18px; box-shadow: var(--shadow); position: relative; flex-wrap: wrap; justify-content: center; }
 .ceo b { font-size: 15.5px; display: block; } .ceo small { color: var(--ink-3); }
 .ceo-stats { display: flex; gap: 14px; border-left: 1px solid var(--line); padding-left: 14px; font-size: 12px; color: var(--ink-3); }
