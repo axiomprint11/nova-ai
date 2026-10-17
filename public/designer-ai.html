@@ -104,6 +104,14 @@
   .da-empty { color: var(--muted); font-size: 13px; padding: 24px; text-align: center; }
   .da-soon { padding: 60px 20px; text-align: center; color: var(--muted); } .da-soon b { display: block; font-size: 16px; color: var(--ink); margin-bottom: 6px; }
   .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #1c1c28; color: #fff; padding: 9px 14px; border-radius: 9px; font-size: 13px; z-index: 50; }
+  /* 1.20.166 — score parts + weights */
+  .da-parts { display: grid; grid-template-columns: repeat(2, 86px); gap: 3px 4px; margin: 3px 0 2px; } .da-parts .pt { position: relative; width: 86px; height: 15px; border-radius: 4px; background: #eef2f7; overflow: hidden; }
+  .da-parts .pt i { position: absolute; left: 0; top: 0; bottom: 0; background: #a7f3d0; } .da-parts .pt em { position: relative; font-style: normal; font-size: 9.5px; font-weight: 600; color: #065f46; padding-left: 5px; line-height: 15px; white-space: nowrap; }
+  .da-parts .pt.off { opacity: .4; }
+  .da-wgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 6px 0 12px; }
+  .da-w { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; grid-template-columns: 1fr 110px; gap: 2px 10px; align-items: start; }
+  .da-w b { font-size: 13.5px; grid-column: 1; } .da-w span { font-size: 12px; color: var(--muted); grid-column: 1; line-height: 1.4; } .da-w select { grid-column: 2; grid-row: 1 / span 2; height: 32px; border: 1px solid var(--line); border-radius: 7px; font-family: inherit; font-size: 13px; }
+  .da-aitog { display: flex; gap: 8px; align-items: center; font-size: 13px; margin: 4px 0 8px; } .da-aitog input { width: auto; height: auto; }
 </style>
 </head>
 <body>
@@ -144,8 +152,20 @@
     </div>
     <div class="da-subview" data-s="logic">
       <div class="da-card">
+        <h2>How Nova scores<span class="sp"></span><span class="da-muted">all arithmetic — a Match takes well under a second</span></h2>
+        <p class="da-p">Every Match scores the job first — <b>hard</b>, <b>creative</b> and <b>client contact</b>, 0–10 each — then every designer who takes jobs on four parts. Choose how much each part counts.</p>
+        <div class="da-wgrid">
+          <div class="da-w"><b>Capacity</b><span>Room left under their Max active (25 points). A pick made here in the last 2 hours costs 3.</span><select data-w="capacity"><option value="0">Off</option><option value="0.5">Half</option><option value="1">Normal</option><option value="1.5">×1.5</option><option value="2">Double</option></select></div>
+          <div class="da-w"><b>Skills</b><span>Hardness against their Hard-jobs level (20), creativity against their Creative level (8), client contact against their Communication level (7). A Tier 2 job keeps 40% for a designer not marked Tier 2; a language the job mentions +5.</span><select data-w="skills"><option value="0">Off</option><option value="0.5">Half</option><option value="1">Normal</option><option value="1.5">×1.5</option><option value="2">Double</option></select></div>
+          <div class="da-w"><b>History</b><span>Did this product in 180 days (3 a job, up to 15), else the category (1 a job, up to 8), strong sides found in the job (5 each, up to 10); newer designers +8 on a common easy product.</span><select data-w="history"><option value="0">Off</option><option value="0.5">Half</option><option value="1">Normal</option><option value="1.5">×1.5</option><option value="2">Double</option></select></div>
+          <div class="da-w"><b>Hours</b><span>On shift with time left 15 · under 90 min left 12 (6 on a hard job) · under 60 min 4 · hours not set 8 · off shift 0. Off shift never tops the list (capped at 15), at max capped at 25; after hours whoever starts first wins.</span><select data-w="hours"><option value="0">Off</option><option value="0.5">Half</option><option value="1">Normal</option><option value="1.5">×1.5</option><option value="2">Double</option></select></div>
+        </div>
+        <label class="da-aitog"><input type="checkbox" id="daUseAi"> Also run my written Match Logic below through AI — slower (about 5–10 s a match). Off: the rules below are kept but not read.</label>
+        <div class="da-ef-foot"><button class="bk-btn pri" id="daWSave">Save scoring</button></div>
+      </div>
+      <div class="da-card">
         <h2>Match Logic<span class="sp"></span><span class="da-muted" id="daLogicWhen"></span></h2>
-        <p class="da-p">Write how you want jobs matched to designers, in your own words — who takes what, who to protect, who to grow, what to avoid. Nova scores every designer with its built-in rules first (history with the product, strong sides, hardness and creativity against their levels, newer designers on common easy work, hours, load), then reads what you wrote here and moves the scores where your rules apply. Each change shows on the pick as "your rule: …".</p>
+        <p class="da-p"><b>Read by AI only when the switch above is on.</b> Write how you want jobs matched to designers, in your own words — who takes what, who to protect, who to grow, what to avoid. Nova scores every designer with its built-in rules first (history with the product, strong sides, hardness and creativity against their levels, newer designers on common easy work, hours, load), then reads what you wrote here and moves the scores where your rules apply. Each change shows on the pick as "your rule: …".</p>
         <textarea id="daLogic" rows="16" placeholder="Examples:
 - Packaging and folding cartons go to George or Edgar first; Jelly only when both are over 6 active jobs.
 - Never give Max a new job after 1:30 PM — he leaves at 2.
@@ -159,8 +179,8 @@
         <textarea id="daOverload" rows="6"></textarea>
         <div class="da-sub" style="margin:8px 0 12px">When everyone is busy the job is left in the queue, tagged on the Test Data row and logged in History — no email is sent.</div>
         <div class="da-ef-foot"><button class="bk-btn pri" id="daOverloadSave">Save</button></div>
-        <h3 class="da-h3">What Nova scores on its own</h3>
-        <ul class="da-ul">
+        <h3 class="da-h3" style="display:none">What Nova scores on its own</h3>
+        <ul class="da-ul" style="display:none">
           <li><b>History</b> — did this product in 180 days (+5 a job, up to +30), else the same category (+2 a job, up to +15).</li>
           <li><b>Strong sides</b> — a word from the designer's list found in the product, category, proof type or job name (+12 each, up to +36).</li>
           <li><b>Tier 2</b> — a Tier 2 job: +15 for a Tier 2 designer, −20 otherwise.</li>

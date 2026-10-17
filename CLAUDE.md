@@ -470,6 +470,18 @@ reads in `designersFresh()`, the 180-day history read alongside `designers()`, a
 `da_matches.timing` = `{job, scores, rules}` ms, and History shows "CRM 1.2 s · rules AI 4.0 s" under the total (hover = the three
 parts). Shrinking the window to 6 months would not help — the data is already only months. Stub test (300 ms per CRM query, 800 ms
 model): 2.4 s cold / 1.4 s warm, three queries in flight at once.
+**1.20.166 — the score is arithmetic; the AI is optional.** Production showed CRM 0.1–0.2 s and the rules model 4.7–10 s, so a Match no
+longer calls the model unless the owner ticks **"Also run my written Match Logic through AI"** (`da_settings.use_ai` = '1'; off by default
+— the written rules are kept, not read). `match()` now scores in four parts, each with its points (`p.parts` = [{k, got, max, w}], drawn as
+small bars on the pick by `partsBar()`): **Capacity 25** (room under Max active, −3 per Nova pick in 2 h) · **Skills 35** (hardness fit 20:
+over their level −5 a point, at or ≤ 2 above 20, overqualified on a ≤ 4 job down to 10; creativity fit 8 and client-contact fit 7 when the
+job is ≥ 5 on it, full otherwise; +5 a mentioned language; a Tier 2 job keeps 40 % for a non-Tier 2 designer) · **History 25** (product
+3 a job up to 15, else category 1 a job up to 8; strong sides 5 each up to 10; newer designer +8 on common easy work) · **Hours 15**
+(on shift 15, < 90 min left 12 / 6 on a hard job, < 60 min 4, not set 8, off 0). Score = Σ part × weight ÷ Σ max × weight × 100; the
+off-shift (15) / at-max (25) caps and the after-hours "first in" ranking stay. The job gets a third 0–10 score, **client contact**
+(`jobComm()`: design fee, creative ≥ 6, "Work with Our Designers", manual proof, a rejected round, notes asking for calls / changes, a
+language), shown on the Test Data row. **Match Logic → How Nova scores**: a weight per part (Off · Half · Normal · ×1.5 · Double →
+`da_settings.weights` JSON, `weights()`), the AI switch, Save scoring. Stub test: 0.6 s with no model call.
 
 ## ReportsAI (1.20.96)
 

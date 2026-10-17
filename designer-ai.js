@@ -118,7 +118,7 @@ module.exports = function mountDesignerAi(app, deps) {
       design_fee: Number(r.design_price) || 0, notes: [r.design_notes, r.prepress_notes, r.prepress_internal_notes].filter(Boolean).join('\n').slice(0, 1200), product_180: Number(r.product_180) || 0, category_id: r.category_id,
       files: jobFiles(r.file_slots, r.file_versions),
       nova: mine[r.id] || null, busy: busy[r.id] ? { at: busy[r.id].at, reason: busy[r.id].reason } : null
-    })).map(j => Object.assign(j, { hard: jobHard(j), creative: jobCreative(j), common: j.product_180 >= 40 }));
+    })).map(j => Object.assign(j, { hard: jobHard(j), creative: jobCreative(j), common: j.product_180 >= 40 })).map(j => Object.assign(j, { comm: jobComm(j) }));
   }
   // 1.20.17: how hard and how creative a job is, 0–10 — from the category, the proof tier, the design fee and the notes
   const HARD_BY_CAT = { 'Folding Cartons': 8, 'Rigid Boxes': 9, 'Corrugated Boxes': 8, 'Sleeves and Inserts': 7, 'Catalogs & Books': 7, 'Trade Show Displays': 6, 'Standing Displays': 6, 'Custom': 8, 'Services': 7, 'Roll Labels': 5, 'Adhesive Products': 5, 'Stickers on Sheet': 4, 'Individual Stickers': 4, 'Rigid Boards': 4, 'Signs': 4, 'Real Estate Signs': 3, 'Banners / Posters': 3, 'Banner Stands': 3, 'Flags': 4, 'Standard Business Cards': 2, 'Luxury Business Cards': 4, 'Plastic Business Cards': 3, 'Special Shape Business Cards': 6, 'Marketing Materials': 3, 'Brochures / Flyers': 3, 'Menus': 4, 'Invitations': 5, 'Event & Invitations': 5, 'Calendars': 5, 'Promo Products': 4, 'Wall Art': 5, 'Mailing & EDDM': 4, 'Holders / Folders': 5 };
@@ -163,6 +163,19 @@ module.exports = function mountDesignerAi(app, deps) {
     if (/Work with Our Designers/i.test(j.files_type || '')) c = Math.max(c, 7);
     if (/design|create|layout|mock ?up|logo|artwork from scratch|make it look/i.test(j.notes || '')) c += 1;
     if (/Print Ready|Use Existing Files/i.test(j.files_type || '') && j.design_fee === 0) c = Math.min(c, 2);
+    return Math.max(0, Math.min(10, c));
+  }
+  // 1.20.166: how much talking to the client the job needs, 0–10 — a design fee, a creative brief, "Work with Our Designers",
+  // a manual proof (back-and-forth on the proof), a rejected-with-edits round, notes asking for calls / changes, another language
+  function jobComm(j) {
+    let c = 2;
+    if (j.design_fee > 0) c += 3;
+    if (j.creative >= 6) c += 2;
+    if (/Work with Our Designers/i.test(j.files_type || '')) c += 2;
+    if (/manual proof/i.test(j.proof_type || '')) c += 1;
+    if (/rejected/.test(j.status || '')) c += 2;
+    if (/\bcall\b|meeting|zoom|discuss|revision|changes|picky|particular|several (rounds|versions)/i.test(j.notes || '')) c += 2;
+    if (jobLangs(j).length) c += 1;
     return Math.max(0, Math.min(10, c));
   }
   // 1.20.21: client communication (0–10) and the languages a designer speaks — a job that needs talking to the client
@@ -211,52 +224,59 @@ module.exports = function mountDesignerAi(app, deps) {
     const team = teamAll.filter(d => d.active);
     const hist = {}; h.forEach(r => { hist[r.user_id] = { product: Number(r.same_product) || 0, cat: Number(r.same_cat) || 0 }; });
     const recent = {}; (await dbAll("SELECT user_id, COUNT(*) n FROM da_assign WHERE status = 'assigned' AND at >= datetime('now', '-2 hours') GROUP BY user_id")).forEach(r => { recent[r.user_id] = r.n; });
-    const minLoad = team.length ? Math.min(...team.map(d => d.active_jobs)) : 0;
     const langs = jobLangs(job);
     const jobText = [job.product, job.category, job.proof_type, job.name, job.files_type].join(' ').toLowerCase();
     const isT2 = /tier ?2|tier_2/i.test(job.proof_type + ' ' + job.substage);
-    // 1.20.17: every reason carries its points, so the pick can be read: "did 39 × Classic Business Cards (+30) · 2 active jobs (−3)"
+    // 1.20.166 — the score is FOUR parts, each with its own points, all arithmetic (no model):
+    //   Capacity (25) — room left under their Max active; −3 per pick made here in the last 2 hours
+    //   Skills   (35) — hardness fit 20 + creativity fit 8 + client-communication fit 7 (×0.4 when a Tier 2 job meets a non-Tier 2 designer; +5 a language the job mentions)
+    //   History  (25) — this product in 180 days (3 a job, up to 15) else the category (1 a job, up to 8) + strong sides (5 each, up to 10) ± newer-designer rule
+    //   Hours    (15) — on shift with time left 15 · leaving within 90 min (hard job) 6 / 12 · within 60 min 4 · hours not set 8 · off shift 0
+    // Each part × the owner's weight (Match Logic → How Nova scores), summed and turned into 0–100. Off shift caps at 15, at max at 25.
+    const W = await weights();
+    const MAXP = { capacity: 25, skills: 35, history: 25, hours: 15 };
+    const denom = Object.keys(MAXP).reduce((n, k) => n + MAXP[k] * W[k], 0) || 1;
     const pts = (n) => ' (' + (n > 0 ? '+' : '') + n + ')';
     const out = team.map(d => {
-      let score = 50; const why = [];
-      const add = (n, text) => { score += n; why.push(text + (n ? pts(n) : '')); };
-      const h = hist[d.user_id] || { product: 0, cat: 0 };
-      if (h.product) add(Math.min(30, h.product * 5), 'did ' + h.product + ' × ' + (job.product || 'this product') + ' in 180 days');
-      else if (h.cat) add(Math.min(15, h.cat * 2), h.cat + ' ' + (job.category || 'same category') + ' jobs in 180 days');
-      const hits = d.skill_list.filter(sk => sk && jobText.indexOf(sk) > -1);
-      if (hits.length) add(Math.min(36, hits.length * 12), 'strong side: ' + hits.join(', '));
-      if (isT2) { if (d.tier2) add(15, 'Tier 2 designer'); else add(-20, 'not marked Tier 2'); }
-      // how hard the job is against what they can take (0–10): each point over their level costs 6
-      const hardOver = job.hard - d.hard_level;
+      const why = [], part = { capacity: 0, skills: 0, history: 0, hours: 0 };
+      const note = (k, n, text) => { part[k] += n; why.push(text + (n ? pts(n) : '')); };
+      // ---- capacity
+      const max = d.max_active || 25, free = Math.max(0, max - d.active_jobs), atMax = !!(d.max_active && d.active_jobs >= d.max_active);
+      note('capacity', atMax ? 0 : Math.round(25 * free / max), d.active_jobs + ' active of ' + max + (atMax ? ' — at max' : ' — room for ' + free));
+      if (recent[d.user_id]) note('capacity', -Math.min(part.capacity, recent[d.user_id] * 3), 'picked ' + recent[d.user_id] + '× in the last 2 h');
+      // ---- skills
       const fw = job.files && job.files.why.length ? ' [' + job.files.why.join(', ') + ']' : '';
-      if (hardOver > 0) add(-Math.min(40, hardOver * 6), 'job hardness ' + job.hard + '/10' + fw + ' is over their ' + d.hard_level);
-      else if (job.hard >= 7) add(6, 'hard job (' + job.hard + '/10' + fw + ') within their ' + d.hard_level);
-      else if (job.files && job.files.hard >= 3 && d.hard_level >= 7) add(4, 'skilled for ' + job.files.labels.join(' / ') + ' files (level ' + d.hard_level + ')');
-      // 1.20.65: the fit the other way — a simple job (≤ 4) is wasted on a level-9 designer (−3 a level beyond hard + 2, up to −15:
-      // George at 9 on a hard-4 postcard −9), and the designers whose level sits at the job's hardness or up to 2 above it are
-      // the right ones for it (+4) — so Max at 5–6 beats George on the everyday postcard, and George stays free for the die lines.
-      else if (job.hard <= 4 && d.hard_level >= 7) add(-Math.min(15, (d.hard_level - job.hard - 2) * 3), 'too simple for a level-' + d.hard_level + ' designer — keep them for hard jobs');
-      else if (d.hard_level >= job.hard && d.hard_level <= job.hard + 2) add(4, 'the right level (' + d.hard_level + ') for a ' + job.hard + '/10 job');
-      // a creative job (design fee, "Work with Our Designers", design notes) goes to the creative ones
-      if (job.creative >= 6 || job.design_fee > 0) { const c = (d.comm_level == null ? 5 : d.comm_level) - 5; if (c) add(c * 2, 'client communication ' + (c + 5) + '/10 on a job with client back-and-forth'); }
-      langs.forEach(l => { if ((d.language_list || []).indexOf(l) > -1) add(12, 'speaks ' + l + ' — the job mentions it'); });
-      if (job.creative >= 6) { const diff = d.creative_level - 5; add(diff * 3, 'creative job ' + job.creative + '/10 · their creative level ' + d.creative_level); if (d.creative_level < job.creative - 2) add(-15, 'below the creativity this job asks'); }
-      // newer designers: common, easy products are theirs to learn on; the hard / creative ones are not
-      if (d.is_new) { if (job.common && job.hard <= 4 && job.creative < 6) add(15, 'newer designer (' + d.jobs_180 + ' jobs in 180 d) — a common, easy product'); else if (job.hard >= 7 || job.creative >= 7) add(-10, 'newer designer — not a hard / creative one'); }
-      // hours: off shift is out; leaving within the hour should not start something new
+      const diff = d.hard_level - job.hard;
+      let hs = diff < 0 ? Math.max(0, 20 + diff * 5) : diff <= 2 ? 20 : job.hard <= 4 ? Math.max(10, 20 - (diff - 2) * 3) : 18;
+      note('skills', hs, diff < 0 ? 'job hardness ' + job.hard + '/10' + fw + ' is over their ' + d.hard_level : diff <= 2 ? 'the right level (' + d.hard_level + ') for a ' + job.hard + '/10 job' + fw : job.hard <= 4 ? 'level ' + d.hard_level + ' — overqualified for a ' + job.hard + '/10 job' : 'level ' + d.hard_level + ' covers a ' + job.hard + '/10 job' + fw);
+      const cl = d.creative_level == null ? 5 : d.creative_level;
+      if (job.creative >= 5) note('skills', cl >= job.creative ? 8 : Math.max(0, 8 - (job.creative - cl) * 2), 'creative job ' + job.creative + '/10 · their creative ' + cl); else part.skills += 8;
+      const ml = d.comm_level == null ? 5 : d.comm_level;
+      if (job.comm >= 5) note('skills', ml >= job.comm ? 7 : Math.max(0, 7 - (job.comm - ml) * 2), 'client contact ' + job.comm + '/10 · their communication ' + ml); else part.skills += 7;
+      langs.forEach(l => { if ((d.language_list || []).indexOf(l) > -1) note('skills', 5, 'speaks ' + l + ' — the job mentions it'); });
+      if (isT2 && !d.tier2) { const cut = Math.round(part.skills * 0.6); note('skills', -cut, 'Tier 2 job — not a Tier 2 designer'); }
+      else if (isT2) why.push('Tier 2 designer');
+      part.skills = Math.min(35, part.skills);
+      // ---- history & strong sides
+      const h = hist[d.user_id] || { product: 0, cat: 0 };
+      if (h.product) note('history', Math.min(15, h.product * 3), 'did ' + h.product + ' × ' + (job.product || 'this product') + ' in 180 days');
+      else if (h.cat) note('history', Math.min(8, h.cat), h.cat + ' ' + (job.category || 'same category') + ' jobs in 180 days');
+      const hits = d.skill_list.filter(sk => sk && jobText.indexOf(sk) > -1);
+      if (hits.length) note('history', Math.min(10, hits.length * 5), 'strong side: ' + hits.join(', '));
+      if (d.is_new) { if (job.common && job.hard <= 4 && job.creative < 6) note('history', 8, 'newer designer (' + d.jobs_180 + ' jobs in 180 d) — a common, easy product'); else if (job.hard >= 7 || job.creative >= 7) note('history', -Math.min(part.history, 5), 'newer designer — not a hard / creative one'); }
+      part.history = Math.max(0, Math.min(25, part.history));
+      // ---- hours (the clock)
       const sh = d.on_shift;
-      if (!sh.known) add(0, 'hours not set — add them on the Designers tab');
-      else if (!sh.on) add(-45, 'OFF SHIFT — ' + sh.why);
-      else if (sh.left <= 60) add(-25, 'leaves at ' + sh.ends);
-      else if (sh.left <= 90 && job.hard >= 6) add(-15, 'only ' + sh.left + ' min left today for a hard job');
-      const over = d.active_jobs - minLoad;
-      add(over > 0 ? -Math.min(30, over * 3) : 0, d.active_jobs + ' active job' + (d.active_jobs === 1 ? '' : 's') + (over === 0 ? ' — lightest load' : ''));
-      if (d.max_active && d.active_jobs >= d.max_active) add(-40, 'at max (' + d.max_active + ')');
-      if (recent[d.user_id]) add(-recent[d.user_id] * 4, 'picked ' + recent[d.user_id] + '× in the last 2 h');
-      // 1.20.32: hours and the cap are hard limits, not just points — an off-shift designer can never top the list
-      const off = !!(sh.known && !sh.on), atMax = !!(d.max_active && d.active_jobs >= d.max_active);
+      if (!sh.known) note('hours', 8, 'hours not set — add them on the Designers tab');
+      else if (!sh.on) note('hours', 0, 'OFF SHIFT — ' + sh.why);
+      else if (sh.left <= 60) note('hours', 4, 'leaves at ' + sh.ends);
+      else if (sh.left <= 90) note('hours', job.hard >= 6 ? 6 : 12, 'only ' + sh.left + ' min left today' + (job.hard >= 6 ? ' for a hard job' : ''));
+      else note('hours', 15, 'on shift until ' + sh.ends);
+      let score = Object.keys(MAXP).reduce((n, k) => n + Math.max(0, part[k]) * W[k], 0) / denom * 100;
+      const off = !!(sh.known && !sh.on);
       if (off) score = Math.min(score, 15); else if (atMax) score = Math.min(score, 25);
-      return { user_id: d.user_id, name: d.name, last_name: d.last_name, photo: d.photo, score: Math.max(0, Math.min(100, Math.round(score))), why, active_jobs: d.active_jobs, at_max: atMax, off_shift: off, hours_known: !!sh.known, _d: d };
+      const parts = Object.keys(MAXP).map(k => ({ k, got: Math.max(0, Math.round(part[k])), max: MAXP[k], w: W[k] }));
+      return { user_id: d.user_id, name: d.name, last_name: d.last_name, photo: d.photo, score: Math.max(0, Math.min(100, Math.round(score))), why, parts, active_jobs: d.active_jobs, at_max: atMax, off_shift: off, hours_known: !!sh.known, _d: d };
     });
     // 1.20.51: after hours, when nobody is on shift, the job should wait for whoever is in FIRST — the picks are ranked by
     // the next shift start (who starts earliest gets the points), still under the off-shift cap so "busy" stays true.
@@ -309,6 +329,12 @@ module.exports = function mountDesignerAi(app, deps) {
   // 1.20.18: Match Logic — the owner's rules in plain words (Designer AI → Match Logic). When set, the model reads the job, the
   // scored candidates and the rules, and may move the scores; every change it makes is shown as "your rule: …" on the pick.
   const getSetting = async (k) => { const r = await dbGet('SELECT value FROM da_settings WHERE key = ?', [k]); return r ? r.value : ''; };
+  /* 1.20.166: how much each part of the score counts (Match Logic → How Nova scores), 0–2 each, 1 = normal */
+  const W_DEFAULT = { capacity: 1, skills: 1, history: 1, hours: 1 };
+  async function weights() {
+    let w = {}; try { w = JSON.parse((await getSetting('weights')) || '{}'); } catch (e) {}
+    const out = {}; Object.keys(W_DEFAULT).forEach(k => { const n = Number(w[k]); out[k] = n >= 0 && n <= 2 ? n : W_DEFAULT[k]; }); return out;
+  }
   // 1.20.28 — Overload: when nobody can take the job it stays in the queue, is marked "Everyone is busy" and the people in
   // `overload_to` get an email (once per job per day). Built-in test: every designer who takes jobs is at their Max active
   // or off shift. The owner's Overload Logic text (editable on the Match Logic tab) goes to the model too, which may say
@@ -356,12 +382,16 @@ module.exports = function mountDesignerAi(app, deps) {
     } catch (e) { errlog('ai adjust', e.message); return { picks, ai: false, ai_error: e.message }; }
   }
   app.get('/api/designer/settings', ...guard, async (req, res) => { try { const r = await dbGet('SELECT * FROM da_settings WHERE key = ?', ['match_logic']); const o = await dbGet('SELECT * FROM da_settings WHERE key = ?', ['overload_logic']); const t = await dbGet('SELECT * FROM da_settings WHERE key = ?', ['overload_to']);
-    res.json({ ok: true, match_logic: r ? r.value : '', updated_by: r ? r.updated_by : null, updated_at: r ? r.updated_at : null, overload_logic: o ? o.value : OVERLOAD_DEFAULT, overload_default: !o, overload_to: t ? t.value : OVERLOAD_TO_DEFAULT, overload_updated_at: o ? o.updated_at : null, overload_updated_by: o ? o.updated_by : null }); } catch (e) { res.json({ ok: false, error: e.message }); } });
+    let w = null; try { w = await weights(); } catch (e) {}
+    const ua = await getSetting('use_ai');
+    res.json({ ok: true, weights: w, use_ai: ua === '1', match_logic: r ? r.value : '', updated_by: r ? r.updated_by : null, updated_at: r ? r.updated_at : null, overload_logic: o ? o.value : OVERLOAD_DEFAULT, overload_default: !o, overload_to: t ? t.value : OVERLOAD_TO_DEFAULT, overload_updated_at: o ? o.updated_at : null, overload_updated_by: o ? o.updated_by : null }); } catch (e) { res.json({ ok: false, error: e.message }); } });
   app.post('/api/designer/settings', ...guard, async (req, res) => {
     try {
       const put = (k, v) => dbRun('INSERT INTO da_settings (key, value, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = excluded.updated_at', [k, v, userId(req), nowIso()]);
       const b = req.body || {};
       if (b.match_logic != null) await put('match_logic', String(b.match_logic).slice(0, 8000));
+      if (b.weights && typeof b.weights === 'object') { const w = {}; Object.keys(W_DEFAULT).forEach(k => { const n = Number(b.weights[k]); w[k] = n >= 0 && n <= 2 ? Math.round(n * 100) / 100 : 1; }); await put('weights', JSON.stringify(w)); }
+      if (b.use_ai != null) await put('use_ai', b.use_ai ? '1' : '0');
       if (b.overload_logic != null) await put('overload_logic', String(b.overload_logic).slice(0, 4000));
       if (b.overload_to != null) await put('overload_to', String(b.overload_to).split(/[,;\s]+/).map(x => x.trim()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).join(', '));
       res.json({ ok: true }); }
@@ -371,10 +401,11 @@ module.exports = function mountDesignerAi(app, deps) {
   // button and by the CRM's cron (/api/designer/auto-assign). `who` is written on the busy row and the history.
   async function runMatch(id, who, source) {
     const t0 = Date.now(), timing = {};
-    const [job, overload, logic] = await Promise.all([queueAll(true, 0, id).then(l => { timing.job = Date.now() - t0; return l.find(j => j.id === id); }), getSetting('overload_logic'), getSetting('match_logic')]);   // 1.20.31: one job, not the whole queue
+    const [job, overload, logic, useAi] = await Promise.all([queueAll(true, 0, id).then(l => { timing.job = Date.now() - t0; return l.find(j => j.id === id); }), getSetting('overload_logic'), getSetting('match_logic'), getSetting('use_ai')]);   // 1.20.31: one job, not the whole queue
     if (!job) return { ok: false, status: 'not_in_queue', error: 'E' + id + ' is not in the queue (not parked on PrePress Tier 1 / Tier 2 in the prepress stage)' };
     let t1 = Date.now(); const base = await match(job); timing.scores = Date.now() - t1;
-    t1 = Date.now(); const r = await aiAdjust(job, base, logic, overload || OVERLOAD_DEFAULT); timing.rules = r.ai || r.ai_error ? Date.now() - t1 : 0;
+    /* 1.20.166: the written rules go to the model only when the owner switches it on — the score itself is all arithmetic now */
+    t1 = Date.now(); const r = useAi === '1' ? await aiAdjust(job, base, logic, overload || OVERLOAD_DEFAULT) : { picks: base, ai: false }; timing.rules = useAi === '1' ? Date.now() - t1 : 0;
     let busy = null;
     if (r.busy) busy = { reason: r.busy_reason || 'your Overload Logic says nobody should take this now' };
     else if (!r.ai && builtinBusy(base)) busy = { reason: 'every designer who takes jobs is at their max or off shift' };
