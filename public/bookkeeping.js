@@ -290,15 +290,21 @@
     const draw = () => {
       const f = q.value.trim().toLowerCase(); let html = '';
       const only = wrap.dataset.only;   // 1.19.59: 'income' = money in → only the income type(s); 'expense' = everything else
-      const tops = chart.filter(c => !c.parent && (!only || (only === 'income' ? !!c.income : !c.income)));
+      // 1.20.154: this side's types first; the other side's follow under a divider, collapsed — a refund we issued is negative income, a
+      // vendor's credit is a negative expense, so the owner must be able to reach them. The AI suggestions still stay on the line's side.
+      const sideOf = (c) => only === 'income' ? !!c.income : !c.income;
+      const allTops = chart.filter(c => !c.parent), tops = only ? allTops.filter(sideOf).concat(allTops.filter(c => !sideOf(c))) : allTops;
+      let divided = false;
       tops.forEach(t => {
+        const other = !!only && !sideOf(t);
+        if (other && !divided) { divided = true; html += '<div class="ckp-side">' + (only === 'income' ? 'Expense types — a vendor credit, a reversal' : 'Income types — a refund we issued, a reversal') + '</div>'; }
         const subs = t.children ? chart.filter(c => c.parent === t.name) : [];
         const kidsAll = t.children ? subs.flatMap(c => [{ name: c.name, lvl: 2, kids: chart.filter(g => g.parent === c.name).map(g => g.name) }].concat(chart.filter(g => g.parent === c.name).map(g => ({ name: g.name, lvl: 3, up: c.name })))) : [{ name: t.name, lvl: 1 }];
         const kids = kidsAll.map(k => k.name), lvlOf = {}, info = {}; kidsAll.forEach(k => { lvlOf[k.name] = k.lvl; info[k.name] = k; });
         const hit = (n) => n.toLowerCase().indexOf(f) > -1;
         const show = f ? kids.filter(k => hit(k) || hit(t.name) || (info[k].kids || []).some(hit) || (info[k].up && hit(info[k].up))) : kids;   // a match shows its sub above it and its sub-subs below
         if (!show.length) return;
-        const col = !f && ckpCollapsed[t.name] && !show.some(k => vals.indexOf(k) > -1);
+        const col = !f && (ckpCollapsed[t.name] != null ? ckpCollapsed[t.name] : other) && !show.some(k => vals.indexOf(k) > -1);   /* the other side starts folded */
         const nSel = kids.filter(k => vals.indexOf(k) > -1).length;
         html += '<div class="ckp-g' + (col ? ' col' : '') + '" data-g="' + esc(t.name) + '"><div class="ckp-gh"><span class="ckp-tri"></span>' + tile(t.color, t.icon, 'sm', '') + esc(t.name) + (nSel ? '<b>' + nSel + '</b>' : '') + '<small>' + kids.length + '</small></div>' +
           (t.children ? show.map(k => { const row = chart.find(c => c.name === k && c.parent); const ic = row && row.icon && iconKey(row.icon) ? tile(t.color, row.icon, 'xs', '') : ''; return '<div class="ckp-i' + (vals.indexOf(k) > -1 ? ' on' : '') + (lvlOf[k] === 3 ? ' l3' : '') + '" data-v="' + esc(k) + '"><span class="ckp-ck"></span>' + ic + esc(k) + '</div>'; }).join('') : '<div class="ckp-i top' + (vals.indexOf(t.name) > -1 ? ' on' : '') + '" data-v="' + esc(t.name) + '"><span class="ckp-ck"></span>use as is</div>') + '</div>';
