@@ -110,6 +110,38 @@
   .ma-set { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 12.5px; } .ma-set input[type=number] { width: 64px; } .ma-set input[type=text] { width: 260px; }
   .ma-set input[type=checkbox] { width: auto; height: auto; } .ma-set label { display: inline-flex; align-items: center; gap: 6px; }
   .ma-set input { height: 32px; border: 1px solid var(--line); border-radius: 7px; padding: 0 8px; font: 12.5px inherit; }
+  /* 1.20.161 — Sheet / Roll form pieces */
+  .ma-color { display: flex; gap: 6px; align-items: center; } .ma-color .sw { position: relative; width: 34px; height: 34px; flex: none; border-radius: 8px; border: 1px solid var(--line); overflow: hidden; cursor: pointer;
+    background: repeating-conic-gradient(#e5e7eb 0 25%, #fff 0 50%) 0 0 / 10px 10px; }
+  .ma-color .sw input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; border: none; padding: 0; } .ma-color .sw i { position: absolute; inset: 0; pointer-events: none; }
+  .ma-color input[name=color] { flex: 1; } .ma-color .clr { border: none; background: none; color: #9ca3af; font-size: 16px; cursor: pointer; width: 20px; } .ma-color.empty .clr { visibility: hidden; }
+  .ma-fb { display: flex; gap: 10px; align-items: center; min-height: 34px; } .ma-fb .ck { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--ink-soft); white-space: nowrap; }
+  .ma-fb .ck input { width: auto; height: auto; } .ma-fb select { flex: 1; }
+  .ma-mach { display: flex; flex-wrap: wrap; gap: 5px; } .ma-mach button { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--line); background: #fff; border-radius: 16px; padding: 4px 10px 4px 5px; font: 500 11.5px/1.2 inherit; color: var(--ink-soft); cursor: pointer; }
+  .ma-mach button img { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; } .ma-mach button.on { border-color: #1e1b2e; background: #1e1b2e; color: #fff; font-weight: 600; }
+  .ma-mach button.more { border-style: dashed; padding-left: 10px; color: #6b6890; }
+  .ma-f .pair.wt select[name=weight_per] { flex: 0 0 190px; } .ma-f .pair.st select { flex: 0 0 112px; } .ma-f .pair.st input { min-width: 60px; }
+  .ma-specs .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgba(0,0,0,.15); margin-right: 4px; vertical-align: -1px; }
+  /* Geo types panel */
+  .gp-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 96vw); background: #fff; box-shadow: -10px 0 40px rgba(20, 20, 40, .16); z-index: 33; display: none; flex-direction: column; }
+  .gp-panel.on { display: flex; } #maGeoDim { z-index: 32; }
+  .gp-hd { display: flex; gap: 10px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); } .gp-hd b { font-size: 16px; } .gp-hd .ma-muted { flex: 1; font-size: 11.5px; }
+  .gp-body { flex: 1; overflow: auto; padding: 10px 12px 30px; }
+  .gp-in { height: 36px; border: 1px solid var(--line); border-radius: 8px; padding: 0 12px; font: 13px inherit; background: #fff; min-width: 0; box-sizing: border-box; }
+  .gp-type { margin-bottom: 14px; } .gp-th .gp-tag { margin-right: 2px; } .gp-th { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; } .gp-th .gp-in { flex: 1; background: #fafafa; font-weight: 500; }
+  .gp-sub { display: grid; grid-template-columns: 34px 1fr 82px 30px 22px 44px; gap: 8px; align-items: center; margin: 0 0 8px; }
+  .gp-sub.new { grid-template-columns: 34px 1fr 82px 30px; } .gp-sub .ab { text-transform: uppercase; }
+  .gp-ic { width: 34px; height: 34px; border-radius: 6px; background: #0ea5e9; color: #fff; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .gp-ic svg { width: 20px; height: 20px; } .gp-ic img { width: 100%; height: 100%; object-fit: cover; background: #fff; }
+  .gp-del, .gp-act { border: none; background: none; color: #dc2626; cursor: pointer; width: 30px; height: 30px; border-radius: 7px; display: flex; align-items: center; justify-content: center; padding: 0; }
+  .gp-del svg { width: 18px; height: 18px; } .gp-del.big svg { width: 22px; height: 22px; } .gp-del:hover { background: #fef2f2; }
+  .gp-act { color: #4f46e5; font-size: 16px; font-weight: 700; } .gp-act:hover { background: #eef2ff; } .gp-act.ok { color: #047857; }
+  .gp-used { font-size: 11px; color: var(--muted); text-align: center; }
+  .gp-tag { font-size: 9.5px; font-weight: 700; border-radius: 5px; padding: 1px 5px; white-space: nowrap; } .gp-tag.nova { background: #fce7f3; color: #be185d; } .gp-tag.ed { background: #ede9fe; color: #6d28d9; } .gp-tag.off { background: #f3f4f6; color: #6b7280; }
+  .gp-add { text-align: right; } .gp-add button { border: none; background: none; color: #4f46e5; font: 500 12px inherit; cursor: pointer; padding: 2px 4px; }
+  .hid .gp-in { color: #9ca3af; background: #f9fafb; }
+  .gp-new { display: flex; gap: 8px; padding-top: 12px; border-top: 1px solid #f0f0f5; } .gp-new .gp-in { flex: 1; }
+  .gp-foot { margin-top: 12px; font-size: 12px; color: var(--muted); } .gp-foot input { vertical-align: -2px; }
   @media (max-width: 760px) { .ma-grid { grid-template-columns: repeat(2, 1fr); } .ma-span3, .ma-span4, .ma-span6, .ma-sec, .ma-ship, .ma-prev { grid-column: span 2; } }
 </style>
 </head>
@@ -134,6 +166,7 @@
       <select id="maGeo"><option value="">All geo types</option></select>
       <span class="sp"></span>
       <span class="ma-muted" id="maShown"></span>
+      <button class="bk-btn sm" id="maGeoBtn">Geo Types</button>
       <button class="bk-btn sm" id="maRefresh">Refresh</button>
     </div>
     <div class="ma-card" style="padding:0;overflow:visible">
@@ -181,6 +214,8 @@
 </div>
 <div class="ma-dim" id="maDim"></div>
 <div class="ma-drawer" id="maDrawer"></div>
+<div class="ma-dim" id="maGeoDim"></div>
+<div class="gp-panel" id="maGeoPanel"><div class="gp-hd"><b>Material Geo Types</b><span class="ma-muted">kept in Nova — the CRM's list is not changed</span><button class="ma-x" id="gpClose" title="Close (Esc)">×</button></div><div class="gp-body" id="gpBody"></div></div>
 <script src="/nova-loader.js"></script>
 <script src="/nova-nav.js"></script>
 <script>NovaNav.mount({ current: 'materials' });</script>

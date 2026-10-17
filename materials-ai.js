@@ -30,6 +30,8 @@ module.exports = function mountMaterialsAi(app, deps) {
     db.run(`CREATE TABLE IF NOT EXISTS ma_specs (material_id INTEGER PRIMARY KEY, form TEXT, thickness REAL, thickness_unit TEXT, color TEXT, edge_color TEXT,
       adhesive TEXT, finish TEXT, coated TEXT, basis_weight REAL, basis_unit TEXT, sides TEXT, use_where TEXT, features TEXT, brand TEXT, product_line TEXT,
       base_unit TEXT, press_w REAL, press_h REAL, weight REAL, weight_unit TEXT, weight_per TEXT, notes TEXT, updated_by TEXT, updated_at TEXT)`);
+    /* 1.20.161: the Sheet / Roll forms — colour swatch, back finish, roll liner, the machines that print it, our SKU, a measured stack */
+    ['color_hex TEXT', 'finish_back TEXT', 'liner TEXT', 'machines TEXT', 'sku TEXT', 'stack_thick REAL', 'stack_n INTEGER', 'geo_key TEXT'].forEach(c => db.run('ALTER TABLE ma_specs ADD COLUMN ' + c, () => {}));
     db.run(`CREATE TABLE IF NOT EXISTS ma_sources (id INTEGER PRIMARY KEY AUTOINCREMENT, material_id INTEGER, seller_id INTEGER, vendor_name TEXT, vendor_sku TEXT,
       vendor_desc TEXT, buy_unit TEXT DEFAULT 'sheet', units_per_buy REAL DEFAULT 1, unit_w REAL, unit_h REAL, yield_override REAL, cost_per_buy REAL,
       cost_date TEXT, cost_from TEXT, preferred INTEGER DEFAULT 0, active INTEGER DEFAULT 1, lead_days INTEGER, min_order TEXT, match_how TEXT, notes TEXT,
@@ -51,6 +53,9 @@ module.exports = function mountMaterialsAi(app, deps) {
     db.run('CREATE INDEX IF NOT EXISTS ma_stock_m ON ma_stock(material_id)');
     db.run('CREATE TABLE IF NOT EXISTS ma_seen (ref_kind TEXT, ref_id INTEGER, ref_idx INTEGER, at TEXT, PRIMARY KEY (ref_kind, ref_id, ref_idx))');
     db.run('CREATE TABLE IF NOT EXISTS ma_meta (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)');
+    /* 1.20.161 — Geo types kept in Nova: an edit of a CRM type / sub type (crm_id set) or one added here (crm_id NULL). The CRM's list is never written. */
+    db.run(`CREATE TABLE IF NOT EXISTS ma_geo (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, crm_id INTEGER, parent TEXT, name TEXT, abbr TEXT, icon_url TEXT,
+      hidden INTEGER DEFAULT 0, sort INTEGER, updated_by TEXT, updated_at TEXT)`);
   });
   const meta = async (k) => { const r = await dbGet('SELECT value FROM ma_meta WHERE key = ?', [k]); return r ? r.value : null; };
   const setMeta = (k, v) => dbRun("INSERT INTO ma_meta (key, value, updated_at) VALUES (?,?,datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at", [k, String(v)]);
@@ -69,16 +74,21 @@ module.exports = function mountMaterialsAi(app, deps) {
   const VOCAB = {
     form: [['sheet', 'Sheet'], ['roll', 'Roll'], ['rigid', 'Rigid board'], ['item', 'Item / hardware'], ['liquid', 'Ink / liquid']],
     thickness_unit: [['in', 'in'], ['mm', 'mm'], ['mil', 'mil'], ['pt', 'pt']],
+    thickness_unit_sr: [['pt', 'PT'], ['mil', 'Mil'], ['gsm', 'GSM']],
+    adhesive_roll: [['none', 'No adhesive'], ['permanent', 'Permanent'], ['removable', 'Removable'], ['static', 'Static']],
+    liner: [['none', 'No liner'], ['paper40', 'Paper 40#'], ['clear40', 'Clear 40#'], ['paper70', 'Paper 70#']],
+    weight_per: [['base', 'Per unit'], ['sqft', 'Per sq ft'], ['crm100', 'Per 100 sheets of 8.5×11'], ['p100_1319', 'Per 100 sheets of 13×19']],
+    stack_n: [['1', '1 piece'], ['10', '10 pieces'], ['100', '100 pieces']],
     adhesive: [['none', 'No adhesive'], ['permanent', 'Permanent'], ['removable', 'Removable'], ['repositionable', 'Repositionable'], ['static', 'Static cling']],
     finish: [['gloss', 'Gloss'], ['matte', 'Matte'], ['satin', 'Satin / Silk'], ['uncoated', 'Uncoated'], ['textured', 'Textured / Linen'], ['metallic', 'Metallic'], ['clear', 'Clear'], ['frosted', 'Frosted']],
     coated: [['none', 'Not coated'], ['c1s', 'Coated 1 side (C1S)'], ['c2s', 'Coated 2 sides (C2S)']],
     basis_unit: [['text', '# Text'], ['cover', '# Cover'], ['bond', '# Bond'], ['index', '# Index'], ['gsm', 'gsm'], ['oz', 'oz (banner)']],
-    sides: [['1', 'Prints 1 side'], ['2', 'Prints both sides']],
+    sides: [['1', 'Front only'], ['2', '2 sides'], ['0', 'None']],
     use_where: [['indoor', 'Indoor'], ['outdoor', 'Outdoor'], ['both', 'Indoor & outdoor']],
     features: ['Waterproof', 'Tear-resistant', 'UV-resistant', 'Scratch-resistant', 'Food-safe', 'Fire-rated', 'Recyclable', 'Blockout / opaque', 'Translucent', 'Reflective', 'Magnetic', 'Laser-safe', 'Eco / FSC'],
-    base_unit: [['sheet', 'Sheet (as bought)'], ['press', 'Press sheet (a set size)'], ['sqft', 'Square foot'], ['lft', 'Linear foot'], ['roll', 'Roll'], ['each', 'Each / piece']],
+    base_unit: [['sheet', 'Sheet'], ['each', 'Unit'], ['msi', 'MSI (1,000 sq in)'], ['sqft', 'Sq ft'], ['lft', 'Linear ft'], ['roll', 'Roll'], ['press', 'Press sheet (a set size)']],
     buy_unit: [['sheet', 'Sheet'], ['carton', 'Carton'], ['ream', 'Ream'], ['box', 'Box'], ['skid', 'Skid'], ['roll', 'Roll'], ['pack', 'Pack'], ['each', 'Each']],
-    weight_unit: [['oz', 'oz'], ['lb', 'lb'], ['g', 'g'], ['kg', 'kg']]
+    weight_unit: [['lb', 'LB'], ['kg', 'KG'], ['oz', 'OZ'], ['g', 'Gram']]
   };
   const RIGID = ['acrylic', 'pvc', 'foam', 'coroplast', 'aluminnum', 'wood', 'cardboard'];
 
@@ -90,7 +100,7 @@ module.exports = function mountMaterialsAi(app, deps) {
   }
   const crmMaterials = (fresh) => cached('materials', 5 * 60e3, async () => {
     const rows = await runQuery('SELECT m.id, m.name, m.material, m.type, m.production_step, m.thickness, m.t_measure, m.size, m.size_w, m.size_h, m.weight, m.color_name, m.color_hex, ' +
-      'm.w_measure, m.photo_url, m.website_image_url, m.swatch_name, m.supplier, m.seller_id, m.manufacturer, m.stock, m.location, m.code, m.cost, m.department_ids, ' +
+      'm.w_measure, m.photo_url, m.website_image_url, m.swatch_name, m.supplier, m.seller_id, m.manufacturer, m.stock, m.location, m.code, m.cost, m.department_ids, m.geo_type_id, m.geo_sub_type_id, ' +
       'gt.name AS geo_type, gs.name AS geo_sub_type FROM materials m LEFT JOIN geo_type gt ON gt.id = m.geo_type_id LEFT JOIN geo_sub_type gs ON gs.id = m.geo_sub_type_id ORDER BY m.name');
     let teams = {}; try { (await runQuery('SELECT id, name FROM team')).forEach(t => { teams[t.id] = t.name; }); } catch (e) {}
     rows.forEach(r => { let d = r.department_ids; try { if (typeof d === 'string') d = JSON.parse(d); } catch (e) { d = []; } r.departments = (Array.isArray(d) ? d : []).map(i => teams[i]).filter(Boolean); delete r.department_ids; });
@@ -105,6 +115,28 @@ module.exports = function mountMaterialsAi(app, deps) {
       'JOIN product_variables pv ON pv.id = pvi.variable_id WHERE pvi.material_id > 0 GROUP BY pvi.material_id');
     const out = {}; rows.forEach(r => { out[r.material_id] = { options: Number(r.n), products: Number(r.products) }; }); return out;
   }, fresh);
+
+  // ---- Geo types: the CRM's list with Nova's edits on top (keys ct<id> / cs<id> = CRM, nt<id> / ns<id> = made in Nova)
+  const crmGeo = (fresh) => cached('geo', 10 * 60e3, async () => ({
+    types: await runQuery('SELECT id, name FROM geo_type ORDER BY name'),
+    subs: await runQuery('SELECT id, geo_type_id, name, abbreviation, icon_url FROM geo_sub_type ORDER BY name')
+  }), fresh);
+  async function geoTree(fresh) {
+    const g = await crmGeo(fresh), ov = await dbAll('SELECT * FROM ma_geo ORDER BY id');
+    const ovOf = (kind, cid) => ov.find(o => o.kind === kind && o.crm_id === cid) || null;
+    const types = [], byKey = {};
+    g.types.forEach(t => { const o = ovOf('type', t.id); types.push({ key: 'ct' + t.id, crm: true, crm_name: t.name, name: (o && o.name) || t.name, edited: !!(o && o.name && o.name !== t.name), hidden: !!(o && o.hidden), subs: [] }); });
+    ov.filter(o => o.kind === 'type' && !o.crm_id).forEach(o => types.push({ key: 'nt' + o.id, crm: false, name: o.name, hidden: !!o.hidden, subs: [] }));
+    types.forEach(t => { byKey[t.key] = { key: t.key, name: t.name, type_key: t.key, type_name: t.name, hidden: t.hidden }; });
+    const subs = [];
+    g.subs.forEach(x => { const o = ovOf('sub', x.id); subs.push({ key: 'cs' + x.id, crm: true, parent: (o && o.parent) || 'ct' + x.geo_type_id, crm_name: x.name, name: (o && o.name) || x.name,
+      abbr: o && o.abbr != null ? o.abbr : (x.abbreviation || ''), crm_abbr: x.abbreviation || '', icon: (o && o.icon_url) || x.icon_url || null,
+      edited: !!(o && ((o.name && o.name !== x.name) || (o.abbr != null && o.abbr !== (x.abbreviation || '')))), hidden: !!(o && o.hidden) }); });
+    ov.filter(o => o.kind === 'sub' && !o.crm_id).forEach(o => subs.push({ key: 'ns' + o.id, crm: false, parent: o.parent, name: o.name, abbr: o.abbr || '', icon: o.icon_url || null, hidden: !!o.hidden }));
+    subs.forEach(x => { const t = types.find(y => y.key === x.parent); if (!t) return; t.subs.push(x); byKey[x.key] = { key: x.key, name: x.name, abbr: x.abbr, type_key: t.key, type_name: t.name, hidden: x.hidden || t.hidden }; });
+    types.sort((a, b) => a.name.localeCompare(b.name)); types.forEach(t => t.subs.sort((a, b) => a.name.localeCompare(b.name)));
+    return { types, byKey };
+  }
 
   // ---- matching a free-text supplier ("Kelly", "Montroy Sign", "GWF") to a CRM seller
   const STOP = ['inc', 'co', 'llc', 'corp', 'company', 'the', 'and', 'of', 'dba'];
@@ -153,32 +185,52 @@ module.exports = function mountMaterialsAi(app, deps) {
     const thick = Number(m.thickness) > 0 && Number(m.t_measure) === 1 ? Number(m.thickness) : Number(m.thickness) > 0 && Number(m.t_measure) === 100 ? +(Number(m.thickness) / 100).toFixed(5) : null;
     /* paper sheets carry a weight in lb per 100 sheets of 8.5×11 (100# cover = 3.51) — a ready-made weight */
     const paperW = type === 'sheet' && /paper/.test(mat) && Number(m.weight) > 0 && (!m.w_measure || m.w_measure === '100_sh_8.5x11') ? Number(m.weight) : null;
-    const mil = name.match(/(\d+(?:\.\d+)?)\s*mil/i);
+    const mil = name.match(/(\d+(?:\.\d+)?)\s*mil/i), pt = name.match(/(\d+(?:\.\d+)?)\s*pt\b/i);
+    /* Sheet / Roll speak in thousandths (PT for paper, Mil for film) or GSM — never inches */
+    let tv = thick != null ? thick : (mil ? Number(mil[1]) : null), tu = thick != null ? 'in' : (mil ? 'mil' : null);
+    if (form === 'sheet' || form === 'roll') {
+      if (mil) { tv = Number(mil[1]); tu = 'mil'; }
+      else if (pt) { tv = Number(pt[1]); tu = 'pt'; }
+      else if (thick != null) { tv = +(thick * 1000).toFixed(2); tu = form === 'roll' ? 'mil' : 'pt'; }
+      else if (gsm) { tv = Number(gsm[1]); tu = 'gsm'; }
+    }
+    const hex = /^#?[0-9a-f]{6}$/i.test(String(m.color_hex || '').trim()) ? '#' + String(m.color_hex).trim().replace('#', '').toLowerCase() : null;
     return {
-      form, adhesive, finish, color: m.color_name || null, basis_weight: basis, basis_unit: bu, brand: m.manufacturer || null,
-      thickness: thick != null ? thick : (mil ? Number(mil[1]) : null), thickness_unit: thick != null ? 'in' : (mil ? 'mil' : null),
+      form, adhesive: form === 'sheet' ? null : adhesive, finish, color: m.color_name || null, color_hex: hex, basis_weight: basis, basis_unit: bu, brand: m.manufacturer || null,
+      sku: m.code || null, thickness: tv, thickness_unit: tu,
+      geo_key: Number(m.geo_sub_type_id) > 0 ? 'cs' + m.geo_sub_type_id : Number(m.geo_type_id) > 0 ? 'ct' + m.geo_type_id : null,
       base_unit: form === 'roll' || form === 'rigid' ? 'sqft' : form === 'sheet' ? 'sheet' : form ? 'each' : null,
       edge_color: form === 'rigid' ? (/clear/i.test(name) ? 'Clear' : m.color_name || null) : null,
       weight: paperW, weight_unit: paperW ? 'lb' : null, weight_per: paperW ? 'crm100' : null,
       coated: /coated 2 side|c2s/i.test(name) ? 'c2s' : /coated 1 side|c1s/i.test(name) ? 'c1s' : /uncoated/i.test(name) ? 'none' : null
     };
   }
-  const SPEC_FIELDS = ['form', 'thickness', 'thickness_unit', 'color', 'edge_color', 'adhesive', 'finish', 'coated', 'basis_weight', 'basis_unit', 'sides', 'use_where',
-    'features', 'brand', 'product_line', 'base_unit', 'press_w', 'press_h', 'weight', 'weight_unit', 'weight_per', 'notes'];
-  const NUM_SPEC = ['thickness', 'basis_weight', 'press_w', 'press_h', 'weight'];
+  const SPEC_FIELDS = ['form', 'thickness', 'thickness_unit', 'color', 'color_hex', 'edge_color', 'adhesive', 'liner', 'finish', 'finish_back', 'coated', 'basis_weight', 'basis_unit',
+    'sides', 'machines', 'use_where', 'features', 'brand', 'product_line', 'sku', 'base_unit', 'press_w', 'press_h', 'weight', 'weight_unit', 'weight_per', 'stack_thick', 'stack_n', 'geo_key', 'notes'];
+  const NUM_SPEC = ['thickness', 'basis_weight', 'press_w', 'press_h', 'weight', 'stack_thick', 'stack_n'];
+  /* fields a form does not have — never shown, never counted (rigid / item / ink keep the full set until they get their own form) */
+  const NOT_ON = { sheet: ['edge_color', 'adhesive', 'liner', 'use_where', 'coated', 'product_line'], roll: ['edge_color', 'use_where', 'coated', 'product_line'] };
   function mergedSpec(m, saved) {
     const d = defaultsFor(m), out = {}, from = {};
     SPEC_FIELDS.forEach(f => { const v = saved ? saved[f] : null; if (v != null && v !== '') { out[f] = v; from[f] = 'nova'; } else if (d[f] != null && d[f] !== '') { out[f] = d[f]; from[f] = 'crm'; } else out[f] = null; });
     out.features = out.features ? String(out.features).split(',').map(s => s.trim()).filter(Boolean) : [];
+    out.machines = out.machines ? String(out.machines).split(',').map(Number).filter(n => n > 0) : [];
+    (NOT_ON[out.form] || []).forEach(f => { out[f] = null; delete from[f]; });
+    /* an older Sheet / Roll thickness in inches or mm reads as PT / Mil */
+    if ((out.form === 'sheet' || out.form === 'roll') && Number(out.thickness) > 0 && (out.thickness_unit === 'in' || out.thickness_unit === 'mm' || !out.thickness_unit)) {
+      const i = out.thickness_unit === 'mm' ? Number(out.thickness) / 25.4 : Number(out.thickness);
+      out.thickness = +(i * 1000).toFixed(2); out.thickness_unit = out.form === 'roll' ? 'mil' : 'pt';
+    }
     return { spec: out, from };
   }
 
   // ---- units: a supplier item's yield in base units, and the cost per base unit
-  function inches(v, u) { const n = Number(v); if (!(n > 0)) return null; return u === 'mm' ? n / 25.4 : u === 'mil' ? n / 1000 : u === 'pt' ? n / 1000 : n; }
+  function inches(v, u) { const n = Number(v); if (!(n > 0) || u === 'gsm') return null; return u === 'mm' ? n / 25.4 : u === 'mil' ? n / 1000 : u === 'pt' ? n / 1000 : n; }
   function yieldOf(src, spec) {
     if (Number(src.yield_override) > 0) return Number(src.yield_override);
     const w = Number(src.unit_w) || 0, h = Number(src.unit_h) || 0, b = spec.base_unit || 'sheet';
     if (b === 'sqft') return w > 0 && h > 0 ? +(w * h / 144).toFixed(4) : null;
+    if (b === 'msi') return w > 0 && h > 0 ? +(w * h / 1000).toFixed(4) : null;
     if (b === 'lft') return h > 0 ? +(h / 12).toFixed(4) : null;
     if (b === 'press') {
       const pw = Number(spec.press_w) || 0, ph = Number(spec.press_h) || 0; if (!(pw > 0 && ph > 0 && w > 0 && h > 0)) return null;
@@ -186,7 +238,7 @@ module.exports = function mountMaterialsAi(app, deps) {
     }
     return 1;
   }
-  const BASE_LABEL = { sheet: 'sheet', press: 'press sheet', sqft: 'sq ft', lft: 'linear ft', roll: 'roll', each: 'each' };
+  const BASE_LABEL = { sheet: 'sheet', press: 'press sheet', sqft: 'sq ft', msi: 'MSI', lft: 'linear ft', roll: 'roll', each: 'unit' };
   function baseLabel(spec) { return spec.base_unit === 'press' && spec.press_w && spec.press_h ? 'press sheet ' + spec.press_w + '×' + spec.press_h : BASE_LABEL[spec.base_unit || 'sheet'] || 'unit'; }
   function shapeSource(s, spec) {
     const per = Number(s.units_per_buy) > 0 ? Number(s.units_per_buy) : 1, y = yieldOf(s, spec);
@@ -199,9 +251,11 @@ module.exports = function mountMaterialsAi(app, deps) {
   const OZ = { oz: 1, lb: 16, g: 1 / 28.3495, kg: 1000 / 28.3495 };
   function physics(spec, srcs) {
     const std = srcs.find(s => s.preferred && s.unit_w && s.unit_h) || srcs.find(s => s.unit_w && s.unit_h) || null;
-    const thick = inches(spec.thickness, spec.thickness_unit);
+    /* a measured stack (1.657 in for 100 pieces) beats the nominal thickness for the volume */
+    const stack = Number(spec.stack_thick) > 0 && Number(spec.stack_n) > 0 ? Number(spec.stack_thick) / Number(spec.stack_n) : null;
+    const thick = stack || inches(spec.thickness, spec.thickness_unit);
     let area = null;   /* square inches of one base unit */
-    if (spec.base_unit === 'sqft') area = 144; else if (spec.base_unit === 'press' && spec.press_w && spec.press_h) area = spec.press_w * spec.press_h;
+    if (spec.base_unit === 'sqft') area = 144; else if (spec.base_unit === 'msi') area = 1000; else if (spec.base_unit === 'press' && spec.press_w && spec.press_h) area = spec.press_w * spec.press_h;
     else if (spec.base_unit === 'lft' && std) area = std.unit_w * 12; else if (std && (spec.base_unit === 'sheet' || spec.base_unit === 'roll')) area = std.unit_w * std.unit_h;
     let oz = null, how = null;
     if (Number(spec.weight) > 0 && spec.weight_unit) {
@@ -209,7 +263,10 @@ module.exports = function mountMaterialsAi(app, deps) {
       const per = spec.weight_per || 'base';   /* base · sqft · msi (1,000 sq in) */
       if (per === 'base') { oz = w; how = 'entered'; }
       else if (per === 'sqft' && area) { oz = w * area / 144; how = 'from weight per sq ft'; }
-      else if (per === 'crm100' && area) { oz = w * area / 9350; how = 'from the CRM weight (per 100 sheets 8.5×11)'; }
+      else if (per === 'crm100' && area) { oz = w * area / 9350; how = 'from the weight per 100 sheets 8.5×11'; }
+      else if (per === 'p100_1319' && area) { oz = w * area / 24700; how = 'from the weight per 100 sheets 13×19'; }
+    } else if (spec.thickness_unit === 'gsm' && Number(spec.thickness) > 0 && area) {
+      oz = Number(spec.thickness) * (area * 0.00064516) / 28.3495; how = 'from ' + spec.thickness + ' gsm';
     } else if (Number(spec.basis_weight) > 0 && area) {
       /* paper: basis weight is for 500 sheets of the basic size (text 25×38, cover 20×26, bond 17×22, index 25.5×30.5); gsm is grams per m² */
       const BASIC = { text: 950, cover: 520, bond: 374, index: 777.75 };
@@ -218,7 +275,7 @@ module.exports = function mountMaterialsAi(app, deps) {
       else if (spec.basis_unit === 'oz') { oz = Number(spec.basis_weight) * area / 1296; how = 'from oz per sq yd'; }
     } else if (thick && area && /acrylic/i.test(String(spec._material || ''))) { oz = thick * area * 16.387 * 1.19 / 28.3495; how = 'acrylic density 1.19'; }
     const cube = thick && area ? +(thick * area).toFixed(3) : null;
-    return { per_unit_oz: oz != null ? +oz.toFixed(4) : null, weight_how: how, cube_in3: cube, area_in2: area, thickness_in: thick };
+    return { per_unit_oz: oz != null ? +oz.toFixed(4) : null, weight_how: how, cube_in3: cube, area_in2: area, thickness_in: thick, thick_how: stack ? 'measured stack' : thick ? 'thickness' : null };
   }
 
   // ---- stock and the reorder cycle
@@ -256,10 +313,15 @@ module.exports = function mountMaterialsAi(app, deps) {
 
   // ---- completeness: how well a material is described (what to fill next)
   function completeness(m, spec, srcs, phys) {
-    const want = [['form', !!spec.form], ['thickness', !!spec.thickness], ['color', !!spec.color], ['finish', !!spec.finish || spec.form === 'item'],
-      ['adhesive', !!spec.adhesive || spec.form === 'item' || spec.form === 'liquid'], ['base unit', !!spec.base_unit], ['weight', phys.per_unit_oz != null],
+    const sr = spec.form === 'sheet' || spec.form === 'roll';
+    const want = [['form', !!spec.form], ['thickness', !!spec.thickness || !!spec.stack_thick], ['color', !!(spec.color || spec.color_hex)], ['finish', !!spec.finish || spec.form === 'item'],
+      ['base unit', !!spec.base_unit], ['weight', phys.per_unit_oz != null]];
+    if (['item', 'liquid', 'sheet'].indexOf(spec.form) === -1) want.push(['adhesive', !!spec.adhesive]);
+    if (sr) want.push(['printable', spec.sides != null && spec.sides !== ''], ['machines', spec.sides === '0' || spec.machines.length > 0]);
+    if (spec.form === 'roll') want.push(['liner', !!spec.liner]);
+    want.push(
       ['supplier', srcs.length > 0], ['cost', srcs.some(s => s.cost_per_buy != null)], ['size', srcs.some(s => s.unit_w && s.unit_h) || spec.form === 'item'],
-      ['photo', !!(m.photo_url || m.website_image_url)]];
+      ['photo', !!(m.photo_url || m.website_image_url)]);
     const have = want.filter(w => w[1]).length;
     return { pct: Math.round(have * 100 / want.length), missing: want.filter(w => !w[1]).map(w => w[0]) };
   }
@@ -403,7 +465,7 @@ module.exports = function mountMaterialsAi(app, deps) {
 
   // ---- the list
   async function buildList(fresh) {
-    const [mats, sellers, usage] = await Promise.all([crmMaterials(fresh), crmSellers(fresh), crmUsage(fresh).catch(() => ({}))]);
+    const [mats, sellers, usage, geo] = await Promise.all([crmMaterials(fresh), crmSellers(fresh), crmUsage(fresh).catch(() => ({})), geoTree(fresh).catch(() => ({ byKey: {} }))]);
     await seed(mats, sellers);
     const specs = {}; (await dbAll('SELECT * FROM ma_specs')).forEach(r => { specs[r.material_id] = r; });
     const srcs = {}; (await dbAll('SELECT * FROM ma_sources ORDER BY preferred DESC, id')).forEach(r => { (srcs[r.material_id] = srcs[r.material_id] || []).push(r); });
@@ -411,8 +473,9 @@ module.exports = function mountMaterialsAi(app, deps) {
     const alerts = {}; (await dbAll("SELECT material_id, COUNT(*) n FROM ma_alerts WHERE status = 'open' GROUP BY material_id")).forEach(r => { alerts[r.material_id] = r.n; });
     const unmatched = {}; (await dbAll("SELECT material_id, COUNT(*) n FROM ma_unmatched WHERE status = 'open' GROUP BY material_id")).forEach(r => { unmatched[r.material_id] = r.n; });
     const sellerById = {}; sellers.forEach(s => { sellerById[s.id] = s; });
-    return mats.map(m => {
+    return mats.map(m0 => { let m = m0;
       const ms = mergedSpec(m, specs[m.id]); ms.spec._material = m.material;
+      const gk = ms.spec.geo_key && geo.byKey[ms.spec.geo_key]; if (gk) { m = Object.assign({}, m, { geo_type: gk.type_name, geo_sub_type: gk.key === gk.type_key ? null : gk.name }); }
       const ss = (srcs[m.id] || []).map(s => Object.assign(shapeSource(s, ms.spec), { seller: s.seller_id && sellerById[s.seller_id] ? { id: s.seller_id, name: sellerById[s.seller_id].company_name, photo: sellerById[s.seller_id].photo_url || null, email: sellerById[s.seller_id].email || null } : null }));
       const ph = physics(ms.spec, ss); const st = stockSummary(stock[m.id] || [], ss);
       delete st.entries;
@@ -457,6 +520,8 @@ module.exports = function mountMaterialsAi(app, deps) {
   app.post('/api/material-ai/materials/:id/spec', ...guard, async (req, res) => {
     const id = parseInt(req.params.id), b = req.body || {}; if (!id) return res.json({ ok: false, error: 'No material' });
     const vals = SPEC_FIELDS.map(f => {
+      if (f === 'machines') return (Array.isArray(b.machines) ? b.machines : String(b.machines || '').split(',')).map(n => parseInt(n)).filter(n => n > 0).slice(0, 40).join(',') || null;
+      if (f === 'color_hex') return /^#[0-9a-f]{6}$/i.test(String(b.color_hex || '')) ? String(b.color_hex).toLowerCase() : null;
       if (f === 'features') return (Array.isArray(b.features) ? b.features : String(b.features || '').split(',')).map(s => String(s).trim()).filter(Boolean).slice(0, 20).join(', ') || null;
       if (NUM_SPEC.indexOf(f) > -1) return num(b[f]);
       return str(b[f], f === 'notes' ? 1000 : 120);
@@ -464,6 +529,63 @@ module.exports = function mountMaterialsAi(app, deps) {
     await dbRun('INSERT INTO ma_specs (material_id, ' + SPEC_FIELDS.join(', ') + ', updated_by, updated_at) VALUES (?,' + SPEC_FIELDS.map(() => '?').join(',') + ",?,datetime('now')) " +
       'ON CONFLICT(material_id) DO UPDATE SET ' + SPEC_FIELDS.map(f => f + ' = excluded.' + f).join(', ') + ', updated_by = excluded.updated_by, updated_at = excluded.updated_at', [id].concat(vals, [userId(req)]));
     res.json({ ok: true });
+  });
+  app.get('/api/material-ai/geo', ...guard, async (req, res) => {
+    try {
+      const t = await geoTree(req.query.fresh === '1');
+      const used = {}; (await buildList(false)).forEach(m => { const k = m.spec.geo_key; if (k) used[k] = (used[k] || 0) + 1; });
+      t.types.forEach(x => { x.used = x.subs.reduce((n, y) => n + (used[y.key] || 0), used[x.key] || 0); x.subs.forEach(y => { y.used = used[y.key] || 0; }); });
+      res.json({ ok: true, types: t.types });
+    } catch (e) { errlog('geo', e.message); res.json({ ok: false, error: e.message }); }
+  });
+  app.post('/api/material-ai/geo', ...guard, async (req, res) => {
+    const b = req.body || {}, who = userId(req), op = String(b.op || ''), key = String(b.key || '');
+    const m = key.match(/^(c|n)(t|s)(\d+)$/), name = str(b.name, 80), abbr = b.abbr == null ? null : (String(b.abbr).trim().toUpperCase().slice(0, 12));
+    try {
+      if (op === 'add') {
+        const kind = b.kind === 'type' ? 'type' : 'sub', parent = kind === 'sub' ? String(b.parent || '') : null;
+        if (!name) return res.json({ ok: false, error: 'Give it a name' });
+        if (kind === 'sub' && !/^(c|n)t\d+$/.test(parent)) return res.json({ ok: false, error: 'Which geo type?' });
+        const r = await dbRun("INSERT INTO ma_geo (kind, parent, name, abbr, updated_by, updated_at) VALUES (?,?,?,?,?,datetime('now'))", [kind, parent, name, abbr, who]);
+        return res.json({ ok: true, key: 'n' + (kind === 'type' ? 't' : 's') + r.lastID });
+      }
+      if (!m) return res.json({ ok: false, error: 'Unknown geo type' });
+      const kind = m[2] === 't' ? 'type' : 'sub', id = Number(m[3]);
+      let row = m[1] === 'n' ? await dbGet('SELECT * FROM ma_geo WHERE id = ? AND kind = ? AND crm_id IS NULL', [id, kind]) : await dbGet('SELECT * FROM ma_geo WHERE kind = ? AND crm_id = ?', [kind, id]);
+      if (!row && m[1] === 'n') return res.json({ ok: false, error: 'Not found' });
+      if (!row) { const r = await dbRun("INSERT INTO ma_geo (kind, crm_id, updated_by, updated_at) VALUES (?,?,?,datetime('now'))", [kind, id, who]); row = { id: r.lastID }; }
+      if (op === 'save') {
+        if (b.name !== undefined && !name && m[1] === 'n') return res.json({ ok: false, error: 'Give it a name' });
+        const sets = [], vals = [];
+        if (b.name !== undefined) { sets.push('name = ?'); vals.push(name); }
+        if (b.abbr !== undefined && kind === 'sub') { sets.push('abbr = ?'); vals.push(abbr); }
+        if (!sets.length) return res.json({ ok: true });
+        await dbRun('UPDATE ma_geo SET ' + sets.join(', ') + ", updated_by = ?, updated_at = datetime('now') WHERE id = ?", vals.concat([who, row.id]));
+      } else if (op === 'remove' || op === 'restore') {
+        if (op === 'remove' && m[1] === 'n') {
+          const inUse = (await dbGet('SELECT COUNT(*) n FROM ma_specs WHERE geo_key = ?', [key])).n;
+          const kids = kind === 'type' ? (await dbGet("SELECT COUNT(*) n FROM ma_geo WHERE kind = 'sub' AND parent = ? AND hidden = 0", [key])).n : 0;
+          if (!inUse && !kids) { await dbRun('DELETE FROM ma_geo WHERE id = ?', [row.id]); return res.json({ ok: true, deleted: true }); }
+        }
+        await dbRun("UPDATE ma_geo SET hidden = ?, updated_by = ?, updated_at = datetime('now') WHERE id = ?", [op === 'remove' ? 1 : 0, who, row.id]);
+      } else return res.json({ ok: false, error: 'Unknown action' });
+      res.json({ ok: true });
+    } catch (e) { errlog('geo save', e.message); res.json({ ok: false, error: e.message }); }
+  });
+  /* the machines a material can run on — CRM equipments, printers first (an action named "Print …"), read-only */
+  const crmMachines = (fresh) => cached('machines', 30 * 60e3, async () => {
+    const eq = await runQuery('SELECT id, name, photo_url, action_ids FROM equipments ORDER BY name');
+    const acts = {}; (await runQuery('SELECT a.id, a.name, t.name AS team FROM actions a LEFT JOIN team t ON t.id = a.team_id')).forEach(a => { acts[a.id] = a; });
+    return eq.map(e => {
+      let ids = e.action_ids; try { if (typeof ids === 'string') ids = JSON.parse(ids); } catch (x) { ids = []; }
+      const a = (Array.isArray(ids) ? ids : []).map(i => acts[i]).filter(Boolean);
+      const pr = a.filter(x => /^print\b/i.test(String(x.name || '').trim()));
+      return { id: e.id, name: String(e.name || '').trim(), photo: e.photo_url || null, prints: pr.length > 0, team: (pr[0] || a[0] || {}).team || null,
+        does: (pr.length ? pr : a).map(x => String(x.name || '').replace(/^print\s*-\s*/i, '')).slice(0, 4) };
+    }).sort((x, y) => (y.prints - x.prints) || String(x.team || '').localeCompare(String(y.team || '')) || x.name.localeCompare(y.name));
+  }, fresh);
+  app.get('/api/material-ai/machines', ...guard, async (req, res) => {
+    try { res.json({ ok: true, machines: await crmMachines(req.query.fresh === '1') }); } catch (e) { res.json({ ok: false, error: e.message }); }
   });
   app.get('/api/material-ai/sellers', ...guard, async (req, res) => {
     try { const s = await crmSellers(req.query.fresh === '1'); res.json({ ok: true, sellers: s.map(x => ({ id: x.id, name: x.company_name, type: x.type, specialty: x.specialty, photo: x.photo_url, email: x.email })) }); }

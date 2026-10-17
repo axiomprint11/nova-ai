@@ -16,7 +16,7 @@
   const usdU = (n) => n == null ? '—' : usd(n, Math.abs(n) < 1 ? 4 : 2);
   const nf = (n, d) => n == null || n === '' || isNaN(n) ? '—' : Number(n).toLocaleString('en-US', { maximumFractionDigits: d == null ? 2 : d });
   const usD = (d) => { if (!d) return ''; const s = String(d).slice(0, 10).split('-'); return s.length === 3 ? s[1] + '-' + s[2] + '-' + s[0] : String(d); };
-  const pl = (u) => !u ? 'units' : /^(sq ft|linear ft|each)$/.test(u) ? u : u.replace(/^(press sheet|sheet|roll|unit)/, '$1s');
+  const pl = (u) => !u ? 'units' : /^(sq ft|linear ft|each|MSI)$/.test(u) ? u : u.replace(/^(press sheet|sheet|roll|unit)/, '$1s');
   const who = (w) => String(w || '').replace(/@.*/, '');
   const lbl = (list, v) => { const x = (list || []).find(p => p[0] === v); return x ? x[1] : v; };
   const photo = (url, cls) => url ? '<img class="ma-ph ' + (cls || '') + '" src="' + esc(url) + '" alt="" loading="lazy" onerror="this.outerHTML=\'<span class=&quot;ma-ph none&quot;>no photo</span>\'">' : '<span class="ma-ph none">no photo</span>';
@@ -70,11 +70,14 @@
   };
   function specChips(m) {
     const s = m.spec, out = [];
-    if (s.thickness) out.push(nf(s.thickness, 4) + ' ' + (s.thickness_unit || ''));
-    if (s.basis_weight) out.push(nf(s.basis_weight) + (s.basis_unit === 'gsm' ? ' gsm' : s.basis_unit === 'oz' ? ' oz' : '# ' + lbl(V.basis_unit, s.basis_unit).replace('# ', '')));
-    if (s.color) out.push(s.color + (s.edge_color && s.edge_color !== s.color ? ' · ' + s.edge_color + ' edge' : ''));
-    if (s.finish && String(lbl(V.finish, s.finish)).toLowerCase() !== String(s.color || '').toLowerCase()) out.push(lbl(V.finish, s.finish));
+    if (s.thickness) out.push(nf(s.thickness, 4) + ' ' + ({ pt: 'pt', mil: 'mil', gsm: 'gsm' }[s.thickness_unit] || s.thickness_unit || ''));
+    if (s.basis_weight && s.thickness_unit !== 'gsm') out.push(nf(s.basis_weight) + (s.basis_unit === 'gsm' ? ' gsm' : s.basis_unit === 'oz' ? ' oz' : '# ' + lbl(V.basis_unit, s.basis_unit).replace('# ', '')));
+    const fin = s.finish && String(lbl(V.finish, s.finish)).toLowerCase() !== String(s.color || '').toLowerCase() ? lbl(V.finish, s.finish) : null;
+    const back = s.finish_back && s.finish_back !== 'same' && s.finish_back !== s.finish ? lbl(V.finish, s.finish_back) : null;
     let h = out.map(x => '<span>' + esc(x) + '</span>').join('');
+    if (s.color || s.color_hex) h += '<span>' + (s.color_hex ? '<i class="dot" style="background:' + esc(s.color_hex) + '"></i>' : '') + esc((s.color || '') + (s.edge_color && s.edge_color !== s.color ? ' · ' + s.edge_color + ' edge' : '')) + '</span>';
+    if (fin || back) h += '<span>' + esc((fin || '—') + (back ? ' / ' + back : '')) + '</span>';
+    if (s.liner && s.liner !== 'none') h += '<span>' + esc(lbl(V.liner, s.liner)) + ' liner</span>';
     if (s.adhesive && s.adhesive !== 'none') h += '<span class="adh">' + esc(lbl(V.adhesive, s.adhesive)) + '</span>';
     return h || '<span class="ma-muted" style="background:none">—</span>';
   }
@@ -107,7 +110,7 @@
   $('maDim').onclick = closeDrawer;
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && openId) closeDrawer(); });
   async function openMat(id, tab) {
-    openId = id; if (tab) drawerTab = tab;
+    openId = id; DRAFT = null; if (tab) drawerTab = tab;
     document.querySelectorAll('#maTable tbody tr').forEach(t => t.classList.toggle('on', Number(t.dataset.id) === id));
     $('maDrawer').innerHTML = '<div class="ma-dbody ma-muted">Loading…</div>'; $('maDrawer').classList.add('on'); $('maDim').classList.add('on');
     const j = await api('/api/material-ai/materials/' + id); if (!j.ok) { $('maDrawer').innerHTML = '<div class="ma-dbody">' + esc(j.error) + '</div>'; return; }
@@ -120,7 +123,7 @@
       '<div class="s">' + (m.usage.products ? 'Used by ' + m.usage.products + ' product' + (m.usage.products === 1 ? '' : 's') + ' (' + m.usage.options + ' option' + (m.usage.options === 1 ? '' : 's') + ')' : 'Not linked to any product option yet') + ' · described ' + m.completeness.pct + '%' + (m.completeness.missing.length ? ' — missing ' + esc(m.completeness.missing.join(', ')) : '') + '</div></div>' +
       '<button class="ma-x" title="Close (Esc)">×</button></div>' +
       '<div class="ma-dtabs">' + [['describe', 'Describe'], ['suppliers', 'Suppliers (' + m.sources.filter(s => s.active).length + ')'], ['stock', 'Inventory'], ['prices', 'Prices' + (nA ? '<span class="n">' + nA + '</span>' : '')], ['used', 'Used in']].map(t => '<button data-dt="' + t[0] + '"' + (drawerTab === t[0] ? ' class="on"' : '') + '>' + t[1] + '</button>').join('') + '</div>' +
-      '<div class="ma-dbody"><div class="ma-dsec" data-dt="describe">' + describeHtml(m) + '</div><div class="ma-dsec" data-dt="suppliers">' + suppliersHtml(m) + '</div>' +
+      '<div class="ma-dbody"><div class="ma-dsec" data-dt="describe">' + describeHtml(m, DRAFT) + '</div><div class="ma-dsec" data-dt="suppliers">' + suppliersHtml(m) + '</div>' +
       '<div class="ma-dsec" data-dt="stock">' + stockHtml(m) + '</div><div class="ma-dsec" data-dt="prices">' + pricesHtml(m) + '</div><div class="ma-dsec" data-dt="used">' + usedHtml(m) + '</div></div>';
     const d = $('maDrawer');
     d.querySelector('.ma-x').onclick = closeDrawer;
@@ -129,58 +132,130 @@
     bindDescribe(m); bindSuppliers(m); bindStock(m); bindPrices(m);
   }
 
-  // ---- Describe
+  // ---- Describe (1.20.161: Sheet and Roll have their own forms; Rigid / Item / Ink keep the full one for now)
   const opt = (list, v, blank) => (blank ? '<option value="">' + esc(blank) + '</option>' : '') + (list || []).map(p => '<option value="' + esc(p[0]) + '"' + (String(v) === String(p[0]) ? ' selected' : '') + '>' + esc(p[1]) + '</option>').join('');
   const crmTag = (m, f) => m.spec_from[f] === 'crm' ? '<span class="crm" title="Read from the CRM row — save to keep it">from CRM</span>' : '';
   const COLORS = ['White', 'Black', 'Clear', 'Silver', 'Gold', 'Natural', 'Kraft', 'Ivory', 'Gray', 'Red', 'Blue', 'Green', 'Yellow', 'Frosted', 'Mirror'];
-  function describeHtml(m) {
-    const s = m.spec, f = (k, label, inner, span) => '<div class="ma-f ' + (span || 'ma-span2') + '"><label>' + label + crmTag(m, k) + '</label>' + inner + '</div>';
-    const seg = (k, list) => '<div class="ma-seg" data-seg="' + k + '">' + list.map(p => '<button type="button" data-v="' + esc(p[0]) + '"' + (s[k] === p[0] ? ' class="on"' : '') + '>' + esc(p[1]) + '</button>').join('') + '</div>';
-    return '<div class="ma-grid" id="dsForm">' +
-      f('form', 'What it is', seg('form', V.form), 'ma-span6') +
-      f('thickness', 'Thickness', '<div class="pair"><input type="number" step="any" name="thickness" value="' + esc(s.thickness == null ? '' : s.thickness) + '"><select name="thickness_unit">' + opt(V.thickness_unit, s.thickness_unit || 'in') + '</select></div>') +
-      f('color', 'Color', '<input name="color" list="maColors" value="' + esc(s.color || '') + '"><datalist id="maColors">' + COLORS.map(c => '<option>' + c + '</option>').join('') + '</datalist>') +
-      f('edge_color', 'Edge color', '<input name="edge_color" list="maColors" value="' + esc(s.edge_color || '') + '" placeholder="rigid boards, acrylic">') +
-      f('adhesive', 'Adhesive', seg('adhesive', V.adhesive), 'ma-span6') +
-      f('finish', 'Finish', '<select name="finish">' + opt(V.finish, s.finish, '—') + '</select>') +
-      f('coated', 'Coating', '<select name="coated">' + opt(V.coated, s.coated, '—') + '</select>') +
-      f('basis_weight', 'Paper / banner weight', '<div class="pair"><input type="number" step="any" name="basis_weight" value="' + esc(s.basis_weight == null ? '' : s.basis_weight) + '" placeholder="70"><select name="basis_unit">' + opt(V.basis_unit, s.basis_unit, '—') + '</select></div>') +
-      f('sides', 'Printable', '<select name="sides">' + opt(V.sides, s.sides, '—') + '</select>') +
-      f('use_where', 'Use', '<select name="use_where">' + opt(V.use_where, s.use_where, '—') + '</select>') +
-      f('brand', 'Brand / maker', '<input name="brand" value="' + esc(s.brand || '') + '">') +
-      f('product_line', 'Product line', '<input name="product_line" value="' + esc(s.product_line || '') + '" placeholder="e.g. Acrylite FF, 3M IJ180">', 'ma-span3') +
-      '<div class="ma-f ma-span6"><label>Features</label><div class="ma-feat" id="dsFeat">' + V.features.map(x => '<button type="button" data-f="' + esc(x) + '"' + (s.features.indexOf(x) > -1 ? ' class="on"' : '') + '>' + esc(x) + '</button>').join('') + '</div></div>' +
-      '<div class="ma-sec">Counting &amp; shipping</div>' +
-      f('base_unit', 'We count it in', '<select name="base_unit">' + opt(V.base_unit, s.base_unit, '—') + '</select>') +
-      '<div class="ma-f ma-span2" id="dsPress"' + (s.base_unit === 'press' ? '' : ' style="display:none"') + '><label>Press sheet size (in)</label><div class="pair"><input type="number" step="any" name="press_w" value="' + esc(s.press_w || '') + '" placeholder="13"><input type="number" step="any" name="press_h" value="' + esc(s.press_h || '') + '" placeholder="19"></div></div>' +
-      f('weight', 'Weight', '<div class="pair"><input type="number" step="any" name="weight" value="' + esc(s.weight == null ? '' : s.weight) + '"><select name="weight_unit">' + opt(V.weight_unit, s.weight_unit || 'oz') + '</select><select name="weight_per"><option value="base"' + (!s.weight_per || s.weight_per === 'base' ? ' selected' : '') + '>per unit</option><option value="sqft"' + (s.weight_per === 'sqft' ? ' selected' : '') + '>per sq ft</option><option value="crm100"' + (s.weight_per === 'crm100' ? ' selected' : '') + '>per 100 sh 8.5×11</option></select></div>', 'ma-span4') +
+  const COLOR_HEX = { white: '#ffffff', black: '#111111', silver: '#c0c0c0', gold: '#d4af37', natural: '#f3ead8', kraft: '#c19a6b', ivory: '#fffff0', gray: '#9ca3af', grey: '#9ca3af', red: '#dc2626', blue: '#2563eb', green: '#16a34a', yellow: '#facc15' };
+  let MACH = null, GEO = null, DRAFT = null;
+  async function machines() { if (MACH) return MACH; const j = await api('/api/material-ai/machines'); MACH = j.ok ? j.machines : []; return MACH; }
+  async function geoTypes(fresh) { if (GEO && !fresh) return GEO; const j = await api('/api/material-ai/geo'); GEO = j.ok ? j.types : []; return GEO; }
+  function describeHtml(m, s) {
+    s = s || m.spec;
+    const sr = s.form === 'sheet' || s.form === 'roll', roll = s.form === 'roll';
+    const f = (k, label, inner, span) => '<div class="ma-f ' + (span || 'ma-span2') + '"><label>' + label + crmTag(m, k) + '</label>' + inner + '</div>';
+    const seg = (k, list) => '<div class="ma-seg" data-seg="' + k + '">' + list.map(p => '<button type="button" data-v="' + esc(p[0]) + '"' + (String(s[k]) === String(p[0]) ? ' class="on"' : '') + '>' + esc(p[1]) + '</button>').join('') + '</div>';
+    const numIn = (k, ph) => '<input type="number" step="any" name="' + k + '" value="' + esc(s[k] == null ? '' : s[k]) + '"' + (ph ? ' placeholder="' + esc(ph) + '"' : '') + '>';
+    const colorF = f('color', 'Color', '<div class="ma-color' + (s.color_hex ? '' : ' empty') + '" id="dsColor"><label class="sw" title="Pick the colour"><input type="color" id="dsHexPick" value="' + esc(s.color_hex || '#ffffff') + '"><i style="background:' + esc(s.color_hex || 'transparent') + '"></i></label>' +
+      '<input name="color" list="maColors" value="' + esc(s.color || '') + '" placeholder="name"><datalist id="maColors">' + COLORS.map(c => '<option>' + c + '</option>').join('') + '</datalist>' +
+      '<input type="hidden" name="color_hex" value="' + esc(s.color_hex || '') + '"><button type="button" class="clr" title="No colour">×</button></div>');
+    const geoF = f('geo_key', 'Geo type', '<select name="geo_key" id="dsGeo"><option value="' + esc(s.geo_key || '') + '">' + esc([m.geo_type, m.geo_sub_type].filter(Boolean).join(' › ') || '—') + '</option></select>', 'ma-span2');
+    const thickU = sr ? V.thickness_unit_sr : V.thickness_unit;
+    const thickF = f('thickness', 'Thickness', '<div class="pair">' + numIn('thickness') + '<select name="thickness_unit">' + opt(thickU, s.thickness_unit || (roll ? 'mil' : sr ? 'pt' : 'in')) + '</select></div>');
+    const same = !s.finish_back || s.finish_back === 'same';
+    const finishF = sr ? f('finish', 'Finishing front', '<select name="finish">' + opt(V.finish, s.finish, '—') + '</select>') +
+      '<div class="ma-f ma-span4"><label>Finishing back' + crmTag(m, 'finish_back') + '</label><div class="ma-fb"><label class="ck"><input type="checkbox" id="dsFbSame"' + (same ? ' checked' : '') + '> Same as front</label>' +
+      '<select id="dsFbSel"' + (same ? ' style="display:none"' : '') + '>' + opt(V.finish, same ? '' : s.finish_back, '—') + '</select></div></div>'
+      : f('finish', 'Finish', '<select name="finish">' + opt(V.finish, s.finish, '—') + '</select>');
+    const machF = '<div class="ma-f ma-span6"><label>Machines that print it' + crmTag(m, 'machines') + '</label><div class="ma-mach" id="dsMach"><span class="ma-muted">Loading the machines…</span></div></div>';
+    const featF = '<div class="ma-f ma-span6"><label>Features</label><div class="ma-feat" id="dsFeat">' + V.features.map(x => '<button type="button" data-f="' + esc(x) + '"' + (s.features.indexOf(x) > -1 ? ' class="on"' : '') + '>' + esc(x) + '</button>').join('') + '</div></div>';
+    let h = '<div class="ma-grid" id="dsForm">' + f('form', 'What it is', seg('form', V.form), 'ma-span4') + geoF;
+    if (sr) {
+      h += thickF + colorF + f('sku', 'Product SKU', '<input name="sku" value="' + esc(s.sku || '') + '">');
+      if (roll) h += f('adhesive', 'Adhesive', seg('adhesive', V.adhesive_roll.concat(s.adhesive && !V.adhesive_roll.some(p => p[0] === s.adhesive) ? [[s.adhesive, lbl(V.adhesive, s.adhesive)]] : [])), 'ma-span3') + f('liner', 'Liner', seg('liner', V.liner), 'ma-span3');
+      h += finishF + f('sides', 'Printable', seg('sides', V.sides), 'ma-span3') + f('brand', 'Brand / maker', '<input name="brand" value="' + esc(s.brand || '') + '">', 'ma-span3') + machF + featF;
+    } else {
+      h += thickF + colorF +
+        f('edge_color', 'Edge color', '<input name="edge_color" list="maColors" value="' + esc(s.edge_color || '') + '" placeholder="rigid boards, acrylic">') +
+        f('adhesive', 'Adhesive', seg('adhesive', V.adhesive), 'ma-span6') + finishF +
+        f('coated', 'Coating', '<select name="coated">' + opt(V.coated, s.coated, '—') + '</select>') +
+        f('basis_weight', 'Paper / banner weight', '<div class="pair">' + numIn('basis_weight', '70') + '<select name="basis_unit">' + opt(V.basis_unit, s.basis_unit, '—') + '</select></div>') +
+        f('sides', 'Printable', seg('sides', V.sides)) + f('use_where', 'Use', '<select name="use_where">' + opt(V.use_where, s.use_where, '—') + '</select>') +
+        f('brand', 'Brand / maker', '<input name="brand" value="' + esc(s.brand || '') + '">') + f('sku', 'Product SKU', '<input name="sku" value="' + esc(s.sku || '') + '">') +
+        f('product_line', 'Product line', '<input name="product_line" value="' + esc(s.product_line || '') + '" placeholder="e.g. Acrylite FF, 3M IJ180">', 'ma-span2') + machF + featF;
+    }
+    const counts = V.base_unit.filter(p => p[0] !== 'press' || s.base_unit === 'press');
+    h += '<div class="ma-sec">Weight and volume</div>' +
+      f('base_unit', 'Product count', seg('base_unit', counts), 'ma-span6') +
+      '<div class="ma-f ma-span3" id="dsPress"' + (s.base_unit === 'press' ? '' : ' style="display:none"') + '><label>Press sheet size (in)</label><div class="pair">' + numIn('press_w', '13') + numIn('press_h', '19') + '</div></div>' +
+      f('weight', 'Weight', '<div class="pair wt">' + numIn('weight', '1.45') + '<select name="weight_unit">' + opt(V.weight_unit, s.weight_unit || 'lb') + '</select><select name="weight_per">' + opt(V.weight_per, s.weight_per || 'base') + '</select></div>', 'ma-span4') +
+      f('stack_thick', 'Thickness (measured, in)', '<div class="pair st">' + numIn('stack_thick', '1.657') + '<select name="stack_n">' + opt(V.stack_n, s.stack_n || 100) + '</select></div>') +
       '<div class="ma-ship" id="dsShip"></div>' +
       f('notes', 'Notes', '<textarea name="notes">' + esc(s.notes || '') + '</textarea>', 'ma-span6') +
       '</div><div class="ma-save"><button class="bk-btn pri" id="dsSave">Save description</button><span class="ma-muted">Fields marked “from CRM” were read from the CRM row; saving keeps them in Nova. Nothing is written to the CRM.</span></div>';
+    return h;
   }
   function shipHtml(m) {
     const p = m.physics, unit = m.base_label;
-    let h = '<span>One <b>' + esc(unit) + '</b>: ' + (p.per_unit_oz != null ? '<b>' + nf(p.per_unit_oz, 3) + ' oz</b> <span class="ma-muted">(' + esc(p.weight_how || '') + ')</span>' : '<span class="ma-muted">weight unknown — give a weight or the paper weight</span>') +
-      ' · ' + (p.cube_in3 != null ? '<b>' + nf(p.cube_in3, 2) + ' in³</b>' : '<span class="ma-muted">size or thickness missing</span>') + '</span>';
+    let h = '<span>One <b>' + esc(unit) + '</b>: ' + (p.per_unit_oz != null ? '<b>' + nf(p.per_unit_oz / 16, 4) + ' lb</b> <span class="ma-muted">(' + nf(p.per_unit_oz, 3) + ' oz · ' + esc(p.weight_how || '') + ')</span>' : '<span class="ma-muted">weight unknown — give a weight (or the thickness in GSM)</span>') +
+      ' · ' + (p.cube_in3 != null ? '<b>' + nf(p.cube_in3, 3) + ' in³</b>' + (p.thick_how === 'measured stack' ? ' <span class="ma-muted">(from the measured stack)</span>' : '') : '<span class="ma-muted">size or thickness missing</span>') + '</span>';
     h += '<span style="display:flex;gap:6px;align-items:center">Job: <input type="number" id="shQty" placeholder="qty" min="0"> ' + esc(pl(unit)) + ' <span id="shOut" class="ma-muted"></span></span>';
     return h;
   }
+  function readDescribe(box) {
+    const body = {}; box.querySelectorAll('[name]').forEach(i => { body[i.name] = i.value; });
+    box.querySelectorAll('[data-seg]').forEach(sg => { const on = sg.querySelector('button.on'); body[sg.dataset.seg] = on ? on.dataset.v : ''; });
+    body.features = Array.from(box.querySelectorAll('#dsFeat button.on')).map(b => b.dataset.f);
+    const mach = box.querySelectorAll('#dsMach button[data-mid]');
+    body.machines = mach.length ? Array.from(box.querySelectorAll('#dsMach button.on')).map(b => Number(b.dataset.mid)) : ((DRAFT || {}).machines || []);
+    if ($('dsFbSame')) body.finish_back = $('dsFbSame').checked ? 'same' : ($('dsFbSel').value || 'same');
+    return body;
+  }
+  async function fillMachines(s) {
+    const el = $('dsMach'); if (!el) return;
+    const list = await machines(); if (!$('dsMach')) return;
+    const pick = new Set((s.machines || []).map(Number));
+    const chip = (x) => '<button type="button" data-mid="' + x.id + '"' + (pick.has(x.id) ? ' class="on"' : '') + ' title="' + esc([x.team, (x.does || []).join(', ')].filter(Boolean).join(' · ')) + '">' +
+      (x.photo ? '<img src="' + esc(x.photo) + '" alt="" onerror="this.remove()">' : '') + esc(x.name) + '</button>';
+    const pr = list.filter(x => x.prints || pick.has(x.id)), rest = list.filter(x => !x.prints && !pick.has(x.id));
+    if (!list.length) { el.innerHTML = '<span class="ma-muted">Could not read the machines from the CRM.</span>'; return; }
+    el.innerHTML = pr.map(chip).join('') + (rest.length ? '<button type="button" class="more" id="dsMachMore">+ other machines (' + rest.length + ')</button><span id="dsMachRest" style="display:none">' + rest.map(chip).join('') + '</span>' : '');
+    el.querySelectorAll('button[data-mid]').forEach(b => b.onclick = () => b.classList.toggle('on'));
+    if ($('dsMachMore')) $('dsMachMore').onclick = () => { $('dsMachRest').style.display = 'contents'; $('dsMachMore').remove(); };
+  }
+  async function fillGeo(s) {
+    const sel = $('dsGeo'); if (!sel) return;
+    const types = await geoTypes(); if (!$('dsGeo')) return;
+    const cur = s.geo_key || '';
+    let h = '<option value="">—</option>';
+    types.forEach(t => {
+      const subs = t.subs.filter(x => !x.hidden || x.key === cur);
+      if (t.hidden && t.key !== cur && !subs.some(x => x.key === cur)) return;
+      h += '<optgroup label="' + esc(t.name) + '"><option value="' + esc(t.key) + '"' + (t.key === cur ? ' selected' : '') + '>' + esc(t.name) + ' (no sub type)</option>' +
+        subs.map(x => '<option value="' + esc(x.key) + '"' + (x.key === cur ? ' selected' : '') + '>' + esc(t.name + ' › ' + x.name) + (x.abbr ? ' · ' + esc(x.abbr) : '') + '</option>').join('') + '</optgroup>';
+    });
+    sel.innerHTML = h;
+  }
   function bindDescribe(m) {
     const box = $('dsForm'); if (!box) return;
-    box.querySelectorAll('[data-seg] button').forEach(b => b.onclick = () => { const on = b.classList.contains('on'); b.parentNode.querySelectorAll('button').forEach(x => x.classList.remove('on')); if (!on) b.classList.add('on'); });
+    const s = DRAFT || m.spec;
+    box.querySelectorAll('[data-seg] button').forEach(b => b.onclick = () => {
+      const sg = b.parentNode, on = b.classList.contains('on');
+      sg.querySelectorAll('button').forEach(x => x.classList.remove('on')); if (!on || sg.dataset.seg === 'form' || sg.dataset.seg === 'base_unit') b.classList.add('on');
+      if (sg.dataset.seg === 'form') {   /* another form → its own fields, keeping what was typed */
+        DRAFT = Object.assign({}, m.spec, readDescribe(box), { form: b.dataset.v });
+        if (DRAFT.form === 'sheet' || DRAFT.form === 'roll') { if (DRAFT.thickness_unit === 'in' || DRAFT.thickness_unit === 'mm') { const i = DRAFT.thickness_unit === 'mm' ? Number(DRAFT.thickness) / 25.4 : Number(DRAFT.thickness); DRAFT.thickness = i ? +(i * 1000).toFixed(2) : ''; DRAFT.thickness_unit = DRAFT.form === 'roll' ? 'mil' : 'pt'; } }
+        box.parentNode.innerHTML = describeHtml(m, DRAFT); bindDescribe(m);
+      }
+      if (sg.dataset.seg === 'base_unit') $('dsPress').style.display = b.dataset.v === 'press' ? '' : 'none';
+    });
     box.querySelectorAll('#dsFeat button').forEach(b => b.onclick = () => b.classList.toggle('on'));
-    box.querySelector('[name=base_unit]').onchange = (e) => { $('dsPress').style.display = e.target.value === 'press' ? '' : 'none'; };
+    if ($('dsFbSame')) $('dsFbSame').onchange = (e) => { $('dsFbSel').style.display = e.target.checked ? 'none' : ''; };
+    const col = $('dsColor'), hexIn = col.querySelector('[name=color_hex]'), sw = col.querySelector('.sw i');
+    const setHex = (v) => { hexIn.value = v || ''; sw.style.background = v || 'transparent'; col.classList.toggle('empty', !v); if (v) $('dsHexPick').value = v; };
+    $('dsHexPick').oninput = (e) => setHex(e.target.value);
+    col.querySelector('[name=color]').onchange = (e) => { const h = COLOR_HEX[e.target.value.trim().toLowerCase()]; if (h && !hexIn.value) setHex(h); };
+    col.querySelector('.clr').onclick = () => setHex('');
+    fillMachines(s); fillGeo(s);
     $('dsShip').innerHTML = shipHtml(m);
     const calc = () => { const q = Number($('shQty').value) || 0, p = m.physics; if (!q) { $('shOut').textContent = ''; return; }
       const lb = p.per_unit_oz != null ? p.per_unit_oz * q / 16 : null, cu = p.cube_in3 != null ? p.cube_in3 * q : null;
       $('shOut').innerHTML = '→ ' + (lb != null ? '<b>' + nf(lb, 2) + ' lb</b>' : 'weight unknown') + ' · ' + (cu != null ? '<b>' + nf(cu, 0) + ' in³</b> (' + nf(cu / 1728, 2) + ' ft³)' : 'volume unknown'); };
     $('shQty').oninput = calc;
     $('dsSave').onclick = async () => {
-      const body = {}; box.querySelectorAll('[name]').forEach(i => { body[i.name] = i.value; });
-      box.querySelectorAll('[data-seg]').forEach(sg => { const on = sg.querySelector('button.on'); body[sg.dataset.seg] = on ? on.dataset.v : ''; });
-      body.features = Array.from(box.querySelectorAll('#dsFeat button.on')).map(b => b.dataset.f);
+      const body = readDescribe(box);
       const r = await api('/api/material-ai/materials/' + m.id + '/spec', body); if (!r.ok) return alert(r.error || 'Could not save');
-      toast('Saved'); await reloadOne(m.id);
+      DRAFT = null; toast('Saved'); await reloadOne(m.id);
     };
   }
   async function reloadOne(id) {
@@ -399,5 +474,57 @@
     tb.querySelectorAll('tr[data-id]').forEach(tr => tr.onclick = () => openMat(Number(tr.dataset.id), 'stock'));
   }
 
-  load().then(() => { const t = params.get('tab'); if (t && t !== 'materials') show(t); const m = Number(params.get('m')); if (m) openMat(m); });
+  // ---- Geo types (the CRM list, edited in Nova — the CRM's own list is never changed)
+  function geoClose() { $('maGeoPanel').classList.remove('on'); $('maGeoDim').classList.remove('on'); }
+  $('maGeoDim').onclick = geoClose;
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('maGeoPanel').classList.contains('on')) geoClose(); });
+  const TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
+  const CLIP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>';
+  let geoShowHidden = false;
+  async function openGeo() {
+    $('maGeoPanel').classList.add('on'); $('maGeoDim').classList.add('on');
+    $('gpBody').innerHTML = '<div class="ma-muted" style="padding:14px">Loading…</div>';
+    await geoTypes(true); drawGeo();
+  }
+  function drawGeo() {
+    const vis = (x) => geoShowHidden || !x.hidden;
+    const nHidden = GEO.reduce((n, t) => n + (t.hidden ? 1 : 0) + t.subs.filter(x => x.hidden).length, 0);
+    const tag = (x) => x.hidden ? '<span class="gp-tag off">hidden</span>' : !x.crm ? '<span class="gp-tag nova">Nova</span>' : x.edited ? '<span class="gp-tag ed" title="CRM: ' + esc(x.crm_name + (x.crm_abbr ? ' · ' + x.crm_abbr : '')) + '">edited</span>' : '';
+    $('gpBody').innerHTML = GEO.filter(vis).map(t => '<div class="gp-type' + (t.hidden ? ' hid' : '') + '" data-k="' + t.key + '"><div class="gp-th"><input class="gp-in" data-gname value="' + esc(t.name) + '">' + tag(t) +
+        (t.hidden ? '<button class="gp-act" data-grestore title="Show again">↺</button>' : '<button class="gp-del big" data-gdel title="' + (t.crm ? 'Hide' : 'Remove') + ' this geo type' + (t.used ? ' (' + t.used + ' materials)' : '') + '">' + TRASH + '</button>') + '</div>' +
+        t.subs.filter(vis).map(x => '<div class="gp-sub' + (x.hidden ? ' hid' : '') + '" data-k="' + x.key + '"><span class="gp-ic">' + (x.icon ? '<img src="' + esc(x.icon) + '" alt="" onerror="this.remove()">' : CLIP) + '</span>' +
+          '<input class="gp-in" data-gname value="' + esc(x.name) + '"><input class="gp-in ab" data-gabbr value="' + esc(x.abbr || '') + '" placeholder="Abrv" maxlength="12">' +
+          (x.hidden ? '<button class="gp-act" data-grestore title="Show again">↺</button>' : '<button class="gp-del" data-gdel title="' + (x.crm ? 'Hide' : 'Remove') + (x.used ? ' (' + x.used + ' material' + (x.used === 1 ? '' : 's') + ')' : '') + '">' + TRASH + '</button>') +
+          '<span class="gp-used" title="' + (x.used || 0) + ' material' + (x.used === 1 ? '' : 's') + ' in this sub type">' + (x.used || '') + '</span><span>' + tag(x) + '</span></div>').join('') +
+        (t.hidden ? '' : '<div class="gp-add"><button data-gaddsub>Add SubType +</button></div>') + '</div>').join('') +
+      '<div class="gp-new"><input class="gp-in" id="gpNewType" placeholder="New geo type…"><button class="bk-btn sm pri" id="gpNewGo">Add Geo Type</button></div>' +
+      (nHidden ? '<div class="gp-foot"><label><input type="checkbox" id="gpHid"' + (geoShowHidden ? ' checked' : '') + '> show hidden (' + nHidden + ')</label></div>' : '');
+    const post = async (body) => { const r = await api('/api/material-ai/geo', body); if (!r.ok) { alert(r.error || 'Could not save'); return null; } return r; };
+    const after = async (msg) => { if (msg) toast(msg); await geoTypes(true); drawGeo(); load(); };
+    $('gpBody').querySelectorAll('[data-k]').forEach(row => {
+      const k = row.dataset.k, own = row.querySelector(':scope > [data-gname], :scope > .gp-th > [data-gname]');
+      const nm = own, ab = row.querySelector(':scope > [data-gabbr]');
+      if (nm) { const was = nm.value; nm.onchange = async () => { const v = nm.value.trim(); if (!v) { nm.value = was; return; } if (await post({ op: 'save', key: k, name: v })) after('Saved'); }; nm.onkeydown = (e) => { if (e.key === 'Enter') nm.blur(); }; }
+      if (ab) { ab.onchange = async () => { if (await post({ op: 'save', key: k, abbr: ab.value.trim() })) after('Saved'); }; ab.onkeydown = (e) => { if (e.key === 'Enter') ab.blur(); }; }
+      const del = row.querySelector(':scope > [data-gdel], :scope > .gp-th > [data-gdel]');
+      if (del) del.onclick = async () => { const crm = k.charAt(0) === 'c'; if (!confirm(crm ? 'Hide this from the list in Nova? (The CRM keeps it.)' : 'Remove it?')) return; const r = await post({ op: 'remove', key: k }); if (r) after(r.deleted ? 'Removed' : 'Hidden'); };
+      const rs = row.querySelector(':scope > [data-grestore], :scope > .gp-th > [data-grestore]');
+      if (rs) rs.onclick = async () => { if (await post({ op: 'restore', key: k })) after('Shown again'); };
+      const add = row.querySelector(':scope > .gp-add [data-gaddsub]');
+      if (add) add.onclick = () => {
+        const line = document.createElement('div'); line.className = 'gp-sub new';
+        line.innerHTML = '<span class="gp-ic">' + CLIP + '</span><input class="gp-in" placeholder="Sub type name"><input class="gp-in ab" placeholder="Abrv" maxlength="12"><button class="gp-act ok" title="Add">✓</button>';
+        add.parentNode.before(line); const [n, a] = line.querySelectorAll('input'); n.focus();
+        const go = async () => { if (!n.value.trim()) return line.remove(); if (await post({ op: 'add', kind: 'sub', parent: k, name: n.value, abbr: a.value })) after('Sub type added'); };
+        line.querySelector('button').onclick = go; [n, a].forEach(i => i.onkeydown = (e) => { if (e.key === 'Enter') go(); if (e.key === 'Escape') { e.stopPropagation(); line.remove(); } });
+      };
+    });
+    $('gpNewGo').onclick = async () => { const v = $('gpNewType').value.trim(); if (!v) return $('gpNewType').focus(); if (await post({ op: 'add', kind: 'type', name: v })) after('Geo type added'); };
+    $('gpNewType').onkeydown = (e) => { if (e.key === 'Enter') $('gpNewGo').click(); };
+    if ($('gpHid')) $('gpHid').onchange = (e) => { geoShowHidden = e.target.checked; drawGeo(); };
+  }
+  $('maGeoBtn').onclick = openGeo;
+  $('gpClose').onclick = geoClose;
+
+  load().then(() => { const t = params.get('tab'); if (t && t !== 'materials') show(t); const m = Number(params.get('m')); if (m) openMat(m); if (params.get('geo')) openGeo(); });
 })();

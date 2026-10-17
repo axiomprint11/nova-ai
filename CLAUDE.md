@@ -571,6 +571,25 @@ material · form · described-as chips · suppliers with $ per base unit · on h
 opens the drawer: Describe (with the weight / in³ per unit and a job calculator for shipping) · Suppliers · Inventory · Prices · Used in)
 · Price alerts (+ unmatched lines + settings) · Inventory (Count inline) · Reorder. Nothing is written to the CRM. Tested with a stub CRM
 (`ma-harness.js` in the scratchpad: real rows for acrylic / Kelly paper / Grimco vinyl, bills at $80 / $81 / $92.40 → one +15.5 % alert).
+**1.20.161 — Sheet and Roll have their own Describe forms** (Rigid / Item / Ink keep the full one until the owner redoes them): `describeHtml(m, s)`
+draws by `s.form`, and picking another form redraws with what was typed (`DRAFT`, `readDescribe()`). **Sheet**: Thickness in **PT / Mil / GSM**
+(`thickness_unit_sr`; a CRM or saved thickness in inches / mm reads as PT ×1000, Mil on a roll — `mergedSpec`; GSM is a weight, so `physics()`
+weighs the piece from it and takes no thickness) · **Color** = a colour picker (`color_hex`, the CRM's `color_hex` as default) + the name · Product
+**SKU** (`sku`, default `materials.code`) · **Finishing front** (`finish`) / **back** ("Same as front" tick or a pick → `finish_back`, 'same') ·
+**Printable** Front only / 2 sides / None (`sides` '1' / '2' / '0') · **Machines that print it** (`machines`, comma CRM `equipments` ids —
+`GET /api/material-ai/machines`: equipments whose actions start "Print" first, the rest behind "+ other machines"; read-only) · Brand · Features.
+No edge colour, adhesive, coating, paper weight, use or product line (`NOT_ON.sheet` nulls them). **Roll** adds **Adhesive** No / Permanent /
+Removable / Static (`adhesive_roll`) and **Liner** No / Paper 40# / Clear 40# / Paper 70# (`liner`). **Weight and volume** (every form):
+**Product count** Sheet · Unit · MSI · Sq ft · Linear ft · Roll (`base_unit` each = "unit", new `msi` = 1,000 sq in in `yieldOf` / `physics`;
+press sheet only shows when already set), **Weight** n · LB / KG / OZ / Gram · Per unit / Per sq ft / Per 100 sheets 8.5×11 (`crm100`) / Per 100
+sheets 13×19 (`p100_1319`, ÷ 24,700 sq in), **Thickness (measured)** n in for 1 / 10 / 100 pieces (`stack_thick` / `stack_n`; when set it is the
+thickness the cube uses, `thick_how 'measured stack'`). **Geo Types** (button beside Refresh, `?geo=1`): a side panel like the CRM's — each geo
+type with its sub types (icon, name, abbreviation, trash, materials count), Add SubType +, Add Geo Type. **The CRM's list is never written**:
+edits live in SQLite `ma_geo` (kind type / sub, `crm_id` for an edited CRM row else a Nova-made one, `parent` = a type key, name, abbr upper-cased,
+hidden); keys `ct<id>` / `cs<id>` (CRM) and `nt<id>` / `ns<id>` (Nova); trash on a CRM row hides it in Nova (↺ to show again, "show hidden"),
+on a Nova row deletes it unless in use; `geoTree()` merges, `GET/POST /api/material-ai/geo {op save|add|remove|restore}`. Every material has a
+**Geo type** pick on Describe (`ma_specs.geo_key`, default from the CRM row's `geo_sub_type_id` / `geo_type_id`), and the list, filter and
+drawer show the Nova names.
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 
