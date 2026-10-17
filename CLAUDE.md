@@ -745,6 +745,15 @@ pattern for any new report over a large log table. To add a report, add an entry
   category, specs, `estimate_design_details` design_type / service_type / notes, `prepress_notes`, `design_price` already on
   file) and returns the estimate + job facts; the model quotes estimate / hours / rate verbatim and mentions a fee already on
   the job. The models never multiply or quote a rate from memory.
+  **1.20.165 — three price options for the team.** The staff ChatBot's `estimate_design` now answers with THREE options by kind of
+  client instead of one wide range: `design_services.tiers` (default **Easy** $85–$95 · **Standard / picky** $120–$150 · **Hard / many
+  ideas** $180–$220, each with a "who it fits" line) priced for a job of `tier_hours` (1.5) hours; `estimate(pieces, rates, {tiers:true})`
+  scales each by the job's LOW hours ÷ `tier_hours` and rounds to $5 (`options[]`, `scaled_from`; the hourly rate and the single range are
+  removed from the staff answer, rush still ×1.5 on the hours). The prompt says: give all three as written, name — price — who it fits,
+  point to one only when the job / notes make it clear. Edited in **Price Estimator → Graphic Design → Price options for the team**
+  (rows name / who it fits / from $ / to $, up to 5, "+ Add an option", the hours box, a live 3-hour example); `set()` merges a partial
+  save so the Client ChatBot page (guide + rates only) never wipes the options. The website chat and TalkAi keep the plain hours × rate
+  estimate — a customer never sees "picky client".
 - **Closed days come from the production `holidays` table** (the website's "Closed days" panel), not a hard-coded
   list. `closed-days.js` expands each row (one-off, or `recurrence` yearly / monthly / weekly) into dates for last
   year .. three years ahead, keeps them in memory and reloads hourly. `usHolidays(year)` in server.js returns those

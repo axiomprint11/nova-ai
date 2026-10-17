@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.164';
-const NOVA_BUILT = '10-17-2026 12:55am';
+const NOVA_VERSION = '1.20.165';
+const NOVA_BUILT = '10-17-2026 1:20am';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -1057,7 +1057,7 @@ const DesignServices = require('./design-services')(db);
 app.get('/api/design-services', auth, async (req, res) => { try { res.json({ ok: true, design: await DesignServices.get() }); } catch (e) { res.json({ ok: false, error: e.message }); } });
 app.post('/api/admin/design-services', auth, adminOnly, async (req, res) => {
   try { const b = req.body || {}; if (Number(b.max) > 0 && Number(b.min) > 0 && Number(b.max) < Number(b.min)) return res.json({ ok: false, error: 'The highest rate is below the lowest.' });
-    const v = await DesignServices.set({ guide: b.guide, min: b.min, max: b.max }, String(req.user.username || req.user.key || '')); res.json({ ok: true, design: v }); }
+    const v = await DesignServices.set({ guide: b.guide, min: b.min, max: b.max, tiers: Array.isArray(b.tiers) ? b.tiers : undefined, tier_hours: b.tier_hours }, String(req.user.username || req.user.key || '')); res.json({ ok: true, design: v }); }
   catch (e) { res.json({ ok: false, error: e.message }); }
 });
 const { artworkSpecs } = require('./artwork-specs');
@@ -6979,7 +6979,7 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     }
   }, {
     name: 'estimate_design',
-    description: 'Price AxiomPrint\'s in-house GRAPHIC DESIGN work — the design fee / designer fee / design charge to add to a job, or a stand-alone design quote. ' +
+    description: 'Price AxiomPrint\'s in-house GRAPHIC DESIGN work — the design fee / designer fee / design charge to add to a job, or a stand-alone design quote. Returns three price options by kind of client. ' +
       'CALL THIS whenever the team asks what to charge for design, artwork, layout, a logo, file fixes or changes on a job or for a client. Pass the E-number when the question is about a job: the tool reads the job ' +
       '(product, category, specs, the design details and notes, any design fee already on it) and returns it with the estimate. Split the work into pieces and give each its hours from the DESIGN SERVICES guide in the prompt ' +
       '(low–high); the tool multiplies by the admin-set hourly rates. NEVER do the multiplication yourself or quote a rate from memory.',
@@ -7565,8 +7565,9 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
     (designSvc ? '\n=== DESIGN SERVICES (design fee / designer fee) ===\n' +
     'When the team asks what to charge for design, artwork, a logo, layout or file changes — on a job ("E1181735 how much can I charge for the designer fee") or for a client — go into design-estimate mode: ' +
     'read the job if an E-number is given (its product, specs, design details and notes tell you what the designer has to do), split the work into pieces, give each its hours from the guide below, ' +
-    'and call estimate_design with the pieces (and the E-number). Quote its estimate, hours and hourly rate exactly as returned — never your own arithmetic, never a rate from memory. ' +
-    'Mention a design fee already on the job when the tool reports one. The rates are admin-set (Domain Knowledge → Company info).\nGUIDE:\n' + designSvc.guide + '\n' : '') +
+    'and call estimate_design with the pieces (and the E-number). It returns THREE price options by kind of client (e.g. Easy · Standard / picky · Hard / many ideas) — give all three exactly as returned, one per line: name — price — who it fits. ' +
+    'Never quote an hourly rate or one wide range, never your own arithmetic. Point to the one that fits only when the job, its notes or the client make it clear. ' +
+    'Mention a design fee already on the job when the tool reports one. The options and the guide are admin-set (Price Estimator → Graphic Design).\nGUIDE:\n' + designSvc.guide + '\n' : '') +
     '\n=== WEBSITE KNOWLEDGE (axiomprint.com text + SEO) ===\n' +
     'Nova mirrors what axiomprint.com says about every product (the team\'s AI-training answers, FAQs, guideline tabs, page copy, samples, bleed / DPI) and the blog. ' +
     'For a question about a product that is not a price or an option lookup — what it is for, selling points, how the site describes it, file prep, samples — call product_knowledge (trust order: team answers > FAQs > tabs > page text; quote facts as written). ' +
@@ -9255,8 +9256,8 @@ app.post('/api/chatbot/chat', auth, async (req, res) => {
           const rates = await DesignServices.get();
           let pieces = Array.isArray(toolUse.input.pieces) ? toolUse.input.pieces : [];
           if (toolUse.input.rush) pieces = pieces.map(x => Object.assign({}, x, { hours_low: Number(x.hours_low) * 1.5, hours_high: Number(x.hours_high) * 1.5 }));
-          const est = DesignServices.estimate(pieces, rates);
-          const out = Object.assign({ hourly_rates: { lowest: rates.min, highest: rates.max } }, est);
+          const est = DesignServices.estimate(pieces, rates, { tiers: true });   /* 1.20.165: three options for the team */
+          const out = Object.assign({}, est);
           const eid = parseInt(String(toolUse.input.e_number || '').replace(/[^0-9]/g, ''));
           if (eid) {
             try {
