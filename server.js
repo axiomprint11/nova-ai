@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.156';
-const NOVA_BUILT = '10-16-2026 7:20pm';
+const NOVA_VERSION = '1.20.157';
+const NOVA_BUILT = '10-16-2026 7:45pm';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -4047,6 +4047,10 @@ app.post('/api/chatbot/draft-reply', auth, async (req, res) => {
         Number(r.quantity || 0).toLocaleString() + ' for $' + usd2(Number(r.price || 0))).join(', ') +
       (it.summary ? ' (' + String(it.summary).slice(0, 200) + ')' : ''));
     const request = String(b.request || '').slice(0, 2500);
+    /* One product at one quantity: one Order now link, so the outro says just that. */
+    const rowCount = (Array.isArray(b.items) ? b.items : []).reduce((n, it) => n + (Array.isArray(it.rows) ? it.rows.length : 0), 0);
+    const single = rowCount <= 1;
+    const ONE_LINK = 'Click on "Order Now" to place your order when ready.';
 
     const sys = 'You write the words of a quote reply email for AxiomPrint, a print shop. ' +
       'Write any price as $1,678.54 (comma for thousands, two decimals). ' +
@@ -4054,8 +4058,11 @@ app.post('/api/chatbot/draft-reply', auth, async (req, res) => {
       '- greeting: "Hi <first name>," when the first name is known, otherwise "Hi there,".\n' +
       '- intro: one or two sentences in the spirit of "here is the pricing based on your request", naming what ' +
       'they asked for in plain words (product, quantities). No prices — the quote table follows the intro.\n' +
-      '- outro: one or two sentences. Say each quantity has an "Order now" link that opens the product with ' +
-      'everything already selected, and invite questions. If the request left something open, ask it here.\n' +
+      (single
+        ? '- outro: begin with exactly this sentence: ' + ONE_LINK + ' Then at most one short sentence inviting questions. ' +
+          'Do not explain what the link does and do not mention quantity options. If the request left something open, ask it here.\n'
+        : '- outro: one or two sentences. Say each quantity has an "Order now" link that opens the product with ' +
+          'everything already selected, and invite questions. If the request left something open, ask it here.\n') +
       '- signoff: e.g. "Best," or "Thanks,".\n' +
       '- subject: short, e.g. "Your quote: Raised Spot UV Business Cards".\n' +
       'Match the tone AxiomPrint has used with this client in the recent emails (warmth, formality, length); ' +
@@ -4077,14 +4084,22 @@ app.post('/api/chatbot/draft-reply', auth, async (req, res) => {
       parsed = JSON.parse(txt);
     } catch (e) { parsed = {}; }
     const firstProduct = ((b.items || [])[0] || {}).product || 'your print job';
+    let outro = String(parsed.outro || '').trim();
+    if (single) {
+      /* Keep the model's other sentences, drop any that explain the link, and lead with the fixed line. */
+      const rest = outro.split(/(?<=[.!?])\s+/).filter(x => x && !/order now|quantity option|already selected/i.test(x)).join(' ');
+      outro = ONE_LINK + (rest ? ' ' + rest : ' Let me know if you have any questions.');
+    } else if (!outro) {
+      outro = 'Each quantity has an Order now link that opens the product with everything already ' +
+        'selected. Let me know if you have any questions.';
+    }
     res.json({
       ok: true,
       to: clientEmail || null, client_name: clientName || null, first_name: firstName || null,
       subject: parsed.subject || ('Your quote: ' + firstProduct),
       greeting: parsed.greeting || (firstName ? 'Hi ' + firstName + ',' : 'Hi there,'),
       intro: parsed.intro || 'Here is the pricing based on your request:',
-      outro: parsed.outro || 'Each quantity has an Order now link that opens the product with everything already ' +
-        'selected. Let me know if you have any questions.',
+      outro: outro,
       signoff: parsed.signoff || 'Best,',
       tone_emails: samples.length, tone_note: toneNote || undefined
     });

@@ -206,7 +206,10 @@ order-assist.js and index.html), never `'$' + n.toFixed(2)`. The prompts tell th
   *in the conversation* (`draftReplyInChat`). `POST /api/chatbot/draft-reply` writes only the words —
   subject, greeting ("Hi <first name>," when the client is known), intro, outro, sign-off — reading the last
   30 days of shared-inbox mail with the client's email (`gmailSearch`, quoted text stripped) for tone.
-  The quote tables and Order now links come from Saved, so the model never retypes a price. The draft is
+  The quote tables and Order now links come from Saved, so the model never retypes a price. **1.20.157**: when the quote is ONE product at ONE
+  quantity (`single` in draft-reply), the outro starts with the fixed line 'Click on "Order Now" to place your order when ready.' and
+  any sentence explaining the link / "each quantity option" is dropped; two or more quantities keep the "each quantity has an Order now
+  link" wording. The draft is
   stored with the chat as an `email_draft` card and is kept out of the model's history on reopen.
   **Attachments are saved**: a sent message's pictures (the browser's 1600px JPEG), PDFs and extracted document
   text go with `POST /api/chats/message` `files` → SQLite `chat_files` + `chat-uploads/` (gitignored; `CHAT_UPLOAD_DIR`;

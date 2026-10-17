@@ -1843,7 +1843,9 @@ async function draftReplyInChat() {
       to: words.to || null, client_name: words.client_name || who || null,
       subject: words.subject || ('Your quote: ' + entries[0].product),
       greeting: words.greeting || 'Hi there,', intro: words.intro || 'Here is the pricing based on your request:',
-      outro: words.outro || 'Each quantity has an Order now link that opens the product with everything already selected. Let me know if you have any questions.',
+      outro: words.outro || (entries.reduce((n, e) => n + e.rows.length, 0) <= 1
+        ? 'Click on "Order Now" to place your order when ready. Let me know if you have any questions.'
+        : 'Each quantity has an Order now link that opens the product with everything already selected. Let me know if you have any questions.'),
       signoff: words.signoff || 'Best,',
       tone_emails: words.tone_emails || 0,
       entries: entries.map(e => ({
