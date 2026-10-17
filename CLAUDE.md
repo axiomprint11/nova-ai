@@ -739,6 +739,31 @@ zooms at the pointer EXACTLY wherever it points (`orgZoomAt(z, px, py)`: x = px 
 page never scrolls; the footnote moved into a (?) on the control bar. Dotted map background. Replaces the 1.20.169 / 1.20.170 scroll +
 CSS-zoom version.
 
+## Dashboard (1.20.174) — NovaAI's home page
+
+`dashboard.js` (`require('./dashboard')(app, { db, auth, serveVersionedHtml, runQuery })` in server.js, after designer-ai) mounts
+**Dashboard** at `/dashboard` (`public/dashboard.html/.js`, nova-nav item `dashboard`, **first in the menu, everyone**; the NovaAI logo and
+the sign-in landing (`redirectToFirstAgent()` in index.html) go there instead of CRM Chat History). READ-ONLY on the CRM. It draws the
+invoices **billed** in a period, by `invoice.invoice_creation_date` — stored in **UTC**, every day here is a **Los Angeles day**
+(`laBound()` / `laDay()`; SQL returns `DATE_FORMAT(…)` strings so the server's timezone never matters) — exactly as the CRM's own Dashboard
+chart (checked Oct 10–16 2026 to the cent: Oct 16 = $81,239.76, $11,324.21 paid, $69,915.55 unpaid). Bars per Day / Week (Monday) /
+Month: **Total value** beside **Partially paid** (the totals of `payment_status = 'partial'` invoices) + **Paid** + **Unpaid** stacked, and
+**Bad debt** (`invoice_type = 'bad_debt'`) + **Estimates** (`invoice_type = 'estimate'`) in a third bar; void invoices are left out; only
+`invoice_type = 'invoice'` counts in Invoiced. **Group by** picks itself (`autoGroup`: ≤ 31 days → Daily, ≤ 183 → Weekly, longer →
+Monthly, the AUTO tag) and can be overridden (a preset / custom range resets to Auto). Filters: **AM** = `invoice.invoice_managerid` (head
+chips with each AM's $ / count — CSR Team 327 holds the website sign-ups), **Billed** presets Last 7 days (today − 7 … today, as the CRM) ·
+Last week · This month · Previous month · YTD · Last year · Custom; **Client's order number** = `invoice.order_n` as four cards (All ·
+**New** = their 1st order · **2–5** · **5+** = the 6th and up; `band()`), **Ordered** = `invoice.create_by_order` (1 = Online, ordered on
+the website; 0 = Manual, entered by the team); **By Inv. / By Qty.** ($ or invoice counts, client-side). Every facet (AM chips, order cards,
+Online / Manual) counts with the OTHER filters on. Tiles against the same number of days just before (`prev`): Invoiced (count, avg),
+Paid, Partially paid (received / still due), Unpaid (all still due), New clients (first orders), Ordered online %, Estimates · Bad debt.
+A click on a bar narrows the **Invoices** list (billed date + LA time, INV, client, AM face, order # pill, Online / Manual, status, total,
+paid; NovaTable filters on Client and Status; the newest 3,000) to that day / week / month. `invoice` has no date index: `idFloor()` binary
+searches the PRIMARY key per day (cached an hour, 3,000 ids of slack); a range's rows are cached a minute and every filter after that runs
+in memory. **Who sees what**: admins every AM (pick one); a member only the invoices where they are the AM (`members.axiom_user_id`, else
+the CRM `user` by email; not linked → a note, nothing shown). State per browser in localStorage `nova_dash_v1`. Harness: `db-harness.js` in
+the scratchpad (the real Oct 10–11 rows + the real per-status day totals).
+
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 
 `website-knowledge.js` (`WebKnowledge = require('./website-knowledge')({ db })` in server.js, passed to client-bot as `deps.WebKnowledge`)

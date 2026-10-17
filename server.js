@@ -25,8 +25,8 @@ const app = express();
 
 // Bump with every deploy. Shown in the UI so "is the new code live?" is a glance
 // rather than an investigation — we have lost hours to that question.
-const NOVA_VERSION = '1.20.173';
-const NOVA_BUILT = '10-17-2026 8:35am';
+const NOVA_VERSION = '1.20.174';
+const NOVA_BUILT = '10-17-2026 9:15am';
 const jsonBody = express.json({ limit: '25mb' });
 // TalkAi's webhooks (talk-ai.js) read their own raw body: signature checks and call recordings.
 // Webhooks that verify a signature over the raw bytes (ElevenLabs, Plaid) parse their own body.
@@ -9679,6 +9679,7 @@ const bookkeeping = require('./bookkeeping')(app, { db, crypto, jwt, anthropic, 
 
 // 1.20.14: Designer AI — AutoAssign Jobs (the prepress tier queues, the designers, the matcher); admins only for now
 require('./designer-ai')(app, { db, auth, adminOnly, serveVersionedHtml, runQuery, anthropic, model: MODEL_MAIN, modelLight: MODEL_LIGHT, sendMail });
+require('./dashboard')(app, { db, auth, serveVersionedHtml, runQuery });   /* 1.20.174: the Dashboard — NovaAI's home page (invoices by billed date, AM / order number / online filters) */
 require('./reports-ai')(app, { db, auth, adminOnly, serveVersionedHtml, runQuery, mysql, sendMail, Notify });   // 1.20.96: ReportsAI — Onboarding first
 require('./materials-ai')(app, { db, auth, adminOnly, serveVersionedHtml, runQuery, sendMail, Notify, isBookkeeper: bookkeeping.isBookkeeper });   // 1.20.159: Material AI — specs, suppliers, prices, stock
 require('./hr')(app, { db, auth, serveVersionedHtml, runQuery, sendMail, Notify, closedDays, version: NOVA_VERSION });   // 1.20.167: NovaHR — clock in (web / kiosk PIN / QR badge), time off, reviews, skills, rewards

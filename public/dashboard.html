@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard · NovaAI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/axiom-shared.css">
+<style>
+  /* Dashboard (1.20.174) — NovaAI's home: the invoices billed in a period, as the CRM's chart draws them */
+  body { margin: 0; font-family: Inter, system-ui, sans-serif; background: #f6f7fb; color: #1c1c28; }
+  .db-top { flex: none; display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: #fff; flex-wrap: wrap; min-height: 36px; }
+  .db-top h1 { font-size: 15px; margin: 0; display: flex; align-items: center; gap: 8px; } .db-top h1 span { font-weight: 500; color: var(--muted); } .db-top h1 svg { color: var(--indigo-dark); width: 18px; height: 18px; }
+  .db-top .sp { flex: 1; }
+  .db-main { flex: 1; min-height: 0; min-width: 0; overflow: auto; padding: 16px 18px 40px; }
+  .db-card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin-bottom: 14px; }
+  .db-card h2 { font-size: 13.5px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .db-card h2 .sp { flex: 1; } .db-card h2 .n { font-weight: 500; color: var(--muted); font-size: 12px; }
+  .db-muted { color: var(--muted); font-size: 12px; }
+  .db-lab { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin: 0 0 7px; }
+  button { font-family: inherit; }
+
+  /* segmented controls */
+  .seg { display: inline-flex; background: #f1f1f8; border-radius: 11px; padding: 3px; gap: 2px; }
+  .seg button { border: 0; background: none; padding: 7px 13px; border-radius: 8px; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .seg button:hover { color: var(--ink); } .seg button.on { background: #fff; color: var(--indigo-dark); box-shadow: 0 1px 3px rgba(20,20,60,.12); }
+  .seg button small { font-size: 10.5px; font-weight: 600; color: var(--muted); } .seg button .auto { font-size: 9.5px; font-weight: 700; letter-spacing: .04em; color: #7c3aed; background: #ede9fe; border-radius: 5px; padding: 1px 5px; }
+  .seg button svg { width: 14px; height: 14px; }
+
+  /* filter card */
+  .db-filters { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; } .db-filters > * { min-width: 0; }
+  .db-row { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-end; }
+  .db-row > div { min-width: 0; }
+  .db-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .db-chips button { border: 1px solid var(--line); background: #fff; border-radius: 20px; padding: 6px 13px; font-size: 12.5px; font-weight: 600; cursor: pointer; color: var(--ink-soft); }
+  .db-chips button:hover { border-color: #c7c7dc; } .db-chips button.on { background: var(--indigo-light); border-color: var(--indigo); color: var(--indigo-dark); }
+  .db-custom { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .db-custom input { font: inherit; font-size: 12.5px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+  .db-range { font-size: 12px; color: var(--muted); margin-left: 4px; white-space: nowrap; }
+
+  /* AM heads */
+  .db-ams { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: thin; }
+  .db-am { flex: none; display: flex; align-items: center; gap: 8px; border: 1.5px solid var(--line); background: #fff; border-radius: 14px; padding: 6px 12px 6px 6px; cursor: pointer; text-align: left; min-width: 0; }
+  .db-am:hover { border-color: #c7c7dc; } .db-am.on { border-color: var(--indigo); background: var(--indigo-light); }
+  .db-am b { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink); white-space: nowrap; } .db-am small { display: block; font-size: 11px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .db-am.on b { color: var(--indigo-dark); }
+  .face { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; flex: none; background: #eef0ff; color: #4338ca; display: inline-grid; place-items: center; font-size: 11.5px; font-weight: 700; border: 1px solid #e6e6f0; }
+  .face.sm { width: 22px; height: 22px; font-size: 9.5px; }
+  .face.all { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff; border: 0; }
+  .face.all svg { width: 15px; height: 15px; }
+
+  /* order-number cards */
+  .db-ord { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 8px; }
+  .db-oc { border: 1.5px solid var(--line); background: #fff; border-radius: 12px; padding: 9px 12px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 2px; position: relative; overflow: hidden; }
+  .db-oc:hover { border-color: #c7c7dc; } .db-oc.on { border-color: var(--c); background: color-mix(in srgb, var(--c) 7%, #fff); }
+  .db-oc .t { font-size: 12px; font-weight: 700; color: var(--c); display: flex; align-items: center; gap: 6px; } .db-oc .t i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+  .db-oc .v { font-size: 17px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; } .db-oc .s { font-size: 11px; color: var(--muted); }
+  .db-oc .bar { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--c); opacity: .55; }
+
+  /* tiles */
+  .db-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .db-tile { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; position: relative; overflow: hidden; }
+  .db-tile::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--c, var(--indigo)); }
+  .db-tile .l { font-size: 11.5px; font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .db-tile .v { font-size: 20px; white-space: nowrap; font-weight: 700; letter-spacing: -.01em; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+  .db-tile .s { font-size: 11.5px; color: var(--muted); }
+  .chg { font-size: 11px; font-weight: 700; border-radius: 6px; padding: 1px 6px; } .chg.up { color: #047857; background: #d1fae5; } .chg.dn { color: #b91c1c; background: #fee2e2; } .chg.eq { color: #6b7280; background: #f3f4f6; }
+
+  /* chart */
+  .db-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink-soft); }
+  .db-legend span { display: inline-flex; align-items: center; gap: 6px; } .db-legend i { width: 14px; height: 10px; border-radius: 3px; display: inline-block; }
+  .db-chart { position: relative; width: 100%; }
+  .db-chart svg { display: block; width: 100%; height: 320px; overflow: visible; }
+  .db-chart .bk { cursor: pointer; } .db-chart .bk:hover .hov { fill: #f4f4fb; } .db-chart .bk.sel .hov { fill: #eef0ff; }
+  .db-tip { position: absolute; z-index: 20; pointer-events: none; background: #1e1b2e; color: #fff; border-radius: 10px; padding: 9px 12px; font-size: 12px; line-height: 1.5; box-shadow: 0 10px 30px rgba(0,0,0,.2); min-width: 200px; display: none; }
+  .db-tip b { font-size: 12.5px; } .db-tip .r { display: flex; gap: 10px; justify-content: space-between; font-variant-numeric: tabular-nums; } .db-tip .r i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; margin-right: 6px; }
+  .db-tip .tot { border-top: 1px solid rgba(255,255,255,.18); margin-top: 4px; padding-top: 4px; font-weight: 700; }
+  .db-tip .hint { color: #a5a3c9; font-size: 11px; margin-top: 3px; }
+
+  /* table */
+  .db-tbl-wrap { overflow-x: auto; }
+  table.db-t { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.db-t th { text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); background: #fff; white-space: nowrap; }
+  table.db-t td { padding: 8px 10px; border-bottom: 1px solid #f1f1f6; vertical-align: middle; }
+  table.db-t td.r, table.db-t th.r { text-align: right; font-variant-numeric: tabular-nums; }
+  table.db-t tr:hover td { background: #fafaff; }
+  .who { display: flex; align-items: center; gap: 8px; min-width: 0; } .who b { font-weight: 600; display: block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .who small { color: var(--muted); display: block; font-size: 11px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; border-radius: 7px; padding: 2px 8px; white-space: nowrap; }
+  .pill.paid { background: #dbeafe; color: #1d4ed8; } .pill.partial { background: #fef3c7; color: #b45309; } .pill.unpaid { background: #ffe4e6; color: #be123c; } .pill.bad { background: #e7e5e4; color: #57534e; } .pill.est { background: #e0f2fe; color: #0369a1; }
+  .pill.new { background: #dcfce7; color: #15803d; } .pill.mid { background: #e0e7ff; color: #4338ca; } .pill.loyal { background: #f3e8ff; color: #7e22ce; }
+  .pill.on { background: #ecfeff; color: #0e7490; } .pill.man { background: #f4f4f5; color: #52525b; }
+  .pill svg { width: 12px; height: 12px; }
+  .db-selchip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--indigo-dark); background: var(--indigo-light); border-radius: 20px; padding: 4px 6px 4px 11px; }
+  .db-selchip button { border: 0; background: #fff; color: var(--indigo-dark); width: 20px; height: 20px; border-radius: 50%; cursor: pointer; font-size: 14px; line-height: 1; }
+  .db-empty { padding: 40px 10px; text-align: center; color: var(--muted); font-size: 13px; }
+  .db-err { padding: 14px 16px; border-radius: 12px; background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; font-size: 13px; margin-bottom: 14px; }
+  .db-skel { height: 320px; border-radius: 10px; background: linear-gradient(90deg, #f4f4f9 25%, #ececf5 50%, #f4f4f9 75%); background-size: 200% 100%; animation: sk 1.2s infinite; }
+  @keyframes sk { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+  @media (max-width: 900px) { .db-ord { grid-template-columns: repeat(2, minmax(0, 1fr)); } .db-chart svg { height: 260px; } }
+  @media (max-width: 560px) { .db-main { padding: 12px 12px 30px; } .db-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .db-tile .v { font-size: 17px; } }
+</style>
+</head>
+<body>
+<div class="db-top">
+  <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Dashboard <span id="dbSub">· invoices by the day they were billed</span></h1>
+  <div class="sp"></div>
+  <div class="seg" id="dbBy"><button data-by="inv" class="on" title="Dollars invoiced">By Inv.</button><button data-by="qty" title="Number of invoices">By Qty.</button></div>
+</div>
+<div class="db-main" id="dbMain">
+  <div class="db-card db-filters" id="dbFilters">
+    <div id="dbAmBox"><div class="db-lab">Account manager</div><div class="db-ams" id="dbAms"></div></div>
+    <div class="db-row">
+      <div><div class="db-lab">Billed</div><div class="db-chips" id="dbPeriod"></div></div>
+      <div><div class="db-lab">Group by</div><div class="seg" id="dbGroup"></div></div>
+      <div><div class="db-lab">Ordered</div><div class="seg" id="dbOnline"></div></div>
+    </div>
+    <div><div class="db-lab">Client's order number</div><div class="db-ord" id="dbOrders"></div></div>
+  </div>
+  <div id="dbErr"></div>
+  <div class="db-tiles" id="dbTiles"></div>
+  <div class="db-card">
+    <h2><span id="dbChartTitle">Invoiced</span><span class="n" id="dbChartSub"></span><span class="sp"></span><div class="db-legend" id="dbLegend"></div></h2>
+    <div class="db-chart" id="dbChart"><div class="db-skel"></div></div>
+  </div>
+  <div class="db-card">
+    <h2>Invoices <span class="n" id="dbListN"></span><span id="dbSel"></span><span class="sp"></span></h2>
+    <div class="db-tbl-wrap" id="dbList"></div>
+  </div>
+</div>
+<script src="/nova-loader.js"></script>
+<script src="/nova-nav.js"></script>
+<script src="/nova-table.js"></script>
+<script>NovaNav.mount({ current: 'dashboard' });</script>
+<script src="/dashboard.js"></script>
+</body>
+</html>

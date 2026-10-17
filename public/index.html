@@ -597,7 +597,7 @@ const AGENT_PAGE_ROUTES = {
 // Prefer Order Assist. Falls back to the launcher UI if nothing is available.
 // Everyone lands on their own chat History (one agent now: ChatBot, opened from there).
 async function redirectToFirstAgent() {
-  window.location.href = '/admin?tab=history&mine=1';
+  window.location.href = '/dashboard';   /* 1.20.174: the Dashboard is home */
   return;
   let list = [];
   try {

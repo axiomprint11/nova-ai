@@ -12,6 +12,7 @@
  */
 (function () {
   const ICON = {
+    dashboard: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
     history: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     client: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/>',
     talk: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>',
@@ -34,7 +35,8 @@
   // [key, label, href, who] — who: 'all' (everyone), 'admin', 'knowledge' (members with Domain Knowledge access),
   // 'bookkeeper' (the people named in BOOKKEEPER_USERS — admin or not), 'ar' (Nova AR: bookkeepers + members ticked AR).
   const GROUPS = [
-    [['history', 'CRM Chat', '/admin?tab=history', 'all'],
+    [['dashboard', 'Dashboard', '/dashboard', 'all'],   /* 1.20.174: the home page — invoices by billed date, by AM */
+     ['history', 'CRM Chat', '/admin?tab=history', 'all'],
      ['client', 'Client ChatBot', '/client-bot', 'admin'],
      ['talk', 'TalkAi', '/talk-ai', 'all'],           // 1.20.78: the whole team — the Calls dashboard + My TalkAI
      ['books', 'Bookkeeping AI', '/bookkeeping', 'bookkeeper'],
@@ -161,7 +163,7 @@ body.nn-shell { flex-direction: row !important; }
       if (!href) return '<span class="nn-item soon" title="' + esc(label) + ' — coming soon" aria-disabled="true">' + inner + '</span>';
       return '<a class="nn-item" data-k="' + key + '" href="' + href + '" title="' + esc(label) + '">' + inner + '</a>';
     }).join('') + '</div>').join('');
-    root.innerHTML = '<a class="nn-logo" href="/admin?tab=history&amp;mine=1" title="NovaAI">Nova<span>AI</span><small class="nn-ver" id="nnVer" title="' + esc(ver.title) + '">' + esc(ver.text) + '</small></a>' +
+    root.innerHTML = '<a class="nn-logo" href="/dashboard" title="NovaAI">Nova<span>AI</span><small class="nn-ver" id="nnVer" title="' + esc(ver.title) + '">' + esc(ver.text) + '</small></a>' +
       '<nav class="nn-groups" aria-label="Nova">' + groups + '</nav>' +
       '<div class="nn-foot"><a class="nn-item" href="/chatbot" title="New chat in ChatBot">' + svg('chatbot') + '<span class="nn-l">New chat</span></a>' + meHtml() + '</div>';
     const out = root.querySelector('.nn-out');
