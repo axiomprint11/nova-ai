@@ -36,7 +36,7 @@
   .db-chips button:hover { border-color: #c7c7dc; } .db-chips button.on { background: var(--indigo-light); border-color: var(--indigo); color: var(--indigo-dark); }
   .db-custom { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
   .db-custom input { font: inherit; font-size: 12.5px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
-  .db-range { font-size: 12px; color: var(--muted); white-space: nowrap; flex-basis: 100%; margin: 2px 0 0 4px; }   /* 1.20.180: on its own line under the chips */
+  .db-range { font-size: 12px; color: var(--muted); white-space: nowrap; margin: 6px 0 0 4px; }   /* 1.20.180: on its own line under the chips */
 
   /* AM heads */
   .db-ams { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: thin; }
@@ -50,7 +50,16 @@
   .face.all svg { width: 15px; height: 15px; }
 
   /* order-number cards */
-  .db-ord { display: grid; grid-template-columns: repeat(4, minmax(96px, 1fr)); gap: 6px; }
+  .db-ord { display: grid; grid-template-columns: repeat(4, minmax(84px, auto)); gap: 6px; }
+  /* 1.20.183: the order-number cards sit in the Billed row; Ordered shows each choice on two lines (name, then the amount) */
+  .db-row { gap: 14px; } .db-ordbox { flex: 0 1 auto; }
+  #dbOnline button { flex-direction: column; align-items: center; gap: 1px; padding: 5px 12px; line-height: 1.15; }
+  #dbOnline button .l { display: inline-flex; align-items: center; gap: 5px; } #dbOnline button small { font-size: 10.5px; }
+  /* compact so Billed · Group by · Ordered · Count · order number fit one row on a laptop */
+  .db-row .seg button { padding: 6px 9px; font-size: 12px; } .db-row #dbOnline button { padding: 4px 10px; }
+  .db-row .db-chips button { padding: 6px 11px; font-size: 12px; } .db-row .db-chips { gap: 5px; }
+  .db-ord .db-oc { padding: 4px 9px 5px; } .db-ord .db-oc .v { font-size: 13.5px; }
+  .db-ord { grid-template-columns: repeat(4, minmax(72px, auto)); gap: 5px; }
   .db-oc { border: 1.5px solid var(--line); background: #fff; border-radius: 10px; padding: 5px 10px 6px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 2px; position: relative; overflow: hidden; }
   .db-oc:hover { border-color: #c7c7dc; } .db-oc.on { border-color: var(--c); background: color-mix(in srgb, var(--c) 7%, #fff); }
   .db-oc .t { font-size: 11px; font-weight: 700; color: var(--c); display: flex; align-items: center; gap: 6px; } .db-oc .t i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
@@ -175,12 +184,12 @@
   <div class="db-card db-filters" id="dbFilters">
     <div id="dbAmBox"><div class="db-lab">Account manager <span class="db-q" tabindex="0" aria-label="Help">?<span class="db-qtip">All account managers · hover a face for a snapshot, click to see only theirs</span></span><span class="db-ampick" id="dbAmPick"></span></div><div class="db-heads" id="dbAms"></div></div>
     <div class="db-row">
-      <div><div class="db-lab">Billed</div><div class="db-chips" id="dbPeriod"></div></div>
+      <div><div class="db-lab">Billed</div><div class="db-chips" id="dbPeriod"></div><div class="db-range" id="dbRange"></div></div>
       <div class="db-dash-only"><div class="db-lab">Group by</div><div class="seg" id="dbGroup"></div></div>
       <div><div class="db-lab">Ordered</div><div class="seg" id="dbOnline"></div></div>
       <div><div class="db-lab">Count</div><div class="seg" id="dbBy"><button data-by="inv" class="on" title="Dollars invoiced">By Inv.</button><button data-by="qty" title="Number of invoices">By Qty.</button></div></div>
+      <div class="db-ordbox"><div class="db-lab">Client's order number</div><div class="db-ord" id="dbOrders"></div></div>
     </div>
-    <div><div class="db-lab">Client's order number</div><div class="db-ord" id="dbOrders"></div></div>
   </div>
   <div id="dbErr"></div>
   <div class="db-vs db-dash-only" id="dbVs"></div>

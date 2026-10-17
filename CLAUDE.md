@@ -789,7 +789,10 @@ number, Ordered, Count) are the same code and the same saved state (`nova_dash_v
 Dashboard asks `/api/dashboard` with `rows=0` (no list in the reply). A bar click opens `/invoices?d=<from>&e=<to>` (`SUB`, a chip with × that
 shows the whole period; dropped when the period no longer covers it); a tile opens the list narrowed to it (`data-tgo`: Paid / Partially
 paid / Unpaid / Estimates → `?st=` = the Status column filter, New clients → order number New, Ordered online → Online); the chart header has
-"See the invoices →" and the Invoices title "see the chart". The list line reads "n shown · $total".
+"See the invoices →" and the Invoices title "see the chart". The list line reads "n shown · $total". **1.20.183**: the filter card is two rows — the AM heads, then Billed · Group by · Ordered · Count · **Client's order
+number** (the four cards moved into that row, `.db-ordbox`); each Ordered choice is two lines (name, then the amount — `.l` + `small`);
+the Billed date line is its own `#dbRange` under the chips (inside the chip row it stretched the column); the row's chips / toggles / cards
+are a little tighter so it all fits one line from about 1366px (Invoices) / 1600px (Dashboard, which also has Group by); narrower, it wraps.
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 
