@@ -489,7 +489,7 @@
       '<div class="cols">' + cols + '</div></div></div>' +
       '<button class="org-arrow l" data-act="org-pan" data-d="-1" aria-label="Scroll left"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></button>' +
       '<button class="org-arrow r" data-act="org-pan" data-d="1" aria-label="Scroll right"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>' +
-      '<div class="org-ctl"><span class="org-hint"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 0 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>Drag to move</span>' +
+      '<div class="org-ctl"><span class="org-hint"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 0 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>Drag to move · wheel to zoom</span>' +
       '<button data-act="org-zoom" data-d="-1" aria-label="Zoom out" title="Zoom out">−</button><button data-act="org-zoom" data-d="0" class="pct" title="Back to 100%">' + Math.round(UI.orgZoom * 100) + '%</button><button data-act="org-zoom" data-d="1" aria-label="Zoom in" title="Zoom in">+</button><button data-act="org-zoom" data-d="fit" title="Fit the whole tree in view">Fit</button></div></div>' +
       '<p class="muted" style="font-size:12px;margin-top:10px">The tree comes from the Axiom CRM\'s departments and teams; a department or team edited here keeps its Nova version (marked NOVA). Some people lead more than one team. Click a name to open their profile.</p>';
   }
@@ -504,16 +504,33 @@
     const box = w.parentNode, max = w.scrollWidth - w.clientWidth;
     box.classList.toggle('more-l', w.scrollLeft > 4); box.classList.toggle('more-r', w.scrollLeft < max - 4);
   }
-  function orgZoom(d) {
-    const w = document.querySelector('.org-wrap'), o = w && w.querySelector('.org'); if (!o) return;
-    const old = UI.orgZoom, cx = (w.scrollLeft + w.clientWidth / 2) / old, cy = (w.scrollTop + w.clientHeight / 2) / old;
-    let z = d === 'fit' ? 1 : d === '0' ? 1 : Math.round((old + (+d) * 0.1) * 10) / 10;
+  /* d: -1 / 1 = a step, '0' = 100 %, 'fit', or {z} = an exact zoom; at = {x, y} in the window — that spot of the tree stays
+     under it (the mouse wheel), else the middle of the view does. 1.20.170 */
+  function orgZoom(d, at) {
+    const w = document.querySelector('.org-wrap'), o = w && w.querySelector('.org'), c = o && o.querySelector('.cols'); if (!c) return;
+    const old = UI.orgZoom, wr = w.getBoundingClientRect();
+    const px = at ? at.x : wr.left + w.clientWidth / 2, py = at ? at.y : wr.top + w.clientHeight / 2;
+    const cr = c.getBoundingClientRect(), or = o.getBoundingClientRect();
+    const fx = (px - cr.left) / (cr.width || 1), fy = (py - or.top) / (or.height || 1);
+    let z = d === 'fit' || d === '0' ? 1 : d && typeof d === 'object' ? d.z : Math.round((old + (+d) * 0.1) * 10) / 10;
     if (d === 'fit') { o.style.zoom = 1; z = Math.min(1, (w.clientWidth - 44) / o.scrollWidth, (w.clientHeight - 56) / o.scrollHeight); z = Math.floor(z * 20) / 20; }
-    z = Math.max(0.3, Math.min(1.5, z)); UI.orgZoom = z; try { localStorage.setItem('hr_org_zoom', String(z)); } catch (e) {}
+    z = Math.max(0.3, Math.min(1.5, Math.round(z * 100) / 100)); if (z === old && d !== 'fit') return;
+    UI.orgZoom = z; try { localStorage.setItem('hr_org_zoom', String(z)); } catch (e) {}
     o.style.zoom = z; const pct = w.parentNode.querySelector('.org-ctl .pct'); if (pct) pct.textContent = Math.round(z * 100) + '%';
-    if (d === 'fit') { w.scrollLeft = (w.scrollWidth - w.clientWidth) / 2; w.scrollTop = 0; } else { w.scrollLeft = cx * z - w.clientWidth / 2; w.scrollTop = cy * z - w.clientHeight / 2; }
+    if (d === 'fit') { w.scrollLeft = (w.scrollWidth - w.clientWidth) / 2; w.scrollTop = 0; }
+    else { const cr2 = c.getBoundingClientRect(), or2 = o.getBoundingClientRect(); w.scrollLeft += cr2.left + fx * cr2.width - px; w.scrollTop += or2.top + fy * or2.height - py; }
     orgEdges();
   }
+  /* The mouse wheel zooms in / out where the pointer is (a map's feel); a trackpad's two-finger scroll still moves the tree,
+     a pinch (ctrl + wheel) zooms; Shift + wheel scrolls sideways. 1.20.170 */
+  document.addEventListener('wheel', (ev) => {
+    const w = ev.target.closest && ev.target.closest('.org-wrap'); if (!w || ev.shiftKey) return;
+    const mouse = ev.deltaMode === 1 || (ev.deltaX === 0 && Math.abs(ev.deltaY) >= 50 && Number.isInteger(ev.deltaY));
+    if (!ev.ctrlKey && !mouse) return;
+    ev.preventDefault();
+    const step = ev.ctrlKey && !mouse ? Math.exp(-ev.deltaY * 0.01) : (ev.deltaY < 0 ? 1.12 : 1 / 1.12);
+    orgZoom({ z: UI.orgZoom * step }, { x: ev.clientX, y: ev.clientY });
+  }, { passive: false });
   let orgDrag = null;
   document.addEventListener('pointerdown', (ev) => {
     const w = ev.target.closest && ev.target.closest('.org-wrap'); if (!w || ev.button !== 0 || ev.pointerType === 'touch') return;

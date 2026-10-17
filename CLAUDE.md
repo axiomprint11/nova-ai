@@ -689,7 +689,11 @@ uses the people picker with the flag + the local time instead of a head (`isLoc(
 under the fold and the tree looked stuck), drags with the hand anywhere — cards included; a drag never opens a card (the click after a
 move is swallowed), text selection is blocked while dragging — ‹ › arrows + edge fades show while there is more that way (`orgEdges()`),
 ← → keys when focused, and zoom − % + Fit (CSS `zoom`, `UI.orgZoom`, localStorage `hr_org_zoom`, 30–150 %); scroll is kept both ways
-across re-renders.
+across re-renders. **1.20.170 — the wheel zooms where the pointer is**: a mouse wheel over the tree zooms in / out
+(×1.12 a notch) keeping the spot under the pointer in place (`orgZoom(d, at)` anchors on `.cols` / `.org` rects and corrects the
+scroll after the zoom; exact once the tree is bigger than the view — while it all fits it stays centred); a pinch (ctrl + wheel)
+zooms smoothly, a trackpad's two-finger scroll still pans (told apart by `deltaMode` / whole-number `deltaY` ≥ 50 with no `deltaX`),
+Shift + wheel scrolls sideways; the hint reads "Drag to move · wheel to zoom".
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 
