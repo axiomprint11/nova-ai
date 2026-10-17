@@ -598,6 +598,15 @@ clears it); rolls have ONE **Finish** (no back); **Machines that print it** is a
 focus shows up to 8 printers, typing searches all by name / team / action, ↑↓ Enter, × removes); measures read in small letters (pt / mil / gsm,
 lb / kg / oz / gram). The page's `font: 600 12px/1 inherit` shorthands were invalid CSS (ignored — buttons fell back to the browser font) and
 are now longhands with `font-family: inherit`.
+**1.20.163 — every form has its own fields** (`describeHtml` by `s.form`; `NOT_ON` on the server nulls the rest, `features` / `machines` stay
+`[]`): all but Item / Ink have **Material · Thickness · Color · Product SKU** + Printable · Brand · Machines · Features; **Sheet** adds
+Finishing front / back; **Roll** and **Wide roll** add Adhesive · Liner · one Finish; **Rigid board** adds **Edge color** + Finish;
+**Item / hardware** and **Ink / liquid** are only Color · SKU · Geo type (`BARE`). Every form keeps **Weight and volume**. Roll's Material list
+gained **Vinyl**. **Rigid board and Wide roll take their Material list from the Geo Types** (`GEO_LIST` server / `GEO_FORM` page: the type whose
+name says "board" / "wide" — Boards, Wide Format; `matList()` reads `GEO`, loaded before the drawer draws): the value is the geo sub key
+(`cs40`), picking it also sets the Geo type select and the reverse, and the CRM's own geo sub type is the default (`buildList`); the list
+shows `spec.substrate_label`. Switching forms clears the Material when the list family changes (`matFamily`). Geo type and Material
+overlap for these two on purpose — the owner is still deciding whether to fold them together.
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 

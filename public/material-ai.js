@@ -74,7 +74,7 @@
     const s = m.spec, out = [];
     if (s.thickness) out.push(nf(s.thickness, 4) + ' ' + ({ pt: 'pt', mil: 'mil', gsm: 'gsm' }[s.thickness_unit] || s.thickness_unit || ''));
     if (s.basis_weight && s.thickness_unit !== 'gsm') out.push(nf(s.basis_weight) + (s.basis_unit === 'gsm' ? ' gsm' : s.basis_unit === 'oz' ? ' oz' : '# ' + lbl(V.basis_unit, s.basis_unit).replace('# ', '')));
-    if (s.substrate) out.unshift(lbl(s.form === 'sheet' ? V.substrate_sheet : V.substrate_roll, s.substrate));
+    if (s.substrate_label) out.unshift(s.substrate_label);
     const fin = s.finish && String(lbl(V.finish, s.finish)).toLowerCase() !== String(s.color || '').toLowerCase() ? lbl(V.finish, s.finish) : null;
     const back = s.finish_back && s.finish_back !== 'same' && s.finish_back !== s.finish ? lbl(V.finish, s.finish_back) : null;
     let h = out.map(x => '<span>' + esc(x) + '</span>').join('');
@@ -116,7 +116,7 @@
     openId = id; DRAFT = null; if (tab) drawerTab = tab;
     document.querySelectorAll('#maTable tbody tr').forEach(t => t.classList.toggle('on', Number(t.dataset.id) === id));
     $('maDrawer').innerHTML = '<div class="ma-dbody ma-muted">Loading…</div>'; $('maDrawer').classList.add('on'); $('maDim').classList.add('on');
-    const j = await api('/api/material-ai/materials/' + id); if (!j.ok) { $('maDrawer').innerHTML = '<div class="ma-dbody">' + esc(j.error) + '</div>'; return; }
+    const [j] = await Promise.all([api('/api/material-ai/materials/' + id), geoTypes().catch(() => null)]); if (!j.ok) { $('maDrawer').innerHTML = '<div class="ma-dbody">' + esc(j.error) + '</div>'; return; }
     DET = j.material; drawDrawer();
   }
   function drawDrawer() {
@@ -143,6 +143,15 @@
   let MACH = null, GEO = null, DRAFT = null;
   async function machines() { if (MACH) return MACH; const j = await api('/api/material-ai/machines'); MACH = j.ok ? j.machines : []; return MACH; }
   async function geoTypes(fresh) { if (GEO && !fresh) return GEO; const j = await api('/api/material-ai/geo'); GEO = j.ok ? j.types : []; return GEO; }
+  /* the Material choices: fixed lists for Sheet / Roll, the sub types of the Boards / Wide Format geo type for Rigid board / Wide roll */
+  const GEO_FORM = { rigid: /board/i, wide_roll: /wide/i };
+  function matList(form, cur) {
+    if (form === 'sheet') return V.substrate_sheet; if (form === 'roll') return V.substrate_roll;
+    if (!GEO_FORM[form] || !GEO) return [];
+    const t = GEO.find(x => !x.hidden && GEO_FORM[form].test(x.crm_name || x.name)) || GEO.find(x => GEO_FORM[form].test(x.name));
+    return t ? t.subs.filter(x => !x.hidden || x.key === cur).map(x => [x.key, x.name]) : [];
+  }
+  const matFamily = (f) => f === 'sheet' ? 's' : f === 'roll' ? 'r' : f === 'rigid' ? 'b' : f === 'wide_roll' ? 'w' : '';
   function describeHtml(m, s) {
     s = s || m.spec;
     const roll = isRoll(s.form), sr = s.form === 'sheet' || roll;
@@ -163,24 +172,23 @@
     const machF = '<div class="ma-f ma-span6"><label>Machines that print it</label><div class="ma-mpick" id="dsMach"><span class="chips"></span>' +
       '<span class="srch"><input type="search" id="dsMachQ" placeholder="Search machines…" autocomplete="off"><div class="ma-mlist" id="dsMachL"></div></span></div></div>';
     const featF = '<div class="ma-f ma-span6"><label>Features</label><div class="ma-feat" id="dsFeat">' + V.features.map(x => '<button type="button" data-f="' + esc(x) + '"' + (s.features.indexOf(x) > -1 ? ' class="on"' : '') + '>' + esc(x) + '</button>').join('') + '</div></div>';
+    const form = s.form, bare = form === 'item' || form === 'liquid', mats = matList(form, s.substrate);
+    const skuF = f('sku', 'Product SKU', '<input name="sku" value="' + esc(s.sku || '') + '">');
+    const brandF = (span) => f('brand', 'Brand / maker', '<input name="brand" value="' + esc(s.brand || '') + '">', span);
+    const sidesF = (span) => f('sides', 'Printable', seg('sides', V.sides), span);
     let h = '<div class="ma-grid" id="dsForm">' + f('form', 'What it is', seg('form', V.form), 'ma-span6');
-    if (sr) {
-      h += f('substrate', 'Material', seg('substrate', s.form === 'sheet' ? V.substrate_sheet : V.substrate_roll), 'ma-span4') + geoF;
-      h += thickF + colorF + f('sku', 'Product SKU', '<input name="sku" value="' + esc(s.sku || '') + '">');
-      const brandF = f('brand', 'Brand / maker', '<input name="brand" value="' + esc(s.brand || '') + '">', roll ? 'ma-span2' : 'ma-span3');
+    if (bare) h += colorF + skuF + geoF;   /* Item / hardware and Ink / liquid: colour and SKU, then weight & volume */
+    else {
+      const geoList = !!GEO_FORM[form];
+      h += f('substrate', 'Material', mats.length ? seg('substrate', mats) : '<span class="ma-muted" style="padding:8px 0">' + (form ? 'No sub types under that geo type yet — add them with Geo Types' : 'Pick what it is first') + '</span>', geoList ? 'ma-span6' : 'ma-span4');
+      if (!geoList) h += geoF;
+      h += thickF + colorF + skuF;
       if (roll) h += f('adhesive', 'Adhesive', seg('adhesive', V.adhesive_roll.concat(s.adhesive && !V.adhesive_roll.some(p => p[0] === s.adhesive) ? [[s.adhesive, lbl(V.adhesive, s.adhesive)]] : [])), 'ma-span4') + finishF +
-        f('liner', 'Liner', seg('liner', V.liner), 'ma-span4') + f('sides', 'Printable', seg('sides', V.sides), 'ma-span2') + brandF;
-      else h += finishF + f('sides', 'Printable', seg('sides', V.sides), 'ma-span3') + brandF;
+        f('liner', 'Liner', seg('liner', V.liner), 'ma-span4') + sidesF('ma-span2') + brandF('ma-span2');
+      else if (form === 'rigid') h += f('edge_color', 'Edge color', '<input name="edge_color" list="maColors" value="' + esc(s.edge_color || '') + '" placeholder="White, Clear, Black…">') + finishF + sidesF('ma-span2') + brandF('ma-span2');
+      else h += finishF + sidesF('ma-span3') + brandF('ma-span3');
+      if (geoList) h += geoF;
       h += machF + featF;
-    } else {
-      h += geoF + thickF + colorF +
-        f('edge_color', 'Edge color', '<input name="edge_color" list="maColors" value="' + esc(s.edge_color || '') + '" placeholder="rigid boards, acrylic">') +
-        f('adhesive', 'Adhesive', seg('adhesive', V.adhesive), 'ma-span6') + finishF +
-        f('coated', 'Coating', '<select name="coated">' + opt(V.coated, s.coated, '—') + '</select>') +
-        f('basis_weight', 'Paper / banner weight', '<div class="pair">' + numIn('basis_weight', '70') + '<select name="basis_unit">' + opt(V.basis_unit, s.basis_unit, '—') + '</select></div>') +
-        f('sides', 'Printable', seg('sides', V.sides)) + f('use_where', 'Use', '<select name="use_where">' + opt(V.use_where, s.use_where, '—') + '</select>') +
-        f('brand', 'Brand / maker', '<input name="brand" value="' + esc(s.brand || '') + '">') + f('sku', 'Product SKU', '<input name="sku" value="' + esc(s.sku || '') + '">') +
-        f('product_line', 'Product line', '<input name="product_line" value="' + esc(s.product_line || '') + '" placeholder="e.g. Acrylite FF, 3M IJ180">', 'ma-span2') + machF + featF;
     }
     const counts = V.base_unit.filter(p => p[0] !== 'press' || s.base_unit === 'press');
     h += '<div class="ma-sec">Weight and volume</div>' +
@@ -264,11 +272,14 @@
       if (sg.dataset.seg === 'form') {   /* another form → its own fields, keeping what was typed */
         const was = (DRAFT || m.spec).form;
         DRAFT = Object.assign({}, m.spec, readDescribe(box, m), { form: b.dataset.v });
-        if ((was === 'sheet') !== (DRAFT.form === 'sheet')) DRAFT.substrate = '';   /* the two Material lists differ */
+        if (matFamily(was) !== matFamily(DRAFT.form)) DRAFT.substrate = '';   /* every form has its own Material list */
         if (DRAFT.form === 'sheet' || isRoll(DRAFT.form)) { if (DRAFT.thickness_unit === 'in' || DRAFT.thickness_unit === 'mm') { const i = DRAFT.thickness_unit === 'mm' ? Number(DRAFT.thickness) / 25.4 : Number(DRAFT.thickness); DRAFT.thickness = i ? +(i * 1000).toFixed(2) : ''; DRAFT.thickness_unit = DRAFT.form === 'sheet' ? 'pt' : 'mil'; } }
         box.parentNode.innerHTML = describeHtml(m, DRAFT); bindDescribe(m);
       }
       if (sg.dataset.seg === 'base_unit') $('dsPress').style.display = b.dataset.v === 'press' ? '' : 'none';
+      if (sg.dataset.seg === 'substrate' && GEO_FORM[(DRAFT || m.spec).form] && b.classList.contains('on') && $('dsGeo')) {   /* the material IS the geo sub type */
+        const g = $('dsGeo'); if (!Array.from(g.options).some(o => o.value === b.dataset.v)) g.add(new Option(b.textContent, b.dataset.v)); g.value = b.dataset.v;
+      }
     });
     box.querySelectorAll('#dsFeat button').forEach(b => b.onclick = () => b.classList.toggle('on'));
     if ($('dsFbSame')) $('dsFbSame').onchange = (e) => { $('dsFbSel').style.display = e.target.checked ? 'none' : ''; };
@@ -277,7 +288,10 @@
     $('dsHexPick').oninput = (e) => setHex(e.target.value);
     col.querySelector('[name=color]').onchange = (e) => { const h = COLOR_HEX[e.target.value.trim().toLowerCase()]; if (h && !hexIn.value) setHex(h); };
     col.querySelector('.clr').onclick = () => setHex('');
-    fillMachines(s); fillGeo(s);
+    fillMachines(s); fillGeo(s).then(() => {
+      if ($('dsGeo')) $('dsGeo').onchange = (e) => { const sg = box.querySelector('[data-seg="substrate"]'); if (!sg || !GEO_FORM[(DRAFT || m.spec).form]) return;
+        sg.querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.v === e.target.value)); };
+    });
     $('dsShip').innerHTML = shipHtml(m);
     const calc = () => { const q = Number($('shQty').value) || 0, p = m.physics; if (!q) { $('shOut').textContent = ''; return; }
       const lb = p.per_unit_oz != null ? p.per_unit_oz * q / 16 : null, cu = p.cube_in3 != null ? p.cube_in3 * q : null;

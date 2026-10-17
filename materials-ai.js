@@ -74,7 +74,7 @@ module.exports = function mountMaterialsAi(app, deps) {
   const VOCAB = {
     form: [['sheet', 'Sheet'], ['roll', 'Roll'], ['wide_roll', 'Wide roll'], ['rigid', 'Rigid board'], ['item', 'Item / hardware'], ['liquid', 'Ink / liquid']],
     substrate_sheet: [['paper_text', 'Paper Text'], ['cardstock', 'Paper Cardstock'], ['plastic', 'Plastic'], ['clear', 'Clear'], ['magnetic', 'Magnetic']],
-    substrate_roll: [['bopp', 'BOPP'], ['clear', 'Clear'], ['holographic', 'Holographic'], ['silver', 'Silver'], ['lamination', 'Lamination']],
+    substrate_roll: [['bopp', 'BOPP'], ['clear', 'Clear'], ['holographic', 'Holographic'], ['silver', 'Silver'], ['lamination', 'Lamination'], ['vinyl', 'Vinyl']],
     thickness_unit: [['in', 'in'], ['mm', 'mm'], ['mil', 'mil'], ['pt', 'pt']],
     thickness_unit_sr: [['pt', 'pt'], ['mil', 'mil'], ['gsm', 'gsm']],
     adhesive_roll: [['none', 'No adhesive'], ['permanent', 'Permanent'], ['removable', 'Removable'], ['static', 'Static']],
@@ -226,25 +226,33 @@ module.exports = function mountMaterialsAi(app, deps) {
       if (/silver|chrome|metallic/i.test(name)) return 'silver';
       if (/clear|transparent/i.test(name)) return 'clear';
       if (/bopp/i.test(mat + ' ' + name)) return 'bopp';
+      if (/vinyl/i.test(mat + ' ' + name)) return 'vinyl';
     }
     return null;
   }
   const SPEC_FIELDS = ['form', 'thickness', 'thickness_unit', 'color', 'color_hex', 'edge_color', 'adhesive', 'liner', 'finish', 'finish_back', 'coated', 'basis_weight', 'basis_unit',
     'sides', 'machines', 'use_where', 'features', 'brand', 'product_line', 'sku', 'base_unit', 'press_w', 'press_h', 'weight', 'weight_unit', 'weight_per', 'stack_thick', 'stack_n', 'geo_key', 'substrate', 'notes'];
   const NUM_SPEC = ['thickness', 'basis_weight', 'press_w', 'press_h', 'weight', 'stack_thick', 'stack_n'];
-  /* fields a form does not have — never shown, never counted (rigid / item / ink keep the full set until they get their own form) */
+  /* fields a form does not have — never shown, never counted. Item / Ink keep only colour, SKU, geo type and weight & volume (1.20.163) */
+  const BARE = ['thickness', 'thickness_unit', 'edge_color', 'adhesive', 'liner', 'finish', 'finish_back', 'coated', 'sides', 'machines', 'use_where', 'features', 'brand', 'product_line', 'substrate'];
   const NOT_ON = { sheet: ['edge_color', 'adhesive', 'liner', 'use_where', 'coated', 'product_line'],
-    roll: ['edge_color', 'use_where', 'coated', 'product_line', 'finish_back'], wide_roll: ['edge_color', 'use_where', 'coated', 'product_line', 'finish_back'] };
+    roll: ['edge_color', 'use_where', 'coated', 'product_line', 'finish_back'], wide_roll: ['edge_color', 'use_where', 'coated', 'product_line', 'finish_back'],
+    rigid: ['adhesive', 'liner', 'use_where', 'coated', 'product_line', 'finish_back'], item: BARE, liquid: BARE };
+  /* Rigid board and Wide roll take their Material list from a Geo type (Boards / Wide Format); Sheet and Roll have fixed lists */
+  const GEO_LIST = { rigid: /board/i, wide_roll: /wide/i };
+  const isGeoKey = (v) => /^[cn]s\d+$/.test(String(v || ''));
   const SR = (f) => f === 'sheet' || f === 'roll' || f === 'wide_roll';
   function mergedSpec(m, saved) {
     const d = defaultsFor(m), out = {}, from = {};
     SPEC_FIELDS.forEach(f => { const v = saved ? saved[f] : null; if (v != null && v !== '') { out[f] = v; from[f] = 'nova'; } else if (d[f] != null && d[f] !== '') { out[f] = d[f]; from[f] = 'crm'; } else out[f] = null; });
     out.features = out.features ? String(out.features).split(',').map(s => s.trim()).filter(Boolean) : [];
     out.machines = out.machines ? String(out.machines).split(',').map(Number).filter(n => n > 0) : [];
-    (NOT_ON[out.form] || []).forEach(f => { out[f] = null; delete from[f]; });
+    (NOT_ON[out.form] || []).forEach(f => { out[f] = f === 'features' || f === 'machines' ? [] : null; delete from[f]; });
     /* an older Sheet / Roll thickness in inches or mm reads as PT / Mil */
-    if (out.substrate && !(VOCAB[out.form === 'sheet' ? 'substrate_sheet' : 'substrate_roll'] || []).some(p => p[0] === out.substrate) && from.substrate === 'crm') out.substrate = null;
-    if (!SR(out.form)) { out.substrate = null; delete from.substrate; }
+    if (out.substrate) {
+      const fits = GEO_LIST[out.form] ? isGeoKey(out.substrate) : (VOCAB[out.form === 'sheet' ? 'substrate_sheet' : 'substrate_roll'] || []).some(p => p[0] === out.substrate);
+      if (!fits || (!SR(out.form) && out.form !== 'rigid')) { out.substrate = null; delete from.substrate; }
+    }
     if (SR(out.form) && Number(out.thickness) > 0 && (out.thickness_unit === 'in' || out.thickness_unit === 'mm' || !out.thickness_unit)) {
       const i = out.thickness_unit === 'mm' ? Number(out.thickness) / 25.4 : Number(out.thickness);
       out.thickness = +(i * 1000).toFixed(2); out.thickness_unit = out.form === 'sheet' ? 'pt' : 'mil';
@@ -341,16 +349,14 @@ module.exports = function mountMaterialsAi(app, deps) {
 
   // ---- completeness: how well a material is described (what to fill next)
   function completeness(m, spec, srcs, phys) {
-    const sr = SR(spec.form);
-    const want = [['form', !!spec.form], ['thickness', !!spec.thickness || !!spec.stack_thick], ['color', !!(spec.color || spec.color_hex)], ['finish', !!spec.finish || spec.form === 'item'],
-      ['base unit', !!spec.base_unit], ['weight', phys.per_unit_oz != null]];
-    if (['item', 'liquid', 'sheet'].indexOf(spec.form) === -1) want.push(['adhesive', !!spec.adhesive]);
-    if (sr) want.push(['printable', spec.sides != null && spec.sides !== ''], ['machines', spec.sides === '0' || spec.machines.length > 0]);
-    if (sr) want.push(['material', !!spec.substrate]);
-    if (spec.form === 'roll' || spec.form === 'wide_roll') want.push(['liner', !!spec.liner]);
-    want.push(
-      ['supplier', srcs.length > 0], ['cost', srcs.some(s => s.cost_per_buy != null)], ['size', srcs.some(s => s.unit_w && s.unit_h) || spec.form === 'item'],
-      ['photo', !!(m.photo_url || m.website_image_url)]);
+    const bare = spec.form === 'item' || spec.form === 'liquid', roll = spec.form === 'roll' || spec.form === 'wide_roll';
+    const want = [['form', !!spec.form], ['color', !!(spec.color || spec.color_hex)], ['base unit', !!spec.base_unit], ['weight', phys.per_unit_oz != null]];
+    if (!bare) want.push(['material', !!spec.substrate], ['thickness', !!spec.thickness || !!spec.stack_thick], ['printable', spec.sides != null && spec.sides !== ''],
+      ['machines', spec.sides === '0' || spec.machines.length > 0], ['size', srcs.some(s => s.unit_w && s.unit_h)]);
+    if (SR(spec.form)) want.push(['finish', !!spec.finish]);
+    if (spec.form === 'rigid') want.push(['edge color', !!spec.edge_color]);
+    if (roll) want.push(['adhesive', !!spec.adhesive], ['liner', !!spec.liner]);
+    want.push(['supplier', srcs.length > 0], ['cost', srcs.some(s => s.cost_per_buy != null)], ['photo', !!(m.photo_url || m.website_image_url)]);
     const have = want.filter(w => w[1]).length;
     return { pct: Math.round(have * 100 / want.length), missing: want.filter(w => !w[1]).map(w => w[0]) };
   }
@@ -505,6 +511,10 @@ module.exports = function mountMaterialsAi(app, deps) {
     return mats.map(m0 => { let m = m0;
       const ms = mergedSpec(m, specs[m.id]); ms.spec._material = m.material;
       const gk = ms.spec.geo_key && geo.byKey[ms.spec.geo_key]; if (gk) { m = Object.assign({}, m, { geo_type: gk.type_name, geo_sub_type: gk.key === gk.type_key ? null : gk.name }); }
+      /* Rigid board / Wide roll: the Material is a sub type of the Boards / Wide Format geo type — the CRM's own geo sub type is the default */
+      if (GEO_LIST[ms.spec.form] && !ms.spec.substrate && gk && gk.key !== gk.type_key && GEO_LIST[ms.spec.form].test(gk.type_name)) { ms.spec.substrate = gk.key; ms.from.substrate = 'crm'; }
+      const sub = ms.spec.substrate;
+      ms.spec.substrate_label = !sub ? null : isGeoKey(sub) ? ((geo.byKey[sub] || {}).name || null) : (((VOCAB.substrate_sheet.concat(VOCAB.substrate_roll)).find(p => p[0] === sub) || [])[1] || sub);
       const ss = (srcs[m.id] || []).map(s => Object.assign(shapeSource(s, ms.spec), { seller: s.seller_id && sellerById[s.seller_id] ? { id: s.seller_id, name: sellerById[s.seller_id].company_name, photo: sellerById[s.seller_id].photo_url || null, email: sellerById[s.seller_id].email || null } : null }));
       const ph = physics(ms.spec, ss); const st = stockSummary(stock[m.id] || [], ss);
       delete st.entries;
