@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Material AI · NovaAI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/axiom-shared.css">
+<style>
+  /* Material AI — the materials Axiom buys: described, every supplier, prices checked on each invoice, stock and reorder cycle. */
+  body { margin: 0; font-family: Inter, system-ui, sans-serif; background: #f6f7fb; color: #1c1c28; }
+  .ma-top { flex: none; display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: #fff; flex-wrap: wrap; }
+  .ma-top h1 { font-size: 15px; margin: 0; display: flex; align-items: center; gap: 8px; } .ma-top h1 span { font-weight: 500; color: var(--muted); } .ma-top h1 svg { color: var(--indigo-dark); width: 18px; height: 18px; }
+  .ma-top .sp { flex: 1; }
+  .ma-tabs { display: flex; gap: 4px; } .ma-tabs button { border: 1px solid transparent; background: none; padding: 7px 13px; border-radius: 9px; font: 600 13px/1 inherit; color: var(--ink-soft); cursor: pointer; display: flex; align-items: center; gap: 6px; }
+  .ma-tabs button.on { background: var(--indigo-light); color: var(--indigo-dark); }
+  .ma-tabs .n { font-size: 11px; font-weight: 700; background: #fee2e2; color: #b91c1c; border-radius: 10px; padding: 1px 7px; } .ma-tabs .n:empty { display: none; } .ma-tabs .n.soft { background: #f0f0f5; color: #555; }
+  .ma-main { flex: 1; min-height: 0; overflow: auto; padding: 16px 18px 40px; position: relative; }
+  .ma-view { display: none; } .ma-view.on { display: block; }
+  .ma-card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
+  .ma-card h2 { font-size: 13.5px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .ma-card h2 .sp { flex: 1; } .ma-card h2 .n { font-weight: 500; color: var(--muted); font-size: 12px; }
+  .ma-muted { color: var(--muted); font-size: 12px; } .ma-p { font-size: 12.5px; color: var(--ink-soft); line-height: 1.5; margin: 0 0 10px; }
+  .bk-btn { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; font: 600 12px/1 inherit; cursor: pointer; color: var(--ink-soft); white-space: nowrap; }
+  .bk-btn:hover { border-color: #c7c7d9; } .bk-btn.pri { background: var(--indigo); border-color: var(--indigo); color: #fff; } .bk-btn.sm { padding: 5px 9px; font-size: 11.5px; }
+  .bk-btn.go { background: #059669; border-color: #059669; color: #fff; } .bk-btn.warn { background: #fff7ed; border-color: #fdba74; color: #c2410c; } .bk-btn.x { color: #b91c1c; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #1c1c28; color: #fff; padding: 9px 14px; border-radius: 9px; font-size: 13px; z-index: 80; }
+  /* tiles */
+  .ma-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .ma-tile { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; cursor: pointer; text-align: left; font-family: inherit; }
+  .ma-tile:hover { border-color: #c7c7d9; } .ma-tile.on { border-color: var(--indigo); box-shadow: 0 0 0 2px var(--indigo-light); }
+  .ma-tile b { display: block; font-size: 22px; letter-spacing: -.02em; color: var(--ink); } .ma-tile span { font-size: 12px; color: var(--muted); }
+  .ma-tile.red b { color: #b91c1c; } .ma-tile.amber b { color: #b45309; } .ma-tile.green b { color: #047857; }
+  /* filter bar */
+  .ma-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .ma-bar .chip { border: 1px solid var(--line); background: #fff; border-radius: 20px; padding: 5px 12px; font: 600 12px/1 inherit; cursor: pointer; color: var(--ink-soft); }
+  .ma-bar .chip.on { background: var(--indigo-light); border-color: var(--indigo); color: var(--indigo-dark); }
+  .ma-bar input[type=search], .ma-bar select { height: 32px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; font: 13px inherit; background: #fff; }
+  .ma-bar input[type=search] { width: 240px; } .ma-bar .sp { flex: 1; }
+  /* the list */
+  table.ma { width: 100%; border-collapse: collapse; font-size: 12.5px; background: #fff; }
+  table.ma th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding: 9px 8px; border-bottom: 1px solid var(--line); position: sticky; top: -16px; background: #fff; z-index: 2; white-space: nowrap; }
+  table.ma td { padding: 9px 8px; border-bottom: 1px solid #f0f0f5; vertical-align: middle; }
+  table.ma tbody tr { cursor: pointer; } table.ma tbody tr:hover td { background: #fafaff; } table.ma tbody tr.on td { background: #eef2ff; }
+  .ma-ph { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: #f0f0f5; display: block; }
+  .ma-ph.none { display: flex; align-items: center; justify-content: center; color: #b6b6c8; font-size: 10px; }
+  .ma-nm b { font-size: 13px; display: block; } .ma-nm .s { font-size: 11px; color: var(--muted); }
+  .ma-form { display: inline-block; font-size: 10.5px; font-weight: 700; border-radius: 6px; padding: 2px 7px; background: #f0f0f5; color: #555; }
+  .ma-form.sheet { background: #e0f2fe; color: #0369a1; } .ma-form.roll { background: #ede9fe; color: #6d28d9; } .ma-form.rigid { background: #fef3c7; color: #92400e; } .ma-form.item { background: #ecfdf5; color: #047857; }
+  .ma-specs { display: flex; flex-wrap: wrap; gap: 3px; max-width: 260px; } .ma-specs span { font-size: 10.5px; background: #f4f4f8; color: #4b4869; border-radius: 6px; padding: 2px 6px; white-space: nowrap; }
+  .ma-specs span.adh { background: #fdf2f8; color: #be185d; }
+  .ma-sups { display: flex; flex-direction: column; gap: 3px; } .ma-sup { display: flex; gap: 6px; align-items: center; font-size: 11.5px; white-space: nowrap; }
+  .ma-sup .v { max-width: 150px; overflow: hidden; text-overflow: ellipsis; } .ma-sup .c { color: var(--muted); } .ma-sup.best .c { color: #047857; font-weight: 700; }
+  .ma-sup .star { color: #f59e0b; font-size: 11px; } .ma-sup.off { opacity: .5; text-decoration: line-through; }
+  .ma-q { display: flex; align-items: center; gap: 6px; min-width: 110px; } .ma-qbar { flex: 1; height: 6px; border-radius: 4px; background: #f0f0f5; overflow: hidden; } .ma-qbar i { display: block; height: 100%; background: #10b981; }
+  .ma-q.mid .ma-qbar i { background: #f59e0b; } .ma-q.low .ma-qbar i { background: #ef4444; } .ma-q b { font-size: 11.5px; min-width: 32px; }
+  .ma-pill { display: inline-block; font-size: 10.5px; font-weight: 700; border-radius: 10px; padding: 2px 8px; background: #f0f0f5; color: #555; white-space: nowrap; }
+  .ma-pill.red { background: #fee2e2; color: #b91c1c; } .ma-pill.amber { background: #fef3c7; color: #92400e; } .ma-pill.green { background: #dcfce7; color: #166534; } .ma-pill.blue { background: #dbeafe; color: #1d4ed8; }
+  .ma-num { font-weight: 700; font-size: 13px; } .ma-sub { font-size: 11px; color: var(--muted); }
+  /* the drawer */
+  .ma-dim { position: fixed; inset: 0; background: rgba(20, 20, 40, .18); z-index: 30; display: none; } .ma-dim.on { display: block; }
+  .ma-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(780px, 92vw); background: #fff; box-shadow: -10px 0 40px rgba(20, 20, 40, .16); z-index: 31; display: none; flex-direction: column; }
+  .ma-drawer.on { display: flex; }
+  .ma-dh { display: flex; gap: 14px; align-items: flex-start; padding: 16px 18px 12px; border-bottom: 1px solid var(--line); }
+  .ma-dh img, .ma-dh .ma-ph { width: 64px; height: 64px; border-radius: 10px; }
+  .ma-dh h3 { margin: 0; font-size: 16px; } .ma-dh .s { font-size: 12px; color: var(--muted); margin-top: 3px; } .ma-dh .sp { flex: 1; min-width: 0; }
+  .ma-x { border: none; background: #f4f4f8; width: 32px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 18px; color: #555; }
+  .ma-dtabs { display: flex; gap: 2px; padding: 0 18px; border-bottom: 1px solid var(--line); } .ma-dtabs button { border: none; background: none; padding: 10px 12px; font: 600 13px/1 inherit; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; }
+  .ma-dtabs button.on { color: var(--indigo-dark); border-bottom-color: var(--indigo); } .ma-dtabs .n { font-size: 10.5px; background: #fee2e2; color: #b91c1c; border-radius: 8px; padding: 1px 6px; margin-left: 4px; }
+  .ma-dbody { flex: 1; overflow: auto; padding: 16px 18px 30px; }
+  .ma-dsec { display: none; } .ma-dsec.on { display: block; }
+  /* the describe form */
+  .ma-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px 12px; }
+  .ma-f { display: flex; flex-direction: column; gap: 4px; min-width: 0; } .ma-f > label { font-size: 11px; font-weight: 600; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+  .ma-f > label .crm { font-size: 9.5px; font-weight: 700; color: #6d28d9; background: #ede9fe; border-radius: 5px; padding: 1px 5px; }
+  .ma-f input, .ma-f select, .ma-f textarea { height: 34px; border: 1px solid var(--line); border-radius: 8px; padding: 0 9px; font: 13px inherit; background: #fff; width: 100%; box-sizing: border-box; min-width: 0; }
+  .ma-f textarea { height: 64px; padding: 7px 9px; resize: vertical; }
+  .ma-f .pair { display: flex; gap: 6px; } .ma-f .pair > * { flex: 1; } .ma-f .pair select { flex: 0 0 82px; }
+  .ma-seg { display: flex; flex-wrap: wrap; gap: 5px; } .ma-seg button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 7px 11px; font: 600 12px/1 inherit; color: var(--ink-soft); cursor: pointer; }
+  .ma-seg button.on { background: #1e1b2e; border-color: #1e1b2e; color: #fff; }
+  .ma-feat { display: flex; flex-wrap: wrap; gap: 5px; } .ma-feat button { border: 1px dashed #d4d4e2; background: #fff; border-radius: 16px; padding: 5px 10px; font: 500 11.5px/1 inherit; color: var(--ink-soft); cursor: pointer; }
+  .ma-feat button.on { border-style: solid; border-color: #10b981; background: #ecfdf5; color: #047857; font-weight: 600; }
+  .ma-span2 { grid-column: span 2; } .ma-span3 { grid-column: span 3; } .ma-span4 { grid-column: span 4; } .ma-span6 { grid-column: span 6; }
+  .ma-sec { grid-column: span 6; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #6b6890; margin-top: 8px; padding-top: 10px; border-top: 1px solid #f0f0f5; }
+  .ma-ship { grid-column: span 6; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 12px; font-size: 12.5px; }
+  .ma-ship b { font-size: 13px; } .ma-ship input { width: 80px; height: 30px; border: 1px solid var(--line); border-radius: 7px; padding: 0 8px; font: 12.5px inherit; }
+  .ma-save { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
+  /* suppliers */
+  table.ma-st { width: 100%; border-collapse: collapse; font-size: 12px; } table.ma-st th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 6px; border-bottom: 1px solid var(--line); }
+  table.ma-st td { padding: 9px 6px; border-bottom: 1px solid #f0f0f5; vertical-align: top; } table.ma-st tr.best td { background: #f0fdf4; } table.ma-st tr.off td { opacity: .5; }
+  .ma-ven { display: flex; gap: 8px; align-items: center; } .ma-ven .av { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; background: #eef2ff; color: #3730a3; font-weight: 700; font-size: 12px; display: flex; align-items: center; justify-content: center; flex: none; }
+  .ma-ven b { font-size: 12.5px; display: block; } .ma-ven .how { font-size: 10.5px; color: var(--muted); }
+  .ma-sform { background: #fafaff; border: 1px solid #e0e0f5; border-radius: 10px; padding: 12px; margin: 10px 0; }
+  .ma-prev { grid-column: span 6; font-size: 12px; color: #374151; background: #fff; border: 1px dashed #c7d2fe; border-radius: 8px; padding: 8px 10px; }
+  .ma-prev b { color: var(--indigo-dark); }
+  /* stock */
+  .ma-onhand { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .ma-onhand .big { font-size: 28px; font-weight: 700; letter-spacing: -.02em; } .ma-onhand .big small { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+  .ma-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-bottom: 12px; }
+  .ma-fact { background: #f8f8fc; border-radius: 9px; padding: 8px 10px; } .ma-fact b { display: block; font-size: 14px; } .ma-fact span { font-size: 11px; color: var(--muted); }
+  .ma-reorder { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 9px; padding: 8px 12px; font-size: 12.5px; font-weight: 600; margin-bottom: 12px; }
+  .ma-inl { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; background: #fafaff; border: 1px solid #e0e0f5; border-radius: 10px; padding: 10px; margin-bottom: 12px; font-size: 12.5px; }
+  .ma-inl input, .ma-inl select { height: 32px; border: 1px solid var(--line); border-radius: 7px; padding: 0 8px; font: 12.5px inherit; background: #fff; } .ma-inl input[type=number] { width: 100px; }
+  /* alerts */
+  .ma-alert { display: grid; grid-template-columns: 48px 1fr auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid #f0f0f5; }
+  .ma-alert .t b { font-size: 13px; } .ma-alert .t .s { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+  .ma-alert .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .ma-delta { font-weight: 700; } .ma-delta.up { color: #b91c1c; } .ma-delta.down { color: #047857; }
+  .ma-draft { grid-column: 1 / -1; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 9px; padding: 10px; font-size: 12px; white-space: pre-wrap; }
+  .ma-set { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 12.5px; } .ma-set input[type=number] { width: 64px; } .ma-set input[type=text] { width: 260px; }
+  .ma-set input[type=checkbox] { width: auto; height: auto; } .ma-set label { display: inline-flex; align-items: center; gap: 6px; }
+  .ma-set input { height: 32px; border: 1px solid var(--line); border-radius: 7px; padding: 0 8px; font: 12.5px inherit; }
+  @media (max-width: 760px) { .ma-grid { grid-template-columns: repeat(2, 1fr); } .ma-span3, .ma-span4, .ma-span6, .ma-sec, .ma-ship, .ma-prev { grid-column: span 2; } }
+</style>
+</head>
+<body>
+<div class="ma-top">
+  <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></svg>
+    Material AI <span>· what we buy, from whom, at what price</span></h1>
+  <div class="sp"></div>
+  <div class="ma-tabs">
+    <button type="button" data-v="materials" class="on">Materials</button>
+    <button type="button" data-v="alerts">Price alerts<span class="n" id="nAlerts"></span></button>
+    <button type="button" data-v="stock">Inventory<span class="n soft" id="nStock"></span></button>
+    <button type="button" data-v="reorder">Reorder<span class="n" id="nReorder"></span></button>
+  </div>
+</div>
+<div class="ma-main">
+  <div class="ma-view on" data-v="materials">
+    <div class="ma-tiles" id="maTiles"></div>
+    <div class="ma-bar">
+      <input type="search" id="maQ" placeholder="Search name, code, brand, supplier…">
+      <span id="maForms"></span>
+      <select id="maGeo"><option value="">All geo types</option></select>
+      <span class="sp"></span>
+      <span class="ma-muted" id="maShown"></span>
+      <button class="bk-btn sm" id="maRefresh">Refresh</button>
+    </div>
+    <div class="ma-card" style="padding:0;overflow:visible">
+      <table class="ma" id="maTable"><thead><tr><th></th><th>Material</th><th>Form</th><th>Described as</th><th>Suppliers · cost per unit</th><th>On hand</th><th>Data</th><th>Used in</th></tr></thead><tbody><tr><td colspan="8" class="ma-muted" style="padding:20px">Loading the materials from the CRM…</td></tr></tbody></table>
+    </div>
+  </div>
+  <div class="ma-view" data-v="alerts">
+    <div class="ma-card">
+      <h2>Price alerts <span class="n" id="alN"></span><span class="sp"></span><button class="bk-btn sm" id="alRun">Check invoices now</button></h2>
+      <p class="ma-p">Every invoice line BookkeeperAI links to a material is compared with that vendor's price on file. When it is off by the set percent or more it lands here — accept the new price (it becomes the price on file), mark it to renegotiate (a draft email to the vendor), or dismiss it.</p>
+      <div id="alOpen"><div class="ma-muted">Loading…</div></div>
+    </div>
+    <div class="ma-card" id="alUmCard">
+      <h2>Invoice lines with no supplier item yet <span class="n" id="umN"></span></h2>
+      <p class="ma-p">The vendor billed a material, but that material has no supplier item for this vendor — add it once and every next invoice is checked.</p>
+      <div id="alUm"></div>
+    </div>
+    <div class="ma-card">
+      <h2>Settings</h2>
+      <div class="ma-set">
+        <label>Alert when off by <input type="number" id="setPct" min="1" max="90"> %</label>
+        <label><input type="checkbox" id="setRecv"> invoice lines add to inventory</label>
+        <label>Email alerts to <input type="text" id="setTo"></label>
+        <button class="bk-btn pri sm" id="setSave">Save</button>
+      </div>
+    </div>
+    <div class="ma-card">
+      <h2>Decided <span class="n" id="doneN"></span></h2>
+      <div id="alDone"></div>
+    </div>
+  </div>
+  <div class="ma-view" data-v="stock">
+    <div class="ma-card">
+      <h2>Inventory<span class="sp"></span><span class="ma-muted">Nothing takes stock out yet: on hand = the last count + what came in since. Each count asks what is left — the drop is what was used.</span></h2>
+      <div class="ma-bar"><input type="search" id="stQ" placeholder="Search…"><button class="chip on" data-st="tracked">Counted</button><button class="chip" data-st="all">All materials</button></div>
+      <table class="ma" id="stTable"><thead><tr><th></th><th>Material</th><th>On hand</th><th>Last count</th><th>Last received</th><th>Used / week</th><th>Days left</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+  <div class="ma-view" data-v="reorder">
+    <div class="ma-card">
+      <h2>Reorder cycle<span class="sp"></span><span class="ma-muted">From every receipt (invoice lines and receipts typed here): how often each material is bought, how much, and when the next order is due.</span></h2>
+      <table class="ma" id="roTable"><thead><tr><th></th><th>Material</th><th>Time to reorder?</th><th>Bought</th><th>Every</th><th>Usually</th><th>Last in</th><th>Next expected</th><th>Days left</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+</div>
+<div class="ma-dim" id="maDim"></div>
+<div class="ma-drawer" id="maDrawer"></div>
+<script src="/nova-loader.js"></script>
+<script src="/nova-nav.js"></script>
+<script>NovaNav.mount({ current: 'materials' });</script>
+<script src="/material-ai.js"></script>
+</body>
+</html>

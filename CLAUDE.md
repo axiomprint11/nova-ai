@@ -526,6 +526,41 @@ Referrals; `fetchClients(state)`). **Revenue on New Clients**: a "Revenue from t
 and a **Revenue from the new clients** card (`drawRevenue`, `.ra-bars-rev`: By source / By who created / By AM — revenue + share, clients,
 ordered %, per client, from the rows' `orders.rev` = every invoiced estimate of those customers to date); the creator tiles show "$". **1.20.129**: the chips' hover card opens under the chip being hovered (clamped to the row) and marks that person's line (`.ra-fpop-r.hov`); no native tooltip. **1.20.128 — people tiles are chips**: `window.RaChips.render(el, items, {pick, onPick, sub, title, total, empty})` (top of public/reports-ai.js) draws the Onboarding AM tiles, New Clients' "Who created the accounts" and both Referral leaderboards as head + count chips (`.ra-fchip`, 34px head, the website as a globe icon; `.on` when picked, a click filters as before, rank · name · detail in the tooltip) and the row's hover card `.ra-fpop` (rank · head · name · detail · count, up to 12 then "n more", the total in the header) — the TalkAi dashboard's look, a size up. **1.20.125 — three chips**: `RaPeriod.wire()` now draws the bar itself (`.ra-pchips`; the HTML bars are empty, Onboarding's carries `data-all="1"`): **Last 30 days** (the default on all four) · **YTD** · **More ▾** (`.ra-pmenu`: This month · Last month · Last 90 days · 6 months · 12 months · All time · Custom range…; a pick from More takes the chip's place, "Last month ▾" / "09/09/2026 – 10/06/2026 ▾"); Custom opens the **range picker** `.ra-pick` — two month calendars side by side (40px day buttons, ‹ › move both, future days disabled, today outlined), click the first day then the last (hover previews the range, a reversed pair is swapped), Clear / **Apply**; Esc or a click outside closes. **1.20.122**: no "This week" chip on any report (`RaPeriod` still understands `week`); the New clients chart has **By revenue** (`C.series = 'rev'`: `stacked(..., opts)` with `opts.value` = the client's `orders.rev` and `opts.fmt = usdK`, stacked by who created, a $ axis with `nice4` steps, the title adds "$x ordered so far") — what the clients created in each month have ordered to date; the legend and the Revenue card's rows show the person's head (`keyOf` / `drawRevenue` return `photo` for team members and AMs, `face(…, 'xs' | 'sm')`).
 
+## Material AI (1.20.159)
+
+`materials-ai.js` (`require('./materials-ai')(app, { db, auth, adminOnly, serveVersionedHtml, runQuery, sendMail, Notify, isBookkeeper })` in
+server.js, before backups) mounts **Material AI** at `/material-ai` (`public/material-ai.html/.js`, left-menu item `materials`, who
+`materials` = admins + bookkeepers). Three layers kept apart: (1) the **material** = CRM `materials` (read-only; the website's options link
+to it, a customer never sees a vendor) + the describing fields the CRM lacks in SQLite `ma_specs` (form sheet / roll / rigid / item /
+liquid, thickness + unit, color, edge color, adhesive none / permanent / removable / repositionable / static, finish, coating C1S / C2S,
+paper weight # text / cover / bond / index / gsm / oz, printable sides, indoor / outdoor, features chips, brand, product line, **base unit**
+= what it is counted in: sheet / press sheet W×H / sq ft / linear ft / roll / each, weight per unit / per sq ft / per 100 sh 8.5×11);
+`defaultsFor(m)` pre-fills from the CRM row ("from CRM" tag until saved): type → form, name words → adhesive / finish / basis weight /
+coating, **thickness: t_measure 1 = inches, 100 = hundredths of an inch** (14PT 1.431 → 0.0143 in), and **paper `weight` = lb per 100
+sheets of 8.5×11** (100# cover 3.51) as a ready weight. (2) **supplier items** `ma_sources` (vendor = CRM `sellers` id or a typed name,
+SKU, invoice wording, buy unit + pieces per buy, piece size — rolls store length in inches, the form shows feet —, cost per buy, yield
+override, lead days, preferred, `confirmed`): `yieldOf()` turns a piece into base units (sq ft = w·h/144, press = how many W×H fit, either
+way round), so cost per base unit compares vendors of different sizes; the cheapest row is green. Every CRM material is **seeded once**
+(`seed()`, `ma_meta seeded:<id>`) with its supplier: `materials.seller_id` (99 rows) else the free-text `supplier` matched to Sellers by
+`matchSeller()` (exact / compact prefix "Montroy" → Montroy Supply Co. / initials "GWF" → Great Western Foils / first word "Foam Mart" /
+spelling "Gavrielli" → Gavrieli; a supplier not in Sellers keeps its name), cost = CRM cost, size = CRM size_w / size_h — seeded rows are
+**unconfirmed** ("check pack & size" pill) until a person saves them. (3) **stock** `ma_stock` (receive / count / adjust in base units):
+nothing takes stock out yet, so on hand = the last count + receipts since, a count asks "what is left?" and the drop is the usage;
+`stockSummary()` gives used / week, days left, the median gap between receipts (reorder cycle), usual order, next expected and a
+"time to reorder?" flag (days left ≤ lead + 7, or the cycle says within a week). **Price check** (`sweep()`, on list / alerts load
+throttled 60 s, every 20 min, "Check invoices now"): every `bk_bills.lines` line and `bk_purchase_items` row (purchase without a bill)
+BookkeeperAI linked to a material (`bk_materials.id` → `crm_id`) is read once (`ma_seen`), its vendor mapped to a seller (`bk_vendors.crm_id`
+with `details.list = sellers`, else the name), priced into `ma_prices` (per buy unit or per piece — whichever reading is closer to the
+price on file) and compared: off by `alert_pct` (10 %) or more → `ma_alerts` (Accept new price = becomes the cost on file · Renegotiate =
+a draft email to the vendor, mailto when Sellers has the email · Dismiss) and an email through Notify kind **`ma.price`** (Material Price
+Alert); no cost on file → the first invoice sets it ("confirm the pack" when unconfirmed); no supplier item for that vendor → `ma_unmatched`
+("Add as supplier item"). With `invoice_receives` on, a line priced against a **confirmed** item adds a receipt; confirming an item later
+back-fills its past invoice receipts (`backfillReceipts`). Page: tabs Materials (tiles, search, form chips, geo type; table photo ·
+material · form · described-as chips · suppliers with $ per base unit · on hand · Data % with what is missing · used in n products; a row
+opens the drawer: Describe (with the weight / in³ per unit and a job calculator for shipping) · Suppliers · Inventory · Prices · Used in)
+· Price alerts (+ unmatched lines + settings) · Inventory (Count inline) · Reorder. Nothing is written to the CRM. Tested with a stub CRM
+(`ma-harness.js` in the scratchpad: real rows for acrylic / Kelly paper / Grimco vinyl, bills at $80 / $81 / $92.40 → one +15.5 % alert).
+
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 
 `website-knowledge.js` (`WebKnowledge = require('./website-knowledge')({ db })` in server.js, passed to client-bot as `deps.WebKnowledge`)
