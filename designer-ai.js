@@ -23,7 +23,8 @@ module.exports = function mountDesignerAi(app, deps) {
     // 1.20.34: every match that was run — by a person here or by the CRM's cron through /api/designer/auto-assign
     db.run(`CREATE TABLE IF NOT EXISTS da_matches (id INTEGER PRIMARY KEY AUTOINCREMENT, estimate_id INTEGER, e TEXT, job_name TEXT, customer TEXT, product TEXT, tier INTEGER,
       status TEXT, picked_user_id INTEGER, picked_name TEXT, picked_score INTEGER, reason TEXT, picks_json TEXT, source TEXT, by TEXT, ai INTEGER, ms INTEGER, at TEXT)`);
-    db.run('CREATE INDEX IF NOT EXISTS da_matches_at ON da_matches (at)');   // 1.20.18: match_logic — the owner's rules in words
+    db.run('CREATE INDEX IF NOT EXISTS da_matches_at ON da_matches (at)');
+    db.run('ALTER TABLE da_matches ADD COLUMN timing TEXT', () => {});   /* 1.20.164: where a Match spent its time, JSON {job, scores, rules} ms */   // 1.20.18: match_logic — the owner's rules in words
     // 1.20.17: how hard / how creative a job a designer can take (0–10), and their hours (until the hours table exists)
     ['hard_level INTEGER DEFAULT 5', 'creative_level INTEGER DEFAULT 5', 'shift_start TEXT', 'shift_end TEXT', 'work_days TEXT', 'comm_level INTEGER DEFAULT 5', 'languages TEXT'].forEach(c => db.run('ALTER TABLE da_designers ADD COLUMN ' + c, () => {}));
   });
@@ -64,16 +65,22 @@ module.exports = function mountDesignerAi(app, deps) {
     const rows = await dbAll('SELECT * FROM da_designers ORDER BY name');
     // the live load: jobs in the prepress stage assigned to each designer (not canceled), and what they finished in 30 days
     let load = {}, waiting = {}, done = {}, done90 = {};
+    const [f90, f180] = await Promise.all([idFloor(90), idFloor(180)]).catch(() => [0, 0]);
+    /* 1.20.164: the three CRM reads run side by side on the pool, not one after the other */
+    const totalQ = runQuery("SELECT m.user_id, COUNT(DISTINCT m.estimate_id) n FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id WHERE m.user_id IN (" + TEAM.join(',') + ") AND e.id >= " + f180 + " AND e.created >= DATE_SUB(NOW(), INTERVAL 180 DAY) GROUP BY m.user_id").catch(() => []);
     try {
       // 1.20.16: "active" is what the CRM board counts — proof_checking (and a rejected-edits round) on the designer's desk;
       // proof_sent / rejected_reupload sit with the customer and are shown apart as "waiting on client"
       // 1.20.35: "active" = the job's clicked head — estimate.active_user (−1 = nobody). A job Jelly is on but someone else
       // holds is "waiting" for her. Counted over invoiced prepress-stage jobs, not canceled, as the CRM board does.
-      (await runQuery("SELECT m.user_id, COUNT(DISTINCT CASE WHEN e.active_user = m.user_id THEN e.id END) n, COUNT(DISTINCT CASE WHEN e.active_user <> m.user_id THEN e.id END) w FROM estimate_stage s JOIN estimate e ON e.id = s.estimate_id JOIN estimate_team_members m ON m.estimate_id = e.id AND m.user_id IN (" + TEAM.join(',') + ") WHERE s.estimate_stage = 'prepress' AND s.estimate_substage <> 'canceled' AND e.estimate_invoiceid > 0 GROUP BY m.user_id")).forEach(r => { load[r.user_id] = Number(r.n) || 0; waiting[r.user_id] = Number(r.w) || 0; });
-      (await runQuery("SELECT m.user_id, COUNT(DISTINCT CASE WHEN e.created >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN e.id END) n, COUNT(DISTINCT e.id) n90 FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id WHERE m.user_id IN (" + TEAM.join(',') + ") AND e.id >= " + (await idFloor(90)) + " AND e.prepress_status = 'approved' AND e.created >= DATE_SUB(NOW(), INTERVAL 90 DAY) GROUP BY m.user_id")).forEach(r => { done[r.user_id] = Number(r.n); done90[r.user_id] = Number(r.n90); });
+      const [lq, dq] = await Promise.all([
+        runQuery("SELECT m.user_id, COUNT(DISTINCT CASE WHEN e.active_user = m.user_id THEN e.id END) n, COUNT(DISTINCT CASE WHEN e.active_user <> m.user_id THEN e.id END) w FROM estimate_stage s JOIN estimate e ON e.id = s.estimate_id JOIN estimate_team_members m ON m.estimate_id = e.id AND m.user_id IN (" + TEAM.join(',') + ") WHERE s.estimate_stage = 'prepress' AND s.estimate_substage <> 'canceled' AND e.estimate_invoiceid > 0 GROUP BY m.user_id"),
+        runQuery("SELECT m.user_id, COUNT(DISTINCT CASE WHEN e.created >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN e.id END) n, COUNT(DISTINCT e.id) n90 FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id WHERE m.user_id IN (" + TEAM.join(',') + ") AND e.id >= " + f90 + " AND e.prepress_status = 'approved' AND e.created >= DATE_SUB(NOW(), INTERVAL 90 DAY) GROUP BY m.user_id")]);
+      lq.forEach(r => { load[r.user_id] = Number(r.n) || 0; waiting[r.user_id] = Number(r.w) || 0; });
+      dq.forEach(r => { done[r.user_id] = Number(r.n); done90[r.user_id] = Number(r.n90); });
     } catch (e) { errlog('load', e.message); }
     const nova = {}; (await dbAll("SELECT user_id, COUNT(*) n FROM da_assign WHERE status = 'assigned' AND at >= datetime('now', '-14 days') GROUP BY user_id")).forEach(r => { nova[r.user_id] = r.n; });
-    let total = {}; try { (await runQuery("SELECT m.user_id, COUNT(DISTINCT m.estimate_id) n FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id WHERE m.user_id IN (" + TEAM.join(',') + ") AND e.id >= " + (await idFloor(180)) + " AND e.created >= DATE_SUB(NOW(), INTERVAL 180 DAY) GROUP BY m.user_id")).forEach(r => { total[r.user_id] = Number(r.n); }); } catch (e) {}
+    const total = {}; (await totalQ).forEach(r => { total[r.user_id] = Number(r.n); });
     return rows.map(r => Object.assign({}, r, { skills: r.skills || '', skill_list: skillList(r.skills), hard_level: r.hard_level == null ? 5 : r.hard_level, creative_level: r.creative_level == null ? 5 : r.creative_level, comm_level: r.comm_level == null ? 5 : r.comm_level, languages: r.languages || '', language_list: String(r.languages || '').split(',').map(x => x.trim()).map(x => x.charAt(0).toUpperCase() + x.slice(1).toLowerCase()).filter(Boolean), active_jobs: load[r.user_id] || 0, waiting_client: waiting[r.user_id] || 0, done_30: done[r.user_id] || 0, done_90: done90[r.user_id] || 0, nova_assigned: nova[r.user_id] || 0, jobs_180: total[r.user_id] || 0, is_new: (total[r.user_id] || 0) < 60, on_shift: onShift(r) }));
   }
   const skillList = (s) => String(s || '').split(/[,;\n]+/).map(x => x.trim().toLowerCase()).filter(Boolean);
@@ -197,12 +204,12 @@ module.exports = function mountDesignerAi(app, deps) {
   //   fairness — a Nova pick in the last 2 hours costs 4 a pick, so the queue spreads
   const WORDS = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9&]+/g, ' ').split(' ').filter(w => w.length >= 3);
   async function match(job) {
-    const team = (await designers()).filter(d => d.active);
-    let hist = {};
-    try {
-      const h = await runQuery("SELECT m.user_id, SUM(e.estimate_productid = " + (parseInt(job.product_id) || 0) + ") same_product, SUM(p.product_category_id = (SELECT product_category_id FROM product WHERE id = " + (parseInt(job.product_id) || 0) + ")) same_cat FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id LEFT JOIN product p ON p.id = e.estimate_productid WHERE m.user_id IN (" + TEAM.join(',') + ") AND e.id >= " + (await idFloor(180)) + " AND e.created >= DATE_SUB(NOW(), INTERVAL 180 DAY) GROUP BY m.user_id");
-      h.forEach(r => { hist[r.user_id] = { product: Number(r.same_product) || 0, cat: Number(r.same_cat) || 0 }; });
-    } catch (e) { errlog('history', e.message); }
+    const histQ = idFloor(180).then(f => runQuery("SELECT m.user_id, SUM(e.estimate_productid = " + (parseInt(job.product_id) || 0) + ") same_product, SUM(p.product_category_id = (SELECT product_category_id FROM product WHERE id = " + (parseInt(job.product_id) || 0) + ")) same_cat FROM estimate_team_members m JOIN estimate e ON e.id = m.estimate_id LEFT JOIN product p ON p.id = e.estimate_productid WHERE m.user_id IN (" + TEAM.join(',') + ") AND e.id >= " + f + " AND e.created >= DATE_SUB(NOW(), INTERVAL 180 DAY) GROUP BY m.user_id"))
+      .catch(e => { errlog('history', e.message); return []; });
+    /* 1.20.164: the history read and the team's load are fetched at the same time */
+    const [teamAll, h] = await Promise.all([designers(), histQ]);
+    const team = teamAll.filter(d => d.active);
+    const hist = {}; h.forEach(r => { hist[r.user_id] = { product: Number(r.same_product) || 0, cat: Number(r.same_cat) || 0 }; });
     const recent = {}; (await dbAll("SELECT user_id, COUNT(*) n FROM da_assign WHERE status = 'assigned' AND at >= datetime('now', '-2 hours') GROUP BY user_id")).forEach(r => { recent[r.user_id] = r.n; });
     const minLoad = team.length ? Math.min(...team.map(d => d.active_jobs)) : 0;
     const langs = jobLangs(job);
@@ -291,7 +298,8 @@ module.exports = function mountDesignerAi(app, deps) {
   async function queueAll(all, tier, onlyId) {
     const want = tier === 1 || tier === 2 ? [tier] : [2, 1];
     const seen = new Map();
-    for (const t of want) for (const j of await queue(t, all, onlyId)) if (!seen.has(j.id)) seen.set(j.id, j);
+    const lists = await Promise.all(want.map(t => queue(t, all, onlyId)));   /* both tiers at once (1.20.164) */
+    lists.forEach(l => l.forEach(j => { if (!seen.has(j.id)) seen.set(j.id, j); }));
     return Array.from(seen.values()).sort((a, b) => String(b.created).localeCompare(String(a.created)));
   }
   app.get('/api/designer/queue', ...guard, async (req, res) => {
@@ -328,18 +336,19 @@ module.exports = function mountDesignerAi(app, deps) {
     overload = (overload || '').trim(); logic = (logic || '').trim();
     if (overload === OVERLOAD_DEFAULT.trim()) overload = '';   // Nova's own default is already builtinBusy() — no model call for it
     if (!anthropic || (!logic && !overload)) return { picks, ai: false };
-    const cand = picks.map(p => ({ user_id: p.user_id, name: p.name + ' ' + (p.last_name || ''), score: p.score, reasons: p.why, active_jobs: p.active_jobs }));
+    const cand = picks.map(p => ({ user_id: p.user_id, name: p.name + ' ' + (p.last_name || ''), score: p.score, reasons: p.why.slice(0, 8), active_jobs: p.active_jobs }));
     const team = await designers();
     const prof = team.filter(d => d.active).map(d => ({ user_id: d.user_id, name: d.name + ' ' + (d.last_name || ''), title: d.title, strong_sides: d.skill_list, tier2: !!d.tier2, hard_level: d.hard_level, creative_level: d.creative_level, client_communication: d.comm_level, languages: d.language_list, notes: d.notes || '', active_jobs: d.active_jobs, waiting_on_client: d.waiting_client, approved_30d: d.done_30, jobs_180d: d.jobs_180, hours: d.shift_start ? d.shift_start + '-' + d.shift_end + ' days ' + (d.work_days || '1-5') : 'unknown', on_shift: d.on_shift }));
-    const sys = 'You assign print jobs to designers at AxiomPrint. Nova has already scored every designer with its built-in rules (history, strong sides, hardness, creativity, load, hours). The OWNER\'S RULES below take priority over those scores wherever they apply. Return ONLY JSON: {"picks":[{"user_id":n,"score":0-100,"note":"short reason citing the owner rule, or empty"}],"busy":false,"busy_reason":""} — every candidate once, scores changed only where a rule applies, note only when you changed something. Set busy to true ONLY when the OVERLOAD RULES say nobody should take this job right now (then the job stays in the queue and the team is emailed); give the reason in one sentence.';
+    const sys = 'You assign print jobs to designers at AxiomPrint. Nova has already scored every designer with its built-in rules (history, strong sides, hardness, creativity, load, hours). The OWNER\'S RULES below take priority over those scores wherever they apply. Return ONLY JSON: {"changes":[{"user_id":n,"score":0-100,"note":"short reason citing the owner rule"}],"busy":false,"busy_reason":""} — list ONLY the designers whose score an owner rule changes (often none or two or three); everyone you leave out keeps Nova\'s score. Set busy to true ONLY when the OVERLOAD RULES say nobody should take this job right now (then the job stays in the queue and the team is emailed); give the reason in one sentence.';
     const user = 'OWNER\'S RULES:\n' + (logic.slice(0, 4000) || '(none)') + '\n\nOVERLOAD RULES (when is everyone busy):\n' + (overload.slice(0, 2000) || '(none)') + '\n\nJOB:\n' + JSON.stringify({ e: job.e, name: job.name, customer: job.customer, product: job.product, category: job.category, tier: job.tier, proof_type: job.proof_type, status: job.status_label, hard: job.hard, files: job.files ? job.files.labels : [], creative: job.creative, design_fee: job.design_fee, expedite: job.service === 'expedite', due: job.complete_by, created: job.created, notes: (job.notes || '').slice(0, 600), team_on_it: job.others }) +
       '\n\nDESIGNERS:\n' + JSON.stringify(prof) + '\n\nNOVA\'S SCORES:\n' + JSON.stringify(cand) + '\n\nTime now (Los Angeles): ' + new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
     try {
       // 1.20.58: 900 tokens cut the JSON mid-array on a 9-designer team ("Expected ',' or ']' … at position 263");
       // more room, notes kept short, and the answer is parsed with a repair pass (fences, trailing commas, a cut-off tail)
-      const r = await anthropic.messages.create({ model: model || 'claude-haiku-4-5', max_tokens: 2000, system: sys + ' Keep every note under 12 words. No text outside the JSON.', messages: [{ role: 'user', content: user }] });
+      /* 1.20.164: the answer lists only what changes (it used to repeat all nine designers) — the model's writing time was most of a Match */
+      const r = await anthropic.messages.create({ model: model || 'claude-haiku-4-5', max_tokens: 900, system: sys + ' Keep every note under 10 words. No text outside the JSON.', messages: [{ role: 'user', content: user }] });
       const txt = (r.content || []).filter(c => c.type === 'text').map(c => c.text).join(''); const m = /\{[\s\S]*\}/.exec(txt.replace(/```json|```/g, '')); if (!m) return { picks, ai: false };
-      const out = parseLoose(m[0]); const by = {}; (out.picks || []).forEach(p => { by[p.user_id] = p; });
+      const out = parseLoose(m[0]); const by = {}; (out.changes || out.picks || []).forEach(p => { by[p.user_id] = p; });
       const adj = picks.map(p => { const a = by[p.user_id]; if (!a) return p; const sc = Math.max(0, Math.min(100, Math.round(Number(a.score)))); const changed = !isNaN(sc) && sc !== p.score; return Object.assign({}, p, { score: isNaN(sc) ? p.score : sc, why: changed || a.note ? p.why.concat(['your rule: ' + (a.note || ('score ' + p.score + ' → ' + sc))]) : p.why, ai_changed: changed }); });
       if (adj.every(p => p.off_shift || !p.hours_known) && adj.some(p => p.next_start != null)) adj.sort((a, b) => (a.next_start == null) - (b.next_start == null) || (a.next_start || 0) - (b.next_start || 0) || b.score - a.score);
       else adj.sort((a, b) => (a.off_shift - b.off_shift) || (a.at_max - b.at_max) || b.score - a.score || a.active_jobs - b.active_jobs);
@@ -361,24 +370,23 @@ module.exports = function mountDesignerAi(app, deps) {
   // one Match, start to finish: the job, the built-in scores, the owner's rules, the overload test. Used by the Match
   // button and by the CRM's cron (/api/designer/auto-assign). `who` is written on the busy row and the history.
   async function runMatch(id, who, source) {
-    const t0 = Date.now();
-    const job = (await queueAll(true, 0, id)).find(j => j.id === id);   // 1.20.31: one job, not the whole queue
+    const t0 = Date.now(), timing = {};
+    const [job, overload, logic] = await Promise.all([queueAll(true, 0, id).then(l => { timing.job = Date.now() - t0; return l.find(j => j.id === id); }), getSetting('overload_logic'), getSetting('match_logic')]);   // 1.20.31: one job, not the whole queue
     if (!job) return { ok: false, status: 'not_in_queue', error: 'E' + id + ' is not in the queue (not parked on PrePress Tier 1 / Tier 2 in the prepress stage)' };
-    const base = await match(job);
-    const overload = (await getSetting('overload_logic')) || OVERLOAD_DEFAULT;
-    const r = await aiAdjust(job, base, await getSetting('match_logic'), overload);
+    let t1 = Date.now(); const base = await match(job); timing.scores = Date.now() - t1;
+    t1 = Date.now(); const r = await aiAdjust(job, base, logic, overload || OVERLOAD_DEFAULT); timing.rules = r.ai || r.ai_error ? Date.now() - t1 : 0;
     let busy = null;
     if (r.busy) busy = { reason: r.busy_reason || 'your Overload Logic says nobody should take this now' };
     else if (!r.ai && builtinBusy(base)) busy = { reason: 'every designer who takes jobs is at their max or off shift' };
     if (!busy && !r.picks.length) busy = { reason: 'no designer is set to take jobs' };
     if (busy) { const m = await markBusy(job, busy.reason, who); Object.assign(busy, m); }
     const picks = r.picks.slice(0, 5);
-    const out = { ok: true, job, picks, ai: r.ai, ai_error: r.ai_error || null, busy, ms: Date.now() - t0 };
+    const out = { ok: true, job, picks, ai: r.ai, ai_error: r.ai_error || null, busy, ms: Date.now() - t0, timing };
     // the history row (1.20.34)
     const top = !busy && picks[0] ? picks[0] : null;
-    const ins = await dbRun('INSERT INTO da_matches (estimate_id, e, job_name, customer, product, tier, status, picked_user_id, picked_name, picked_score, reason, picks_json, source, by, ai, ms, at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    const ins = await dbRun('INSERT INTO da_matches (estimate_id, e, job_name, customer, product, tier, status, picked_user_id, picked_name, picked_score, reason, picks_json, source, by, ai, ms, at, timing) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       [job.id, job.e, (job.name || '').slice(0, 200), (job.customer || '').slice(0, 200), (job.product || '').slice(0, 200), job.tier, busy ? 'busy' : 'matched', top ? top.user_id : null, top ? (top.name + ' ' + (top.last_name || '')).trim() : null, top ? top.score : null,
-        busy ? busy.reason : (top ? top.why.join(' · ') : ''), JSON.stringify(picks.map(p => ({ user_id: p.user_id, name: (p.name + ' ' + (p.last_name || '')).trim(), score: p.score, why: p.why, off_shift: !!p.off_shift, at_max: !!p.at_max }))), source, who, r.ai ? 1 : 0, out.ms, nowIso()]);
+        busy ? busy.reason : (top ? top.why.join(' · ') : ''), JSON.stringify(picks.map(p => ({ user_id: p.user_id, name: (p.name + ' ' + (p.last_name || '')).trim(), score: p.score, why: p.why, off_shift: !!p.off_shift, at_max: !!p.at_max }))), source, who, r.ai ? 1 : 0, out.ms, nowIso(), JSON.stringify(timing)]);
     out.match_id = ins && ins.lastID;
     return out;
   }

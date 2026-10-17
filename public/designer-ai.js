@@ -141,7 +141,11 @@ async function loadHistory() {
     const st = (r) => r.status === 'busy' ? '<span class="da-tag busy">All Busy</span>' : r.status === 'applied' ? '<span class="da-tag applied">applied in CRM</span>' : r.status === 'crm_failed' ? '<span class="da-tag crm_failed">CRM failed</span>' : '<span class="da-tag">' + esc(r.status) + '</span>';
     $('daHist').innerHTML = '<table class="da-ht"><thead><tr><th>When</th><th class="da-ht-job">Job</th><th>Product</th><th>Nova picked</th><th>Also considered</th><th>Status</th><th>Source</th></tr></thead><tbody>' + j.rows.map(r => {
       const others = (r.picks || []).filter(p => p.user_id !== r.picked_user_id).slice(0, 4);
-      return '<tr><td>' + when(r.at) + ((r.ms || r.ai) ? '<div class="da-sub">' + [r.ms ? (Math.round(r.ms / 100) / 10) + ' s' : '', r.ai ? '✦ rules' : ''].filter(Boolean).join(' · ') + '</div>' : '') + '</td>' +
+      let tm = null; try { tm = r.timing ? JSON.parse(r.timing) : null; } catch (e) {}
+      const sec = (n) => (Math.round((n || 0) / 100) / 10) + ' s';
+      /* 1.20.164: where the time went — CRM reads (job + scores) vs the Match Logic model */
+      const split = tm ? 'CRM ' + sec((tm.job || 0) + (tm.scores || 0)) + (tm.rules ? ' · rules AI ' + sec(tm.rules) : '') : '';
+      return '<tr><td>' + when(r.at) + ((r.ms || r.ai) ? '<div class="da-sub"' + (tm ? ' title="' + esc('Job read ' + sec(tm.job) + ' · scoring ' + sec(tm.scores) + ' · Match Logic AI ' + sec(tm.rules)) + '"' : '') + '>' + [r.ms ? sec(r.ms) : '', r.ai ? '✦ rules' : ''].filter(Boolean).join(' · ') + (split ? '<br>' + esc(split) : '') + '</div>' : '') + '</td>' +
         '<td><span class="da-e">' + esc(r.e) + '</span><div class="da-sub">' + esc(r.job_name || '') + '</div><div class="da-sub">' + esc(r.customer || '') + '</div></td>' +
         '<td>' + esc(r.product || '') + '<div class="da-sub">Tier ' + (r.tier || 1) + '</div></td>' +
         '<td>' + (r.picked_user_id ? '<div class="da-pickmini" title="' + esc(r.reason || '') + '">' + av({ name: r.picked_name, photo: r.photo }) + '<div><b>' + esc(r.picked_name) + '</b> <span class="pct">' + r.picked_score + '%</span><div class="da-sub" style="max-width:260px">' + esc((r.reason || '').slice(0, 110)) + ((r.reason || '').length > 110 ? '…' : '') + '</div></div></div>' : '<span class="da-muted">nobody</span><div class="da-sub" style="max-width:260px">' + esc(r.reason || '') + '</div>') + '</td>' +
