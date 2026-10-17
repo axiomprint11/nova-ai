@@ -47,6 +47,12 @@
   /* 1.20.176: the top 12 AMs by total; "Show n more" opens the rest (the picked one always shows) */
   const AM_LIMIT = 12; let amMore = false;
   let D = null, sel = null, LF = { status: '', client: '' }, seq = 0;
+  /* 1.20.182: /invoices shows the list with the same filters (state shared in nova_dash_v1); /dashboard shows the chart and no list.
+     A bar on the dashboard opens /invoices?d=<from>&e=<to> — the list narrowed to that day / week / month (SUB, × shows the whole period). */
+  const INV = /^\/invoices\/?$/.test(location.pathname);
+  let SUB = null;
+  if (INV) { const st0 = new URLSearchParams(location.search).get('st'); if (/^(paid|partial|unpaid|bad_debt|estimate)$/.test(st0 || '')) LF.status = st0; }
+  if (INV) { const u = new URLSearchParams(location.search), d = u.get('d'), e = u.get('e'); if (/^\d{4}-\d\d-\d\d$/.test(d || '') && /^\d{4}-\d\d-\d\d$/.test(e || '')) SUB = { from: d, to: e }; }
 
   // ---- icons
   const IC = {
@@ -63,8 +69,9 @@
   // ---- the data
   async function load() {
     const [from, to] = range(); const my = ++seq;
-    const qs = new URLSearchParams({ from, to, group: S.group === 'auto' ? '' : S.group, am: S.am, orders: S.orders, online: S.online, compare: S.ly ? 'ly' : '' });
-    $('dbChart').innerHTML = '<div class="db-skel"></div>';
+    const qs = new URLSearchParams({ from, to, group: S.group === 'auto' ? '' : S.group, am: S.am, orders: S.orders, online: S.online, compare: S.ly ? 'ly' : '', rows: INV ? '' : '0' });
+    if (!INV) $('dbChart').innerHTML = '<div class="db-skel"></div>';
+    else $('dbList').innerHTML = '<div class="db-skel"></div>';
     let j;
     try {
       const r = await fetch('/api/dashboard?' + qs, { headers: { Authorization: 'Bearer ' + token() } });
@@ -212,15 +219,16 @@
     const t = D.tiles, p = D.prev_tiles, q = S.by === 'qty';
     const pct = (a, b) => b ? Math.round(100 * a / b) + '%' : '—';
     const T = [
-      ['Invoiced', C.total, q ? int(t.n) : usd2(t.total), q ? chg(t.n, p.n) : chg(t.total, p.total), (q ? usd0(t.total) : int(t.n) + ' invoices') + ' · avg ' + usd0(t.avg)],
-      ['Paid', C.paid, q ? int(t.n_paid) : usd2(t.paid), q ? chg(t.n_paid, p.n_paid) : chg(t.paid, p.paid), pct(t.paid, t.total) + ' of the invoiced ' + (q ? '$' : 'value') + ' · ' + (q ? usd0(t.paid) : int(t.n_paid) + ' invoices')],
-      ['Partially paid', C.partial, q ? int(t.n_partial) : usd2(t.partial), q ? chg(t.n_partial, p.n_partial) : chg(t.partial, p.partial), usd0(t.partial_done) + ' received · ' + usd0(Math.max(0, t.partial - t.partial_done)) + ' still due'],
-      ['Unpaid', C.unpaid, q ? int(t.n_unpaid) : usd2(t.unpaid), q ? chg(t.n_unpaid, p.n_unpaid) : chg(t.unpaid, p.unpaid), 'still due in all: ' + usd0(t.due)],
-      ['New clients', '#16a34a', int(t.new_clients), chg(t.new_clients, p.new_clients), 'first orders · ' + pct(t.new_clients, t.n) + ' of invoices'],
-      ['Ordered online', '#0891b2', pct(q ? t.n_online : t.online, q ? t.n : t.total), chg(q ? t.n_online : t.online, q ? p.n_online : p.online), (q ? int(t.n_online) + ' invoices' : usd0(t.online)) + ' · the rest entered by the team'],
-      ['Estimates · Bad debt', '#64748b', q ? int(t.n_est) : usd0(t.estimates), '', (q ? int(t.n_bad) + ' bad debt' : usd0(t.bad_debt) + ' bad debt') + ' · not in Invoiced']
+      ['Invoiced', C.total, q ? int(t.n) : usd2(t.total), q ? chg(t.n, p.n) : chg(t.total, p.total), (q ? usd0(t.total) : int(t.n) + ' invoices') + ' · avg ' + usd0(t.avg), ''],
+      ['Paid', C.paid, q ? int(t.n_paid) : usd2(t.paid), q ? chg(t.n_paid, p.n_paid) : chg(t.paid, p.paid), pct(t.paid, t.total) + ' of the invoiced ' + (q ? '$' : 'value') + ' · ' + (q ? usd0(t.paid) : int(t.n_paid) + ' invoices'), 'st:paid'],
+      ['Partially paid', C.partial, q ? int(t.n_partial) : usd2(t.partial), q ? chg(t.n_partial, p.n_partial) : chg(t.partial, p.partial), usd0(t.partial_done) + ' received · ' + usd0(Math.max(0, t.partial - t.partial_done)) + ' still due', 'st:partial'],
+      ['Unpaid', C.unpaid, q ? int(t.n_unpaid) : usd2(t.unpaid), q ? chg(t.n_unpaid, p.n_unpaid) : chg(t.unpaid, p.unpaid), 'still due in all: ' + usd0(t.due), 'st:unpaid'],
+      ['New clients', '#16a34a', int(t.new_clients), chg(t.new_clients, p.new_clients), 'first orders · ' + pct(t.new_clients, t.n) + ' of invoices', 'ord:new'],
+      ['Ordered online', '#0891b2', pct(q ? t.n_online : t.online, q ? t.n : t.total), chg(q ? t.n_online : t.online, q ? p.n_online : p.online), (q ? int(t.n_online) + ' invoices' : usd0(t.online)) + ' · the rest entered by the team', 'on:online'],
+      ['Estimates · Bad debt', '#64748b', q ? int(t.n_est) : usd0(t.estimates), '', (q ? int(t.n_bad) + ' bad debt' : usd0(t.bad_debt) + ' bad debt') + ' · not in Invoiced', 'st:estimate']
     ];
-    $('dbTiles').innerHTML = T.map(x => '<div class="db-tile" style="--c:' + x[1] + '"><div class="l">' + x[0] + (x[3] ? ' ' + x[3] : '') + '</div><div class="v">' + x[2] + '</div><div class="s">' + x[4] + '</div></div>').join('');
+    /* 1.20.182: a tile opens the Invoices page narrowed to it (status, New, Online) */
+    $('dbTiles').innerHTML = T.map(x => '<div class="db-tile go" data-tgo="' + x[5] + '" title="See these invoices" style="--c:' + x[1] + '"><div class="l">' + x[0] + (x[3] ? ' ' + x[3] : '') + '</div><div class="v">' + x[2] + '</div><div class="s">' + x[4] + '</div></div>').join('');
     $('dbTiles').title = 'Changes are against ' + us(D.prev.from) + ' – ' + us(D.prev.to) + (D.prev.kind === 'ly' ? ', the same dates last year' : ', the same number of days just before');
     $('dbVs').textContent = 'vs ' + (D.prev.kind === 'ly' ? 'last year' : 'the ' + D.range.days + ' days before') + ' (' + us(D.prev.from) + ' – ' + us(D.prev.to) + ')';
   }
@@ -265,13 +273,13 @@
         tip.innerHTML = '<b>' + esc(bucketLabel(b, g, true)) + '</b>' + [['Total value', C.total, x.total], ['Partially paid', C.partial, x.partial], ['Paid', C.paid, x.paid], ['Unpaid', C.unpaid, x.unpaid], ['Bad debt', C.bad, x.bad], ['Estimates', C.est, x.est]].filter((z, k) => k < 4 || z[2]).map(z => '<div class="r"><span><i style="background:' + z[1] + '"></i>' + z[0] + '</span><span>' + f(z[2]) + '</span></div>').join('') +
           '<div class="r tot"><span>' + (q ? 'Invoiced' : 'Invoices') + '</span><span>' + (q ? usd2(b.total) : int(b.n)) + '</span></div>' +
           (LY[+el.dataset.i] ? (() => { const p = LY[+el.dataset.i], pv = q ? p.n : p.total, cv = q ? b.n : b.total, ch = pv ? Math.round((cv - pv) / pv * 100) : null; return '<div class="r ly"><span>Last year · ' + esc(bucketLabel(p, g, false)) + '</span><span>' + (q ? int(pv) : usd2(pv)) + (ch == null ? '' : ' (' + (ch > 0 ? '+' : '') + ch + '%)') + '</span></div>'; })() : '') +
-          '<div class="hint">Click to see these invoices below</div>';
+          '<div class="hint">Click to see these invoices</div>';
         tip.style.display = 'block';
         const lx = ev.clientX - r.left + 14, tw = tip.offsetWidth;
         tip.style.left = (lx + tw > r.width ? ev.clientX - r.left - tw - 14 : lx) + 'px'; tip.style.top = Math.max(0, ev.clientY - r.top - 20) + 'px';
       });
       el.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
-      el.addEventListener('click', () => { const i = +el.dataset.i; sel = sel === i ? null : i; paintChart(); paintList(); if (sel != null) $('dbList').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+      el.addEventListener('click', () => { const b = ser[+el.dataset.i]; location.href = '/invoices?d=' + b.from + '&e=' + b.to; });
     });
   }
 
@@ -282,11 +290,12 @@
   function paintList() {
     const g = D.range.group; let rows = D.rows;
     let selTxt = '';
-    if (sel != null && D.series[sel]) { const b = D.series[sel]; rows = rows.filter(r => r.day >= b.from && r.day <= b.to); selTxt = '<span class="db-selchip">' + esc(bucketLabel(b, g, true)) + '<button id="dbSelX" title="Show the whole period">×</button></span>'; }
+    if (SUB && (SUB.to < D.range.from || SUB.from > D.range.to)) dropSub();
+    if (SUB) { const b = SUB; rows = rows.filter(r => r.day >= b.from && r.day <= b.to); selTxt = '<span class="db-selchip">' + esc(b.from === b.to ? md(b.from, { weekday: 'short', year: 'numeric' }) : md(b.from) + ' – ' + md(b.to, { year: 'numeric' })) + '<button id="dbSelX" title="Show the whole period">×</button></span>'; }
     if (LF.status) rows = rows.filter(r => stOf(r) === LF.status);
     if (LF.client) { const w = LF.client.toLowerCase(); rows = rows.filter(r => (r.client + ' ' + r.person + ' INV' + r.id).toLowerCase().indexOf(w) > -1); }
     $('dbSel').innerHTML = selTxt;
-    $('dbListN').textContent = int(rows.length) + ' shown' + (D.row_count > D.rows.length ? ' · the newest ' + int(D.rows.length) + ' of ' + int(D.row_count) : '');
+    $('dbListN').textContent = int(rows.length) + ' shown · ' + usd2(rows.reduce((a, r) => a + (r.type === 'invoice' ? r.total : 0), 0)) + (D.row_count > D.rows.length ? ' · the newest ' + int(D.rows.length) + ' of ' + int(D.row_count) : '');
     const admin = D.scope && D.scope.admin, info = D.am_info || {};
     const specs = { status: Object.keys(STATUS).map(k => ({ v: k, l: STATUS[k][0] })), client: { type: 'text', value: LF.client } };
     const head = '<tr><th>Billed</th><th>Invoice</th><th>' + NovaTable.th('client', 'Client', specs.client, LF.client) + '</th>' + (admin ? '<th>AM</th>' : '') + '<th>Order #</th><th>Ordered</th><th>' + NovaTable.th('status', 'Status', specs.status, LF.status) + '</th><th class="r">Total</th><th class="r">Paid</th></tr>';
@@ -303,11 +312,12 @@
     }).join('');
     $('dbList').innerHTML = rows.length ? '<table class="db-t"><thead>' + head + '</thead><tbody>' + body + '</tbody></table>' : '<table class="db-t"><thead>' + head + '</thead></table><div class="db-empty">No invoices with these filters</div>';
     const t = $('dbList').querySelector('table'); if (t) { NovaTable.bind(t, specs, (k, v) => { LF[k] = v || ''; paintList(); }); try { NovaTable.pin(t); } catch (e) {} }
-    const x = $('dbSelX'); if (x) x.onclick = () => { sel = null; paintChart(); paintList(); };
+    const x = $('dbSelX'); if (x) x.onclick = () => { dropSub(); paintList(); };
   }
+  function dropSub() { SUB = null; try { history.replaceState(null, '', '/invoices'); } catch (e) {} }
   const ordinal = (n) => { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return s[(v - 20) % 10] || s[v] || s[0]; };
 
-  function paint() { paintFilters(); paintTiles(); paintChart(); paintList(); }
+  function paint() { paintFilters(); if (INV) { paintList(); return; } paintTiles(); paintChart(); }
 
   // ---- clicks
   document.addEventListener('click', (ev) => {
@@ -322,6 +332,12 @@
     if (b.dataset.am) { S.am = S.am === b.dataset.am && b.dataset.am !== 'all' ? 'all' : b.dataset.am; save(); paintFilters(); load(); return; }
     if (b.dataset.by) { S.by = b.dataset.by; save(); if (D) paint(); else paintFilters(); return; }
   });
+  document.addEventListener('click', (ev) => {
+    const t = ev.target.closest && ev.target.closest('[data-tgo]'); if (!t) return;
+    const [k, v] = (t.dataset.tgo || '').split(':');
+    if (k === 'ord') { S.orders = v; save(); } if (k === 'on') { S.online = v; save(); }
+    location.href = '/invoices' + (k === 'st' ? '?st=' + v : '');
+  });
   document.addEventListener('change', (ev) => {
     if (ev.target.id === 'dbLy') { S.ly = ev.target.checked; save(); load(); }
   });
@@ -330,7 +346,7 @@
     if (!(ev.target.closest && ev.target.closest('.db-pm'))) closeMenu();
   }, true);
   document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { closeMenu(); const c = $('dbSnap'); if (c) c.hidden = true; } });
-  let rt = 0; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { if (D) paintChart(); }, 120); });
+  let rt = 0; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { if (D && !INV) paintChart(); }, 120); });
 
   paintFilters(); load();
 })();

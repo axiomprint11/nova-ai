@@ -61,6 +61,7 @@
   /* tiles */
   .db-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
   .db-tile { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; position: relative; overflow: hidden; }
+  .db-tile.go { cursor: pointer; transition: border-color .15s, box-shadow .15s; } .db-tile.go:hover { border-color: #c7c7dc; box-shadow: 0 4px 14px rgba(20,20,50,.07); }
   .db-tile::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--c, var(--indigo)); }
   .db-tile .l { font-size: 11.5px; font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 6px; }
   .db-tile .v { font-size: 20px; white-space: nowrap; font-weight: 700; letter-spacing: -.01em; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
@@ -151,6 +152,10 @@
   .pill.new { background: #dcfce7; color: #15803d; } .pill.mid { background: #e0e7ff; color: #4338ca; } .pill.loyal { background: #f3e8ff; color: #7e22ce; }
   .pill.on { background: #ecfeff; color: #0e7490; } .pill.man { background: #f4f4f5; color: #52525b; }
   .pill svg { width: 12px; height: 12px; }
+  /* 1.20.182: one page, two screens — /dashboard (chart) and /invoices (the list), the filters shared */
+  body.inv-mode .db-dash-only, body:not(.inv-mode) .db-inv-only { display: none !important; }
+  .db-top h1 span a { color: var(--indigo-dark); font-weight: 600; text-decoration: none; } .db-top h1 span a:hover { text-decoration: underline; }
+  .db-golist { margin-left: 12px; font-size: 12px; font-weight: 600; color: var(--indigo-dark); text-decoration: none; white-space: nowrap; } .db-golist:hover { text-decoration: underline; }
   .db-selchip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--indigo-dark); background: var(--indigo-light); border-radius: 20px; padding: 4px 6px 4px 11px; }
   .db-selchip button { border: 0; background: #fff; color: var(--indigo-dark); width: 20px; height: 20px; border-radius: 50%; cursor: pointer; font-size: 14px; line-height: 1; }
   .db-empty { padding: 40px 10px; text-align: center; color: var(--muted); font-size: 13px; }
@@ -163,27 +168,28 @@
 </head>
 <body>
 <div class="db-top">
-  <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Dashboard <span id="dbSub">· invoices by the day they were billed</span></h1>
+  <h1 class="db-dash-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Dashboard <span id="dbSub">· invoices by the day they were billed</span></h1>
+  <h1 class="db-inv-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h9l4 4v16l-2.5-1.5L14 22l-2-1.5L10 22l-2.5-1.5L5 22V3a1 1 0 0 1 1-1z"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>Invoices <span>· every invoice billed in the period · <a href="/dashboard">see the chart</a></span></h1>
 </div>
 <div class="db-main" id="dbMain">
   <div class="db-card db-filters" id="dbFilters">
     <div id="dbAmBox"><div class="db-lab">Account manager <span class="db-q" tabindex="0" aria-label="Help">?<span class="db-qtip">All account managers · hover a face for a snapshot, click to see only theirs</span></span><span class="db-ampick" id="dbAmPick"></span></div><div class="db-heads" id="dbAms"></div></div>
     <div class="db-row">
       <div><div class="db-lab">Billed</div><div class="db-chips" id="dbPeriod"></div></div>
-      <div><div class="db-lab">Group by</div><div class="seg" id="dbGroup"></div></div>
+      <div class="db-dash-only"><div class="db-lab">Group by</div><div class="seg" id="dbGroup"></div></div>
       <div><div class="db-lab">Ordered</div><div class="seg" id="dbOnline"></div></div>
       <div><div class="db-lab">Count</div><div class="seg" id="dbBy"><button data-by="inv" class="on" title="Dollars invoiced">By Inv.</button><button data-by="qty" title="Number of invoices">By Qty.</button></div></div>
     </div>
     <div><div class="db-lab">Client's order number</div><div class="db-ord" id="dbOrders"></div></div>
   </div>
   <div id="dbErr"></div>
-  <div class="db-vs" id="dbVs"></div>
-  <div class="db-tiles" id="dbTiles"></div>
-  <div class="db-card">
-    <h2><span id="dbChartTitle">Invoiced</span><span class="n" id="dbChartSub"></span><span class="sp"></span><label class="db-ly" title="Compare every figure with the same dates one year earlier — the tiles, the AM cards and a dashed line on the chart"><input type="checkbox" id="dbLy"><span>Compare</span></label><div class="db-legend" id="dbLegend"></div></h2>
+  <div class="db-vs db-dash-only" id="dbVs"></div>
+  <div class="db-tiles db-dash-only" id="dbTiles"></div>
+  <div class="db-card db-dash-only">
+    <h2><span id="dbChartTitle">Invoiced</span><span class="n" id="dbChartSub"></span><span class="sp"></span><label class="db-ly" title="Compare every figure with the same dates one year earlier — the tiles, the AM cards and a dashed line on the chart"><input type="checkbox" id="dbLy"><span>Compare</span></label><div class="db-legend" id="dbLegend"></div><a class="db-golist" href="/invoices">See the invoices →</a></h2>
     <div class="db-chart" id="dbChart"><div class="db-skel"></div></div>
   </div>
-  <div class="db-card">
+  <div class="db-card db-inv-only">
     <h2>Invoices <span class="n" id="dbListN"></span><span id="dbSel"></span><span class="sp"></span></h2>
     <div class="db-tbl-wrap" id="dbList"></div>
   </div>
@@ -192,7 +198,7 @@
 <script src="/nova-loader.js"></script>
 <script src="/nova-nav.js"></script>
 <script src="/nova-table.js"></script>
-<script>NovaNav.mount({ current: 'dashboard' });</script>
+<script>document.body.classList.toggle('inv-mode', /^\/invoices\/?$/.test(location.pathname)); NovaNav.mount({ current: document.body.classList.contains('inv-mode') ? 'invoices' : 'dashboard' });</script>
 <script src="/dashboard.js"></script>
 </body>
 </html>

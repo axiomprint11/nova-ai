@@ -12,6 +12,7 @@
  */
 (function () {
   const ICON = {
+    invoices: '<path d="M6 2h9l4 4v16l-2.5-1.5L14 22l-2-1.5L10 22l-2.5-1.5L5 22V3a1 1 0 0 1 1-1z"/><path d="M9 8h6M9 12h6M9 16h4"/>',
     dashboard: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
     history: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     client: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/>',
@@ -36,6 +37,7 @@
   // 'bookkeeper' (the people named in BOOKKEEPER_USERS — admin or not), 'ar' (Nova AR: bookkeepers + members ticked AR).
   const GROUPS = [
     [['dashboard', 'Dashboard', '/dashboard', 'all'],   /* 1.20.174: the home page — invoices by billed date, by AM */
+     ['invoices', 'Invoices', '/invoices', 'all'],       /* 1.20.182: the invoice list, with the Dashboard's filters */
      ['history', 'CRM Chat', '/admin?tab=history', 'all'],
      ['client', 'Client ChatBot', '/client-bot', 'admin'],
      ['talk', 'TalkAi', '/talk-ai', 'all'],           // 1.20.78: the whole team — the Calls dashboard + My TalkAI

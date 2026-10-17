@@ -111,6 +111,7 @@ module.exports = function mountDashboard(app, deps) {
   }
 
   app.get('/dashboard', serveVersionedHtml('dashboard.html'));
+  app.get('/invoices', serveVersionedHtml('dashboard.html'));   /* 1.20.182: the Invoices page — the same filters, the list instead of the chart */
 
   app.get('/api/dashboard', auth, async (req, res) => {
     try {
@@ -178,7 +179,7 @@ module.exports = function mountDashboard(app, deps) {
         filters: { am, orders, online },
         ams, am_all: sum(amF), orders_f: ordFull(),
         online_f: { all: sum(onF), online: onF.online || { n: 0, total: 0 }, manual: onF.manual || { n: 0, total: 0 } },
-        tiles, prev_tiles: ptiles, series, rows: list, row_count: rows.length, am_info: info });
+        tiles, prev_tiles: ptiles, series, rows: q.rows === '0' ? [] : list, row_count: rows.length, am_info: info });
     } catch (e) { errlog('data', e.message); res.json({ ok: false, error: 'CRM not reachable: ' + e.message }); }
   });
 
