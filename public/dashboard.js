@@ -45,7 +45,7 @@
     return (p && p[2] ? p[2] : PRESETS[0][2])(t);
   }
   /* 1.20.176: the top 12 AMs by total; "Show n more" opens the rest (the picked one always shows) */
-  const AM_LIMIT = 12; let amMore = false;
+  const AM_LIMIT = 10; let amMore = false;   /* 1.20.184: 10, the rest on a line under */
   let D = null, sel = null, LF = { status: '', client: '' }, seq = 0;
   /* 1.20.182: /invoices shows the list with the same filters (state shared in nova_dash_v1); /dashboard shows the chart and no list.
      A bar on the dashboard opens /invoices?d=<from>&e=<to> — the list narrowed to that day / week / month (SUB, × shows the whole period). */
@@ -101,7 +101,7 @@
     $('dbOnline').innerHTML = '<button data-o="all" class="' + (S.online === 'all' ? 'on' : '') + '"><span class="l">All</span>' + cnt('all') + '</button><button data-o="online" class="' + (S.online === 'online' ? 'on' : '') + '" title="Ordered on axiomprint.com"><span class="l">' + IC.web + 'Online</span>' + cnt('online') + '</button><button data-o="manual" class="' + (S.online === 'manual' ? 'on' : '') + '" title="Entered by the team in the CRM"><span class="l">' + IC.hand + 'Manual</span>' + cnt('manual') + '</button>';
     const ofs = D && D.orders_f, maxT = ofs ? Math.max(1, ofs.all[S.by === 'qty' ? 'n' : 'total']) : 1;
     $('dbOrders').innerHTML = BANDS.map(b => { const f = ofs ? ofs[b[0]] : null; const v = f ? (S.by === 'qty' ? f.n : f.total) : 0;
-      return '<button class="db-oc' + (S.orders === b[0] ? ' on' : '') + '" data-ord="' + b[0] + '" data-snap="ord:' + b[0] + '" style="--c:' + b[3] + '"><span class="t"><i></i>' + b[1] + '</span><span class="v">' + (f ? (S.by === 'qty' ? int(f.n) + ' <small>inv.</small>' : usd0(f.total)) : '—') + '</span>' + (f ? '<span class="bar" style="width:' + Math.round(100 * v / maxT) + '%"></span>' : '') + '</button>'; }).join('');
+      return '<button class="db-oc' + (S.orders === b[0] ? ' on' : '') + '" data-ord="' + b[0] + '" data-snap="ord:' + b[0] + '" style="--c:' + b[3] + '"><span class="t"><i></i>' + b[1] + '</span><span class="v">' + (f ? (S.by === 'qty' ? int(f.n) + ' <small>invoices</small>' : usd0(f.total)) : '—') + '</span><span class="s">' + b[2] + '</span>' + (f ? '<span class="s">' + (S.by === 'qty' ? usd0(f.total) : int(f.n) + ' invoices') + '</span>' : '') + (f ? '<span class="bar" style="width:' + Math.round(100 * v / maxT) + '%"></span>' : '') + '</button>'; }).join('');
     // AMs
     if (D && D.scope && !D.scope.admin) {
       $('dbAmBox').querySelector('.db-lab').textContent = 'Your invoices';
@@ -110,10 +110,12 @@
     } else if (D) {
       /* 1.20.175: heads only — hover for a snapshot, click to see only that AM (click again for everyone) */
       const missing = S.am !== 'all' && !D.ams.some(a => String(a.id) === String(S.am));
+      const headBtn = (a) => '<button class="db-head' + (String(S.am) === String(a.id) ? ' on' : '') + (S.am !== 'all' && String(S.am) !== String(a.id) ? ' dim' : '') + '" data-am="' + a.id + '" data-snap="' + a.id + '" aria-label="' + esc(a.name) + '">' + face(a) + '</button>';
       $('dbAms').innerHTML = '<button class="db-head all' + (S.am === 'all' ? ' on' : '') + '" data-am="all" data-snap="all" aria-label="All account managers"><span class="face all">' + IC.all + '</span></button>' +
-        D.ams.filter((a, i) => amMore || i < AM_LIMIT || String(S.am) === String(a.id)).map(a => '<button class="db-head' + (String(S.am) === String(a.id) ? ' on' : '') + (S.am !== 'all' && String(S.am) !== String(a.id) ? ' dim' : '') + '" data-am="' + a.id + '" data-snap="' + a.id + '" aria-label="' + esc(a.name) + '">' + face(a) + '</button>').join('') +
+        D.ams.filter((a, i) => i < AM_LIMIT || (!amMore && String(S.am) === String(a.id))).map(headBtn).join('') +
         (missing ? '<button class="db-head on" data-am="' + esc(S.am) + '" data-snap="' + esc(S.am) + '">' + face(D.am_info && D.am_info[S.am]) + '</button>' : '') +
-        (D.ams.length > AM_LIMIT ? '<button class="db-hmore" id="dbAmMore">' + (amMore ? 'Show less' : 'Show ' + (D.ams.length - AM_LIMIT) + ' more') + '</button>' : '');
+        (D.ams.length > AM_LIMIT ? '<button class="db-hmore" id="dbAmMore">' + (amMore ? 'Show less' : 'Show ' + (D.ams.length - AM_LIMIT) + ' more') + '</button>' : '') +
+        (amMore && D.ams.length > AM_LIMIT ? '<div class="db-hrest">' + D.ams.slice(AM_LIMIT).map(headBtn).join('') + '</div>' : '');
       const cur = S.am === 'all' ? null : D.ams.find(a => String(a.id) === String(S.am)) || (D.am_info && D.am_info[S.am]);
       $('dbAmPick').innerHTML = cur ? 'Showing <b>' + esc(cur.name) + '</b> · <a href="#" id="dbAmAll">everyone</a>' : '';
     }

@@ -792,7 +792,11 @@ paid / Unpaid / Estimates → `?st=` = the Status column filter, New clients →
 "See the invoices →" and the Invoices title "see the chart". The list line reads "n shown · $total". **1.20.183**: the filter card is two rows — the AM heads, then Billed · Group by · Ordered · Count · **Client's order
 number** (the four cards moved into that row, `.db-ordbox`); each Ordered choice is two lines (name, then the amount — `.l` + `small`);
 the Billed date line is its own `#dbRange` under the chips (inside the chip row it stretched the column); the row's chips / toggles / cards
-are a little tighter so it all fits one line from about 1366px (Invoices) / 1600px (Dashboard, which also has Group by); narrower, it wraps.
+are a little tighter so it all fits one line from about 1366px (Invoices) / 1600px (Dashboard, which also has Group by); narrower, it wraps. **1.20.184 — the owner's layout**: the top row is two halves (`.db-top2`, `fit-content(600px)` + the rest; one column under 1100px):
+the AM heads on the left, **10** (`AM_LIMIT`) then **Show n more**, which opens the rest on a line **under** (`.db-hrest`), and the order-number
+cards on the right in their full look again — label, $ (or count), the band's words ("1st order") and the invoice count on two small lines
+(the hover snapshot stays). The second row is Billed · Group by · Ordered · Count; Ordered is back to one line with the amount beside each
+name ("All $283k").
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 
