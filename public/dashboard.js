@@ -94,7 +94,7 @@
     $('dbOnline').innerHTML = '<button data-o="all" class="' + (S.online === 'all' ? 'on' : '') + '">All' + cnt('all') + '</button><button data-o="online" class="' + (S.online === 'online' ? 'on' : '') + '" title="Ordered on axiomprint.com">' + IC.web + 'Online' + cnt('online') + '</button><button data-o="manual" class="' + (S.online === 'manual' ? 'on' : '') + '" title="Entered by the team in the CRM">' + IC.hand + 'Manual' + cnt('manual') + '</button>';
     const ofs = D && D.orders_f, maxT = ofs ? Math.max(1, ofs.all[S.by === 'qty' ? 'n' : 'total']) : 1;
     $('dbOrders').innerHTML = BANDS.map(b => { const f = ofs ? ofs[b[0]] : null; const v = f ? (S.by === 'qty' ? f.n : f.total) : 0;
-      return '<button class="db-oc' + (S.orders === b[0] ? ' on' : '') + '" data-ord="' + b[0] + '" style="--c:' + b[3] + '"><span class="t"><i></i>' + b[1] + '</span><span class="v">' + (f ? (S.by === 'qty' ? int(f.n) + ' <small style="font-size:11px;font-weight:600;color:var(--muted)">invoices</small>' : usd0(f.total)) : '—') + '</span><span class="s">' + b[2] + (f ? ' · ' + (S.by === 'qty' ? usd0(f.total) : int(f.n) + ' invoices') : '') + '</span>' + (f ? '<span class="bar" style="width:' + Math.round(100 * v / maxT) + '%"></span>' : '') + '</button>'; }).join('');
+      return '<button class="db-oc' + (S.orders === b[0] ? ' on' : '') + '" data-ord="' + b[0] + '" data-snap="ord:' + b[0] + '" style="--c:' + b[3] + '"><span class="t"><i></i>' + b[1] + '</span><span class="v">' + (f ? (S.by === 'qty' ? int(f.n) + ' <small>inv.</small>' : usd0(f.total)) : '—') + '</span>' + (f ? '<span class="bar" style="width:' + Math.round(100 * v / maxT) + '%"></span>' : '') + '</button>'; }).join('');
     // AMs
     if (D && D.scope && !D.scope.admin) {
       $('dbAmBox').querySelector('.db-lab').textContent = 'Your invoices';
@@ -162,6 +162,7 @@
   // ---- the AM snapshot (hover card)
   function snapHTML(key) {
     const q = S.by === 'qty', lyTxt = D.prev.kind === 'ly' ? 'last year' : 'the ' + D.range.days + ' days before';
+    if (key.indexOf('ord:') === 0) { return ordSnap(key.slice(4)); }
     if (key === 'all') { const t = D.am_all || { n: 0, total: 0 };
       return '<div class="sn-h"><span class="face all">' + IC.all + '</span><div><b>All account managers</b><small>' + int(D.ams.length) + ' AMs with invoices</small></div></div><div class="sn-big">' + usd2(t.total) + '</div><div class="sn-sub">' + int(t.n) + ' invoices · ' + us(D.range.from) + ' – ' + us(D.range.to) + '</div><div class="sn-hint">Click to see everyone</div>'; }
     const a = D.ams.find(x => String(x.id) === String(key)); if (!a) return '';
@@ -174,6 +175,20 @@
       '<div class="sn-rows"><span><i style="background:' + C.paid + '"></i>Paid</span><b>' + usd0(a.paid) + '</b><span><i style="background:' + C.partial + '"></i>Partially paid</span><b>' + usd0(a.partial) + '</b><span><i style="background:' + C.unpaid + '"></i>Unpaid</span><b>' + usd0(a.unpaid) + '</b>' +
       '<span>Still due</span><b>' + usd0(a.due) + '</b><span>New clients</span><b>' + int(a.new_clients) + '</b><span>Ordered online</span><b>' + (a.total ? Math.round(100 * a.online / a.total) : 0) + '%</b></div>' +
       '<div class="sn-hint">' + (String(S.am) === String(a.id) ? 'Click to see everyone again' : 'Click to see only ' + esc(a.first || a.name.split(' ')[0]) + '\'s invoices') + '</div>';
+  }
+  /* 1.20.181: the order-number card's hover: what the band is, invoices, estimates, bad debt, paid / unpaid */
+  function ordSnap(k) {
+    const b = BANDS.find(x => x[0] === k), f = D.orders_f && D.orders_f[k]; if (!b || !f) return '';
+    const all = (D.orders_f.all && D.orders_f.all.total) || 0, w = (v) => f.total ? Math.max(0, Math.round(100 * v / f.total)) : 0;
+    return '<div class="sn-h"><span class="sn-dot" style="background:' + b[3] + '"></span><div><b>' + esc(b[1]) + '</b><small>' + esc(b[2] === 'every client' ? 'Every client, any order number' : 'The client\'s ' + b[2]) + '</small></div></div>' +
+      '<div class="sn-big">' + usd2(f.total) + '</div>' +
+      '<div class="sn-sub">' + int(f.n) + ' invoice' + (f.n === 1 ? '' : 's') + ' · avg ' + usd0(f.avg) + (k !== 'all' && all ? ' · ' + Math.round(100 * f.total / all) + '% of all' : '') + '</div>' +
+      '<div class="sn-bar"><i style="width:' + w(f.partial) + '%;background:' + C.partial + '"></i><i style="width:' + w(f.paid) + '%;background:' + C.paid + '"></i><i style="width:' + w(f.unpaid) + '%;background:' + C.unpaid + '"></i></div>' +
+      '<div class="sn-rows"><span>Invoices</span><b>' + int(f.n) + '</b><span>Estimates</span><b>' + int(f.n_est || 0) + (f.n_est ? ' · ' + usd0(f.estimates) : '') + '</b>' +
+      (f.n_bad ? '<span>Bad debt</span><b>' + int(f.n_bad) + ' · ' + usd0(f.bad_debt) + '</b>' : '') +
+      '<span><i style="background:' + C.paid + '"></i>Paid</span><b>' + int(f.n_paid || 0) + ' · ' + usd0(f.paid) + '</b><span><i style="background:' + C.partial + '"></i>Partially paid</span><b>' + int(f.n_partial || 0) + ' · ' + usd0(f.partial) + '</b><span><i style="background:' + C.unpaid + '"></i>Unpaid</span><b>' + int(f.n_unpaid || 0) + ' · ' + usd0(f.unpaid) + '</b>' +
+      '<span>Ordered online</span><b>' + (f.total ? Math.round(100 * f.online / f.total) : 0) + '%</b></div>' +
+      '<div class="sn-hint">' + (S.orders === k && k !== 'all' ? 'Click to see all orders again' : k === 'all' ? 'Click to see every order' : 'Click to see only these') + '</div>';
   }
   let snapT = 0;
   document.addEventListener('mouseover', (ev) => {

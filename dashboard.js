@@ -145,7 +145,10 @@ module.exports = function mountDashboard(app, deps) {
         cur.forEach(r => { if (passOrd(r) && passOn(r)) add(amFull[r.am] || (amFull[r.am] = blank()), r); });
         prev.forEach(r => { if (passOrd(r) && passOn(r)) add(amPrev[r.am] || (amPrev[r.am] = blank()), r); });
       }
-      const ordF = facet(cur, r => base(r) && passAm(r) && passOn(r), r => band(r.order_n));
+      /* 1.20.181: each order-number card carries the full figures (invoices, estimates, bad debt, paid / partial / unpaid) for its hover */
+      const ordFull = () => { const o = { all: blank(), new: blank(), mid: blank(), loyal: blank() };
+        cur.forEach(r => { if (!(base(r) && passAm(r) && passOn(r))) return; add(o.all, r); const k = band(r.order_n); if (o[k]) add(o[k], r); });
+        Object.keys(o).forEach(k => round(o[k])); return o; };
       const onF = facet(cur, r => base(r) && passAm(r) && passOrd(r), r => r.online ? 'online' : 'manual');
       const sum = (m) => Object.values(m).reduce((a, f) => ({ n: a.n + f.n, total: num(a.total + f.total) }), { n: 0, total: 0 });
 
@@ -173,7 +176,7 @@ module.exports = function mountDashboard(app, deps) {
       res.json({ ok: true, scope: { admin: scope.admin, am_locked: !scope.admin, me: scope.crmId ? info[scope.crmId] || null : null },
         range: { from, to, days, group, auto_group: auto, today }, prev: { from: pFrom, to: pTo, kind: ly ? 'ly' : 'before' }, prev_series,
         filters: { am, orders, online },
-        ams, am_all: sum(amF), orders_f: { all: sum(ordF), new: ordF.new || { n: 0, total: 0 }, mid: ordF.mid || { n: 0, total: 0 }, loyal: ordF.loyal || { n: 0, total: 0 } },
+        ams, am_all: sum(amF), orders_f: ordFull(),
         online_f: { all: sum(onF), online: onF.online || { n: 0, total: 0 }, manual: onF.manual || { n: 0, total: 0 } },
         tiles, prev_tiles: ptiles, series, rows: list, row_count: rows.length, am_info: info });
     } catch (e) { errlog('data', e.message); res.json({ ok: false, error: 'CRM not reachable: ' + e.message }); }
