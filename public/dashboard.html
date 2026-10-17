@@ -139,8 +139,6 @@
 <body>
 <div class="db-top">
   <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Dashboard <span id="dbSub">· invoices by the day they were billed</span></h1>
-  <div class="sp"></div>
-  <div class="seg" id="dbBy"><button data-by="inv" class="on" title="Dollars invoiced">By Inv.</button><button data-by="qty" title="Number of invoices">By Qty.</button></div>
 </div>
 <div class="db-main" id="dbMain">
   <div class="db-card db-filters" id="dbFilters">
@@ -149,6 +147,7 @@
       <div><div class="db-lab">Billed</div><div class="db-chips" id="dbPeriod"></div></div>
       <div><div class="db-lab">Group by</div><div class="seg" id="dbGroup"></div></div>
       <div><div class="db-lab">Ordered</div><div class="seg" id="dbOnline"></div></div>
+      <div><div class="db-lab">Count</div><div class="seg" id="dbBy"><button data-by="inv" class="on" title="Dollars invoiced">By Inv.</button><button data-by="qty" title="Number of invoices">By Qty.</button></div></div>
     </div>
     <div><div class="db-lab">Client's order number</div><div class="db-ord" id="dbOrders"></div></div>
   </div>
