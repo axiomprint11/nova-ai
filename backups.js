@@ -36,8 +36,18 @@ module.exports = function mountBackups(app, deps) {
   const SP_PREFIX = env('SPACES_PREFIX', 'nova').replace(/^\/+|\/+$/g, '');
   const SP_KEEP = Math.max(7, parseInt(env('SPACES_KEEP_DAYS', '90')) || 90);
   let space = null, spaceErr = null;
-  if (SP.key && SP.secret && SP.bucket && SP.region) { try { space = require('./spaces')(SP); } catch (e) { spaceErr = e.message; } }
   const ROOT = path.dirname(dbPath);
+  // The keys come from .env, or — so nobody has to type a 40-character secret into a server console — from the form on
+  // Admin → Connectors, which tests them and saves them in .spaces.json beside .env (mode 600, gitignored, never backed up).
+  const CRED_FILE = path.join(ROOT, '.spaces.json');
+  function initSpace() {
+    space = null; spaceErr = null;
+    if (!(SP.key && SP.secret && SP.bucket && SP.region) && fs.existsSync(CRED_FILE)) {
+      try { const c = JSON.parse(fs.readFileSync(CRED_FILE, 'utf8')); for (const k of ['key', 'secret', 'bucket', 'region']) if (c[k]) SP[k] = c[k]; SP.from = 'admin'; } catch (e) { spaceErr = 'could not read .spaces.json: ' + e.message; }
+    }
+    if (SP.key && SP.secret && SP.bucket && SP.region) { try { space = require('./spaces')(SP); } catch (e) { spaceErr = e.message; } }
+  }
+  initSpace();
   // every folder of uploaded files, named as each module names it (same env overrides, same defaults)
   const FOLDERS = [
     ['hr-files', env('HR_FILES_DIR', path.join(ROOT, 'hr-files'))],
@@ -195,8 +205,26 @@ module.exports = function mountBackups(app, deps) {
     setTimeout(() => { try { if (laHM() > AT && !list().some(f => f.name.startsWith('users-' + laDate()))) { firedOn = laDate(); run('boot').catch(() => {}); } } catch (e) {} }, 90000).unref();
   }
   const status = () => ({ ok: true, dir: DIR, at: AT + ' (LA)', keep_days: KEEP, drive_folder: DRIVE_FOLDER || null, last, files: list().slice(0, 40),
-    spaces: space ? { bucket: SP.bucket, region: SP.region, prefix: SP_PREFIX, keep_days: SP_KEEP, sync } : { off: spaceErr || 'not set up' } });
+    spaces: space ? { bucket: SP.bucket, region: SP.region, prefix: SP_PREFIX, keep_days: SP_KEEP, from: SP.from || 'env', sync } : { off: spaceErr || 'not set up', from_env: !!process.env.SPACES_KEY } });
   app.get('/api/admin/backups', auth, adminOnly, (req, res) => res.json(status()));
+  // Connect / change the Space from the admin page: test a real write first, save only when it works
+  app.post('/api/admin/backups/spaces', auth, adminOnly, async (req, res) => {
+    const b = req.body || {}; const c = {};
+    for (const k of ['key', 'secret', 'bucket', 'region']) c[k] = String(b[k] || '').trim();
+    c.region = c.region.toLowerCase().replace(/\.digitaloceanspaces\.com.*$/, '').replace(/^https?:\/\//, '').split('.').pop();
+    c.bucket = c.bucket.toLowerCase().replace(/^https?:\/\//, '').split('.')[0];
+    if (!c.key || !c.secret || !c.bucket || !c.region) return res.json({ ok: false, error: 'All four are needed: access key, secret, Space name and region.' });
+    if (process.env.SPACES_KEY) return res.json({ ok: false, error: 'The Space is set in .env on the server — change it there.' });
+    try {
+      const test = require('./spaces')(Object.assign({}, c, { endpoint: SP.endpoint }));
+      await test.putText(SP_PREFIX + '/.nova-check', 'Nova can write here · ' + new Date().toISOString());
+    } catch (e) { return res.json({ ok: false, error: 'DigitalOcean refused: ' + e.message + '. Check the key, the secret, the Space name and its region, and that the key may write to this Space.' }); }
+    try { fs.writeFileSync(CRED_FILE, JSON.stringify(c), { mode: 0o600 }); fs.chmodSync(CRED_FILE, 0o600); } catch (e) { return res.json({ ok: false, error: 'Worked, but could not save: ' + e.message }); }
+    for (const k of ['key', 'secret', 'bucket', 'region']) SP[k] = c[k];
+    SP.from = 'admin'; initSpace();
+    log('Spaces connected from the admin page: ' + c.bucket + ' (' + c.region + ')');
+    res.json(Object.assign({ ok: true }, status()));
+  });
   app.post('/api/admin/backups/run', auth, adminOnly, async (req, res) => { const who = req.user ? (req.user.email || req.user.username || req.user.key) : 'admin'; res.json(Object.assign({ ok: true }, { last: await run(who, 'manual') })); });
   return { run, status, list };
 };

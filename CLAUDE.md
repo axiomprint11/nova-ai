@@ -67,6 +67,10 @@ the file copy **never deletes** from the Space; `.tmp` / `.part` files and links
 or any file that would not copy emails the `backup` Notify kind; failed files are retried next run. `GET /api/admin/backups` → `spaces`
 {bucket, region, prefix, keep_days, sync {running, scanned, todo, done, bytes, failed, errors, folders}} or `{off}`; Admin → Connectors'
 backup row has a second line for it and refreshes every 5 s while files are copying. Add a new upload folder to `FOLDERS` in backups.js.
+Without the keys in `.env`, the row's **Connect Spaces** / **Change Space** button opens a form (Space name, region, access key, secret —
+pasted in the browser, so nobody types a 40-character secret into a server console); `POST /api/admin/backups/spaces` normalises a pasted
+URL into name + region, writes `<prefix>/.nova-check` with the new keys and saves them **only if that works**, in `.spaces.json` beside
+`.env` (mode 600, gitignored, deploy.sh never touches it, not part of any backup). `.env` keys win when both exist.
 **The MySQL user (1.20.173)**: Nova logs in as **`nova_ai_app`** (`MYSQL_USER`), created by `scripts/make-nova-user.sh` with `SELECT, SHOW
 VIEW` on `axiomprint_new` and `ALL` on **`nova_ai`** — Nova's own MySQL database on the same DigitalOcean cluster, empty for now, where the
 SQLite tables will move. The CRM is now read-only **in the database itself**, not only by convention: an INSERT / UPDATE from any path

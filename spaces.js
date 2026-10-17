@@ -109,9 +109,10 @@ module.exports = function spaces(opt) {
     } while (token);
     return out;
   }
+  const putText = (objKey, text) => call('PUT', objKey, { body: text, headers: { 'x-amz-acl': 'private', 'content-type': 'text/plain' } });
   const del = (objKey) => call('DELETE', objKey);
   // a cheap "can we write?" — used by the admin row's check
   async function ping() { await call('GET', '', { query: { 'list-type': 2, 'max-keys': 1 } }); return true; }
 
-  return { putFile, list, del, ping, _sign: sign, _target: target, get signRegion() { return signRegion; } };
+  return { putFile, putText, list, del, ping, _sign: sign, _target: target, get signRegion() { return signRegion; } };
 };

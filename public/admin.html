@@ -896,6 +896,29 @@ async function loadBackups(box) {
       '<button class="btn-mini" id="bkNow" style="margin-right:10px">Back up now</button><span class="conn-status ' + dot + '">' + (ok ? 'OK' : err ? 'Failed' : 'Scheduled') + '</span>';
     document.getElementById('bkNow').onclick = async () => { const b = document.getElementById('bkNow'); b.disabled = true; b.textContent = 'Working…'; await fetch('/api/admin/backups/run', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: '{}' }); paint(); };
     /* while the file copy runs, refresh the line every 5 s (only while this row is on screen) */
+    /* 1.20.173: connect (or change) the Space by pasting the key here — tested by Nova before it is saved */
+    if (!sp.from_env) {
+      const act = document.createElement('button'); act.className = 'btn-mini'; act.style.marginRight = '10px';
+      act.textContent = sp.off ? 'Connect Spaces' : 'Change Space';
+      row.querySelector('#bkNow').before(act);
+      act.onclick = () => {
+        if (row.nextElementSibling && row.nextElementSibling.id === 'spForm') { row.nextElementSibling.remove(); return; }
+        const f = document.createElement('div'); f.id = 'spForm'; f.className = 'conn-row'; f.style.cssText = 'flex-direction:column;align-items:stretch;gap:10px';
+        const inp = (id, ph, type) => '<input id="' + id + '" type="' + (type || 'text') + '" placeholder="' + ph + '" autocomplete="off" style="padding:8px 10px;border:1px solid var(--line);border-radius:8px;font:inherit">';
+        f.innerHTML = '<div style="font-weight:600">Connect the DigitalOcean Space for backups</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' + inp('spBucket', 'Space name, e.g. axiom-nova-backup') + inp('spRegion', 'Region, e.g. sfo3') + inp('spKey', 'Access key') + inp('spSecret', 'Secret', 'password') + '</div>' +
+          '<div style="display:flex;gap:10px;align-items:center"><button class="btn-mini" id="spSave">Test and save</button><span id="spMsg" style="font-size:13px;color:var(--muted)">Nova writes a small test file to the Space first and saves the keys only if that works.</span></div>';
+        row.after(f);
+        f.querySelector('#spSave').onclick = async () => {
+          const m = f.querySelector('#spMsg'), btn = f.querySelector('#spSave'); btn.disabled = true; m.textContent = 'Testing…'; m.style.color = 'var(--muted)';
+          const body = { bucket: f.querySelector('#spBucket').value, region: f.querySelector('#spRegion').value, key: f.querySelector('#spKey').value, secret: f.querySelector('#spSecret').value };
+          const r = await fetch('/api/admin/backups/spaces', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(x => x.json()).catch(e => ({ ok: false, error: e.message }));
+          btn.disabled = false;
+          if (!r.ok) { m.textContent = r.error || 'Failed'; m.style.color = 'var(--red, #c0392b)'; return; }
+          f.remove(); paint();
+        };
+      };
+    }
     clearTimeout(row._t); if (sy.running && document.body.contains(row)) row._t = setTimeout(() => paint().catch(() => {}), 5000);
   };
   paint().catch(() => row.remove());

@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 gmail-key.json
+.spaces.json
 ca-certificate.crt
 *.pem
 *.key
