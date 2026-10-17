@@ -482,6 +482,24 @@ off-shift (15) / at-max (25) caps and the after-hours "first in" ranking stay. T
 (`jobComm()`: design fee, creative ≥ 6, "Work with Our Designers", manual proof, a rejected round, notes asking for calls / changes, a
 language), shown on the Test Data row. **Match Logic → How Nova scores**: a weight per part (Off · Half · Normal · ×1.5 · Double →
 `da_settings.weights` JSON, `weights()`), the AI switch, Save scoring. Stub test: 0.6 s with no model call.
+**1.20.172 — fit, then availability, then the AI decides.** 1.20.166 capped every off-shift designer at 15 % and, after hours, sorted
+by who starts first — so on a Saturday everyone read 15 % and George (level 9, AT MAX 7 of 6, starts 6 AM) topped a simple Perforated
+Window Vinyl job over Max (did it 24 times, 1 of 8 active). Now: (1) the % is the real **fit**, no caps; (2) **availability is the
+order** (`p.tier`: 0 on shift with room / hours not set · 1 off shift with room · 2 at max; `byTier` sorts tier → AI rank → fit →
+load), off-shift designers get Hours 10 when back with the first wave (within 2 h of the earliest start), 5 within a day, 2 later
+(`next_start_text` on every off-shift pick); (3) **history is relative** — 15 × √(their jobs of this product ÷ the team's most), category
+8 × √…, so 24 beats 5 (before, 5 jobs already hit the cap); (4) **overqualified on any job** — hardness fit 20 down 4 a level beyond
+job + 2 (floor 4); "advanced, keep them for harder work" only at level 8+; (5) `'Adhesive Products'` hardness 5 → 3 (window vinyl,
+decals, clings); (6) **the AI makes the final pick by default** — `aiDecide()` (replaces `aiAdjust`): `MODEL_LIGHT` (`modelLight` passed
+from server.js), the top 6 with their facts (`p._facts`: product / category jobs, levels, tier 2, strong sides, notes, newer,
+languages) + availability + Nova's reasons + the owner's Match Logic (+ custom Overload text), a production-manager brief (match level
+to the job, product experience first for routine work, never an AT MAX designer first), answers `{order, why, notes, busy}`; 8 s budget
+(`Promise.race`), any failure keeps the arithmetic order with "AI did not decide (…)"; the AI orders INSIDE the availability tiers.
+`use_ai` is on unless set to '0' (the Match Logic switch now reads "AI makes the final pick"). The built-in busy test runs whether or
+not the AI ran, and its reason names the first choice when the team is back ("— first choice when the team is back: Max (Mon 7 AM)").
+The page shows the AI's sentence in a violet box above the picks (`.da-ai-why`), an "AI pick" tag on the first, "AI: <note>" first
+in the reasons, the % titled "Fit"; History says "✦ AI". Harness: `da-h2.js` in the scratchpad (the Saturday case: Max 82 % · Edgar
+60 · Fernando 59 · George 36 at max, with or without the AI).
 
 ## ReportsAI (1.20.96)
 

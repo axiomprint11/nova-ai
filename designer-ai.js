@@ -6,7 +6,7 @@
 'use strict';
 
 module.exports = function mountDesignerAi(app, deps) {
-  const { db, auth, adminOnly, serveVersionedHtml, runQuery, anthropic, model, sendMail } = deps;
+  const { db, auth, adminOnly, serveVersionedHtml, runQuery, anthropic, model, modelLight, sendMail } = deps;
   const dbAll = (sql, p) => new Promise((res, rej) => db.all(sql, p || [], (e, r) => e ? rej(e) : res(r || [])));
   const dbGet = (sql, p) => new Promise((res, rej) => db.get(sql, p || [], (e, r) => e ? rej(e) : res(r)));
   const dbRun = (sql, p) => new Promise((res, rej) => db.run(sql, p || [], function (e) { e ? rej(e) : res(this); }));
@@ -121,7 +121,7 @@ module.exports = function mountDesignerAi(app, deps) {
     })).map(j => Object.assign(j, { hard: jobHard(j), creative: jobCreative(j), common: j.product_180 >= 40 })).map(j => Object.assign(j, { comm: jobComm(j) }));
   }
   // 1.20.17: how hard and how creative a job is, 0–10 — from the category, the proof tier, the design fee and the notes
-  const HARD_BY_CAT = { 'Folding Cartons': 8, 'Rigid Boxes': 9, 'Corrugated Boxes': 8, 'Sleeves and Inserts': 7, 'Catalogs & Books': 7, 'Trade Show Displays': 6, 'Standing Displays': 6, 'Custom': 8, 'Services': 7, 'Roll Labels': 5, 'Adhesive Products': 5, 'Stickers on Sheet': 4, 'Individual Stickers': 4, 'Rigid Boards': 4, 'Signs': 4, 'Real Estate Signs': 3, 'Banners / Posters': 3, 'Banner Stands': 3, 'Flags': 4, 'Standard Business Cards': 2, 'Luxury Business Cards': 4, 'Plastic Business Cards': 3, 'Special Shape Business Cards': 6, 'Marketing Materials': 3, 'Brochures / Flyers': 3, 'Menus': 4, 'Invitations': 5, 'Event & Invitations': 5, 'Calendars': 5, 'Promo Products': 4, 'Wall Art': 5, 'Mailing & EDDM': 4, 'Holders / Folders': 5 };
+  const HARD_BY_CAT = { 'Folding Cartons': 8, 'Rigid Boxes': 9, 'Corrugated Boxes': 8, 'Sleeves and Inserts': 7, 'Catalogs & Books': 7, 'Trade Show Displays': 6, 'Standing Displays': 6, 'Custom': 8, 'Services': 7, 'Roll Labels': 5, 'Adhesive Products': 3, 'Stickers on Sheet': 4, 'Individual Stickers': 4, 'Rigid Boards': 4, 'Signs': 4, 'Real Estate Signs': 3, 'Banners / Posters': 3, 'Banner Stands': 3, 'Flags': 4, 'Standard Business Cards': 2, 'Luxury Business Cards': 4, 'Plastic Business Cards': 3, 'Special Shape Business Cards': 6, 'Marketing Materials': 3, 'Brochures / Flyers': 3, 'Menus': 4, 'Invitations': 5, 'Event & Invitations': 5, 'Calendars': 5, 'Promo Products': 4, 'Wall Art': 5, 'Mailing & EDDM': 4, 'Holders / Folders': 5 };
   // The CRM Files panel → {slots: ['print','foil','die_line'…], white, vdp, cut, versions, labels: ['Die Line','Foil'…], hard: points}
   const SLOT_LABEL = { print: 'Print', foil: 'Foil', die_line: 'Die Line', cutline: 'Cut Line', spot_uv: 'Spot UV', kisscut: 'Kiss Cut', grommet: 'Grommets', book_cover_print: 'Book Cover', book_cover_foil: 'Cover Foil', book_cover_spot_uv: 'Cover Spot UV' };
   const SLOT_HARD = { die_line: 3, cutline: 1, kisscut: 1, foil: 1, spot_uv: 1, book_cover_print: 1, book_cover_foil: 1, book_cover_spot_uv: 1 };
@@ -241,16 +241,24 @@ module.exports = function mountDesignerAi(app, deps) {
     const langs = jobLangs(job);
     const jobText = [job.product, job.category, job.proof_type, job.name, job.files_type].join(' ').toLowerCase();
     const isT2 = /tier ?2|tier_2/i.test(job.proof_type + ' ' + job.substage);
-    // 1.20.166 — the score is FOUR parts, each with its own points, all arithmetic (no model):
+    // 1.20.172 — the score is the FIT, 0–100, from four parts (each with its points, the owner's weight per part):
     //   Capacity (25) — room left under their Max active; −3 per pick made here in the last 2 hours
-    //   Skills   (35) — hardness fit 20 + creativity fit 8 + client-communication fit 7 (×0.4 when a Tier 2 job meets a non-Tier 2 designer; +5 a language the job mentions)
-    //   History  (25) — this product in 180 days (3 a job, up to 15) else the category (1 a job, up to 8) + strong sides (5 each, up to 10) ± newer-designer rule
-    //   Hours    (15) — on shift with time left 15 · leaving within 90 min (hard job) 6 / 12 · within 60 min 4 · hours not set 8 · off shift 0
-    // Each part × the owner's weight (Match Logic → How Nova scores), summed and turned into 0–100. Off shift caps at 15, at max at 25.
+    //   Skills   (35) — hardness fit 20 (over their level −5 a point; the right level = the job's hardness up to 2 above; more than
+    //                   2 above costs 4 a level on ANY job — keep the advanced designers for the hard work) + creativity 8 + client contact 7
+    //   History  (25) — this product in 180 days, measured against the team's most experienced (15 × √(theirs ÷ the most)),
+    //                   else the category (8 × √…), + strong sides 5 each (up to 10) ± the newer-designer rule
+    //   Hours    (15) — on shift 15 (less near the end of the day); off shift: who is in with the first wave 10, later 5 / 2
+    // No caps any more (1.20.166 pinned every off-shift designer at 15 %, so after hours everyone read 15 %). Availability is the
+    // ORDER instead: on shift with room → off shift with room → at their max; inside each group the fit (then the AI) decides.
     const W = await weights();
     const MAXP = { capacity: 25, skills: 35, history: 25, hours: 15 };
     const denom = Object.keys(MAXP).reduce((n, k) => n + MAXP[k] * W[k], 0) || 1;
     const pts = (n) => ' (' + (n > 0 ? '+' : '') + n + ')';
+    const maxProd = Math.max(0, ...team.map(d => (hist[d.user_id] || {}).product || 0));
+    const maxCat = Math.max(0, ...team.map(d => (hist[d.user_id] || {}).cat || 0));
+    // who starts first when they are off: the first wave = within 2 h of the earliest start
+    const starts = {}; team.forEach(d => { const sh = d.on_shift; if (sh.known && !sh.on) { const n = nextStart(d); if (n) starts[d.user_id] = n; } });
+    const firstStart = Math.min(Infinity, ...Object.values(starts).map(n => n.minutes));
     const out = team.map(d => {
       const why = [], part = { capacity: 0, skills: 0, history: 0, hours: 0 };
       const note = (k, n, text) => { part[k] += n; why.push(text + (n ? pts(n) : '')); };
@@ -261,8 +269,8 @@ module.exports = function mountDesignerAi(app, deps) {
       // ---- skills
       const fw = job.files && job.files.why.length ? ' [' + job.files.why.join(', ') + ']' : '';
       const diff = d.hard_level - job.hard;
-      let hs = diff < 0 ? Math.max(0, 20 + diff * 5) : diff <= 2 ? 20 : job.hard <= 4 ? Math.max(10, 20 - (diff - 2) * 3) : 18;
-      note('skills', hs, diff < 0 ? 'job hardness ' + job.hard + '/10' + fw + ' is over their ' + d.hard_level : diff <= 2 ? 'the right level (' + d.hard_level + ') for a ' + job.hard + '/10 job' + fw : job.hard <= 4 ? 'level ' + d.hard_level + ' — overqualified for a ' + job.hard + '/10 job' : 'level ' + d.hard_level + ' covers a ' + job.hard + '/10 job' + fw);
+      const hs = diff < 0 ? Math.max(0, 20 + diff * 5) : diff <= 2 ? 20 : Math.max(4, 20 - (diff - 2) * 4);
+      note('skills', hs, diff < 0 ? 'job hardness ' + job.hard + '/10' + fw + ' is over their ' + d.hard_level : diff <= 2 ? 'the right level (' + d.hard_level + ') for a ' + job.hard + '/10 job' + fw : 'level ' + d.hard_level + (d.hard_level >= 8 ? ' — advanced, keep them for harder work than a ' + job.hard + '/10 job' : ' — above this ' + job.hard + '/10 job'));
       const cl = d.creative_level == null ? 5 : d.creative_level;
       if (job.creative >= 5) note('skills', cl >= job.creative ? 8 : Math.max(0, 8 - (job.creative - cl) * 2), 'creative job ' + job.creative + '/10 · their creative ' + cl); else part.skills += 8;
       const ml = d.comm_level == null ? 5 : d.comm_level;
@@ -270,48 +278,42 @@ module.exports = function mountDesignerAi(app, deps) {
       langs.forEach(l => { if ((d.language_list || []).indexOf(l) > -1) note('skills', 5, 'speaks ' + l + ' — the job mentions it'); });
       if (isT2 && !d.tier2) { const cut = Math.round(part.skills * 0.6); note('skills', -cut, 'Tier 2 job — not a Tier 2 designer'); }
       else if (isT2) why.push('Tier 2 designer');
-      part.skills = Math.min(35, part.skills);
-      // ---- history & strong sides
+      part.skills = Math.max(0, Math.min(35, part.skills));
+      // ---- history & strong sides (measured against the most experienced on the team, so 24 jobs beat 5)
       const h = hist[d.user_id] || { product: 0, cat: 0 };
-      if (h.product) note('history', Math.min(15, h.product * 3), 'did ' + h.product + ' × ' + (job.product || 'this product') + ' in 180 days');
-      else if (h.cat) note('history', Math.min(8, h.cat), h.cat + ' ' + (job.category || 'same category') + ' jobs in 180 days');
+      if (h.product) note('history', Math.max(3, Math.round(15 * Math.sqrt(h.product / (maxProd || 1)))), 'did ' + h.product + ' × ' + (job.product || 'this product') + ' in 180 days' + (h.product === maxProd && maxProd > 1 ? ' — the most on the team' : ''));
+      else if (h.cat) note('history', Math.max(1, Math.round(8 * Math.sqrt(h.cat / (maxCat || 1)))), h.cat + ' ' + (job.category || 'same category') + ' jobs in 180 days');
+      else why.push('has not done this product in 180 days');
       const hits = d.skill_list.filter(sk => sk && jobText.indexOf(sk) > -1);
       if (hits.length) note('history', Math.min(10, hits.length * 5), 'strong side: ' + hits.join(', '));
       if (d.is_new) { if (job.common && job.hard <= 4 && job.creative < 6) note('history', 8, 'newer designer (' + d.jobs_180 + ' jobs in 180 d) — a common, easy product'); else if (job.hard >= 7 || job.creative >= 7) note('history', -Math.min(part.history, 5), 'newer designer — not a hard / creative one'); }
       part.history = Math.max(0, Math.min(25, part.history));
       // ---- hours (the clock)
-      const sh = d.on_shift;
+      const sh = d.on_shift; let nx = null;
       if (!sh.known) note('hours', 8, 'hours not set — add them on the Designers tab');
-      else if (!sh.on) note('hours', 0, 'OFF SHIFT — ' + sh.why);
+      else if (!sh.on) {
+        nx = starts[d.user_id];
+        const later = nx ? nx.minutes - firstStart : null;
+        const hp = nx == null ? 0 : later <= 120 ? 10 : later <= 1440 ? 5 : 2;
+        note('hours', hp, 'OFF SHIFT — ' + sh.why + (nx ? ' · back ' + nx.day + ' ' + nx.at + (later <= 120 ? ' (first wave)' : '') : ''));
+      }
       else if (sh.left <= 60) note('hours', 4, 'leaves at ' + sh.ends);
       else if (sh.left <= 90) note('hours', job.hard >= 6 ? 6 : 12, 'only ' + sh.left + ' min left today' + (job.hard >= 6 ? ' for a hard job' : ''));
       else note('hours', 15, 'on shift until ' + sh.ends);
-      let score = Object.keys(MAXP).reduce((n, k) => n + Math.max(0, part[k]) * W[k], 0) / denom * 100;
+      const score = Object.keys(MAXP).reduce((n, k) => n + Math.max(0, part[k]) * W[k], 0) / denom * 100;
       const off = !!(sh.known && !sh.on);
-      if (off) score = Math.min(score, 15); else if (atMax) score = Math.min(score, 25);
       const parts = Object.keys(MAXP).map(k => ({ k, got: Math.max(0, Math.round(part[k])), max: MAXP[k], w: W[k] }));
-      return { user_id: d.user_id, name: d.name, last_name: d.last_name, photo: d.photo, score: Math.max(0, Math.min(100, Math.round(score))), why, parts, active_jobs: d.active_jobs, at_max: atMax, off_shift: off, hours_known: !!sh.known, _d: d };
+      const p = { user_id: d.user_id, name: d.name, last_name: d.last_name, photo: d.photo, score: Math.max(0, Math.min(100, Math.round(score))), why, parts, active_jobs: d.active_jobs, max_active: max, at_max: atMax, off_shift: off, hours_known: !!sh.known, tier: atMax ? 2 : off ? 1 : 0, _d: d };
+      if (nx) { p.next_start = nx.minutes; p.next_start_text = nx.day + ' ' + nx.at; }
+      p._facts = { product_jobs: h.product, category_jobs: h.cat, hard_level: d.hard_level, creative_level: cl, communication: ml, tier2: !!d.tier2, strong_sides: d.skill_list, notes: String(d.notes || '').slice(0, 240), newer: !!d.is_new, languages: d.language_list || [] };
+      return p;
     });
-    // 1.20.51: after hours, when nobody is on shift, the job should wait for whoever is in FIRST — the picks are ranked by
-    // the next shift start (who starts earliest gets the points), still under the off-shift cap so "busy" stays true.
-    if (out.length && out.every(p => p.off_shift || !p.hours_known) && out.some(p => p.off_shift)) {
-      const starts = out.map(p => ({ p, n: p.off_shift ? nextStart(p._d) : null })).filter(x => x.n);
-      starts.sort((a, b) => a.n.minutes - b.n.minutes);
-      const first = starts.length ? starts[0].n.minutes : 0;
-      let rank = -1, prevMin = null;
-      starts.forEach((x) => {
-        if (x.n.minutes !== prevMin) { rank++; prevMin = x.n.minutes; }   // the same start time shares the rank (and "FIRST IN")
-        const i = rank;
-        const bonus = Math.max(0, 12 - i * 3);
-        x.p.next_start = x.n.minutes; x.p.next_start_text = x.n.day + ' ' + x.n.at;
-        x.p.score = Math.max(0, Math.min(15, x.p.score + bonus));
-        x.p.why.push((i === 0 ? 'FIRST IN — ' : '') + 'starts ' + x.n.day + ' at ' + x.n.at + (x.n.minutes - first >= 60 ? ' (' + Math.round((x.n.minutes - first) / 60) + ' h later)' : '') + (bonus ? pts(bonus) : ''));
-      });
-      out.sort((a, b) => (a.next_start == null) - (b.next_start == null) || (a.next_start || 0) - (b.next_start || 0) || b.score - a.score || a.active_jobs - b.active_jobs);
-    } else out.sort((a, b) => (a.off_shift - b.off_shift) || (a.at_max - b.at_max) || b.score - a.score || a.active_jobs - b.active_jobs);
+    out.sort(byTier);
     out.forEach(p => { delete p._d; });
     return out;
   }
+  /* availability first (on shift with room → off shift with room → at max), then the AI's order when it ran, then the fit */
+  const byTier = (a, b) => (a.tier - b.tier) || ((a.ai_rank == null ? 99 : a.ai_rank) - (b.ai_rank == null ? 99 : b.ai_rank)) || b.score - a.score || a.active_jobs - b.active_jobs;
 
   const guard = [auth, adminOnly];
   app.get('/designer-ai', serveVersionedHtml('designer-ai.html'));
@@ -372,33 +374,47 @@ module.exports = function mountDesignerAi(app, deps) {
     const busy = /"busy"\s*:\s*true/.test(txt); const br = /"busy_reason"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(txt);
     return { picks: items, busy, busy_reason: br ? br[1] : '' };
   }
-  async function aiAdjust(job, picks, logic, overload) {
+  /* 1.20.172 — the AI makes the call. Nova's arithmetic gives every designer a fit score with its reasons; a fast model then reads
+     the job, the top candidates (their levels, strong sides, notes, experience with this product, load, when they are in) and the
+     owner's written Match Logic, and puts them in order with one sentence on why. Availability stays a hard rule (on shift with room
+     → off shift → at max); the AI orders the designers inside it. 8 s budget — on a timeout or an error the arithmetic order stands. */
+  async function aiDecide(job, picks, logic, overload) {
     overload = (overload || '').trim(); logic = (logic || '').trim();
-    if (overload === OVERLOAD_DEFAULT.trim()) overload = '';   // Nova's own default is already builtinBusy() — no model call for it
-    if (!anthropic || (!logic && !overload)) return { picks, ai: false };
-    const cand = picks.map(p => ({ user_id: p.user_id, name: p.name + ' ' + (p.last_name || ''), score: p.score, reasons: p.why.slice(0, 8), active_jobs: p.active_jobs }));
-    const team = await designers();
-    const prof = team.filter(d => d.active).map(d => ({ user_id: d.user_id, name: d.name + ' ' + (d.last_name || ''), title: d.title, strong_sides: d.skill_list, tier2: !!d.tier2, hard_level: d.hard_level, creative_level: d.creative_level, client_communication: d.comm_level, languages: d.language_list, notes: d.notes || '', active_jobs: d.active_jobs, waiting_on_client: d.waiting_client, approved_30d: d.done_30, jobs_180d: d.jobs_180, hours: d.shift_start ? d.shift_start + '-' + d.shift_end + ' days ' + (d.work_days || '1-5') : 'unknown', on_shift: d.on_shift }));
-    const sys = 'You assign print jobs to designers at AxiomPrint. Nova has already scored every designer with its built-in rules (history, strong sides, hardness, creativity, load, hours). The OWNER\'S RULES below take priority over those scores wherever they apply. Return ONLY JSON: {"changes":[{"user_id":n,"score":0-100,"note":"short reason citing the owner rule"}],"busy":false,"busy_reason":""} — list ONLY the designers whose score an owner rule changes (often none or two or three); everyone you leave out keeps Nova\'s score. Set busy to true ONLY when the OVERLOAD RULES say nobody should take this job right now (then the job stays in the queue and the team is emailed); give the reason in one sentence.';
-    const user = 'OWNER\'S RULES:\n' + (logic.slice(0, 4000) || '(none)') + '\n\nOVERLOAD RULES (when is everyone busy):\n' + (overload.slice(0, 2000) || '(none)') + '\n\nJOB:\n' + JSON.stringify({ e: job.e, name: job.name, customer: job.customer, product: job.product, category: job.category, tier: job.tier, proof_type: job.proof_type, status: job.status_label, hard: job.hard, files: job.files ? job.files.labels : [], creative: job.creative, design_fee: job.design_fee, expedite: job.service === 'expedite', due: job.complete_by, created: job.created, notes: (job.notes || '').slice(0, 600), team_on_it: job.others }) +
-      '\n\nDESIGNERS:\n' + JSON.stringify(prof) + '\n\nNOVA\'S SCORES:\n' + JSON.stringify(cand) + '\n\nTime now (Los Angeles): ' + new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
+    if (overload === OVERLOAD_DEFAULT.trim()) overload = '';
+    if (!anthropic || !picks.length) return { picks, ai: false };
+    const top = picks.slice(0, 6);
+    const avail = (p) => p.at_max ? 'AT MAX (' + p.active_jobs + ' of ' + p.max_active + ' active)' : p.off_shift ? 'off shift now' + (p.next_start_text ? ', back ' + p.next_start_text : '') : !p.hours_known ? 'hours not set' : 'on shift';
+    const cand = top.map(p => Object.assign({ id: p.user_id, name: (p.name + ' ' + (p.last_name || '')).trim(), fit: p.score, availability: avail(p), active_jobs: p.active_jobs + ' of ' + p.max_active }, p._facts || {}, { nova_reasons: p.why.map(w => String(w).replace(/\s*\([+\-−]?\d+\)/g, '')).slice(0, 8) }));
+    const sys = 'You decide which designer at AxiomPrint (a print shop) takes a prepress job. Think like the production manager:\n' +
+      '- Match the designer\'s level to the job. A simple job (hardness 0–5) goes to a designer at about that level who does this product a lot; do NOT spend an advanced designer (hard level 8–10) on a simple job when a capable mid-level designer is free — keep them for hard work.\n' +
+      '- Experience with THIS product counts most for routine work (who did it most in 180 days).\n' +
+      '- A hard or creative job needs the level, the creativity or client communication it asks for.\n' +
+      '- Spread the load: fewer active jobs is better when two fit equally.\n' +
+      '- Availability order is fixed and already applied: on shift with room → off shift → at max. Never put an AT MAX designer first while anyone has room.\n' +
+      '- The OWNER\'S RULES, when given, win over everything except availability.\n' +
+      'Return ONLY JSON: {"order":[ids, best first, every candidate once],"why":"one plain sentence (under 30 words) for the team: who and why, and why not the obvious alternative","notes":{"<id>":"under 8 words"},"busy":false,"busy_reason":""}. busy=true only when the OVERLOAD RULES say nobody should take it now.';
+    const user = 'OWNER\'S RULES:\n' + (logic.slice(0, 3000) || '(none)') + (overload ? '\n\nOVERLOAD RULES:\n' + overload.slice(0, 1500) : '') +
+      '\n\nJOB:\n' + JSON.stringify({ e: job.e, name: job.name, product: job.product, category: job.category, tier: job.tier, proof_type: job.proof_type, hardness: job.hard, creative: job.creative, client_contact: job.comm, files: job.files ? job.files.labels : [], common_product: !!job.common, design_fee: job.design_fee, expedite: job.service === 'expedite', due: job.complete_by, notes: (job.notes || '').slice(0, 400) }) +
+      '\n\nCANDIDATES (Nova\'s order):\n' + JSON.stringify(cand) + '\n\nNow (Los Angeles): ' + new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', hour: 'numeric', minute: '2-digit' });
     try {
-      // 1.20.58: 900 tokens cut the JSON mid-array on a 9-designer team ("Expected ',' or ']' … at position 263");
-      // more room, notes kept short, and the answer is parsed with a repair pass (fences, trailing commas, a cut-off tail)
-      /* 1.20.164: the answer lists only what changes (it used to repeat all nine designers) — the model's writing time was most of a Match */
-      const r = await anthropic.messages.create({ model: model || 'claude-haiku-4-5', max_tokens: 900, system: sys + ' Keep every note under 10 words. No text outside the JSON.', messages: [{ role: 'user', content: user }] });
-      const txt = (r.content || []).filter(c => c.type === 'text').map(c => c.text).join(''); const m = /\{[\s\S]*\}/.exec(txt.replace(/```json|```/g, '')); if (!m) return { picks, ai: false };
-      const out = parseLoose(m[0]); const by = {}; (out.changes || out.picks || []).forEach(p => { by[p.user_id] = p; });
-      const adj = picks.map(p => { const a = by[p.user_id]; if (!a) return p; const sc = Math.max(0, Math.min(100, Math.round(Number(a.score)))); const changed = !isNaN(sc) && sc !== p.score; return Object.assign({}, p, { score: isNaN(sc) ? p.score : sc, why: changed || a.note ? p.why.concat(['your rule: ' + (a.note || ('score ' + p.score + ' → ' + sc))]) : p.why, ai_changed: changed }); });
-      if (adj.every(p => p.off_shift || !p.hours_known) && adj.some(p => p.next_start != null)) adj.sort((a, b) => (a.next_start == null) - (b.next_start == null) || (a.next_start || 0) - (b.next_start || 0) || b.score - a.score);
-      else adj.sort((a, b) => (a.off_shift - b.off_shift) || (a.at_max - b.at_max) || b.score - a.score || a.active_jobs - b.active_jobs);
-      return { picks: adj, ai: true, busy: out.busy === true, busy_reason: out.busy === true ? String(out.busy_reason || '').slice(0, 300) : '' };
-    } catch (e) { errlog('ai adjust', e.message); return { picks, ai: false, ai_error: e.message }; }
+      const call = anthropic.messages.create({ model: modelLight || 'claude-haiku-4-5', max_tokens: 400, system: sys, messages: [{ role: 'user', content: user }] });
+      const r = await Promise.race([call, new Promise((_, rej) => setTimeout(() => rej(new Error('AI took longer than 8 s — Nova\'s order kept')), 8000))]);
+      const txt = (r.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
+      const m = /\{[\s\S]*\}/.exec(txt.replace(/```json|```/g, '')); if (!m) return { picks, ai: false, ai_error: 'the AI answer was not JSON' };
+      let o; try { o = JSON.parse(m[0]); } catch (e) { o = JSON.parse(m[0].replace(/,\s*([}\]])/g, '$1')); }
+      const order = (o.order || []).map(Number); const notes = o.notes || {};
+      const adj = picks.map(p => {
+        const k = order.indexOf(p.user_id), n = notes[p.user_id] || notes[String(p.user_id)];
+        return Object.assign({}, p, { ai_rank: k > -1 ? k : null, ai_note: n ? String(n).slice(0, 80) : null, why: n ? ['AI: ' + String(n).slice(0, 80)].concat(p.why) : p.why });
+      });
+      adj.sort(byTier);
+      return { picks: adj, ai: true, ai_why: String(o.why || '').slice(0, 300), busy: o.busy === true, busy_reason: o.busy === true ? String(o.busy_reason || '').slice(0, 300) : '' };
+    } catch (e) { errlog('ai decide', e.message); return { picks, ai: false, ai_error: e.message }; }
   }
   app.get('/api/designer/settings', ...guard, async (req, res) => { try { const r = await dbGet('SELECT * FROM da_settings WHERE key = ?', ['match_logic']); const o = await dbGet('SELECT * FROM da_settings WHERE key = ?', ['overload_logic']); const t = await dbGet('SELECT * FROM da_settings WHERE key = ?', ['overload_to']);
     let w = null; try { w = await weights(); } catch (e) {}
     const ua = await getSetting('use_ai');
-    res.json({ ok: true, weights: w, use_ai: ua === '1', match_logic: r ? r.value : '', updated_by: r ? r.updated_by : null, updated_at: r ? r.updated_at : null, overload_logic: o ? o.value : OVERLOAD_DEFAULT, overload_default: !o, overload_to: t ? t.value : OVERLOAD_TO_DEFAULT, overload_updated_at: o ? o.updated_at : null, overload_updated_by: o ? o.updated_by : null }); } catch (e) { res.json({ ok: false, error: e.message }); } });
+    res.json({ ok: true, weights: w, use_ai: ua !== '0', match_logic: r ? r.value : '', updated_by: r ? r.updated_by : null, updated_at: r ? r.updated_at : null, overload_logic: o ? o.value : OVERLOAD_DEFAULT, overload_default: !o, overload_to: t ? t.value : OVERLOAD_TO_DEFAULT, overload_updated_at: o ? o.updated_at : null, overload_updated_by: o ? o.updated_by : null }); } catch (e) { res.json({ ok: false, error: e.message }); } });
   app.post('/api/designer/settings', ...guard, async (req, res) => {
     try {
       const put = (k, v) => dbRun('INSERT INTO da_settings (key, value, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = excluded.updated_at', [k, v, userId(req), nowIso()]);
@@ -418,20 +434,22 @@ module.exports = function mountDesignerAi(app, deps) {
     const [job, overload, logic, useAi] = await Promise.all([queueAll(true, 0, id).then(l => { timing.job = Date.now() - t0; return l.find(j => j.id === id); }), getSetting('overload_logic'), getSetting('match_logic'), getSetting('use_ai')]);   // 1.20.31: one job, not the whole queue
     if (!job) return { ok: false, status: 'not_in_queue', error: 'E' + id + ' is not in the queue (not parked on PrePress Tier 1 / Tier 2 in the prepress stage)' };
     let t1 = Date.now(); const base = await match(job); timing.scores = Date.now() - t1;
-    /* 1.20.166: the written rules go to the model only when the owner switches it on — the score itself is all arithmetic now */
-    t1 = Date.now(); const r = useAi === '1' ? await aiAdjust(job, base, logic, overload || OVERLOAD_DEFAULT) : { picks: base, ai: false }; timing.rules = useAi === '1' ? Date.now() - t1 : 0;
+    /* 1.20.172: the AI makes the final pick by default (fast model, 8 s budget); the owner can switch it off (use_ai = '0') */
+    const aiOn = useAi !== '0';
+    t1 = Date.now(); const r = aiOn ? await aiDecide(job, base, logic, overload || OVERLOAD_DEFAULT) : { picks: base, ai: false }; timing.rules = aiOn ? Date.now() - t1 : 0;
     let busy = null;
     if (r.busy) busy = { reason: r.busy_reason || 'your Overload Logic says nobody should take this now' };
-    else if (!r.ai && builtinBusy(base)) busy = { reason: 'every designer who takes jobs is at their max or off shift' };
+    else if (builtinBusy(base)) busy = { reason: 'every designer who takes jobs is at their max or off shift' + (r.picks[0] && r.picks[0].next_start_text && !r.picks[0].at_max ? ' — first choice when the team is back: ' + r.picks[0].name + ' (' + r.picks[0].next_start_text + ')' : '') };
     if (!busy && !r.picks.length) busy = { reason: 'no designer is set to take jobs' };
     if (busy) { const m = await markBusy(job, busy.reason, who); Object.assign(busy, m); }
     const picks = r.picks.slice(0, 5);
-    const out = { ok: true, job, picks, ai: r.ai, ai_error: r.ai_error || null, busy, ms: Date.now() - t0, timing };
+    picks.forEach(p => { delete p._facts; });
+    const out = { ok: true, job, picks, ai: r.ai, ai_why: r.ai_why || null, ai_error: r.ai_error || null, busy, ms: Date.now() - t0, timing };
     // the history row (1.20.34)
     const top = !busy && picks[0] ? picks[0] : null;
     const ins = await dbRun('INSERT INTO da_matches (estimate_id, e, job_name, customer, product, tier, status, picked_user_id, picked_name, picked_score, reason, picks_json, source, by, ai, ms, at, timing) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       [job.id, job.e, (job.name || '').slice(0, 200), (job.customer || '').slice(0, 200), (job.product || '').slice(0, 200), job.tier, busy ? 'busy' : 'matched', top ? top.user_id : null, top ? (top.name + ' ' + (top.last_name || '')).trim() : null, top ? top.score : null,
-        busy ? busy.reason : (top ? top.why.join(' · ') : ''), JSON.stringify(picks.map(p => ({ user_id: p.user_id, name: (p.name + ' ' + (p.last_name || '')).trim(), score: p.score, why: p.why, off_shift: !!p.off_shift, at_max: !!p.at_max }))), source, who, r.ai ? 1 : 0, out.ms, nowIso(), JSON.stringify(timing)]);
+        busy ? busy.reason : (top ? (r.ai_why ? 'AI: ' + r.ai_why + ' · ' : '') + top.why.join(' · ') : ''), JSON.stringify(picks.map(p => ({ user_id: p.user_id, name: (p.name + ' ' + (p.last_name || '')).trim(), score: p.score, why: p.why, off_shift: !!p.off_shift, at_max: !!p.at_max }))), source, who, r.ai ? 1 : 0, out.ms, nowIso(), JSON.stringify(timing)]);
     out.match_id = ins && ins.lastID;
     return out;
   }
