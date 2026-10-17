@@ -796,7 +796,7 @@ are a little tighter so it all fits one line from about 1366px (Invoices) / 1600
 the AM heads on the left, **10** (`AM_LIMIT`) then **Show n more**, which opens the rest on a line **under** (`.db-hrest`), and the order-number
 cards on the right in their full look again — label, $ (or count), the band's words ("1st order") and the invoice count on two small lines
 (the hover snapshot stays). The second row is Billed · Group by · Ordered · Count; Ordered is back to one line with the amount beside each
-name ("All $283k"). **1.20.185**: the band's words ("every client", "1st order"…) are off the cards — label, $ and the invoice count only (the words stay in the hover).
+name ("All $283k"). **1.20.185**: the band's words ("every client", "1st order"…) are off the cards — label, $ and the invoice count only (the words stay in the hover). **1.20.186**: the Billed dates left the Billed column — one line above the tiles reads "10/10/2026 – 10/17/2026 · 8 days · vs the 8 days before (10/02/2026 – 10/09/2026)" (`#dbVs` = `#dbRange` + `#dbVsTxt`; on Invoices only the dates).
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 

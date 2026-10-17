@@ -36,7 +36,7 @@
   .db-chips button:hover { border-color: #c7c7dc; } .db-chips button.on { background: var(--indigo-light); border-color: var(--indigo); color: var(--indigo-dark); }
   .db-custom { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
   .db-custom input { font: inherit; font-size: 12.5px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
-  .db-range { font-size: 12px; color: var(--muted); white-space: nowrap; margin: 6px 0 0 4px; }   /* 1.20.180: on its own line under the chips */
+  .db-range { font-weight: 600; color: var(--ink-soft); }
 
   /* AM heads */
   .db-ams { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: thin; }
@@ -142,7 +142,7 @@
   .db-pmenu button.db-apply { background: var(--indigo) !important; color: #fff !important; font-weight: 600 !important; padding: 6px 12px !important; }
   .db-ly { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); margin-right: 14px; cursor: pointer; padding: 5px 11px; border-radius: 20px; border: 1px dashed #cfcfe0; }
   .db-ly input { accent-color: #475569; width: 15px; height: 15px; margin: 0; } .db-ly:has(input:checked) { border-style: solid; border-color: #475569; color: #1e293b; background: #f8fafc; }
-  .db-vs { font-size: 11.5px; color: var(--muted); margin: -4px 2px 6px; }
+  .db-vs { font-size: 12px; color: var(--muted); margin: 2px 4px 8px; }
   .db-legend i.lyk { background: none; border-top: 2px dashed #475569; height: 0; width: 18px; border-radius: 0; }
   .db-tip .r.ly { color: #cbd5e1; border-top: 1px dashed rgba(255,255,255,.2); margin-top: 3px; padding-top: 3px; }
   /* table */
@@ -185,14 +185,14 @@
       <div class="db-ordbox"><div class="db-lab">Client's order number</div><div class="db-ord" id="dbOrders"></div></div>
     </div>
     <div class="db-row">
-      <div><div class="db-lab">Billed</div><div class="db-chips" id="dbPeriod"></div><div class="db-range" id="dbRange"></div></div>
+      <div><div class="db-lab">Billed</div><div class="db-chips" id="dbPeriod"></div></div>
       <div class="db-dash-only"><div class="db-lab">Group by</div><div class="seg" id="dbGroup"></div></div>
       <div><div class="db-lab">Ordered</div><div class="seg" id="dbOnline"></div></div>
       <div><div class="db-lab">Count</div><div class="seg" id="dbBy"><button data-by="inv" class="on" title="Dollars invoiced">By Inv.</button><button data-by="qty" title="Number of invoices">By Qty.</button></div></div>
     </div>
   </div>
   <div id="dbErr"></div>
-  <div class="db-vs db-dash-only" id="dbVs"></div>
+  <div class="db-vs" id="dbVs"><b class="db-range" id="dbRange"></b><span class="db-dash-only" id="dbVsTxt"></span></div>
   <div class="db-tiles db-dash-only" id="dbTiles"></div>
   <div class="db-card db-dash-only">
     <h2><span id="dbChartTitle">Invoiced</span><span class="n" id="dbChartSub"></span><span class="sp"></span><label class="db-ly" title="Compare every figure with the same dates one year earlier — the tiles, the AM cards and a dashed line on the chart"><input type="checkbox" id="dbLy"><span>Compare</span></label><div class="db-legend" id="dbLegend"></div><a class="db-golist" href="/invoices">See the invoices →</a></h2>

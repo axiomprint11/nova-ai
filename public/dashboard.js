@@ -94,6 +94,7 @@
       '<span class="db-pm"><button id="dbCustom" class="db-pmore' + (inMenu ? ' on' : '') + '" aria-haspopup="true" aria-expanded="false">' + (inMenu ? (S.period === 'custom' ? us(from) + ' – ' + us(to) : pl(S.period)) : 'Custom') + caret + '</button>' +
       '<div class="db-pmenu" id="dbPMenu" hidden>' + MENU.map(k => (k === 'custom' ? '<div class="sep"></div>' : '') + '<button data-pm="' + k + '" class="' + (S.period === k ? 'on' : '') + '">' + pl(k) + '</button>').join('') +
       '</div><div class="db-cal" id="dbCal" hidden></div></span>' ;
+      /* 1.20.186: the period and the compared period on one line above the tiles (#dbRange + #dbVsTxt) */
       $('dbRange').textContent = us(from) + ' – ' + us(to) + ' · ' + days + ' day' + (days === 1 ? '' : 's');
     const g = S.group === 'auto' ? auto : S.group;
     $('dbGroup').innerHTML = [['day', 'Daily'], ['week', 'Weekly'], ['month', 'Monthly']].map(x => '<button data-g="' + x[0] + '" class="' + (g === x[0] ? 'on' : '') + '" title="' + (x[0] === auto ? 'Picked by itself for ' + days + ' days' : 'Click to group by ' + x[1].toLowerCase()) + '">' + x[1] + '</button>').join('');
@@ -232,7 +233,7 @@
     /* 1.20.182: a tile opens the Invoices page narrowed to it (status, New, Online) */
     $('dbTiles').innerHTML = T.map(x => '<div class="db-tile go" data-tgo="' + x[5] + '" title="See these invoices" style="--c:' + x[1] + '"><div class="l">' + x[0] + (x[3] ? ' ' + x[3] : '') + '</div><div class="v">' + x[2] + '</div><div class="s">' + x[4] + '</div></div>').join('');
     $('dbTiles').title = 'Changes are against ' + us(D.prev.from) + ' – ' + us(D.prev.to) + (D.prev.kind === 'ly' ? ', the same dates last year' : ', the same number of days just before');
-    $('dbVs').textContent = 'vs ' + (D.prev.kind === 'ly' ? 'last year' : 'the ' + D.range.days + ' days before') + ' (' + us(D.prev.from) + ' – ' + us(D.prev.to) + ')';
+    $('dbVsTxt').textContent = ' · vs ' + (D.prev.kind === 'ly' ? 'last year' : 'the ' + D.range.days + ' days before') + ' (' + us(D.prev.from) + ' – ' + us(D.prev.to) + ')';
   }
 
   // ---- chart
