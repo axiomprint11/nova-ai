@@ -368,7 +368,7 @@
     const d = UI.detail || {}, ed = e.can_manage;
     const yrs = e.hire_date ? (Date.now() - parse(e.hire_date)) / 31557600000 : 0;
     const lock = ed ? '' : '<div class="lock">' + I.lock + 'Only you and your manager can see this. Ask your manager to change anything here.</div>';
-    const sel = (k, opts, v) => '<select class="select" data-jf="' + k + '"' + (ed ? '' : ' disabled') + '>' + opts.map(o => Array.isArray(o) ? '<option value="' + esc(o[0]) + '" ' + (String(o[0]) === String(v) ? 'selected' : '') + '>' + esc(o[1]) + '</option>' : '<option ' + (o === v ? 'selected' : '') + '>' + esc(o) + '</option>').join('') + '</select>';
+    const sel = (k, opts, v) => '<select class="select" data-jf="' + k + '"' + (k === 'reports_to' ? ' data-people' : '') + (ed ? '' : ' disabled') + '>' + opts.map(o => Array.isArray(o) ? '<option value="' + esc(o[0]) + '" ' + (String(o[0]) === String(v) ? 'selected' : '') + '>' + esc(o[1]) + '</option>' : '<option ' + (o === v ? 'selected' : '') + '>' + esc(o) + '</option>').join('') + '</select>';
     const val = (x) => '<div class="v">' + (x == null || x === '' ? '<span class="muted">—</span>' : esc(x)) + '</div>';
     const [s0, s1] = shiftArr(e), hm = (h) => pad(Math.floor(((h % 24) + 24) % 24)) + ':' + pad(Math.round((h % 1) * 60));
     const days = String(e.shift_days || '1,2,3,4,5').split(',').map(Number);
@@ -480,7 +480,7 @@
       '<p class="muted" style="font-size:12px;margin-top:10px">The tree comes from the Axiom CRM\'s departments and teams; a department or team edited here keeps its Nova version (marked NOVA). Some people lead more than one team. Click a name to open their profile.</p>';
   }
   function personPicker(id, list, placeholderName) {
-    return '<select class="select" id="' + id + '" style="width:100%"><option value="">' + esc(placeholderName || 'Pick a person') + '</option>' + people().filter(e => e.status === 'Active').sort((a, b) => a.name.localeCompare(b.name)).map(e => '<option value="' + e.id + '" ' + ((list || []).some(p => p.employee_id === e.id) ? 'selected' : '') + '>' + esc(e.name) + '</option>').join('') + '</select>';
+    return '<select class="select" id="' + id + '" data-people style="width:100%"><option value="">' + esc(placeholderName || 'Pick a person') + '</option>' + people().filter(e => e.status === 'Active').sort((a, b) => a.name.localeCompare(b.name)).map(e => '<option value="' + e.id + '" ' + ((list || []).some(p => p.employee_id === e.id) ? 'selected' : '') + '>' + esc(e.name) + '</option>').join('') + '</select>';
   }
   function multiPick(id, list) {
     const sel = new Set((list || []).filter(p => p.employee_id).map(p => p.employee_id));
@@ -601,7 +601,7 @@
     const def = (() => { let d = today(), c = 0; while (c < 5) { d = addDays(d, 1); if (weekday(d) < 6) c++; } return d; })();
     return '<div class="grid g-today"><div class="card"><div class="card-h"><h2>Request time off</h2><span class="hint">' + (me ? 'Goes to ' + (mgr ? esc(mgr.name) : 'HR') + ' for approval' : '') + '</span></div><div class="card-b">' + (me ? balancesHTML(S.balances) : '') +
       '<div class="fields" style="margin-top:14px">' +
-      (reports.length ? '<div class="field full"><label for="rq_for">For</label><select class="select" id="rq_for" data-in="rq" style="width:100%">' + (me ? '<option value="">Me</option>' : '') + reports.map(e => '<option value="' + e.id + '">' + esc(e.name) + '</option>').join('') + '</select></div>' : '') +
+      (reports.length ? '<div class="field full"><label for="rq_for">For</label><select class="select" id="rq_for" data-in="rq" data-people style="width:100%">' + (me ? '<option value="">Me</option>' : '') + reports.map(e => '<option value="' + e.id + '">' + esc(e.name) + '</option>').join('') + '</select></div>' : '') +
       '<div class="field"><label for="rq_type">Type</label><select class="select" id="rq_type" data-in="rq" style="width:100%">' + types.map(t => '<option value="' + t.k + '">' + esc(t.n) + '</option>').join('') + '</select></div>' +
       '<div class="field"><label>&nbsp;</label><label style="display:flex;gap:8px;align-items:center;color:var(--ink);font-size:13px;font-weight:500"><input type="checkbox" id="rq_half" data-in="rq"> Half day</label></div>' +
       '<div class="field"><label for="rq_from">First day off</label><input class="input" type="date" id="rq_from" data-in="rq" value="' + def + '" style="width:100%"></div>' +
@@ -787,7 +787,7 @@
       '<div class="grid" style="align-content:start">' +
       (me ? '<div class="card"><div class="card-b"><div class="muted">Your points</div><div style="font-size:34px;font-weight:700;letter-spacing:-.02em">' + myPts + '</div><div class="muted" style="font-size:12px">' + (next ? (next.p - myPts) + ' more for ' + esc(next.n.toLowerCase()) : 'You can redeem anything in the catalog') + '</div>' + (next ? '<div class="meter"><i style="width:' + (myPts / next.p * 100) + '%"></i></div>' : '') + '</div></div>' : '') +
       (isMgr() && team.length ? '<div class="card"><div class="card-h"><h2>Quick shout-out</h2><span class="hint">Anytime, outside the weekly check-in</span></div><div class="card-b"><div class="fields">' +
-        '<div class="field"><label for="aw_emp">Who</label><select class="select" id="aw_emp" style="width:100%">' + team.sort((a, b) => a.name.localeCompare(b.name)).map(e => '<option value="' + e.id + '">' + esc(e.name) + '</option>').join('') + '</select></div>' +
+        '<div class="field"><label for="aw_emp">Who</label><select class="select" id="aw_emp" data-people style="width:100%">' + team.sort((a, b) => a.name.localeCompare(b.name)).map(e => '<option value="' + e.id + '">' + esc(e.name) + '</option>').join('') + '</select></div>' +
         '<div class="field"><label for="aw_pts">Points</label><select class="select" id="aw_pts" style="width:100%"><option>10</option><option selected>25</option><option>50</option></select></div>' +
         '<div class="field full"><label for="aw_why">What did they do?</label><input class="input" id="aw_why" style="width:100%" placeholder="e.g. Caught a proof error before a 5k run"></div></div><div style="margin-top:12px"><button class="btn primary" data-act="award">Give points</button></div></div></div>' : '') +
       '<div class="card"><div class="card-h"><h2>Redeem points</h2></div><div class="card-b"><div class="list">' + cat.map(c => '<div class="li"><div class="meta"><b>' + esc(c.n) + '</b>' + (c.leave ? '<small class="muted" style="display:block">Adds ' + (c.days || 1) + ' day' + ((c.days || 1) === 1 ? '' : 's') + ' to your ' + esc(typeName(c.leave).toLowerCase()) + ' balance</small>' : '') + '</div><span class="tag acc num">' + c.p + ' pts</span>' + (me ? '<button class="btn sm" ' + (myPts < c.p ? 'disabled' : '') + ' data-act="redeem" data-k="' + esc(c.k) + '">Redeem</button>' : '') + '</div>').join('') + '</div></div></div>' +
@@ -955,6 +955,74 @@
       '<div class="box-f"><button class="btn" data-act="close-modal">Cancel</button><button class="btn primary" data-act="bp-go">Make badges</button></div>');
   }
 
+  // =========================================================== People picker (1.20.168)
+  // Every <select data-people> (options = employee ids) is drawn as a button with the person's head + name, and opens a list
+  // with heads, names and titles (search past 8 people). The <select> stays in the page, hidden, and keeps the value: a pick
+  // sets it and fires change, so every reader of .value works as before. A MutationObserver upgrades selects drawn later.
+  let ppOpen = null;
+  function ppFace(v, label, cls) {
+    const e = v ? emp(v) : (/^me$/i.test(String(label || '').trim()) ? ME() : null);
+    if (e) return avatar(e, cls || 'sm');
+    return '<span class="av ' + (cls || 'sm') + ' pp-none" aria-hidden="true">—</span>';
+  }
+  function ppLabel(sel) {
+    const o = sel.options[sel.selectedIndex]; if (!o) return '<span class="muted">Pick a person</span>';
+    const e = o.value ? emp(o.value) : null, isMe = !o.value && /^me$/i.test(o.text.trim());
+    const sub = e ? [e.title, deptName(e.department_id)].filter(Boolean)[0] : isMe && ME() ? ME().name : '';
+    return ppFace(o.value, o.text) + '<span class="pp-txt"><b>' + esc(o.text) + '</b>' + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</span>';
+  }
+  function ppSync(sel) { const b = sel && sel._ppBtn; if (b) { b.innerHTML = ppLabel(sel) + '<svg class="pp-chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>'; b.disabled = sel.disabled; } }
+  function ppEnhance(sel) {
+    if (sel._ppBtn) return;
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'pp-btn';
+    if (sel.style.width) b.style.width = sel.style.width;
+    sel.style.display = 'none'; sel.parentNode.insertBefore(b, sel.nextSibling); sel._ppBtn = b; ppSync(sel);
+    b.addEventListener('click', (ev) => { ev.stopPropagation(); if (ppOpen && ppOpen.sel === sel) ppClose(); else ppShow(sel); });
+  }
+  function ppClose() { if (ppOpen) { ppOpen.el.remove(); ppOpen = null; } }
+  function ppShow(sel) {
+    ppClose();
+    const opts = Array.from(sel.options), many = opts.length > 8;
+    const el = document.createElement('div'); el.className = 'pp-pop';
+    el.innerHTML = (many ? '<div class="pp-q">' + I.search + '<input type="text" placeholder="Search people" autocomplete="off"></div>' : '') + '<div class="pp-list" role="listbox"></div>';
+    document.body.appendChild(el);
+    const r = sel._ppBtn.getBoundingClientRect(), w = Math.max(r.width, 280);
+    el.style.width = w + 'px'; el.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
+    const below = innerHeight - r.bottom - 12, above = r.top - 12, up = below < 260 && above > below;
+    el.style.maxHeight = Math.min(380, Math.max(160, up ? above : below)) + 'px';
+    if (up) el.style.bottom = (innerHeight - r.top + 4) + 'px'; else el.style.top = (r.bottom + 4) + 'px';
+    const list = el.querySelector('.pp-list'), q = el.querySelector('input');
+    let act = 0, shown = [];
+    const draw = () => {
+      const t = q ? q.value.trim().toLowerCase() : '';
+      shown = opts.filter(o => { if (!t) return true; const e = o.value ? emp(o.value) : null; return [o.text, e && e.title, e && deptName(e.department_id), e && LOCN(e.location).name].join(' ').toLowerCase().indexOf(t) > -1; });
+      act = Math.max(0, Math.min(act, shown.length - 1));
+      list.innerHTML = shown.map((o, i) => { const e = o.value ? emp(o.value) : null; const isMe = !o.value && /^me$/i.test(o.text.trim()) && ME();
+        const sub = e ? [e.title, deptName(e.department_id), LOCN(e.location).name].filter(Boolean).join(' · ') : isMe ? ME().name : '';
+        return '<div class="pp-row' + (o.value === sel.value ? ' sel' : '') + (i === act ? ' act' : '') + '" role="option" data-i="' + i + '">' + ppFace(o.value, o.text) + '<span class="pp-txt"><b>' + esc(o.text) + '</b>' + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</span>' + (o.value === sel.value ? '<span class="pp-tick">✓</span>' : '') + '</div>'; }).join('') || '<div class="pp-empty">No one matches</div>';
+      const a = list.querySelector('.act'); if (a) a.scrollIntoView({ block: 'nearest' });
+    };
+    const pick = (o) => { if (!o) return; sel.value = o.value; ppSync(sel); ppClose(); sel.dispatchEvent(new Event('input', { bubbles: true })); sel.dispatchEvent(new Event('change', { bubbles: true })); sel._ppBtn.focus(); };
+    list.addEventListener('mousedown', (ev) => ev.preventDefault());
+    list.addEventListener('click', (ev) => { const row = ev.target.closest('.pp-row'); if (row) pick(shown[+row.dataset.i]); });
+    el.addEventListener('click', (ev) => ev.stopPropagation());
+    const keys = (ev) => {
+      if (ev.key === 'ArrowDown') { act = Math.min(shown.length - 1, act + 1); draw(); ev.preventDefault(); }
+      else if (ev.key === 'ArrowUp') { act = Math.max(0, act - 1); draw(); ev.preventDefault(); }
+      else if (ev.key === 'Enter') { pick(shown[act]); ev.preventDefault(); }
+      else if (ev.key === 'Escape') { ppClose(); sel._ppBtn.focus(); ev.preventDefault(); ev.stopPropagation(); }
+    };
+    act = Math.max(0, opts.findIndex(o => o.value === sel.value));
+    if (q) { q.addEventListener('input', () => { act = 0; draw(); }); q.addEventListener('keydown', keys); }
+    else { el.tabIndex = -1; el.addEventListener('keydown', keys); }
+    ppOpen = { sel, el }; draw();
+    setTimeout(() => (q || el).focus(), 0);
+  }
+  document.addEventListener('click', () => ppClose());
+  window.addEventListener('resize', () => ppClose());
+  document.addEventListener('scroll', (ev) => { if (ppOpen && !ppOpen.el.contains(ev.target)) ppClose(); }, true);
+  new MutationObserver(() => { document.querySelectorAll('select[data-people]').forEach(ppEnhance); }).observe(document.body, { childList: true, subtree: true });
+
   // =========================================================== Add employee
   async function openAdd() {
     openModal('<div class="box-h"><h2>Add employee</h2><button class="btn ghost x" data-act="close-modal">' + I.x + '</button></div><div class="box-b">' +
@@ -1048,7 +1116,7 @@
         if (!j || !j.ok) { toast((j && j.error) || 'Could not send'); return; }
         toast(body.employee_id ? (body.approve ? 'Added and approved' : 'Request added') : 'Request sent'); await load(); return;
       }
-      case 'req-for': closeAll(); UI.view = 'timeoff'; render(); setTimeout(() => { const s = $('rq_for'); if (s) { s.value = id; rqSummary(); } }, 30); return;
+      case 'req-for': closeAll(); UI.view = 'timeoff'; render(); setTimeout(() => { const s = $('rq_for'); if (s) { s.value = id; ppSync(s); rqSummary(); } }, 30); return;
       case 'cal': { const [y, m] = calBase(); const d = new Date(y, m + (+b.dataset.n), 1); UI.calMonth = [d.getFullYear(), d.getMonth()]; render(); return; }
       case 'cal-loc': UI.calLoc = b.dataset.k; render(); return;
       case 'time-tab': UI.timeTab = b.dataset.k; render(); return;

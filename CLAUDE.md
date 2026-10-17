@@ -674,6 +674,13 @@ catalog item with `leave` adds days when fulfilled. Emails (Notify group NovaHR)
 hours (`hrShift()` in designer-ai.js). The mobile app uses the same `POST /api/hr/punch {type, source:'mobile', lat, lng}`.
 Tested with a stub CRM (`hr-harness.js` in the scratchpad: 15 users incl. Yerevan overnight + Manila shifts, three weeks of punches, three
 roles, kiosk PIN + scanner badge).
+**1.20.168 — every people dropdown shows heads**: a `<select data-people>` (options = employee ids) is drawn as a button with the person's
+head + name + title (`.pp-btn`) that opens a list with heads, names and title · department · location (`.pp-pop`, fixed, z-index above the
+modal; a search box past 8 people, ↑↓ Enter Esc; "Me" shows the signed-in person's head, an empty option a grey dash). The select stays in
+the page hidden and keeps the value — a pick sets it and fires `input` + `change`, so `$('rq_for').value`, the `data-jf` save and the
+`data-in="rq"` preview work unchanged; `ppSync(sel)` repaints the button after code sets `.value`; a MutationObserver upgrades selects
+drawn later (`ppEnhance`). Used on Time off → For, Job & pay → Reports to, Rewards → shout-out Who, Company tree → Add person. A new
+people dropdown only needs `data-people`.
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 
