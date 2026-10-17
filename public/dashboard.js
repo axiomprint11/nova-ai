@@ -87,10 +87,9 @@
       '<span class="db-pm"><button id="dbCustom" class="db-pmore' + (inMenu ? ' on' : '') + '" aria-haspopup="true" aria-expanded="false">' + (inMenu ? (S.period === 'custom' ? us(from) + ' – ' + us(to) : pl(S.period)) : 'Custom') + caret + '</button>' +
       '<div class="db-pmenu" id="dbPMenu" hidden>' + MENU.map(k => (k === 'custom' ? '<div class="sep"></div>' : '') + '<button data-pm="' + k + '" class="' + (S.period === k ? 'on' : '') + '">' + pl(k) + '</button>').join('') +
       '<div class="db-pick"' + (S.period === 'custom' ? '' : ' hidden') + ' id="dbPick"><span>From</span><input type="date" id="dbFrom" value="' + esc(S.from || from) + '" max="' + todayLA() + '"><span>To</span><input type="date" id="dbTo" value="' + esc(S.to || to) + '" max="' + todayLA() + '"><button class="db-apply" id="dbApply">Apply</button></div></div></span>' +
-      '<label class="db-ly" title="Compare every figure with the same dates one year earlier"><input type="checkbox" id="dbLy"' + (S.ly ? ' checked' : '') + '><span>Compare to last year</span></label>' +
       '<span class="db-range">' + us(from) + ' – ' + us(to) + ' · ' + days + ' day' + (days === 1 ? '' : 's') + '</span>';
     const g = S.group === 'auto' ? auto : S.group;
-    $('dbGroup').innerHTML = [['day', 'Daily'], ['week', 'Weekly'], ['month', 'Monthly']].map(x => '<button data-g="' + x[0] + '" class="' + (g === x[0] ? 'on' : '') + '" title="' + (x[0] === auto ? 'Picked by itself for ' + days + ' days' : 'Click to group by ' + x[1].toLowerCase()) + '">' + x[1] + (x[0] === auto ? ' <span class="auto">AUTO</span>' : '') + '</button>').join('');
+    $('dbGroup').innerHTML = [['day', 'Daily'], ['week', 'Weekly'], ['month', 'Monthly']].map(x => '<button data-g="' + x[0] + '" class="' + (g === x[0] ? 'on' : '') + '" title="' + (x[0] === auto ? 'Picked by itself for ' + days + ' days' : 'Click to group by ' + x[1].toLowerCase()) + '">' + x[1] + '</button>').join('');
     const of = D && D.online_f, cnt = (k) => of ? ' <small>' + (S.by === 'qty' ? int(of[k].n) : usdK(of[k].total)) + '</small>' : '';
     $('dbOnline').innerHTML = '<button data-o="all" class="' + (S.online === 'all' ? 'on' : '') + '">All' + cnt('all') + '</button><button data-o="online" class="' + (S.online === 'online' ? 'on' : '') + '" title="Ordered on axiomprint.com">' + IC.web + 'Online' + cnt('online') + '</button><button data-o="manual" class="' + (S.online === 'manual' ? 'on' : '') + '" title="Entered by the team in the CRM">' + IC.hand + 'Manual' + cnt('manual') + '</button>';
     const ofs = D && D.orders_f, maxT = ofs ? Math.max(1, ofs.all[S.by === 'qty' ? 'n' : 'total']) : 1;
@@ -112,6 +111,7 @@
       $('dbAmPick').innerHTML = cur ? 'Showing <b>' + esc(cur.name) + '</b> · <a href="#" id="dbAmAll">everyone</a>' : 'All account managers · hover a face for a snapshot, click to see only theirs';
     }
     document.querySelectorAll('#dbBy button').forEach(b => b.classList.toggle('on', b.dataset.by === S.by));
+    const ly = $('dbLy'); if (ly) ly.checked = !!S.ly;
   }
 
   // ---- the AM snapshot (hover card)

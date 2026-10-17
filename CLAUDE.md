@@ -775,7 +775,8 @@ Apply; the chip shows the picked preset's name or the dates; `BAR` / `MENU` in p
 before — the tiles, the AM cards and a line above the tiles (`#dbVs`, "vs last year (10/10/2025 – 10/17/2025)") follow it, and the chart
 draws last year as a dashed line with dots over each bucket (`prev_series`, lined up by position; legend "Last year"; the tooltip adds
 "Last year · Oct 13 $8,666.67 (+5%)"). **1.20.176**: the heads are 30px (were 42px) and only the **top 12 AMs by total** show (`AM_LIMIT`); a
-**Show n more** pill (`#dbAmMore`, `amMore`) opens the rest and turns into **Show less**; the picked AM always shows even when outside the 12.
+**Show n more** pill (`#dbAmMore`, `amMore`) opens the rest and turns into **Show less**; the picked AM always shows even when outside the 12. **1.20.177**: Group by still picks Daily / Weekly / Monthly by itself but shows no AUTO tag; the compare
+checkbox moved from the Billed row into the chart card's header, before the legend, and reads just **Compare** (`#dbLy`, same behaviour).
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 
