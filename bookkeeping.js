@@ -2622,7 +2622,7 @@ module.exports = function mountBookkeeping(app, deps) {
     if (activeLoans.length) for (const r of rows) {
       if (r.loan_id || r.transfer_of || r.refund_of || !(Number(r.amount) > 0)) continue;
       const amt = Number(r.amount);
-      const hit = loanFit(activeLoans.filter(l => r.vendor_id && l.vendor_id === r.vendor_id), amt, l => l.amts) || activeLoans.find(l => r.vendor_id && l.vendor_id === r.vendor_id && !l.monthly) || ((!r.vendor_id || r.vendor_kind === 'lender' || r.vendor_source === 'nova') ? loanFit(activeLoans, amt, l => l.amts) : null);   // 1.20.141: the lender's closest loan within $5; 1.20.145: else any active loan's payment within $5 — Match then checks the lender (conflict / pick)
+      const hit = loanFit(activeLoans.filter(l => r.vendor_id && l.vendor_id === r.vendor_id), amt, l => l.amts) || activeLoans.find(l => r.vendor_id && l.vendor_id === r.vendor_id && !l.monthly) || ((r.vendor_id && (r.vendor_kind === 'lender' || r.vendor_source === 'nova')) ? loanFit(activeLoans, amt, l => l.amts) : null);   /* 1.20.155: never on an unlinked line — a $101 taco charge sat within $10 of a loan step and was offered as a "Loan payment?" */   // 1.20.141: the lender's closest loan within $5; 1.20.145: else any active loan's payment within $5 — Match then checks the lender (conflict / pick)
       if (hit) r.loan_hint = { id: hit.id, name: hit.name };
       else if (r.vendor_kind === 'lender' && r.vendor_id) {   /* 1.20.145: a lender's line that did not pair — say why, and offer the lender's loans */
         const mine = activeLoans.filter(l => l.vendor_id === r.vendor_id);
