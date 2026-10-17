@@ -881,10 +881,22 @@ async function loadBackups(box) {
     const kb = (n) => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.round(n / 1024) + ' KB';
     const when = l.at ? new Date(l.at).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null;
     const drive = l.drive ? (l.drive.id ? 'copied to Google Drive' : l.drive.skipped ? 'Drive: ' + l.drive.skipped : l.drive.error ? 'Drive upload FAILED: ' + l.drive.error : '') : '';
+    /* 1.20.173: the off-server copy in DigitalOcean Spaces — the database snapshot and every uploaded file */
+    const sp = j.spaces || {}, sy = sp.sync || {};
+    const n = (x) => Number(x || 0).toLocaleString('en-US');
+    let spaces = '';
+    if (sp.off) spaces = 'Spaces: ' + sp.off;
+    else {
+      spaces = 'Spaces "' + sp.bucket + '": ' + (l.spaces ? (l.spaces.key ? 'database copied' : l.spaces.error ? 'database copy FAILED: ' + l.spaces.error : 'database ' + (l.spaces.skipped || '')) : 'database not copied yet');
+      if (sy.running) spaces += ' · copying files: ' + n(sy.done) + ' of ' + n(sy.todo) + ' new (' + n(sy.scanned) + ' in all)…';
+      else if (sy.finished) spaces += ' · files: ' + n(sy.scanned) + ' backed up' + (sy.done ? ', ' + n(sy.done) + ' new last run' : '') + (sy.failed ? ' · ' + n(sy.failed) + ' FAILED: ' + (sy.errors || [])[0] : '');
+    }
     row.innerHTML = '<span class="conn-dot ' + dot + '"></span><div class="conn-info"><div class="conn-name">Nightly backup of Nova\'s database</div>' +
-      '<div class="conn-detail">' + esc('Every day at ' + j.at + ' · ' + j.files.length + ' on the server (' + j.keep_days + ' days kept)' + (when ? ' · last ' + when + (ok ? ' ✓ ' + l.file + ', ' + kb(l.size || 0) : ' ✗ ' + (l.error || 'failed')) : ' · none since this start') + (drive ? ' · ' + drive : '')) + '</div></div>' +
+      '<div class="conn-detail">' + esc('Every day at ' + j.at + ' · ' + j.files.length + ' on the server (' + j.keep_days + ' days kept)' + (when ? ' · last ' + when + (ok ? ' ✓ ' + l.file + ', ' + kb(l.size || 0) : ' ✗ ' + (l.error || 'failed')) : ' · none since this start') + (drive ? ' · ' + drive : '')) + '</div>' + (spaces ? '<div class="conn-detail">' + esc(spaces) + '</div>' : '') + '</div>' +
       '<button class="btn-mini" id="bkNow" style="margin-right:10px">Back up now</button><span class="conn-status ' + dot + '">' + (ok ? 'OK' : err ? 'Failed' : 'Scheduled') + '</span>';
     document.getElementById('bkNow').onclick = async () => { const b = document.getElementById('bkNow'); b.disabled = true; b.textContent = 'Working…'; await fetch('/api/admin/backups/run', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: '{}' }); paint(); };
+    /* while the file copy runs, refresh the line every 5 s (only while this row is on screen) */
+    clearTimeout(row._t); if (sy.running && document.body.contains(row)) row._t = setTimeout(() => paint().catch(() => {}), 5000);
   };
   paint().catch(() => row.remove());
 }

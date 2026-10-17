@@ -57,6 +57,21 @@ file is also uploaded to that Google Drive folder with the order@ service accoun
 domain-wide delegation and the folder shared with order@ — until then "Drive skipped" and an email on a real failure to
 `BACKUP_ALERT_TO`, gary@). `GET /api/admin/backups`, `POST /api/admin/backups/run`; Admin → Connectors shows the row with
 **Back up now**. Restore: stop Nova, `gunzip -c backups/users-<date>.db.gz > users.db`, remove `-wal` / `-shm`, start.
+**Off the server — DigitalOcean Spaces (1.20.173)**: `spaces.js` is a dependency-free S3 client (AWS Signature V4 over Node's https /
+crypto — deploy.sh never runs `npm install`, so no SDK; signatures checked against AWS's own signer). With `SPACES_KEY`, `SPACES_SECRET`,
+`SPACES_BUCKET`, `SPACES_REGION` (the datacenter slug, e.g. `sfo3`) in `.env`, every backup run also puts the snapshot in
+`<SPACES_PREFIX, nova>/db/` (kept `SPACES_KEEP_DAYS`, 90) and then, in the background, copies every uploaded file Nova keeps on disk —
+`hr-files/`, `bookkeeping-files/`, `talk-recordings/`, `client-uploads/`, `chat-uploads/`, `knowledge_files/` (each module's own env
+override honoured) — to `<prefix>/files/<folder>/<same path>`. Only new or changed files go up (SQLite `backup_files`: path, size, mtime);
+the file copy **never deletes** from the Space; `.tmp` / `.part` files and links are skipped; objects are private. A failed snapshot upload
+or any file that would not copy emails the `backup` Notify kind; failed files are retried next run. `GET /api/admin/backups` → `spaces`
+{bucket, region, prefix, keep_days, sync {running, scanned, todo, done, bytes, failed, errors, folders}} or `{off}`; Admin → Connectors'
+backup row has a second line for it and refreshes every 5 s while files are copying. Add a new upload folder to `FOLDERS` in backups.js.
+**The MySQL user (1.20.173)**: Nova logs in as **`nova_ai_app`** (`MYSQL_USER`), created by `scripts/make-nova-user.sh` with `SELECT, SHOW
+VIEW` on `axiomprint_new` and `ALL` on **`nova_ai`** — Nova's own MySQL database on the same DigitalOcean cluster, empty for now, where the
+SQLite tables will move. The CRM is now read-only **in the database itself**, not only by convention: an INSERT / UPDATE from any path
+(the `/api/chat` `query_database` tool included) is refused by MySQL. The old panel-made user `novaai` has server-wide rights DigitalOcean
+does not let `doadmin` take away (ERROR 3879), which is why a new user was made rather than narrowing it; it is no longer used.
 
 | | Purpose | Access |
 |---|---|---|

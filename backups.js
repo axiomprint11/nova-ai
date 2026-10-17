@@ -11,6 +11,15 @@
 // lists what is on disk and the last result. Admin → Connectors shows the same.
 //
 // Restore: stop Nova, `gunzip -c backups/users-2026-10-15.db.gz > users.db`, remove users.db-wal / -shm, start Nova.
+//
+// 1.20.173 — a copy off the server, in DigitalOcean Spaces (spaces.js). With SPACES_KEY / SPACES_SECRET / SPACES_BUCKET /
+// SPACES_REGION in .env, every run also (1) uploads the snapshot to <prefix>/db/ (kept SPACES_KEEP_DAYS, 90) and (2) copies
+// every uploaded FILE Nova keeps on this disk — HR documents, bookkeeping receipts and loan papers, TalkAi recordings,
+// client and staff chat attachments, knowledge files — to <prefix>/files/<folder>/<same path>. Only new or changed files
+// go up (SQLite `backup_files` remembers path + size + mtime), so after the first night it is minutes. Nothing is ever
+// deleted from the Space by the file copy: a file removed in Nova stays in the backup. The file copy runs in the
+// background after the snapshot (the first one can take a while); its progress is in GET /api/admin/backups → spaces.
+// Restore a file: download it from the Space (DigitalOcean panel → Spaces → the bucket) and put it back at the same path.
 const fs = require('fs'), path = require('path'), zlib = require('zlib'), os = require('os');
 
 module.exports = function mountBackups(app, deps) {
@@ -21,6 +30,25 @@ module.exports = function mountBackups(app, deps) {
   const AT = env('BACKUP_AT', '03:15');
   const DRIVE_FOLDER = env('BACKUP_DRIVE_FOLDER', '');
   const ALERT_TO = env('BACKUP_ALERT_TO', 'gary@axiomprint.com');
+  // 1.20.173: the off-server copy in DigitalOcean Spaces
+  const SP = { key: env('SPACES_KEY', ''), secret: env('SPACES_SECRET', ''), bucket: env('SPACES_BUCKET', ''), region: env('SPACES_REGION', ''),
+               endpoint: env('SPACES_ENDPOINT', '') || undefined, signRegion: env('SPACES_SIGN_REGION', '') || undefined };
+  const SP_PREFIX = env('SPACES_PREFIX', 'nova').replace(/^\/+|\/+$/g, '');
+  const SP_KEEP = Math.max(7, parseInt(env('SPACES_KEEP_DAYS', '90')) || 90);
+  let space = null, spaceErr = null;
+  if (SP.key && SP.secret && SP.bucket && SP.region) { try { space = require('./spaces')(SP); } catch (e) { spaceErr = e.message; } }
+  const ROOT = path.dirname(dbPath);
+  // every folder of uploaded files, named as each module names it (same env overrides, same defaults)
+  const FOLDERS = [
+    ['hr-files', env('HR_FILES_DIR', path.join(ROOT, 'hr-files'))],
+    ['bookkeeping-files', env('BOOKKEEPER_FILES_DIR', path.join(ROOT, 'bookkeeping-files'))],
+    ['talk-recordings', env('TALKAI_AUDIO_DIR', path.join(ROOT, 'talk-recordings'))],
+    ['client-uploads', env('CLIENT_BOT_UPLOAD_DIR', path.join(ROOT, 'client-uploads'))],
+    ['chat-uploads', env('CHAT_UPLOAD_DIR', path.join(ROOT, 'chat-uploads'))],
+    ['knowledge_files', path.join(ROOT, 'knowledge_files')]
+  ];
+  db.run('CREATE TABLE IF NOT EXISTS backup_files (path TEXT PRIMARY KEY, size INTEGER, mtime INTEGER, at TEXT)', () => {});
+  let sync = { running: false, started: null, finished: null, scanned: 0, todo: 0, done: 0, bytes: 0, failed: 0, errors: [], by: null, folders: {} };
   if (Notify) Notify.register('backup', () => ALERT_TO);
   const mailOn = () => !Notify || Notify.on('backup'); const mailTo = () => Notify ? Notify.to('backup', ALERT_TO) : ALERT_TO;
   const TZ = 'America/Los_Angeles';
@@ -67,6 +95,76 @@ module.exports = function mountBackups(app, deps) {
     } catch (e) {}
     return { id: r.data.id, name: r.data.name };
   }
+  // ---- Spaces (1.20.173) ----
+  const dbAll = (sql, p) => new Promise((res, rej) => db.all(sql, p || [], (e, r) => e ? rej(e) : res(r)));
+  const dbRunP = (sql, p) => new Promise((res, rej) => db.run(sql, p || [], (e) => e ? rej(e) : res()));
+  const MIME = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', mp3: 'audio/mpeg', wav: 'audio/wav',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', csv: 'text/csv', txt: 'text/plain', gz: 'application/gzip' };
+  const mimeOf = (f) => MIME[(path.extname(f).slice(1) || '').toLowerCase()] || 'application/octet-stream';
+  async function dbToSpace(file) {
+    if (!space) return { skipped: spaceErr || 'Spaces not set up (SPACES_KEY / SPACES_SECRET / SPACES_BUCKET / SPACES_REGION)' };
+    const k = SP_PREFIX + '/db/' + path.basename(file);
+    await space.putFile(k, file, 'application/gzip');
+    let pruned = 0;
+    try {
+      const cut = Date.now() - SP_KEEP * 86400000;
+      for (const o of await space.list(SP_PREFIX + '/db/')) if (/users-.*\.db\.gz$/.test(o.key) && o.modified && Date.parse(o.modified) < cut) { await space.del(o.key); pruned++; }
+    } catch (e) { errlog('Spaces prune: ' + e.message); }
+    return { key: k, pruned };
+  }
+  // walk a folder: regular files only (no links), skipping half-written ones
+  function walk(dir, out) {
+    let ents; try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return out; }
+    for (const d of ents) {
+      const p = path.join(dir, d.name);
+      if (d.isDirectory()) walk(p, out);
+      else if (d.isFile() && !/\.(tmp|part)$/i.test(d.name)) out.push(p);
+    }
+    return out;
+  }
+  async function filesToSpace(who) {
+    if (!space || sync.running) return;
+    sync = { running: true, started: new Date().toISOString(), finished: null, scanned: 0, todo: 0, done: 0, bytes: 0, failed: 0, errors: [], by: who || 'clock', folders: {} };
+    try {
+      const seen = new Map((await dbAll('SELECT path, size, mtime FROM backup_files')).map(r => [r.path, r]));
+      const queue = [];
+      for (const [name, dir] of FOLDERS) {
+        const files = walk(dir, []); let n = 0, b = 0;
+        for (const f of files) {
+          let st; try { st = fs.statSync(f); } catch (e) { continue; }
+          n++; b += st.size;
+          const rel = name + '/' + path.relative(dir, f).split(path.sep).join('/');
+          const was = seen.get(rel);
+          if (was && was.size === st.size && was.mtime === Math.floor(st.mtimeMs)) continue;
+          queue.push({ f, rel, size: st.size, mtime: Math.floor(st.mtimeMs) });
+        }
+        sync.folders[name] = { files: n, bytes: b, exists: fs.existsSync(dir) };
+        sync.scanned += n;
+      }
+      sync.todo = queue.length;
+      // three at a time: quick enough, and gentle on a 1-vCPU box serving the team
+      const worker = async () => {
+        while (queue.length) {
+          const it = queue.shift();
+          try {
+            await space.putFile(SP_PREFIX + '/files/' + it.rel, it.f, mimeOf(it.f));
+            await dbRunP('INSERT OR REPLACE INTO backup_files (path, size, mtime, at) VALUES (?, ?, ?, ?)', [it.rel, it.size, it.mtime, new Date().toISOString()]);
+            sync.done++; sync.bytes += it.size;
+          } catch (e) {
+            if (!fs.existsSync(it.f)) { sync.todo--; continue; }   /* deleted while we worked: nothing to copy */
+            sync.failed++; if (sync.errors.length < 10) sync.errors.push(it.rel + ': ' + e.message);
+          }
+        }
+      };
+      await Promise.all([worker(), worker(), worker()]);
+    } catch (e) { sync.failed++; sync.errors.push(e.message); }
+    sync.running = false; sync.finished = new Date().toISOString();
+    log('files → Spaces: ' + sync.done + ' of ' + sync.todo + ' copied (' + Math.round(sync.bytes / 1048576) + ' MB), ' + sync.scanned + ' files in all' + (sync.failed ? ', ' + sync.failed + ' FAILED' : ''));
+    if (sync.failed && sendMail && mailOn()) sendMail({ to: mailTo(), subject: 'Nova backup: ' + sync.failed + ' file(s) not copied to DigitalOcean Spaces',
+      text: 'The nightly copy of Nova\'s uploaded files to the Space "' + SP.bucket + '" could not copy ' + sync.failed + ' of ' + sync.todo + ' file(s). They will be tried again on the next run.\n\n' + sync.errors.join('\n') + '\n\nAdmin → Connectors shows the backup row with Back up now.' }).catch(() => {});
+    return sync;
+  }
+
   async function run(who, tag) {
     if (running) return Object.assign({}, last, { error: 'already running' });
     running = true; const t0 = Date.now();
@@ -74,9 +172,12 @@ module.exports = function mountBackups(app, deps) {
       const file = await snapshot(tag);
       const size = fs.statSync(file).size;
       let drive = null; try { drive = await toDrive(file); } catch (e) { drive = { error: e.message }; errlog('drive upload failed: ' + e.message); }
+      let spaces = null; try { spaces = await dbToSpace(file); } catch (e) { spaces = { error: e.message }; errlog('Spaces upload failed: ' + e.message); }
       const pruned = prune();
-      last = { at: new Date().toISOString(), ok: true, file: path.basename(file), size, ms: Date.now() - t0, drive, pruned, by: who || 'clock', error: null };
-      log('wrote ' + path.basename(file) + ' (' + Math.round(size / 1024) + ' KB, ' + last.ms + ' ms)' + (drive && drive.id ? ' · Drive ok' : drive && drive.skipped ? ' · Drive skipped: ' + drive.skipped : drive && drive.error ? ' · Drive FAILED' : '') + (pruned ? ' · pruned ' + pruned : ''));
+      last = { at: new Date().toISOString(), ok: true, file: path.basename(file), size, ms: Date.now() - t0, drive, spaces, pruned, by: who || 'clock', error: null };
+      if (spaces && spaces.error && sendMail && mailOn()) sendMail({ to: mailTo(), subject: 'Nova backup: written on the server, DigitalOcean Spaces upload failed', text: 'The nightly users.db backup ' + path.basename(file) + ' was written to ' + DIR + ' but could not be copied to the Space "' + SP.bucket + '":\n\n' + spaces.error + '\n\nCheck SPACES_KEY / SPACES_SECRET / SPACES_BUCKET / SPACES_REGION in .env, and that the key is allowed to write to that bucket.' }).catch(() => {});
+      if (space) filesToSpace(who || 'clock').catch(e => errlog('files → Spaces: ' + e.message));   /* background: the first copy can take a while */
+      log('wrote ' + path.basename(file) + ' (' + Math.round(size / 1024) + ' KB, ' + last.ms + ' ms)' + (drive && drive.id ? ' · Drive ok' : drive && drive.skipped ? ' · Drive skipped: ' + drive.skipped : drive && drive.error ? ' · Drive FAILED' : '') + (spaces && spaces.key ? ' · Spaces ok' : spaces && spaces.error ? ' · Spaces FAILED' : '') + (pruned ? ' · pruned ' + pruned : ''));
       if (drive && drive.error && sendMail && mailOn()) sendMail({ to: mailTo(), subject: 'Nova backup: written on the server, Drive upload failed', text: 'The nightly users.db backup ' + path.basename(file) + ' was written to ' + DIR + ' but could not be uploaded to Google Drive:\n\n' + drive.error + '\n\nIf the message is about scope or permission, add https://www.googleapis.com/auth/drive.file to the service account\'s domain-wide delegation in Google Admin, and share the folder ' + DRIVE_FOLDER + ' with ' + gmailUser + '.' }).catch(() => {});
     } catch (e) {
       last = { at: new Date().toISOString(), ok: false, error: e.message, ms: Date.now() - t0, by: who || 'clock' };
@@ -93,7 +194,8 @@ module.exports = function mountBackups(app, deps) {
     // a box that was off at BACKUP_AT: take one at boot when today's is missing and it is past the hour
     setTimeout(() => { try { if (laHM() > AT && !list().some(f => f.name.startsWith('users-' + laDate()))) { firedOn = laDate(); run('boot').catch(() => {}); } } catch (e) {} }, 90000).unref();
   }
-  const status = () => ({ ok: true, dir: DIR, at: AT + ' (LA)', keep_days: KEEP, drive_folder: DRIVE_FOLDER || null, last, files: list().slice(0, 40) });
+  const status = () => ({ ok: true, dir: DIR, at: AT + ' (LA)', keep_days: KEEP, drive_folder: DRIVE_FOLDER || null, last, files: list().slice(0, 40),
+    spaces: space ? { bucket: SP.bucket, region: SP.region, prefix: SP_PREFIX, keep_days: SP_KEEP, sync } : { off: spaceErr || 'not set up' } });
   app.get('/api/admin/backups', auth, adminOnly, (req, res) => res.json(status()));
   app.post('/api/admin/backups/run', auth, adminOnly, async (req, res) => { const who = req.user ? (req.user.email || req.user.username || req.user.key) : 'admin'; res.json(Object.assign({ ok: true }, { last: await run(who, 'manual') })); });
   return { run, status, list };
