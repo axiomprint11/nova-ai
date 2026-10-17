@@ -590,6 +590,14 @@ hidden); keys `ct<id>` / `cs<id>` (CRM) and `nt<id>` / `ns<id>` (Nova); trash on
 on a Nova row deletes it unless in use; `geoTree()` merges, `GET/POST /api/material-ai/geo {op save|add|remove|restore}`. Every material has a
 **Geo type** pick on Describe (`ma_specs.geo_key`, default from the CRM row's `geo_sub_type_id` / `geo_type_id`), and the list, filter and
 drawer show the Nova names.
+**1.20.162**: a third form **Wide roll** (`wide_roll`, the same fields as Roll; a CRM roll on the Wide Format geo type defaults to it; `SR()` /
+`isRoll()` treat it as a roll everywhere — supplier sizes in width × feet, mil, `NOT_ON`); a **Material** pick on Sheet / Roll / Wide roll
+(`ma_specs.substrate`; Sheet: Paper Text · Paper Cardstock · Plastic · Clear · Magnetic = `substrate_sheet`; Roll / Wide roll: BOPP · Clear ·
+Holographic · Silver · Lamination = `substrate_roll`; `substrateOf()` reads the CRM material kind + name; switching between Sheet and a roll
+clears it); rolls have ONE **Finish** (no back); **Machines that print it** is a search box with the picked machines as chips (`fillMachines`:
+focus shows up to 8 printers, typing searches all by name / team / action, ↑↓ Enter, × removes); measures read in small letters (pt / mil / gsm,
+lb / kg / oz / gram). The page's `font: 600 12px/1 inherit` shorthands were invalid CSS (ignored — buttons fell back to the browser font) and
+are now longhands with `font-family: inherit`.
 
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 

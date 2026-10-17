@@ -18,6 +18,8 @@
   const usD = (d) => { if (!d) return ''; const s = String(d).slice(0, 10).split('-'); return s.length === 3 ? s[1] + '-' + s[2] + '-' + s[0] : String(d); };
   const pl = (u) => !u ? 'units' : /^(sq ft|linear ft|each|MSI)$/.test(u) ? u : u.replace(/^(press sheet|sheet|roll|unit)/, '$1s');
   const who = (w) => String(w || '').replace(/@.*/, '');
+  const isRoll = (f) => f === 'roll' || f === 'wide_roll';
+  const FORM_L = { sheet: 'Sheet', roll: 'Roll', wide_roll: 'Wide roll', rigid: 'Rigid', item: 'Item', liquid: 'Ink' };
   const lbl = (list, v) => { const x = (list || []).find(p => p[0] === v); return x ? x[1] : v; };
   const photo = (url, cls) => url ? '<img class="ma-ph ' + (cls || '') + '" src="' + esc(url) + '" alt="" loading="lazy" onerror="this.outerHTML=\'<span class=&quot;ma-ph none&quot;>no photo</span>\'">' : '<span class="ma-ph none">no photo</span>';
   const vAv = (s) => s && s.seller && s.seller.photo ? '<img class="av" src="' + esc(s.seller.photo) + '" alt="" onerror="this.outerHTML=\'<span class=&quot;av&quot;>' + esc((s.vendor_name || '?').charAt(0)) + '</span>\'">' : '<span class="av">' + esc(((s && s.vendor_name) || '?').charAt(0)) + '</span>';
@@ -56,7 +58,7 @@
       ['two', two, 'with 2+ suppliers', ''], ['nosup', none, 'with no supplier', none ? 'red' : ''], ['alerts', COUNTS.alerts || 0, 'price alerts open', COUNTS.alerts ? 'red' : '']];
     $('maTiles').innerHTML = T.map(t => '<button class="ma-tile ' + t[3] + (F.tile === t[0] ? ' on' : '') + '" data-t="' + t[0] + '"><b>' + nf(t[1]) + '</b><span>' + esc(t[2]) + '</span></button>').join('');
     $('maTiles').querySelectorAll('[data-t]').forEach(b => b.onclick = () => { if (b.dataset.t === 'alerts') return show('alerts'); F.tile = F.tile === b.dataset.t ? '' : b.dataset.t; drawTiles(); drawList(); });
-    $('maForms').innerHTML = [['', 'All'], ['sheet', 'Sheet'], ['roll', 'Roll'], ['rigid', 'Rigid'], ['item', 'Item']].map(f => '<button class="chip' + (F.form === f[0] ? ' on' : '') + '" data-f="' + f[0] + '">' + f[1] + '</button>').join(' ');
+    $('maForms').innerHTML = [['', 'All'], ['sheet', 'Sheet'], ['roll', 'Roll'], ['wide_roll', 'Wide roll'], ['rigid', 'Rigid'], ['item', 'Item']].map(f => '<button class="chip' + (F.form === f[0] ? ' on' : '') + '" data-f="' + f[0] + '">' + f[1] + '</button>').join(' ');
     $('maForms').querySelectorAll('[data-f]').forEach(b => b.onclick = () => { F.form = b.dataset.f; drawTiles(); drawList(); });
   }
   const passes = (m) => {
@@ -72,6 +74,7 @@
     const s = m.spec, out = [];
     if (s.thickness) out.push(nf(s.thickness, 4) + ' ' + ({ pt: 'pt', mil: 'mil', gsm: 'gsm' }[s.thickness_unit] || s.thickness_unit || ''));
     if (s.basis_weight && s.thickness_unit !== 'gsm') out.push(nf(s.basis_weight) + (s.basis_unit === 'gsm' ? ' gsm' : s.basis_unit === 'oz' ? ' oz' : '# ' + lbl(V.basis_unit, s.basis_unit).replace('# ', '')));
+    if (s.substrate) out.unshift(lbl(s.form === 'sheet' ? V.substrate_sheet : V.substrate_roll, s.substrate));
     const fin = s.finish && String(lbl(V.finish, s.finish)).toLowerCase() !== String(s.color || '').toLowerCase() ? lbl(V.finish, s.finish) : null;
     const back = s.finish_back && s.finish_back !== 'same' && s.finish_back !== s.finish ? lbl(V.finish, s.finish_back) : null;
     let h = out.map(x => '<span>' + esc(x) + '</span>').join('');
@@ -94,7 +97,7 @@
     const tb = document.querySelector('#maTable tbody');
     tb.innerHTML = rows.length ? rows.map(m => '<tr data-id="' + m.id + '"' + (m.id === openId ? ' class="on"' : '') + '><td style="width:52px">' + photo(m.photo) + '</td>' +
       '<td class="ma-nm"><b>' + esc(m.name) + '</b><div class="s">' + esc([m.code, m.manufacturer && m.manufacturer !== 'N/A' ? m.manufacturer : null, [m.geo_type, m.geo_sub_type].filter(Boolean).join(' › ')].filter(Boolean).join(' · ')) + '</div></td>' +
-      '<td>' + (m.spec.form ? '<span class="ma-form ' + esc(m.spec.form) + '">' + esc({ sheet: 'Sheet', roll: 'Roll', rigid: 'Rigid', item: 'Item', liquid: 'Ink' }[m.spec.form] || m.spec.form) + '</span>' : '<span class="ma-muted">—</span>') + '</td>' +
+      '<td>' + (m.spec.form ? '<span class="ma-form ' + esc(m.spec.form) + '">' + esc(FORM_L[m.spec.form] || m.spec.form) + '</span>' : '<span class="ma-muted">—</span>') + '</td>' +
       '<td><div class="ma-specs">' + specChips(m) + '</div></td><td>' + supChips(m) + (m.alerts ? '<div style="margin-top:3px"><span class="ma-pill red">' + m.alerts + ' price alert' + (m.alerts === 1 ? '' : 's') + '</span></div>' : '') + '</td>' +
       '<td>' + onHand(m) + '</td><td>' + qBar(m.completeness) + '</td>' +
       '<td class="ma-sub">' + (m.usage.products ? m.usage.products + ' product' + (m.usage.products === 1 ? '' : 's') : '—') + '</td></tr>').join('')
@@ -142,7 +145,7 @@
   async function geoTypes(fresh) { if (GEO && !fresh) return GEO; const j = await api('/api/material-ai/geo'); GEO = j.ok ? j.types : []; return GEO; }
   function describeHtml(m, s) {
     s = s || m.spec;
-    const sr = s.form === 'sheet' || s.form === 'roll', roll = s.form === 'roll';
+    const roll = isRoll(s.form), sr = s.form === 'sheet' || roll;
     const f = (k, label, inner, span) => '<div class="ma-f ' + (span || 'ma-span2') + '"><label>' + label + crmTag(m, k) + '</label>' + inner + '</div>';
     const seg = (k, list) => '<div class="ma-seg" data-seg="' + k + '">' + list.map(p => '<button type="button" data-v="' + esc(p[0]) + '"' + (String(s[k]) === String(p[0]) ? ' class="on"' : '') + '>' + esc(p[1]) + '</button>').join('') + '</div>';
     const numIn = (k, ph) => '<input type="number" step="any" name="' + k + '" value="' + esc(s[k] == null ? '' : s[k]) + '"' + (ph ? ' placeholder="' + esc(ph) + '"' : '') + '>';
@@ -153,19 +156,24 @@
     const thickU = sr ? V.thickness_unit_sr : V.thickness_unit;
     const thickF = f('thickness', 'Thickness', '<div class="pair">' + numIn('thickness') + '<select name="thickness_unit">' + opt(thickU, s.thickness_unit || (roll ? 'mil' : sr ? 'pt' : 'in')) + '</select></div>');
     const same = !s.finish_back || s.finish_back === 'same';
-    const finishF = sr ? f('finish', 'Finishing front', '<select name="finish">' + opt(V.finish, s.finish, '—') + '</select>') +
+    const finishF = roll ? f('finish', 'Finish', '<select name="finish">' + opt(V.finish, s.finish, '—') + '</select>') : sr ? f('finish', 'Finishing front', '<select name="finish">' + opt(V.finish, s.finish, '—') + '</select>') +
       '<div class="ma-f ma-span4"><label>Finishing back' + crmTag(m, 'finish_back') + '</label><div class="ma-fb"><label class="ck"><input type="checkbox" id="dsFbSame"' + (same ? ' checked' : '') + '> Same as front</label>' +
       '<select id="dsFbSel"' + (same ? ' style="display:none"' : '') + '>' + opt(V.finish, same ? '' : s.finish_back, '—') + '</select></div></div>'
       : f('finish', 'Finish', '<select name="finish">' + opt(V.finish, s.finish, '—') + '</select>');
-    const machF = '<div class="ma-f ma-span6"><label>Machines that print it' + crmTag(m, 'machines') + '</label><div class="ma-mach" id="dsMach"><span class="ma-muted">Loading the machines…</span></div></div>';
+    const machF = '<div class="ma-f ma-span6"><label>Machines that print it</label><div class="ma-mpick" id="dsMach"><span class="chips"></span>' +
+      '<span class="srch"><input type="search" id="dsMachQ" placeholder="Search machines…" autocomplete="off"><div class="ma-mlist" id="dsMachL"></div></span></div></div>';
     const featF = '<div class="ma-f ma-span6"><label>Features</label><div class="ma-feat" id="dsFeat">' + V.features.map(x => '<button type="button" data-f="' + esc(x) + '"' + (s.features.indexOf(x) > -1 ? ' class="on"' : '') + '>' + esc(x) + '</button>').join('') + '</div></div>';
-    let h = '<div class="ma-grid" id="dsForm">' + f('form', 'What it is', seg('form', V.form), 'ma-span4') + geoF;
+    let h = '<div class="ma-grid" id="dsForm">' + f('form', 'What it is', seg('form', V.form), 'ma-span6');
     if (sr) {
+      h += f('substrate', 'Material', seg('substrate', s.form === 'sheet' ? V.substrate_sheet : V.substrate_roll), 'ma-span4') + geoF;
       h += thickF + colorF + f('sku', 'Product SKU', '<input name="sku" value="' + esc(s.sku || '') + '">');
-      if (roll) h += f('adhesive', 'Adhesive', seg('adhesive', V.adhesive_roll.concat(s.adhesive && !V.adhesive_roll.some(p => p[0] === s.adhesive) ? [[s.adhesive, lbl(V.adhesive, s.adhesive)]] : [])), 'ma-span3') + f('liner', 'Liner', seg('liner', V.liner), 'ma-span3');
-      h += finishF + f('sides', 'Printable', seg('sides', V.sides), 'ma-span3') + f('brand', 'Brand / maker', '<input name="brand" value="' + esc(s.brand || '') + '">', 'ma-span3') + machF + featF;
+      const brandF = f('brand', 'Brand / maker', '<input name="brand" value="' + esc(s.brand || '') + '">', roll ? 'ma-span2' : 'ma-span3');
+      if (roll) h += f('adhesive', 'Adhesive', seg('adhesive', V.adhesive_roll.concat(s.adhesive && !V.adhesive_roll.some(p => p[0] === s.adhesive) ? [[s.adhesive, lbl(V.adhesive, s.adhesive)]] : [])), 'ma-span4') + finishF +
+        f('liner', 'Liner', seg('liner', V.liner), 'ma-span4') + f('sides', 'Printable', seg('sides', V.sides), 'ma-span2') + brandF;
+      else h += finishF + f('sides', 'Printable', seg('sides', V.sides), 'ma-span3') + brandF;
+      h += machF + featF;
     } else {
-      h += thickF + colorF +
+      h += geoF + thickF + colorF +
         f('edge_color', 'Edge color', '<input name="edge_color" list="maColors" value="' + esc(s.edge_color || '') + '" placeholder="rigid boards, acrylic">') +
         f('adhesive', 'Adhesive', seg('adhesive', V.adhesive), 'ma-span6') + finishF +
         f('coated', 'Coating', '<select name="coated">' + opt(V.coated, s.coated, '—') + '</select>') +
@@ -192,26 +200,47 @@
     h += '<span style="display:flex;gap:6px;align-items:center">Job: <input type="number" id="shQty" placeholder="qty" min="0"> ' + esc(pl(unit)) + ' <span id="shOut" class="ma-muted"></span></span>';
     return h;
   }
-  function readDescribe(box) {
+  function readDescribe(box, m) {
     const body = {}; box.querySelectorAll('[name]').forEach(i => { body[i.name] = i.value; });
     box.querySelectorAll('[data-seg]').forEach(sg => { const on = sg.querySelector('button.on'); body[sg.dataset.seg] = on ? on.dataset.v : ''; });
     body.features = Array.from(box.querySelectorAll('#dsFeat button.on')).map(b => b.dataset.f);
-    const mach = box.querySelectorAll('#dsMach button[data-mid]');
-    body.machines = mach.length ? Array.from(box.querySelectorAll('#dsMach button.on')).map(b => Number(b.dataset.mid)) : ((DRAFT || {}).machines || []);
+    const mp = $('dsMach');
+    body.machines = mp && mp.dataset.ready ? Array.from(mp.querySelectorAll('.chips [data-mid]')).map(b => Number(b.dataset.mid)) : ((DRAFT || (m && m.spec) || {}).machines || []);
     if ($('dsFbSame')) body.finish_back = $('dsFbSame').checked ? 'same' : ($('dsFbSel').value || 'same');
     return body;
   }
   async function fillMachines(s) {
     const el = $('dsMach'); if (!el) return;
     const list = await machines(); if (!$('dsMach')) return;
-    const pick = new Set((s.machines || []).map(Number));
-    const chip = (x) => '<button type="button" data-mid="' + x.id + '"' + (pick.has(x.id) ? ' class="on"' : '') + ' title="' + esc([x.team, (x.does || []).join(', ')].filter(Boolean).join(' · ')) + '">' +
-      (x.photo ? '<img src="' + esc(x.photo) + '" alt="" onerror="this.remove()">' : '') + esc(x.name) + '</button>';
-    const pr = list.filter(x => x.prints || pick.has(x.id)), rest = list.filter(x => !x.prints && !pick.has(x.id));
-    if (!list.length) { el.innerHTML = '<span class="ma-muted">Could not read the machines from the CRM.</span>'; return; }
-    el.innerHTML = pr.map(chip).join('') + (rest.length ? '<button type="button" class="more" id="dsMachMore">+ other machines (' + rest.length + ')</button><span id="dsMachRest" style="display:none">' + rest.map(chip).join('') + '</span>' : '');
-    el.querySelectorAll('button[data-mid]').forEach(b => b.onclick = () => b.classList.toggle('on'));
-    if ($('dsMachMore')) $('dsMachMore').onclick = () => { $('dsMachRest').style.display = 'contents'; $('dsMachMore').remove(); };
+    const byId = {}; list.forEach(x => { byId[x.id] = x; });
+    const pick = (s.machines || []).map(Number).filter(id => byId[id]);
+    const face = (x) => x.photo ? '<img src="' + esc(x.photo) + '" alt="" onerror="this.remove()">' : '';
+    const chips = el.querySelector('.chips'), q = $('dsMachQ'), dl = $('dsMachL');
+    const drawChips = () => {
+      chips.innerHTML = pick.length ? pick.map(id => '<span class="ma-mchip" data-mid="' + id + '">' + face(byId[id]) + esc(byId[id].name) + '<button type="button" title="Remove">×</button></span>').join('') : '<span class="ma-muted none">No machine picked yet</span>';
+      chips.querySelectorAll('.ma-mchip button').forEach(b => b.onclick = () => { const id = Number(b.parentNode.dataset.mid); pick.splice(pick.indexOf(id), 1); drawChips(); });
+    };
+    let hi = 0, shown = [];
+    const drawList = () => {
+      const t = q.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      shown = list.filter(x => pick.indexOf(x.id) === -1 && (t.length ? t.every(w => (x.name + ' ' + (x.team || '') + ' ' + (x.does || []).join(' ')).toLowerCase().indexOf(w) > -1) : x.prints)).slice(0, 8);
+      hi = Math.min(hi, Math.max(0, shown.length - 1));
+      dl.innerHTML = shown.length ? shown.map((x, i) => '<div class="it' + (i === hi ? ' hi' : '') + '" data-i="' + i + '">' + face(x) + '<b>' + esc(x.name) + '</b><span>' + esc([x.team, x.prints ? '' : 'not a printer'].filter(Boolean).join(' · ')) + '</span></div>').join('')
+        : '<div class="none">' + (t.length ? 'No machine matches' : 'Type to search every machine') + '</div>';
+      dl.querySelectorAll('[data-i]').forEach(d => d.onmousedown = (e) => { e.preventDefault(); add(shown[Number(d.dataset.i)]); });
+    };
+    const add = (x) => { if (!x) return; pick.push(x.id); q.value = ''; hi = 0; drawChips(); drawList(); };
+    q.onfocus = () => { dl.classList.add('on'); drawList(); };
+    q.onblur = () => dl.classList.remove('on');
+    q.oninput = () => { hi = 0; drawList(); };
+    q.onkeydown = (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); hi = Math.min(hi + 1, shown.length - 1); drawList(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); hi = Math.max(hi - 1, 0); drawList(); }
+      else if (e.key === 'Enter') { e.preventDefault(); add(shown[hi]); }
+      else if (e.key === 'Escape') { e.stopPropagation(); q.blur(); }
+    };
+    if (!list.length) { chips.innerHTML = '<span class="ma-muted">Could not read the machines from the CRM.</span>'; return; }
+    el.dataset.ready = '1'; drawChips();
   }
   async function fillGeo(s) {
     const sel = $('dsGeo'); if (!sel) return;
@@ -233,8 +262,10 @@
       const sg = b.parentNode, on = b.classList.contains('on');
       sg.querySelectorAll('button').forEach(x => x.classList.remove('on')); if (!on || sg.dataset.seg === 'form' || sg.dataset.seg === 'base_unit') b.classList.add('on');
       if (sg.dataset.seg === 'form') {   /* another form → its own fields, keeping what was typed */
-        DRAFT = Object.assign({}, m.spec, readDescribe(box), { form: b.dataset.v });
-        if (DRAFT.form === 'sheet' || DRAFT.form === 'roll') { if (DRAFT.thickness_unit === 'in' || DRAFT.thickness_unit === 'mm') { const i = DRAFT.thickness_unit === 'mm' ? Number(DRAFT.thickness) / 25.4 : Number(DRAFT.thickness); DRAFT.thickness = i ? +(i * 1000).toFixed(2) : ''; DRAFT.thickness_unit = DRAFT.form === 'roll' ? 'mil' : 'pt'; } }
+        const was = (DRAFT || m.spec).form;
+        DRAFT = Object.assign({}, m.spec, readDescribe(box, m), { form: b.dataset.v });
+        if ((was === 'sheet') !== (DRAFT.form === 'sheet')) DRAFT.substrate = '';   /* the two Material lists differ */
+        if (DRAFT.form === 'sheet' || isRoll(DRAFT.form)) { if (DRAFT.thickness_unit === 'in' || DRAFT.thickness_unit === 'mm') { const i = DRAFT.thickness_unit === 'mm' ? Number(DRAFT.thickness) / 25.4 : Number(DRAFT.thickness); DRAFT.thickness = i ? +(i * 1000).toFixed(2) : ''; DRAFT.thickness_unit = DRAFT.form === 'sheet' ? 'pt' : 'mil'; } }
         box.parentNode.innerHTML = describeHtml(m, DRAFT); bindDescribe(m);
       }
       if (sg.dataset.seg === 'base_unit') $('dsPress').style.display = b.dataset.v === 'press' ? '' : 'none';
@@ -253,7 +284,7 @@
       $('shOut').innerHTML = '→ ' + (lb != null ? '<b>' + nf(lb, 2) + ' lb</b>' : 'weight unknown') + ' · ' + (cu != null ? '<b>' + nf(cu, 0) + ' in³</b> (' + nf(cu / 1728, 2) + ' ft³)' : 'volume unknown'); };
     $('shQty').oninput = calc;
     $('dsSave').onclick = async () => {
-      const body = readDescribe(box);
+      const body = readDescribe(box, m);
       const r = await api('/api/material-ai/materials/' + m.id + '/spec', body); if (!r.ok) return alert(r.error || 'Could not save');
       DRAFT = null; toast('Saved'); await reloadOne(m.id);
     };
@@ -266,7 +297,7 @@
   // ---- Suppliers
   let SELLERS = null;
   async function sellers() { if (SELLERS) return SELLERS; const j = await api('/api/material-ai/sellers'); SELLERS = j.ok ? j.sellers : []; return SELLERS; }
-  const buysAs = (s, m) => { const sz = s.unit_w && s.unit_h ? (m.spec.form === 'roll' ? nf(s.unit_w) + '" × ' + nf(s.unit_h / 12, 1) + "'" : nf(s.unit_w) + '×' + nf(s.unit_h)) : ''; return esc(lbl(V.buy_unit, s.buy_unit)) + (s.units_per_buy > 1 ? ' of ' + nf(s.units_per_buy) : '') + (sz ? ' · ' + esc(sz) : ''); };
+  const buysAs = (s, m) => { const sz = s.unit_w && s.unit_h ? (isRoll(m.spec.form) ? nf(s.unit_w) + '" × ' + nf(s.unit_h / 12, 1) + "'" : nf(s.unit_w) + '×' + nf(s.unit_h)) : ''; return esc(lbl(V.buy_unit, s.buy_unit)) + (s.units_per_buy > 1 ? ' of ' + nf(s.units_per_buy) : '') + (sz ? ' · ' + esc(sz) : ''); };
   function suppliersHtml(m) {
     const act = m.sources.filter(s => s.active), best = act.filter(s => s.cost_per_base != null).sort((a, b) => a.cost_per_base - b.cost_per_base)[0];
     const rows = m.sources.map(s => {
@@ -299,8 +330,8 @@
     return 1;
   }
   async function supForm(m, s) {
-    const list = await sellers(); s = s || { buy_unit: m.spec.form === 'roll' ? 'roll' : 'sheet', units_per_buy: 1, active: 1 };
-    const roll = m.spec.form === 'roll';
+    const list = await sellers(); s = s || { buy_unit: isRoll(m.spec.form) ? 'roll' : 'sheet', units_per_buy: 1, active: 1 };
+    const roll = isRoll(m.spec.form);
     const box = $('spForm');
     box.innerHTML = '<div class="ma-sform"><div class="ma-grid">' +
       '<div class="ma-f ma-span3"><label>Supplier (CRM Sellers)</label><select id="sfSel"><option value="">— not in Sellers: type the name →</option>' + list.map(x => '<option value="' + x.id + '"' + (Number(s.seller_id) === x.id ? ' selected' : '') + '>' + esc(x.name) + (x.type === 'vendor' ? ' (vendor)' : '') + '</option>').join('') + '</select></div>' +

@@ -31,7 +31,7 @@ module.exports = function mountMaterialsAi(app, deps) {
       adhesive TEXT, finish TEXT, coated TEXT, basis_weight REAL, basis_unit TEXT, sides TEXT, use_where TEXT, features TEXT, brand TEXT, product_line TEXT,
       base_unit TEXT, press_w REAL, press_h REAL, weight REAL, weight_unit TEXT, weight_per TEXT, notes TEXT, updated_by TEXT, updated_at TEXT)`);
     /* 1.20.161: the Sheet / Roll forms — colour swatch, back finish, roll liner, the machines that print it, our SKU, a measured stack */
-    ['color_hex TEXT', 'finish_back TEXT', 'liner TEXT', 'machines TEXT', 'sku TEXT', 'stack_thick REAL', 'stack_n INTEGER', 'geo_key TEXT'].forEach(c => db.run('ALTER TABLE ma_specs ADD COLUMN ' + c, () => {}));
+    ['color_hex TEXT', 'finish_back TEXT', 'liner TEXT', 'machines TEXT', 'sku TEXT', 'stack_thick REAL', 'stack_n INTEGER', 'geo_key TEXT', 'substrate TEXT'].forEach(c => db.run('ALTER TABLE ma_specs ADD COLUMN ' + c, () => {}));
     db.run(`CREATE TABLE IF NOT EXISTS ma_sources (id INTEGER PRIMARY KEY AUTOINCREMENT, material_id INTEGER, seller_id INTEGER, vendor_name TEXT, vendor_sku TEXT,
       vendor_desc TEXT, buy_unit TEXT DEFAULT 'sheet', units_per_buy REAL DEFAULT 1, unit_w REAL, unit_h REAL, yield_override REAL, cost_per_buy REAL,
       cost_date TEXT, cost_from TEXT, preferred INTEGER DEFAULT 0, active INTEGER DEFAULT 1, lead_days INTEGER, min_order TEXT, match_how TEXT, notes TEXT,
@@ -72,9 +72,11 @@ module.exports = function mountMaterialsAi(app, deps) {
 
   // ---- the vocabulary (the page draws its pickers from this, so one list feeds both)
   const VOCAB = {
-    form: [['sheet', 'Sheet'], ['roll', 'Roll'], ['rigid', 'Rigid board'], ['item', 'Item / hardware'], ['liquid', 'Ink / liquid']],
+    form: [['sheet', 'Sheet'], ['roll', 'Roll'], ['wide_roll', 'Wide roll'], ['rigid', 'Rigid board'], ['item', 'Item / hardware'], ['liquid', 'Ink / liquid']],
+    substrate_sheet: [['paper_text', 'Paper Text'], ['cardstock', 'Paper Cardstock'], ['plastic', 'Plastic'], ['clear', 'Clear'], ['magnetic', 'Magnetic']],
+    substrate_roll: [['bopp', 'BOPP'], ['clear', 'Clear'], ['holographic', 'Holographic'], ['silver', 'Silver'], ['lamination', 'Lamination']],
     thickness_unit: [['in', 'in'], ['mm', 'mm'], ['mil', 'mil'], ['pt', 'pt']],
-    thickness_unit_sr: [['pt', 'PT'], ['mil', 'Mil'], ['gsm', 'GSM']],
+    thickness_unit_sr: [['pt', 'pt'], ['mil', 'mil'], ['gsm', 'gsm']],
     adhesive_roll: [['none', 'No adhesive'], ['permanent', 'Permanent'], ['removable', 'Removable'], ['static', 'Static']],
     liner: [['none', 'No liner'], ['paper40', 'Paper 40#'], ['clear40', 'Clear 40#'], ['paper70', 'Paper 70#']],
     weight_per: [['base', 'Per unit'], ['sqft', 'Per sq ft'], ['crm100', 'Per 100 sheets of 8.5×11'], ['p100_1319', 'Per 100 sheets of 13×19']],
@@ -88,7 +90,7 @@ module.exports = function mountMaterialsAi(app, deps) {
     features: ['Waterproof', 'Tear-resistant', 'UV-resistant', 'Scratch-resistant', 'Food-safe', 'Fire-rated', 'Recyclable', 'Blockout / opaque', 'Translucent', 'Reflective', 'Magnetic', 'Laser-safe', 'Eco / FSC'],
     base_unit: [['sheet', 'Sheet'], ['each', 'Unit'], ['msi', 'MSI (1,000 sq in)'], ['sqft', 'Sq ft'], ['lft', 'Linear ft'], ['roll', 'Roll'], ['press', 'Press sheet (a set size)']],
     buy_unit: [['sheet', 'Sheet'], ['carton', 'Carton'], ['ream', 'Ream'], ['box', 'Box'], ['skid', 'Skid'], ['roll', 'Roll'], ['pack', 'Pack'], ['each', 'Each']],
-    weight_unit: [['lb', 'LB'], ['kg', 'KG'], ['oz', 'OZ'], ['g', 'Gram']]
+    weight_unit: [['lb', 'lb'], ['kg', 'kg'], ['oz', 'oz'], ['g', 'gram']]
   };
   const RIGID = ['acrylic', 'pvc', 'foam', 'coroplast', 'aluminnum', 'wood', 'cardboard'];
 
@@ -173,7 +175,8 @@ module.exports = function mountMaterialsAi(app, deps) {
   // ---- defaults read from the CRM row, so a material is already partly described before anyone types
   function defaultsFor(m) {
     const type = String(m.type || ''), mat = String(m.material || ''), name = String(m.name || '');
-    const form = /role|roll/.test(type) ? 'roll' : type === 'sheet' ? (RIGID.indexOf(mat) > -1 ? 'rigid' : 'sheet') : type ? 'item' : null;
+    /* a roll on the Wide Format geo type is a wide roll (vinyl, banner, film for the large-format printers) */
+    const form = /role|roll/.test(type) ? (/wide/i.test(String(m.geo_type || '')) ? 'wide_roll' : 'roll') : type === 'sheet' ? (RIGID.indexOf(mat) > -1 ? 'rigid' : 'sheet') : type ? 'item' : null;
     let adhesive = null;
     if (/removable/i.test(name)) adhesive = 'removable'; else if (/permanent/i.test(name)) adhesive = 'permanent'; else if (/cling/i.test(name)) adhesive = 'static';
     else if (/adhesive|bopp_label/.test(mat)) adhesive = 'permanent'; else if (form === 'rigid') adhesive = 'none';
@@ -188,10 +191,11 @@ module.exports = function mountMaterialsAi(app, deps) {
     const mil = name.match(/(\d+(?:\.\d+)?)\s*mil/i), pt = name.match(/(\d+(?:\.\d+)?)\s*pt\b/i);
     /* Sheet / Roll speak in thousandths (PT for paper, Mil for film) or GSM — never inches */
     let tv = thick != null ? thick : (mil ? Number(mil[1]) : null), tu = thick != null ? 'in' : (mil ? 'mil' : null);
-    if (form === 'sheet' || form === 'roll') {
+    const sr = form === 'sheet' || form === 'roll' || form === 'wide_roll';
+    if (sr) {
       if (mil) { tv = Number(mil[1]); tu = 'mil'; }
       else if (pt) { tv = Number(pt[1]); tu = 'pt'; }
-      else if (thick != null) { tv = +(thick * 1000).toFixed(2); tu = form === 'roll' ? 'mil' : 'pt'; }
+      else if (thick != null) { tv = +(thick * 1000).toFixed(2); tu = form === 'sheet' ? 'pt' : 'mil'; }
       else if (gsm) { tv = Number(gsm[1]); tu = 'gsm'; }
     }
     const hex = /^#?[0-9a-f]{6}$/i.test(String(m.color_hex || '').trim()) ? '#' + String(m.color_hex).trim().replace('#', '').toLowerCase() : null;
@@ -199,17 +203,39 @@ module.exports = function mountMaterialsAi(app, deps) {
       form, adhesive: form === 'sheet' ? null : adhesive, finish, color: m.color_name || null, color_hex: hex, basis_weight: basis, basis_unit: bu, brand: m.manufacturer || null,
       sku: m.code || null, thickness: tv, thickness_unit: tu,
       geo_key: Number(m.geo_sub_type_id) > 0 ? 'cs' + m.geo_sub_type_id : Number(m.geo_type_id) > 0 ? 'ct' + m.geo_type_id : null,
-      base_unit: form === 'roll' || form === 'rigid' ? 'sqft' : form === 'sheet' ? 'sheet' : form ? 'each' : null,
+      substrate: substrateOf(form, mat, name),
+      base_unit: form === 'roll' || form === 'wide_roll' || form === 'rigid' ? 'sqft' : form === 'sheet' ? 'sheet' : form ? 'each' : null,
       edge_color: form === 'rigid' ? (/clear/i.test(name) ? 'Clear' : m.color_name || null) : null,
       weight: paperW, weight_unit: paperW ? 'lb' : null, weight_per: paperW ? 'crm100' : null,
       coated: /coated 2 side|c2s/i.test(name) ? 'c2s' : /coated 1 side|c1s/i.test(name) ? 'c1s' : /uncoated/i.test(name) ? 'none' : null
     };
   }
+  /* the Material pick of a Sheet / Roll, read from the CRM's material kind and the name */
+  function substrateOf(form, mat, name) {
+    if (form === 'sheet') {
+      if (/magnet/.test(mat) || /magnet/i.test(name)) return 'magnetic';
+      if (/clear|transparent/i.test(name)) return 'clear';
+      if (mat === 'plastic' || /plastic|synthetic|polyester/i.test(name)) return 'plastic';
+      if (mat === 'paper_cover' || /cover|cardstock|card stock/i.test(name)) return 'cardstock';
+      if (mat === 'paper_text' || /text|bond/i.test(name)) return 'paper_text';
+      return null;
+    }
+    if (form === 'roll' || form === 'wide_roll') {
+      if (mat === 'lamination' || /lamina/i.test(name)) return 'lamination';
+      if (/holo/i.test(name)) return 'holographic';
+      if (/silver|chrome|metallic/i.test(name)) return 'silver';
+      if (/clear|transparent/i.test(name)) return 'clear';
+      if (/bopp/i.test(mat + ' ' + name)) return 'bopp';
+    }
+    return null;
+  }
   const SPEC_FIELDS = ['form', 'thickness', 'thickness_unit', 'color', 'color_hex', 'edge_color', 'adhesive', 'liner', 'finish', 'finish_back', 'coated', 'basis_weight', 'basis_unit',
-    'sides', 'machines', 'use_where', 'features', 'brand', 'product_line', 'sku', 'base_unit', 'press_w', 'press_h', 'weight', 'weight_unit', 'weight_per', 'stack_thick', 'stack_n', 'geo_key', 'notes'];
+    'sides', 'machines', 'use_where', 'features', 'brand', 'product_line', 'sku', 'base_unit', 'press_w', 'press_h', 'weight', 'weight_unit', 'weight_per', 'stack_thick', 'stack_n', 'geo_key', 'substrate', 'notes'];
   const NUM_SPEC = ['thickness', 'basis_weight', 'press_w', 'press_h', 'weight', 'stack_thick', 'stack_n'];
   /* fields a form does not have — never shown, never counted (rigid / item / ink keep the full set until they get their own form) */
-  const NOT_ON = { sheet: ['edge_color', 'adhesive', 'liner', 'use_where', 'coated', 'product_line'], roll: ['edge_color', 'use_where', 'coated', 'product_line'] };
+  const NOT_ON = { sheet: ['edge_color', 'adhesive', 'liner', 'use_where', 'coated', 'product_line'],
+    roll: ['edge_color', 'use_where', 'coated', 'product_line', 'finish_back'], wide_roll: ['edge_color', 'use_where', 'coated', 'product_line', 'finish_back'] };
+  const SR = (f) => f === 'sheet' || f === 'roll' || f === 'wide_roll';
   function mergedSpec(m, saved) {
     const d = defaultsFor(m), out = {}, from = {};
     SPEC_FIELDS.forEach(f => { const v = saved ? saved[f] : null; if (v != null && v !== '') { out[f] = v; from[f] = 'nova'; } else if (d[f] != null && d[f] !== '') { out[f] = d[f]; from[f] = 'crm'; } else out[f] = null; });
@@ -217,9 +243,11 @@ module.exports = function mountMaterialsAi(app, deps) {
     out.machines = out.machines ? String(out.machines).split(',').map(Number).filter(n => n > 0) : [];
     (NOT_ON[out.form] || []).forEach(f => { out[f] = null; delete from[f]; });
     /* an older Sheet / Roll thickness in inches or mm reads as PT / Mil */
-    if ((out.form === 'sheet' || out.form === 'roll') && Number(out.thickness) > 0 && (out.thickness_unit === 'in' || out.thickness_unit === 'mm' || !out.thickness_unit)) {
+    if (out.substrate && !(VOCAB[out.form === 'sheet' ? 'substrate_sheet' : 'substrate_roll'] || []).some(p => p[0] === out.substrate) && from.substrate === 'crm') out.substrate = null;
+    if (!SR(out.form)) { out.substrate = null; delete from.substrate; }
+    if (SR(out.form) && Number(out.thickness) > 0 && (out.thickness_unit === 'in' || out.thickness_unit === 'mm' || !out.thickness_unit)) {
       const i = out.thickness_unit === 'mm' ? Number(out.thickness) / 25.4 : Number(out.thickness);
-      out.thickness = +(i * 1000).toFixed(2); out.thickness_unit = out.form === 'roll' ? 'mil' : 'pt';
+      out.thickness = +(i * 1000).toFixed(2); out.thickness_unit = out.form === 'sheet' ? 'pt' : 'mil';
     }
     return { spec: out, from };
   }
@@ -313,12 +341,13 @@ module.exports = function mountMaterialsAi(app, deps) {
 
   // ---- completeness: how well a material is described (what to fill next)
   function completeness(m, spec, srcs, phys) {
-    const sr = spec.form === 'sheet' || spec.form === 'roll';
+    const sr = SR(spec.form);
     const want = [['form', !!spec.form], ['thickness', !!spec.thickness || !!spec.stack_thick], ['color', !!(spec.color || spec.color_hex)], ['finish', !!spec.finish || spec.form === 'item'],
       ['base unit', !!spec.base_unit], ['weight', phys.per_unit_oz != null]];
     if (['item', 'liquid', 'sheet'].indexOf(spec.form) === -1) want.push(['adhesive', !!spec.adhesive]);
     if (sr) want.push(['printable', spec.sides != null && spec.sides !== ''], ['machines', spec.sides === '0' || spec.machines.length > 0]);
-    if (spec.form === 'roll') want.push(['liner', !!spec.liner]);
+    if (sr) want.push(['material', !!spec.substrate]);
+    if (spec.form === 'roll' || spec.form === 'wide_roll') want.push(['liner', !!spec.liner]);
     want.push(
       ['supplier', srcs.length > 0], ['cost', srcs.some(s => s.cost_per_buy != null)], ['size', srcs.some(s => s.unit_w && s.unit_h) || spec.form === 'item'],
       ['photo', !!(m.photo_url || m.website_image_url)]);
@@ -342,7 +371,7 @@ module.exports = function mountMaterialsAi(app, deps) {
           const d = defaultsFor(m);
           await dbRun(`INSERT INTO ma_sources (material_id, seller_id, vendor_name, vendor_sku, buy_unit, units_per_buy, unit_w, unit_h, cost_per_buy, cost_from, preferred, match_how, created_by)
             VALUES (?,?,?,?,?,?,?,?,?,?,1,?,'crm')`, [m.id, sel ? sel.id : null, sel ? sel.company_name : String(m.supplier).trim(), m.code || null,
-            d.form === 'roll' ? 'roll' : d.form === 'item' ? 'each' : 'sheet', 1, Number(m.size_w) > 0 ? Number(m.size_w) : null, Number(m.size_h) > 0 ? Number(m.size_h) : null,
+            d.form === 'roll' || d.form === 'wide_roll' ? 'roll' : d.form === 'item' ? 'each' : 'sheet', 1, Number(m.size_w) > 0 ? Number(m.size_w) : null, Number(m.size_h) > 0 ? Number(m.size_h) : null,
             Number(m.cost) > 0 ? Number(m.cost) : null, Number(m.cost) > 0 ? 'CRM cost' : null, sel ? how : 'not in Sellers — "' + String(m.supplier).trim() + '"']);
           n++;
         }
