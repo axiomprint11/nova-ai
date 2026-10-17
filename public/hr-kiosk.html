@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1e1b4b">
+<title>Time clock · NovaHR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+/* NovaHR time clock — a shared tablet by the door. The team clocks in with their PIN or by scanning their badge. */
+:root { --indigo: #4f46e5; --ink: #1e1b2e; --muted: #8b88a3; --line: #e6e6f0; --ok: #059669; --bad: #dc2626; --warn: #d97706; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; }
+body { font-family: Inter, system-ui, sans-serif; background: radial-gradient(1200px 600px at 20% -10%, #eef2ff 0, transparent 60%), #f6f7fb; color: var(--ink); display: flex; flex-direction: column; user-select: none; -webkit-user-select: none; overflow: hidden; }
+button { font-family: inherit; cursor: pointer; }
+.top { display: flex; align-items: center; gap: 12px; padding: 18px 26px; }
+.mark { width: 38px; height: 38px; border-radius: 10px; background: #190070; color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 17px; }
+.top b { font-size: 17px; } .top small { display: block; color: var(--muted); font-size: 12.5px; }
+.top .sp { flex: 1; }
+.icon { border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 9px 12px; font-size: 13px; font-weight: 600; color: #4b4869; }
+.main { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 28px; padding: 6px 26px 26px; min-height: 0; }
+.left { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; padding-left: 12px; }
+.time { font-size: clamp(56px, 8.5vw, 128px); white-space: nowrap; font-weight: 700; letter-spacing: -.04em; line-height: 1; font-variant-numeric: tabular-nums; }
+.date { font-size: clamp(18px, 2.2vw, 26px); color: #4b4869; margin-top: 10px; font-weight: 500; }
+.hint { margin-top: 34px; font-size: 18px; color: #4b4869; line-height: 1.5; max-width: 440px; }
+.hint b { color: var(--ink); }
+.scanbtn { margin-top: 22px; display: inline-flex; align-items: center; gap: 10px; border: 0; background: #1e1b2e; color: #fff; padding: 16px 22px; border-radius: 14px; font-size: 17px; font-weight: 700; }
+.scanbtn svg { width: 24px; height: 24px; }
+.panel { background: #fff; border: 1px solid var(--line); border-radius: 22px; box-shadow: 0 10px 40px rgba(30,27,46,.08); padding: 26px; display: flex; flex-direction: column; justify-content: center; min-height: 0; position: relative; overflow: hidden; }
+.dots { display: flex; gap: 16px; justify-content: center; margin: 6px 0 22px; min-height: 22px; }
+.dots i { width: 18px; height: 18px; border-radius: 50%; border: 2.5px solid #c7c7d9; }
+.dots i.on { background: var(--indigo); border-color: var(--indigo); }
+.msg { text-align: center; min-height: 24px; font-size: 15.5px; font-weight: 600; color: var(--muted); margin-bottom: 14px; }
+.msg.bad { color: var(--bad); } .msg.ok { color: var(--ok); }
+.pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; max-width: 420px; width: 100%; margin: 0 auto; }
+.pad button { height: clamp(62px, 9vh, 86px); border-radius: 16px; border: 1px solid var(--line); background: #fafaff; font-size: 30px; font-weight: 600; color: var(--ink); transition: transform .05s, background .1s; }
+.pad button:active { transform: scale(.96); background: #eef2ff; }
+.pad .fn { font-size: 16px; color: #4b4869; font-weight: 700; }
+.pad .go { background: var(--indigo); color: #fff; border-color: var(--indigo); font-size: 26px; }
+.who { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.ph { width: 132px; height: 132px; border-radius: 50%; background-size: cover; background-position: center; display: grid; place-items: center; color: #fff; font-size: 46px; font-weight: 700; border: 5px solid #eef2ff; }
+.who h2 { font-size: 32px; margin: 16px 0 4px; letter-spacing: -.02em; }
+.who .st { font-size: 16px; color: #4b4869; }
+.acts { display: grid; gap: 12px; margin-top: 24px; width: 100%; max-width: 440px; }
+.acts button { height: 76px; border-radius: 16px; border: 0; font-size: 22px; font-weight: 700; color: #fff; display: flex; align-items: center; justify-content: center; gap: 10px; }
+.acts .in { background: var(--ok); } .acts .out { background: var(--bad); } .acts .break { background: var(--warn); } .acts .back { background: var(--indigo); }
+.acts .cancel { background: #f1f1f6; color: #4b4869; height: 56px; font-size: 16px; }
+.done { text-align: center; }
+.done .tick { width: 120px; height: 120px; border-radius: 50%; background: #ecfdf5; color: var(--ok); display: grid; place-items: center; margin: 0 auto 18px; }
+.done .tick svg { width: 64px; height: 64px; }
+.done h2 { font-size: 34px; margin: 0 0 8px; letter-spacing: -.02em; }
+.done p { font-size: 18px; color: #4b4869; margin: 0; }
+.bar { position: absolute; left: 0; bottom: 0; height: 5px; background: var(--indigo); opacity: .5; transition: width linear; }
+.cam { position: fixed; inset: 0; background: rgba(10,10,25,.92); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 20; color: #fff; gap: 18px; }
+.cam.on { display: flex; }
+.cam video { width: min(560px, 90vw); border-radius: 18px; background: #000; transform: scaleX(-1); }
+.cam .frame { position: relative; }
+.cam .frame::after { content: ""; position: absolute; inset: 22%; border: 4px solid #a5b4fc; border-radius: 16px; box-shadow: 0 0 0 9999px rgba(0,0,0,.25); }
+.cam button { border: 0; background: #fff; color: var(--ink); padding: 14px 26px; border-radius: 12px; font-size: 16px; font-weight: 700; }
+.setup { max-width: 560px; margin: 8vh auto; background: #fff; border: 1px solid var(--line); border-radius: 20px; padding: 28px; }
+.setup h1 { margin: 0 0 8px; font-size: 22px; }
+.setup p { color: #4b4869; line-height: 1.55; }
+.setup input, .setup select { width: 100%; height: 44px; border: 1px solid #dcdce6; border-radius: 10px; padding: 0 12px; font-size: 15px; font-family: inherit; margin-top: 6px; }
+.setup label { display: block; font-size: 13px; font-weight: 600; color: #4b4869; margin-top: 14px; }
+.setup .go { margin-top: 18px; width: 100%; height: 48px; border: 0; border-radius: 12px; background: var(--indigo); color: #fff; font-size: 16px; font-weight: 700; }
+.foot { text-align: center; color: var(--muted); font-size: 11.5px; padding: 0 0 12px; }
+@media (max-width: 820px) { .main { grid-template-columns: 1fr; } .left { align-items: center; text-align: center; padding: 0; } .hint { display: none; } .time { font-size: 64px; } .scanbtn { margin-top: 14px; } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="cam" id="cam"><div class="frame"><video id="video" playsinline muted></video></div><div>Hold your badge's QR code up to the camera</div><button type="button" id="camClose">Cancel</button></div>
+<script>
+/* The time clock. Kiosk token (made by an HR admin in HR settings → Time clock) in localStorage hr_kiosk_token, sent as X-HR-Kiosk.
+   A PIN or a badge identifies the person (a 90-second ticket), then one tap punches. USB / Bluetooth scanners type the badge code + Enter. */
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  let TOKEN = ''; try { TOKEN = localStorage.getItem('hr_kiosk_token') || ''; } catch (e) {}
+  let K = null, pin = '', badge = null, timer = null, wake = null;
+  async function call(path, body) {
+    try {
+      const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: Object.assign({ 'X-HR-Kiosk': TOKEN }, body ? { 'Content-Type': 'application/json' } : {}), body: body ? JSON.stringify(body) : undefined });
+      if (r.status === 401) return { ok: false, unauth: true, error: (await r.json().catch(() => ({}))).error || 'Not a time clock' };
+      return await r.json();
+    } catch (e) { return { ok: false, error: 'No connection — check the Wi-Fi and try again' }; }
+  }
+  const tz = () => (K && K.kiosk.tz) || 'America/Los_Angeles';
+  const timeStr = (d, o) => new Intl.DateTimeFormat('en-US', Object.assign({ timeZone: tz() }, o || { hour: 'numeric', minute: '2-digit' })).format(d || new Date());
+  const hrs = (h) => { h = Math.max(0, Number(h) || 0); const a = Math.floor(h), b = Math.round((h - a) * 60); return a + 'h ' + String(b === 60 ? 0 : b).padStart(2, '0') + 'm'; };
+  const initials = (n) => String(n || '?').split(/\s+/).map(x => x[0]).slice(0, 2).join('').toUpperCase();
+  const SCAN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><rect x="7" y="7" width="4" height="4"/><path d="M15 7h2v2M7 15h2v2M13 13h4v4h-4z"/></svg>';
+  const TICK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+
+  function shell(panel) {
+    $('app').innerHTML = '<div class="top"><div class="mark">A</div><div><b>AxiomPrint time clock</b><small>' + esc(K ? K.kiosk.name : '') + '</small></div><span class="sp"></span><button class="icon" type="button" id="fs">Full screen</button></div>' +
+      '<div class="main"><div class="left"><div class="time" id="clk">' + timeStr() + '</div><div class="date" id="dt">' + timeStr(null, { weekday: 'long', month: 'long', day: 'numeric' }) + '</div>' +
+      '<div class="hint">Type your <b>PIN</b> or scan your <b>badge</b> to clock in, take a break or clock out.</div><button class="scanbtn" type="button" id="scan">' + SCAN + 'Scan my badge</button></div>' +
+      '<div class="panel" id="panel">' + panel + '</div></div><div class="foot">NovaHR · ' + esc(K ? K.version || '' : '') + '</div>';
+    $('fs').onclick = () => { const d = document.documentElement; if (!document.fullscreenElement && d.requestFullscreen) d.requestFullscreen().catch(() => {}); else if (document.exitFullscreen) document.exitFullscreen(); };
+    $('scan').onclick = openCam;
+  }
+  function padHTML(msg, cls) {
+    const n = Math.max(K ? K.pin_len : 4, pin.length);
+    return '<div class="msg ' + (cls || '') + '" id="msg">' + esc(msg || (badge ? 'Badge read — enter your PIN' : 'Enter your PIN')) + '</div><div class="dots">' + Array.from({ length: n }, (_, i) => '<i class="' + (i < pin.length ? 'on' : '') + '"></i>').join('') + '</div>' +
+      '<div class="pad">' + [1, 2, 3, 4, 5, 6, 7, 8, 9].map(d => '<button type="button" data-k="' + d + '">' + d + '</button>').join('') + '<button type="button" class="fn" data-k="clear">Clear</button><button type="button" data-k="0">0</button><button type="button" class="go" data-k="go" aria-label="Enter">✓</button></div>';
+  }
+  function home(msg, cls) { clearTimeout(timer); pin = ''; badge = null; shell(padHTML(msg, cls)); bindPad(); }
+  function redrawPad(msg, cls) { const p = $('panel'); if (p) { p.innerHTML = padHTML(msg, cls); bindPad(); } }
+  function bindPad() { document.querySelectorAll('.pad button').forEach(b => { b.onclick = () => key(b.dataset.k); }); }
+  function key(k) {
+    if (k === 'clear') { pin = ''; redrawPad(); return; }
+    if (k === 'go') { if (pin.length >= 4) identify(); return; }
+    if (pin.length >= 6) return;
+    pin += k; redrawPad();
+    if (pin.length === 6) identify();
+  }
+  async function identify(code) {
+    const body = code ? { badge: code } : badge ? { badge, pin } : { pin };
+    if (code) badge = null;
+    $('panel').innerHTML = '<div class="msg">Checking…</div>';
+    const j = await call('/api/hr/kiosk/identify', body);
+    pin = '';
+    if (j.unauth) return setup(j.error);
+    if (!j.ok) { badge = null; home(j.error || 'Not found', 'bad'); return; }
+    if (j.need_pin) { badge = code; shell(padHTML('Hi ' + j.name + ' — enter your PIN')); bindPad(); return; }
+    badge = null; person(j.person, j.ticket);
+  }
+  function person(p, ticket) {
+    const last = (p.punches || [])[p.punches.length - 1];
+    const st = p.state === 'working' ? 'Clocked in since ' + timeStr(new Date((p.punches.filter(x => x.type === 'in' || x.type === 'back').pop() || last).at)) + ' · ' + hrs(p.worked) + ' today'
+      : p.state === 'break' ? 'On break since ' + timeStr(new Date(last.at)) + ' · ' + hrs(p.worked) + ' worked'
+      : last ? 'Clocked out at ' + timeStr(new Date(last.at)) + ' · ' + hrs(p.worked) + ' today' : (p.on_leave ? 'You have time off today' : 'Not clocked in yet today');
+    const L = { in: ['in', 'Clock in'], break: ['break', 'Start break'], back: ['back', 'End break'], out: ['out', 'Clock out'] };
+    const ph = p.photo ? 'background-image:url(\'' + esc(p.photo) + '\')' : 'background:' + (p.color || '#4f46e5');
+    $('panel').innerHTML = '<div class="who"><div class="ph" style="' + ph + '">' + (p.photo ? '' : esc(initials(p.name))) + '</div><h2>Hi, ' + esc(p.first_name || p.name) + '</h2><div class="st">' + esc(st) + '</div>' +
+      '<div class="acts">' + p.next.map(t => '<button type="button" class="' + L[t][0] + '" data-t="' + t + '">' + L[t][1] + '</button>').join('') + '<button type="button" class="cancel" data-t="">Not me / cancel</button></div></div><div class="bar" id="bar" style="width:100%"></div>';
+    document.querySelectorAll('.acts button').forEach(b => { b.onclick = () => b.dataset.t ? punch(ticket, b.dataset.t) : home(); });
+    countdown(15000);
+  }
+  function countdown(ms) { clearTimeout(timer); const bar = $('bar'); if (bar) { bar.style.transitionDuration = '0ms'; bar.style.width = '100%'; requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.transitionDuration = ms + 'ms'; bar.style.width = '0%'; })); } timer = setTimeout(() => home(), ms); }
+  async function punch(ticket, type) {
+    clearTimeout(timer);
+    document.querySelectorAll('.acts button').forEach(b => { b.disabled = true; });
+    const j = await call('/api/hr/kiosk/punch', { ticket, type });
+    if (!j.ok) { home(j.error || 'Could not save', 'bad'); return; }
+    const W = { in: 'Clocked in', break: 'Break started', back: 'Back from break', out: 'Clocked out' };
+    const bye = { in: 'Have a great shift, ' + esc(j.person.first_name) + '!', break: 'Enjoy your break.', back: 'Welcome back.', out: 'Worked ' + hrs(j.person.worked) + ' today. See you next time, ' + esc(j.person.first_name) + '!' };
+    $('panel').innerHTML = '<div class="done"><div class="tick">' + TICK + '</div><h2>' + W[type] + ' at ' + timeStr(new Date(j.at)) + '</h2><p>' + bye[type] + '</p></div><div class="bar" id="bar" style="width:100%"></div>';
+    try { if (navigator.vibrate) navigator.vibrate(60); } catch (e) {}
+    countdown(4500);
+  }
+
+  // ---- badge scanning: the camera (BarcodeDetector, else jsQR) and keyboard-wedge scanners ----
+  let stream = null, scanning = false, detector = null;
+  async function openCam() {
+    $('cam').classList.add('on');
+    try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 960 } }, audio: false }); }
+    catch (e) { closeCam(); home('The camera is not available — use the PIN', 'bad'); return; }
+    const v = $('video'); v.srcObject = stream; await v.play().catch(() => {});
+    scanning = true;
+    if ('BarcodeDetector' in window) { try { detector = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { detector = null; } }
+    if (!detector && !window.jsQR) await new Promise((res) => { const s = document.createElement('script'); s.src = '/jsqr.js'; s.onload = res; s.onerror = res; document.head.appendChild(s); });
+    const c = document.createElement('canvas'), ctx = c.getContext('2d', { willReadFrequently: true });
+    const t0 = Date.now();
+    const loop = async () => {
+      if (!scanning) return;
+      if (Date.now() - t0 > 30000) { closeCam(); home(); return; }
+      let code = null;
+      try {
+        if (detector) { const r = await detector.detect(v); if (r && r[0]) code = r[0].rawValue; }
+        else if (window.jsQR && v.videoWidth) { c.width = v.videoWidth; c.height = v.videoHeight; ctx.drawImage(v, 0, 0); const img = ctx.getImageData(0, 0, c.width, c.height); const r = window.jsQR(img.data, img.width, img.height); if (r) code = r.data; }
+      } catch (e) {}
+      if (code && /NHR-\d+-\d+-[0-9A-F]{12}/i.test(code)) { closeCam(); identify(code.match(/NHR-\d+-\d+-[0-9A-F]{12}/i)[0]); return; }
+      setTimeout(loop, 160);
+    };
+    loop();
+  }
+  function closeCam() { scanning = false; $('cam').classList.remove('on'); if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } }
+  $('camClose').onclick = () => { closeCam(); home(); };
+  let buf = '', bufT = 0;
+  document.addEventListener('keydown', (e) => {
+    if (!K || document.activeElement && /INPUT|SELECT/.test(document.activeElement.tagName)) return;
+    const now = Date.now(); if (now - bufT > 120) buf = ''; bufT = now;
+    if (e.key === 'Enter') {
+      const m = /NHR-\d+-\d+-[0-9A-F]{12}/i.exec(buf); buf = '';
+      if (m) { e.preventDefault(); identify(m[0]); return; }
+      if ($('msg')) key('go'); return;
+    }
+    if (e.key.length === 1) buf += e.key;
+    if (/^\d$/.test(e.key) && $('msg') && buf.length <= 1) key(e.key);
+    if (e.key === 'Backspace' && $('msg')) { pin = pin.slice(0, -1); redrawPad(); }
+    if (e.key === 'Escape') home();
+  });
+
+  // ---- setup: this browser is not a time clock yet ----
+  function setup(err) {
+    let admin = ''; try { admin = localStorage.getItem('axiom_token') || ''; } catch (e) {}
+    $('app').innerHTML = '<div class="setup"><h1>Set up the time clock</h1>' + (err ? '<p style="color:#dc2626">' + esc(err) + '</p>' : '') +
+      '<p>This device is not a NovaHR time clock yet. An HR admin sets it up once — then anyone can clock in here with their PIN or badge, and no one needs to sign in.</p>' +
+      (admin ? '<label>Name of this time clock<input id="kName" value="Front door"></label><label>Location<select id="kLoc"><option value="gl">Glendale</option><option value="am">Armenia</option><option value="mx">Mexico</option><option value="ph">Philippines</option></select></label><button class="go" id="kGo">Make this device a time clock</button><p id="kErr" style="color:#dc2626"></p>'
+        : '<p>Sign in to NovaAI on this device as an HR admin (open <b>/hr</b>), then come back here — or use HR settings → Time clock & PINs → "Make this device a time clock".</p><button class="go" onclick="location.href=\'/\'">Sign in</button>') + '</div>';
+    const go = $('kGo'); if (go) go.onclick = async () => {
+      const r = await fetch('/api/hr/kiosks', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + admin }, body: JSON.stringify({ name: $('kName').value, location: $('kLoc').value }) });
+      const j = await r.json().catch(() => ({}));
+      if (!j.ok) { $('kErr').textContent = j.error || 'Only HR admins can set up a time clock'; return; }
+      TOKEN = j.token; try { localStorage.setItem('hr_kiosk_token', j.token); localStorage.setItem('hr_kiosk_name', $('kName').value); } catch (e) {}
+      start();
+    };
+  }
+  async function start() {
+    if (!TOKEN) return setup();
+    const j = await call('/api/hr/kiosk/hello');
+    if (j.unauth) { try { localStorage.removeItem('hr_kiosk_token'); } catch (e) {} TOKEN = ''; return setup(j.error); }
+    if (!j.ok) { $('app').innerHTML = '<div class="setup"><h1>Time clock</h1><p>' + esc(j.error || 'Could not reach Nova') + '</p><button class="go" onclick="location.reload()">Try again</button></div>'; setTimeout(() => location.reload(), 30000); return; }
+    K = j; home();
+    try { if ('wakeLock' in navigator) { wake = await navigator.wakeLock.request('screen'); document.addEventListener('visibilitychange', async () => { if (document.visibilityState === 'visible') { try { wake = await navigator.wakeLock.request('screen'); } catch (e) {} } }); } } catch (e) {}
+  }
+  setInterval(() => { const c = $('clk'), d = $('dt'); if (c) c.textContent = timeStr(); if (d) d.textContent = timeStr(null, { weekday: 'long', month: 'long', day: 'numeric' }); }, 1000);
+  setInterval(() => { if (K && !$('msg')) return; if (K) call('/api/hr/kiosk/hello').then(j => { if (j.unauth) location.reload(); }); }, 10 * 60000);
+  start();
+})();
+</script>
+</body>
+</html>

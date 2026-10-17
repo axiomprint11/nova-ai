@@ -629,6 +629,52 @@ name says "board" / "wide" — Boards, Wide Format; `matList()` reads `GEO`, loa
 shows `spec.substrate_label`. Switching forms clears the Material when the list family changes (`matFamily`). Geo type and Material
 overlap for these two on purpose — the owner is still deciding whether to fold them together.
 
+## NovaHR (1.20.167)
+
+`hr.js` (`require('./hr')(app, { db, auth, serveVersionedHtml, runQuery, sendMail, Notify, closedDays, version })` in server.js, before backups)
+mounts **NovaHR** at `/hr` (`public/hr.html/.js`, left-menu item `hr`, **everyone**; nav badge = time off requests waiting for you,
+`GET /api/hr/badge-count`) and the **time clock** at `/hr/kiosk` (`public/hr-kiosk.html`). The owner's prototype + spec ("Axiom HR: Developer
+Handoff") ported into Nova: tabs **Today** (who's working by location on a 24 h Glendale axis — lanes grouped by shift, a location click
+shows everyone; My time clock with breaks + the week; approvals; coming up: time off, holidays, birthdays, anniversaries) · **People**
+(filters, Missing info, Show inactive, Add employee from the CRM or by hand, Print badges; the profile drawer: Overview with CRM/NOVA tags
+per field, the four CRM access flags read-only, Time clock (PIN, badge) · Job & pay (department, manager, location, shift in local hours +
+work days, pay with history) · Time off (balances, Adjust balances) · Skills & languages · Performance (reviews, points) · Documents
+(checklist + uploads to `hr-files/`, gitignored, sniffed PDF / image / Word / Excel, 25 MB)) · **Company tree** · **Time & attendance**
+(Timesheets: week grid, Missing / No punch, fix = add the missing punch or set hours (`hr_ts_fixes`), void a punch, approve, payroll CSV;
+Schedule adherence 2/4/8 weeks) · **Time off** (request with live preview — workdays, balance after, overlap in the department, short
+notice; manager "for" + already approved; team calendar per location) · **Reviews** (cycle, self → manager → done, printable eggplant
+report) · **Skills** (matrix, coverage, languages) · **Rewards** (weekly check-in with auto attendance points, leaderboard, shout-outs,
+redemptions) · **HR settings** (admins: time off types, holidays, attendance rules, Time clock & PINs + kiosks, skills & languages,
+rewards, reviews, company, audit log). Full write-up and API: `docs/NOVA_HR.md`.
+**Data**: SQLite `hr_*` only — the CRM is read-only. Staff come from CRM `user` (type member; test / system accounts left out on the first
+boot, `seeded_employees` in `hr_meta`), re-read every 15 min; a field edited in NovaHR goes into `hr_employees.nova_edited` and the sync
+leaves it alone; the access flags (isSubmitter / view_all_projects / mail_enabled / view_products) are shown, never changed; a disabled CRM
+account → Inactive. The tree is seeded from CRM `department` + `team` (`lead_ids` / `members`); an edited department / team is `edited`
+(NOVA) and skipped by the sync. First boot places each person from their first team (lead = manager; department heads report to the CEO
+from Settings → Company). Default shift = Glendale 9–6 in the person's own time zone, or their Designer AI hours. Never read: password /
+token / auth_key columns. **Roles**: HR admin = Nova admin or Type Admin; manager = Type Manager or anyone with reports — scope = the whole
+`reports_to` chain under them (`chainOf`); employee = self. `canPrivate` / `canManage` gate every route.
+**Clocking in**: punches in UTC (`hr_punches`, source web / kiosk / mobile / manager_fix / auto); a punch belongs to the shift-day of
+(punch − (shift start − 6 h)) so overnight shifts (end > 24) work; worked = in→break/out + back→break/out, punches rounded, unpaid break
+off a 6 h+ day with no break punched. Web clock-in rules in Settings → Time clock (Glendale: web or time clock only, office IPs; remote
+web on/off). **Kiosk**: an admin makes the device a time clock (`POST /api/hr/kiosks` → a signed token in `localStorage hr_kiosk_token`,
+sent as `X-HR-Kiosk`; `hr_kiosks`, Switch off revokes); PIN or badge → `identify` returns the person + a 90 s ticket → `punch`. PINs 4–6
+digits, unique, weak ones refused, stored as an HMAC keyed from `JWT_SECRET` (`hr_employees.pin_hash`, unique index), shown once; 5 wrong
+tries a minute lock the kiosk 60 s. Badges: `NHR-<id>-<ver>-<sig>` QR (vendored `public/qrcode-generator.js`), CR80 cards with photo;
+re-issue bumps `badge_ver`; optional "badge needs the PIN too". The kiosk reads a QR with BarcodeDetector, else vendored `public/jsqr.js`,
+or a USB / Bluetooth scanner typing the code + Enter. **Rules** (attendance / rewards defaults from the spec): late > grace, very late >
+lateAlert, early < −earlyGrace, missed = no in or no out; adherence and timesheet flags count only from each person's first punch;
+overtime weekly + California daily for Glendale; leave days = the person's work days minus their location's holidays (+ the website's
+Closed days for Glendale); Monthly accrual; carry-over / own allowance / used before NovaHR per person (`hr_leave_adjust`); attendance
+points with the streak bonus (no-shift weeks neutral), weekly cap; redemptions take points at request, a rejection returns them, a
+catalog item with `leave` adds days when fulfilled. Emails (Notify group NovaHR): `hr.leave`, `hr.late`, `hr.missed` (9 am LA daily),
+`hr.checkin`, `hr.review`, `hr.redeem` (`HR_ALERT_TO`). Auto clock-out (setting) 2 h after shift end. Every change → `hr_audit`.
+**Designer AI reads it**: `app.locals.novaHR.liveFor(crmUserId)` — a designer who clocks in through NovaHR is on shift while clocked in
+(minutes left to their NovaHR shift end), out on approved time off, off when not clocked in; designers not clocking in keep Designer AI's
+hours (`hrShift()` in designer-ai.js). The mobile app uses the same `POST /api/hr/punch {type, source:'mobile', lat, lng}`.
+Tested with a stub CRM (`hr-harness.js` in the scratchpad: 15 users incl. Yerevan overnight + Manila shifts, three weeks of punches, three
+roles, kiosk PIN + scanner badge).
+
 ## Website knowledge (axiomprint.com text + SEO, 1.20.50)
 
 `website-knowledge.js` (`WebKnowledge = require('./website-knowledge')({ db })` in server.js, passed to client-bot as `deps.WebKnowledge`)

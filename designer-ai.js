@@ -188,7 +188,21 @@ module.exports = function mountDesignerAi(app, deps) {
   const laNow = () => { const f = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', hour: '2-digit', minute: '2-digit', weekday: 'short' }); const o = {}; f.formatToParts(new Date()).forEach(x => { o[x.type] = x.value; }); return { min: Number(o.hour) * 60 + Number(o.minute), day: ({ Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 })[o.weekday] || 1 }; };
   const toMin = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || '').trim()); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
   const fmtT = (t) => { const m = toMin(t); if (m == null) return ''; const h = Math.floor(m / 60), mm = m % 60; return (h % 12 || 12) + (mm ? ':' + String(mm).padStart(2, '0') : '') + (h < 12 ? ' AM' : ' PM'); };
+  // 1.20.167: NovaHR knows who actually clocked in. A designer who clocks in through NovaHR is on shift while clocked in (out on
+  // approved time off); their NovaHR shift end gives the minutes left. Designers not clocking in yet keep the hours set here.
+  const fmtMs = (ms) => new Date(ms).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' });
+  function hrShift(d) {
+    const hr = app.locals && app.locals.novaHR; if (!hr) return null;
+    let x = null; try { x = hr.liveFor(d.user_id); } catch (e) { return null; }
+    if (!x || !x.tracked) return null;
+    if (x.state === 'pto') return { known: true, on: false, why: 'out today (time off)', hr: true };
+    if (x.clocked) { const left = Math.round((x.shift_end_ms - Date.now()) / 60000); return { known: true, on: true, left: Math.max(0, left), ends: fmtMs(x.shift_end_ms), hr: true, state: x.state }; }
+    if (!x.workday) return { known: true, on: false, why: 'day off', hr: true };
+    if (Date.now() < x.shift_start_ms) return { known: true, on: false, why: 'not clocked in · starts at ' + fmtMs(x.shift_start_ms), hr: true };
+    return { known: true, on: false, why: Date.now() > x.shift_end_ms ? 'clocked out for the day' : 'not clocked in yet', hr: true };
+  }
   function onShift(d) {
+    const h = hrShift(d); if (h) return h;
     const st = toMin(d.shift_start), en = toMin(d.shift_end); if (st == null || en == null) return { known: false };
     const now = laNow(); const days = String(d.work_days || '1,2,3,4,5').split(',').map(Number);
     if (days.indexOf(now.day) < 0) return { known: true, on: false, why: 'day off' };

@@ -28,6 +28,7 @@
     designer: '<path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/>',
     reports: '<path d="M3 20h18"/><rect x="5" y="11" width="3" height="6" rx="1"/><rect x="10.5" y="6" width="3" height="11" rx="1"/><rect x="16" y="9" width="3" height="8" rx="1"/>',
     materials: '<path d="M12 2l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/>',
+    hr: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c1.9.8 3.1 2.6 3.5 5.2"/>',
     chatbot: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/>'
   };
   // [key, label, href, who] — who: 'all' (everyone), 'admin', 'knowledge' (members with Domain Knowledge access),
@@ -40,7 +41,8 @@
      ['ar', 'Nova AR', '/nova-ar', 'ar'],
      ['designer', 'Designer AI', '/designer-ai', 'admin'],
      ['reports', 'ReportsAI', '/reports-ai', 'admin'],   // 1.20.96
-     ['materials', 'Material AI', '/material-ai', 'materials']],   // 1.20.159: admins + bookkeepers
+     ['materials', 'Material AI', '/material-ai', 'materials'],   // 1.20.159: admins + bookkeepers
+     ['hr', 'NovaHR', '/hr', 'all']],   // 1.20.167: the whole team — clock in, time off, reviews, rewards
     [['users', 'Users', '/admin?tab=users', 'admin'],
      ['knowledge', 'Domain Knowledge', '/admin?tab=knowledge', 'knowledge'],
      ['connections', 'Connectors', '/admin?tab=connections', 'admin'],
@@ -52,7 +54,8 @@
     history: ['/api/crm/unread-count', 'conversations you have not opened'],
     client: ['/api/admin/client-bot/unread-count', 'unread client conversations'],
     talk: ['/api/admin/talk/unread-count', 'unread calls'],
-    ar: ['/api/bookkeeping/ar/unread-count', 'customer payments waiting to be matched']   // 1.20.14
+    ar: ['/api/bookkeeping/ar/unread-count', 'customer payments waiting to be matched'],   // 1.20.14
+    hr: ['/api/hr/badge-count', 'time off requests waiting for you']   // 1.20.167
   };
   // Pages that are their own tab of admin.html (switch in place there, instead of reloading).
   const ADMIN_TABS = ['history', 'users', 'knowledge', 'connections', 'pricing', 'emails'];
